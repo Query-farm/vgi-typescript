@@ -4,3 +4,4 @@ duckdb_unittest_tempdir/
 *.db
 *.db-wal
 *.db-shm
+test_*.ts
