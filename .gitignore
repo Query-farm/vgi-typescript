@@ -1,0 +1,6 @@
+node_modules/
+dist/
+duckdb_unittest_tempdir/
+*.db
+*.db-wal
+*.db-shm

@@ -1,0 +1,1008 @@
+// Build VGI protocol from worker implementation.
+// Registers bind, init, table_function_cardinality, and catalog methods on vgi-rpc Protocol.
+
+import { Schema, Field, Binary, Utf8, Int64, Int32, Bool, List, RecordBatch } from "apache-arrow";
+import { Protocol, type OutputCollector } from "vgi-rpc";
+
+// NOTE: We must NOT use vgi-rpc's str/bytes/int/etc. singletons in Schema objects
+// because Bun loads apache-arrow as separate module instances for our code vs vgi-rpc's
+// compiled dist. Instead, we pre-build Schema objects and pass them directly to Protocol
+// methods (toSchema() passes Schema instances through without instanceof checks).
+import type { FunctionRegistry } from "../functions/registry.js";
+import type { VgiFunction, StreamHandlers } from "../functions/types.js";
+import {
+  deserializeBindRequest,
+  serializeBindResponse,
+  deserializeInitRequest,
+  serializeGlobalInitResponse,
+  deserializeCardinalityRequest,
+  serializeTableCardinality,
+} from "./serialize.js";
+import type {
+  BindRequest,
+  BindResponse,
+  InitRequest,
+  GlobalInitResponse,
+} from "./types.js";
+import { TableInOutPhase } from "../types.js";
+import { resolveMetadata } from "../metadata/resolve.js";
+import { metadatasToArrow, METADATA_SCHEMA } from "../metadata/serialize.js";
+import { batchToScalarDict, serializeBatch, deserializeBatch, serializeSchema, emptyBatch, batchFromColumns } from "../util/arrow.js";
+import type { CatalogInterface } from "../catalog/interface.js";
+import { NoCatalogError } from "../errors.js";
+
+// ============================================================================
+// Protocol building
+// ============================================================================
+
+export interface ProtocolConfig {
+  registry: FunctionRegistry;
+  catalogInterface?: CatalogInterface;
+  catalogName?: string;
+}
+
+// The Python vgi-rpc framework wraps ALL non-void unary results in a single
+// "result" column. For ArrowSerializableDataclass types, the result is serialized
+// as Arrow IPC bytes in a Binary column. DuckDB's VGI extension expects this format.
+const RESULT_BINARY_SCHEMA = new Schema([
+  new Field("result", new Binary(), false),
+]);
+
+// DuckDB wraps ArrowSerializableDataclass parameters in a single "request" Binary column.
+const REQUEST_PARAMS_SCHEMA = new Schema([
+  new Field("request", new Binary(), false),
+]);
+
+const RESULT_BINARY_NULLABLE_SCHEMA = new Schema([
+  new Field("result", new Binary(), true),
+]);
+
+/**
+ * Unwrap a "request" Binary column: deserialize the inner Arrow IPC batch
+ * and return flat columns as a dict (row 0).
+ */
+function unwrapRequest(requestBytes: any): Record<string, any> {
+  const bytes = toUint8Array(requestBytes);
+  const innerBatch = deserializeBatch(bytes);
+  return batchToScalarDict(innerBatch);
+}
+
+/**
+ * Wrap a dict of values into a single "result" Binary column.
+ * Builds a 1-row batch from the values using the given schema,
+ * serializes it to IPC bytes, and returns { result: bytes }.
+ */
+function wrapResult(
+  values: Record<string, any>,
+  innerSchema: Schema,
+): { result: Uint8Array } {
+  const batch = batchFromColumns(
+    Object.fromEntries(innerSchema.fields.map(f => [f.name, [values[f.name] ?? null]])),
+    innerSchema,
+  );
+  return { result: serializeBatch(batch) };
+}
+
+export function buildVgiProtocol(config: ProtocolConfig): Protocol {
+  const { registry, catalogInterface } = config;
+  const protocol = new Protocol("vgi");
+
+  // Inner schema for bind response (used to serialize into the "result" Binary column)
+  const bindResponseInnerSchema = new Schema([
+    new Field("output_schema", new Binary(), false),
+    new Field("opaque_data", new Binary(), true),
+  ]);
+
+  const initHeaderSchema = new Schema([
+    new Field("execution_id", new Binary(), false),
+    new Field("opaque_data", new Binary(), true),
+    new Field("max_workers", new Int64(), false),
+  ]);
+
+  // Inner schema for cardinality response
+  const cardinalityInnerSchema = new Schema([
+    new Field("estimate", new Int64(), true),
+    new Field("max", new Int64(), true),
+  ]);
+
+  const emptySchema = new Schema([]);
+
+  // Dummy non-empty schema for the init exchange registration.
+  // The dispatch determines producer vs exchange based on inputSchema emptiness.
+  // We need exchange mode so that input batches are passed to our callback.
+  // The actual input schema comes from the IPC stream, not this registration.
+  const dummyInputSchema = new Schema([
+    new Field("_tick", new Binary(), true),
+  ]);
+
+  // --------------------------------------------------------------------------
+  // bind (unary)
+  // --------------------------------------------------------------------------
+  protocol.unary("bind", {
+    params: REQUEST_PARAMS_SCHEMA,
+    result: RESULT_BINARY_SCHEMA,
+    handler: (params) => {
+      const innerParams = unwrapRequest(params.request);
+      const request = deserializeBindRequest(innerParams);
+      const func = registry.get(request.functionName);
+      const response = func.bind(request);
+      const serialized = serializeBindResponse(response);
+      return wrapResult(serialized, bindResponseInnerSchema);
+    },
+  });
+
+  // --------------------------------------------------------------------------
+  // init (streaming) - dynamically produces either producer or exchange streams
+  // --------------------------------------------------------------------------
+  protocol.exchange("init", {
+    params: REQUEST_PARAMS_SCHEMA,
+    inputSchema: dummyInputSchema,
+    outputSchema: emptySchema,
+    init: (params) => {
+      const innerParams = unwrapRequest(params.request);
+      const request = deserializeInitRequest(innerParams);
+      const func = registry.get(request.bindCall.functionName);
+
+
+      const initResponse = func.globalInit(request);
+
+      const handlers = func.createStreamHandlers(request, initResponse);
+
+      // Initialize the appropriate handler
+      let handlerState: any;
+      if (handlers.producerInit) {
+        handlerState = handlers.producerInit();
+      } else if (handlers.exchangeInit) {
+        handlerState = handlers.exchangeInit();
+      }
+
+      const isProducer = !!handlers.producerFn;
+
+      return {
+        request,
+        func,
+        initResponse,
+        handlers,
+        handlerState,
+        isProducer,
+        // Dynamic output schema for this invocation (vgi-rpc dispatch uses this)
+        __outputSchema: handlers.outputSchema ?? emptySchema,
+        // Tell dispatch whether this is a producer or exchange
+        __isProducer: isProducer,
+      };
+    },
+    exchange: async (state, input, out) => {
+      const { handlers, handlerState, isProducer } = state;
+      if (isProducer && handlers.producerFn) {
+        // Producer mode inside an exchange dispatch: patch finish() to bypass
+        // OutputCollector's producerMode check (since dispatch created it
+        // in exchange mode but we're actually producing).
+        out.finish = () => { (out as any)._finished = true; };
+        await handlers.producerFn(handlerState, out);
+      } else if (handlers.exchangeFn) {
+        await handlers.exchangeFn(handlerState, input, out);
+      }
+    },
+    headerSchema: initHeaderSchema,
+    headerInit: (params: any, state: any, ctx: any) => {
+      return serializeGlobalInitResponse(state.initResponse);
+    },
+  });
+
+  // --------------------------------------------------------------------------
+  // table_function_cardinality (unary)
+  // --------------------------------------------------------------------------
+  protocol.unary("table_function_cardinality", {
+    params: REQUEST_PARAMS_SCHEMA,
+    result: RESULT_BINARY_SCHEMA,
+    handler: (params) => {
+      const innerParams = unwrapRequest(params.request);
+      const request = deserializeCardinalityRequest(innerParams);
+      const func = registry.get(request.bindCall.functionName);
+      let cardResult: Record<string, any>;
+      if (func.cardinality) {
+        cardResult = serializeTableCardinality(func.cardinality(request));
+      } else {
+        cardResult = { estimate: null, max: null };
+      }
+      return wrapResult(cardResult, cardinalityInnerSchema);
+    },
+  });
+
+  // --------------------------------------------------------------------------
+  // Catalog methods
+  // --------------------------------------------------------------------------
+  registerCatalogMethods(protocol, catalogInterface, config.catalogName);
+
+  return protocol;
+}
+
+// ============================================================================
+// Catalog method registration
+// ============================================================================
+
+function registerCatalogMethods(
+  protocol: Protocol,
+  catalog: CatalogInterface | undefined,
+  catalogName: string | undefined,
+): void {
+  function getCatalog(): CatalogInterface {
+    if (!catalog) throw new NoCatalogError();
+    return catalog;
+  }
+
+  // Inner schemas for catalog result types (serialized into "result" Binary column)
+  const catalogsResponseSchema = new Schema([
+    new Field("items", new List(new Field("item", new Utf8(), true)), false),
+  ]);
+
+  const attachResultInnerSchema = new Schema([
+    new Field("attach_id", new Binary(), false),
+    new Field("supports_transactions", new Bool(), false),
+    new Field("supports_time_travel", new Bool(), false),
+    new Field("catalog_version_frozen", new Bool(), false),
+    new Field("catalog_version", new Int64(), false),
+    new Field("attach_id_required", new Bool(), false),
+    new Field("default_schema", new Utf8(), false),
+    new Field("settings", new List(new Field("item", new Binary(), true)), false),
+  ]);
+
+  const versionResponseSchema = new Schema([
+    new Field("version", new Int64(), false),
+  ]);
+
+  const transactionBeginResponseSchema = new Schema([
+    new Field("transaction_id", new Binary(), true),
+  ]);
+
+  const listBinaryResponseSchema = new Schema([
+    new Field("items", new List(new Field("item", new Binary(), true)), false),
+  ]);
+
+  const scanFunctionResponseSchema = new Schema([
+    new Field("function_name", new Utf8(), false),
+    new Field("arguments", new Binary(), true),
+    new Field("required_extensions", new List(new Field("item", new Utf8(), true)), false),
+  ]);
+
+  const emptyResult = new Schema([]);
+
+  // Common param schemas
+  const attachIdParam = new Schema([
+    new Field("attach_id", new Binary(), true),
+  ]);
+
+  const attachIdTxnParams = new Schema([
+    new Field("attach_id", new Binary(), true),
+    new Field("transaction_id", new Binary(), true),
+  ]);
+
+  const attachIdNameTxnParams = new Schema([
+    new Field("attach_id", new Binary(), true),
+    new Field("name", new Utf8(), false),
+    new Field("transaction_id", new Binary(), true),
+  ]);
+
+  const attachIdSchemaNameTxnParams = new Schema([
+    new Field("attach_id", new Binary(), true),
+    new Field("schema_name", new Utf8(), false),
+    new Field("name", new Utf8(), false),
+    new Field("transaction_id", new Binary(), true),
+  ]);
+
+  // catalog_catalogs
+  protocol.unary("catalog_catalogs", {
+    params: emptyResult,
+    result: RESULT_BINARY_SCHEMA,
+    handler: () => {
+      const cat = getCatalog();
+      return wrapResult({ items: cat.catalogs() }, catalogsResponseSchema);
+    },
+  });
+
+  // catalog_attach (params wrapped in request: Binary like bind/init)
+  protocol.unary("catalog_attach", {
+    params: REQUEST_PARAMS_SCHEMA,
+    result: RESULT_BINARY_SCHEMA,
+    handler: (params) => {
+      const innerParams = unwrapRequest(params.request);
+      const cat = getCatalog();
+      const result = cat.attach(innerParams.name, innerParams.options);
+      return wrapResult({
+        attach_id: result.attachId,
+        supports_transactions: result.supportsTransactions ?? false,
+        supports_time_travel: result.supportsTimeTravel ?? false,
+        catalog_version_frozen: result.catalogVersionFrozen ?? false,
+        catalog_version: result.catalogVersion ?? 0,
+        attach_id_required: result.attachIdRequired ?? true,
+        default_schema: result.defaultSchema ?? "main",
+        settings: result.settings ?? [],
+      }, attachResultInnerSchema);
+    },
+  });
+
+  // catalog_detach
+  protocol.unary("catalog_detach", {
+    params: attachIdParam,
+    result: emptyResult,
+    handler: (params) => {
+      const cat = getCatalog();
+      cat.detach(toUint8Array(params.attach_id));
+      return {};
+    },
+  });
+
+  // catalog_create
+  protocol.unary("catalog_create", {
+    params: new Schema([
+      new Field("name", new Utf8(), false),
+      new Field("on_conflict", new Utf8(), false),
+      new Field("options", new Binary(), true),
+    ]),
+    result: emptyResult,
+    handler: (params) => {
+      const cat = getCatalog();
+      cat.create(params.name, params.on_conflict, params.options);
+      return {};
+    },
+  });
+
+  // catalog_drop
+  protocol.unary("catalog_drop", {
+    params: new Schema([new Field("name", new Utf8(), false)]),
+    result: emptyResult,
+    handler: (params) => {
+      const cat = getCatalog();
+      cat.drop(params.name);
+      return {};
+    },
+  });
+
+  // catalog_version
+  protocol.unary("catalog_version", {
+    params: attachIdTxnParams,
+    result: RESULT_BINARY_SCHEMA,
+    handler: (params) => {
+      const cat = getCatalog();
+      return wrapResult({
+        version: cat.version(
+          toUint8Array(params.attach_id),
+          params.transaction_id ? toUint8Array(params.transaction_id) : undefined
+        ),
+      }, versionResponseSchema);
+    },
+  });
+
+  // catalog_transaction_begin
+  protocol.unary("catalog_transaction_begin", {
+    params: attachIdParam,
+    result: RESULT_BINARY_SCHEMA,
+    handler: (params) => {
+      const cat = getCatalog();
+      return wrapResult({
+        transaction_id: cat.transactionBegin(toUint8Array(params.attach_id)),
+      }, transactionBeginResponseSchema);
+    },
+  });
+
+  // catalog_transaction_commit
+  protocol.unary("catalog_transaction_commit", {
+    params: attachIdTxnParams,
+    result: emptyResult,
+    handler: (params) => {
+      const cat = getCatalog();
+      cat.transactionCommit(
+        toUint8Array(params.attach_id),
+        toUint8Array(params.transaction_id)
+      );
+      return {};
+    },
+  });
+
+  // catalog_transaction_rollback
+  protocol.unary("catalog_transaction_rollback", {
+    params: attachIdTxnParams,
+    result: emptyResult,
+    handler: (params) => {
+      const cat = getCatalog();
+      cat.transactionRollback(
+        toUint8Array(params.attach_id),
+        toUint8Array(params.transaction_id)
+      );
+      return {};
+    },
+  });
+
+  // catalog_schemas
+  protocol.unary("catalog_schemas", {
+    params: attachIdTxnParams,
+    result: RESULT_BINARY_SCHEMA,
+    handler: (params) => {
+      const cat = getCatalog();
+      const schemas = cat.schemas(
+        toUint8Array(params.attach_id),
+        params.transaction_id ? toUint8Array(params.transaction_id) : undefined
+      );
+      return wrapResult({
+        items: schemas.map((s) => s.serialize()),
+      }, listBinaryResponseSchema);
+    },
+  });
+
+  // catalog_schema_get
+  protocol.unary("catalog_schema_get", {
+    params: attachIdNameTxnParams,
+    result: RESULT_BINARY_SCHEMA,
+    handler: (params) => {
+      const cat = getCatalog();
+      const info = cat.schemaGet(
+        toUint8Array(params.attach_id),
+        params.name,
+        params.transaction_id ? toUint8Array(params.transaction_id) : undefined
+      );
+      return wrapResult({
+        items: info ? [info.serialize()] : [],
+      }, listBinaryResponseSchema);
+    },
+  });
+
+  // catalog_schema_create
+  protocol.unary("catalog_schema_create", {
+    params: new Schema([
+      new Field("attach_id", new Binary(), true),
+      new Field("name", new Utf8(), false),
+      new Field("comment", new Utf8(), true),
+      new Field("tags", new Binary(), true),
+      new Field("transaction_id", new Binary(), true),
+    ]),
+    result: emptyResult,
+    handler: (params) => {
+      const cat = getCatalog();
+      cat.schemaCreate(
+        toUint8Array(params.attach_id),
+        params.name,
+        params.comment,
+        null, // tags
+        params.transaction_id ? toUint8Array(params.transaction_id) : undefined
+      );
+      return {};
+    },
+  });
+
+  // catalog_schema_drop
+  protocol.unary("catalog_schema_drop", {
+    params: new Schema([
+      new Field("attach_id", new Binary(), true),
+      new Field("name", new Utf8(), false),
+      new Field("ignore_not_found", new Bool(), true),
+      new Field("cascade", new Bool(), true),
+      new Field("transaction_id", new Binary(), true),
+    ]),
+    result: emptyResult,
+    handler: (params) => {
+      const cat = getCatalog();
+      cat.schemaDrop(
+        toUint8Array(params.attach_id),
+        params.name,
+        params.ignore_not_found,
+        params.cascade,
+        params.transaction_id ? toUint8Array(params.transaction_id) : undefined
+      );
+      return {};
+    },
+  });
+
+  // catalog_schema_contents_tables
+  protocol.unary("catalog_schema_contents_tables", {
+    params: attachIdNameTxnParams,
+    result: RESULT_BINARY_SCHEMA,
+    handler: (params) => {
+      const cat = getCatalog();
+      const tables = cat.schemaContentsTables(
+        toUint8Array(params.attach_id),
+        params.name,
+        params.transaction_id ? toUint8Array(params.transaction_id) : undefined
+      );
+      return wrapResult({
+        items: tables.map((t) => t.serialize()),
+      }, listBinaryResponseSchema);
+    },
+  });
+
+  // catalog_schema_contents_views
+  protocol.unary("catalog_schema_contents_views", {
+    params: attachIdNameTxnParams,
+    result: RESULT_BINARY_SCHEMA,
+    handler: (params) => {
+      const cat = getCatalog();
+      const views = cat.schemaContentsViews(
+        toUint8Array(params.attach_id),
+        params.name,
+        params.transaction_id ? toUint8Array(params.transaction_id) : undefined
+      );
+      return wrapResult({
+        items: views.map((v) => v.serialize()),
+      }, listBinaryResponseSchema);
+    },
+  });
+
+  // catalog_schema_contents_functions
+  protocol.unary("catalog_schema_contents_functions", {
+    params: new Schema([
+      new Field("attach_id", new Binary(), true),
+      new Field("name", new Utf8(), false),
+      new Field("type", new Utf8(), false),
+      new Field("transaction_id", new Binary(), true),
+    ]),
+    result: RESULT_BINARY_SCHEMA,
+    handler: (params) => {
+      const cat = getCatalog();
+      const funcs = cat.schemaContentsFunctions(
+        toUint8Array(params.attach_id),
+        params.name,
+        params.type,
+        params.transaction_id ? toUint8Array(params.transaction_id) : undefined
+      );
+      return wrapResult({
+        items: funcs.map((f) => f.serialize()),
+      }, listBinaryResponseSchema);
+    },
+  });
+
+  // catalog_table_get
+  protocol.unary("catalog_table_get", {
+    params: attachIdSchemaNameTxnParams,
+    result: RESULT_BINARY_SCHEMA,
+    handler: (params) => {
+      const cat = getCatalog();
+      const info = cat.tableGet(
+        toUint8Array(params.attach_id),
+        params.schema_name,
+        params.name,
+        params.transaction_id ? toUint8Array(params.transaction_id) : undefined
+      );
+      return wrapResult({
+        items: info ? [info.serialize()] : [],
+      }, listBinaryResponseSchema);
+    },
+  });
+
+  // catalog_table_create
+  protocol.unary("catalog_table_create", {
+    params: new Schema([
+      new Field("attach_id", new Binary(), true),
+      new Field("schema_name", new Utf8(), false),
+      new Field("name", new Utf8(), false),
+      new Field("columns", new Binary(), false),
+      new Field("on_conflict", new Utf8(), false),
+      new Field("not_null_constraints", new List(new Field("item", new Int32(), false)), true),
+      new Field("unique_constraints", new List(new Field("item", new List(new Field("item", new Int32(), false)), false)), true),
+      new Field("check_constraints", new List(new Field("item", new Utf8(), false)), true),
+      new Field("transaction_id", new Binary(), true),
+    ]),
+    result: emptyResult,
+    handler: (params) => {
+      const cat = getCatalog();
+      cat.tableCreate(
+        toUint8Array(params.attach_id),
+        params.schema_name,
+        params.name,
+        toUint8Array(params.columns),
+        params.on_conflict,
+        params.not_null_constraints ?? [],
+        params.unique_constraints ?? [],
+        params.check_constraints ?? [],
+        params.transaction_id ? toUint8Array(params.transaction_id) : undefined
+      );
+      return {};
+    },
+  });
+
+  // catalog_table_drop
+  protocol.unary("catalog_table_drop", {
+    params: new Schema([
+      new Field("attach_id", new Binary(), true),
+      new Field("schema_name", new Utf8(), false),
+      new Field("name", new Utf8(), false),
+      new Field("ignore_not_found", new Bool(), true),
+      new Field("transaction_id", new Binary(), true),
+    ]),
+    result: emptyResult,
+    handler: (params) => {
+      const cat = getCatalog();
+      cat.tableDrop(
+        toUint8Array(params.attach_id),
+        params.schema_name,
+        params.name,
+        params.ignore_not_found,
+        params.transaction_id ? toUint8Array(params.transaction_id) : undefined
+      );
+      return {};
+    },
+  });
+
+  // catalog_table_scan_function_get
+  protocol.unary("catalog_table_scan_function_get", {
+    params: new Schema([
+      new Field("attach_id", new Binary(), true),
+      new Field("schema_name", new Utf8(), false),
+      new Field("name", new Utf8(), false),
+      new Field("at_unit", new Utf8(), true),
+      new Field("at_value", new Utf8(), true),
+      new Field("transaction_id", new Binary(), true),
+    ]),
+    result: RESULT_BINARY_SCHEMA,
+    handler: (params) => {
+      const cat = getCatalog();
+      const scanResult = cat.tableScanFunctionGet(
+        toUint8Array(params.attach_id),
+        params.schema_name,
+        params.name,
+        params.at_unit,
+        params.at_value,
+        params.transaction_id ? toUint8Array(params.transaction_id) : undefined
+      );
+      return wrapResult(scanResult, scanFunctionResponseSchema);
+    },
+  });
+
+  // Helper schemas for table/view mutations with common patterns
+  const schemaNameIgnoreNotFoundTxnParams = new Schema([
+    new Field("attach_id", new Binary(), true),
+    new Field("schema_name", new Utf8(), false),
+    new Field("name", new Utf8(), false),
+    new Field("ignore_not_found", new Bool(), true),
+    new Field("transaction_id", new Binary(), true),
+  ]);
+
+  const schemaNameCommentParams = new Schema([
+    new Field("attach_id", new Binary(), true),
+    new Field("schema_name", new Utf8(), false),
+    new Field("name", new Utf8(), false),
+    new Field("comment", new Utf8(), true),
+    new Field("ignore_not_found", new Bool(), true),
+    new Field("transaction_id", new Binary(), true),
+  ]);
+
+  const schemaNameRenameParams = new Schema([
+    new Field("attach_id", new Binary(), true),
+    new Field("schema_name", new Utf8(), false),
+    new Field("name", new Utf8(), false),
+    new Field("new_name", new Utf8(), false),
+    new Field("ignore_not_found", new Bool(), true),
+    new Field("transaction_id", new Binary(), true),
+  ]);
+
+  const columnOpParams = new Schema([
+    new Field("attach_id", new Binary(), true),
+    new Field("schema_name", new Utf8(), false),
+    new Field("name", new Utf8(), false),
+    new Field("column_name", new Utf8(), false),
+    new Field("ignore_not_found", new Bool(), true),
+    new Field("transaction_id", new Binary(), true),
+  ]);
+
+  // catalog_table_comment_set
+  protocol.unary("catalog_table_comment_set", {
+    params: schemaNameCommentParams,
+    result: emptyResult,
+    handler: (params) => {
+      const cat = getCatalog();
+      cat.tableCommentSet(
+        toUint8Array(params.attach_id),
+        params.schema_name,
+        params.name,
+        params.comment,
+        params.ignore_not_found,
+        params.transaction_id ? toUint8Array(params.transaction_id) : undefined
+      );
+      return {};
+    },
+  });
+
+  // catalog_table_rename
+  protocol.unary("catalog_table_rename", {
+    params: schemaNameRenameParams,
+    result: emptyResult,
+    handler: (params) => {
+      const cat = getCatalog();
+      cat.tableRename(
+        toUint8Array(params.attach_id),
+        params.schema_name,
+        params.name,
+        params.new_name,
+        params.ignore_not_found,
+        params.transaction_id ? toUint8Array(params.transaction_id) : undefined
+      );
+      return {};
+    },
+  });
+
+  // catalog_table_column_add
+  protocol.unary("catalog_table_column_add", {
+    params: new Schema([
+      new Field("attach_id", new Binary(), true),
+      new Field("schema_name", new Utf8(), false),
+      new Field("name", new Utf8(), false),
+      new Field("column_name", new Utf8(), false),
+      new Field("column_type", new Utf8(), false),
+      new Field("default_value", new Utf8(), true),
+      new Field("ignore_not_found", new Bool(), true),
+      new Field("transaction_id", new Binary(), true),
+    ]),
+    result: emptyResult,
+    handler: (params) => {
+      const cat = getCatalog();
+      cat.tableColumnAdd(
+        toUint8Array(params.attach_id),
+        params.schema_name,
+        params.name,
+        params.column_name,
+        params.column_type,
+        params.default_value,
+        params.ignore_not_found,
+        params.transaction_id ? toUint8Array(params.transaction_id) : undefined
+      );
+      return {};
+    },
+  });
+
+  // catalog_table_column_drop
+  protocol.unary("catalog_table_column_drop", {
+    params: columnOpParams,
+    result: emptyResult,
+    handler: (params) => {
+      const cat = getCatalog();
+      cat.tableColumnDrop(
+        toUint8Array(params.attach_id),
+        params.schema_name,
+        params.name,
+        params.column_name,
+        params.ignore_not_found,
+        params.transaction_id ? toUint8Array(params.transaction_id) : undefined
+      );
+      return {};
+    },
+  });
+
+  // catalog_table_column_rename
+  protocol.unary("catalog_table_column_rename", {
+    params: new Schema([
+      new Field("attach_id", new Binary(), true),
+      new Field("schema_name", new Utf8(), false),
+      new Field("name", new Utf8(), false),
+      new Field("column_name", new Utf8(), false),
+      new Field("new_name", new Utf8(), false),
+      new Field("ignore_not_found", new Bool(), true),
+      new Field("transaction_id", new Binary(), true),
+    ]),
+    result: emptyResult,
+    handler: (params) => {
+      const cat = getCatalog();
+      cat.tableColumnRename(
+        toUint8Array(params.attach_id),
+        params.schema_name,
+        params.name,
+        params.column_name,
+        params.new_name,
+        params.ignore_not_found,
+        params.transaction_id ? toUint8Array(params.transaction_id) : undefined
+      );
+      return {};
+    },
+  });
+
+  // catalog_table_column_default_set
+  protocol.unary("catalog_table_column_default_set", {
+    params: new Schema([
+      new Field("attach_id", new Binary(), true),
+      new Field("schema_name", new Utf8(), false),
+      new Field("name", new Utf8(), false),
+      new Field("column_name", new Utf8(), false),
+      new Field("default_value", new Utf8(), false),
+      new Field("ignore_not_found", new Bool(), true),
+      new Field("transaction_id", new Binary(), true),
+    ]),
+    result: emptyResult,
+    handler: (params) => {
+      const cat = getCatalog();
+      cat.tableColumnDefaultSet(
+        toUint8Array(params.attach_id),
+        params.schema_name,
+        params.name,
+        params.column_name,
+        params.default_value,
+        params.ignore_not_found,
+        params.transaction_id ? toUint8Array(params.transaction_id) : undefined
+      );
+      return {};
+    },
+  });
+
+  // catalog_table_column_default_drop
+  protocol.unary("catalog_table_column_default_drop", {
+    params: columnOpParams,
+    result: emptyResult,
+    handler: (params) => {
+      const cat = getCatalog();
+      cat.tableColumnDefaultDrop(
+        toUint8Array(params.attach_id),
+        params.schema_name,
+        params.name,
+        params.column_name,
+        params.ignore_not_found,
+        params.transaction_id ? toUint8Array(params.transaction_id) : undefined
+      );
+      return {};
+    },
+  });
+
+  // catalog_table_column_type_change
+  protocol.unary("catalog_table_column_type_change", {
+    params: new Schema([
+      new Field("attach_id", new Binary(), true),
+      new Field("schema_name", new Utf8(), false),
+      new Field("name", new Utf8(), false),
+      new Field("column_name", new Utf8(), false),
+      new Field("new_type", new Utf8(), false),
+      new Field("ignore_not_found", new Bool(), true),
+      new Field("transaction_id", new Binary(), true),
+    ]),
+    result: emptyResult,
+    handler: (params) => {
+      const cat = getCatalog();
+      cat.tableColumnTypeChange(
+        toUint8Array(params.attach_id),
+        params.schema_name,
+        params.name,
+        params.column_name,
+        params.new_type,
+        params.ignore_not_found,
+        params.transaction_id ? toUint8Array(params.transaction_id) : undefined
+      );
+      return {};
+    },
+  });
+
+  // catalog_table_not_null_set
+  protocol.unary("catalog_table_not_null_set", {
+    params: columnOpParams,
+    result: emptyResult,
+    handler: (params) => {
+      const cat = getCatalog();
+      cat.tableNotNullSet(
+        toUint8Array(params.attach_id),
+        params.schema_name,
+        params.name,
+        params.column_name,
+        params.ignore_not_found,
+        params.transaction_id ? toUint8Array(params.transaction_id) : undefined
+      );
+      return {};
+    },
+  });
+
+  // catalog_table_not_null_drop
+  protocol.unary("catalog_table_not_null_drop", {
+    params: columnOpParams,
+    result: emptyResult,
+    handler: (params) => {
+      const cat = getCatalog();
+      cat.tableNotNullDrop(
+        toUint8Array(params.attach_id),
+        params.schema_name,
+        params.name,
+        params.column_name,
+        params.ignore_not_found,
+        params.transaction_id ? toUint8Array(params.transaction_id) : undefined
+      );
+      return {};
+    },
+  });
+
+  // catalog_view_get
+  protocol.unary("catalog_view_get", {
+    params: attachIdSchemaNameTxnParams,
+    result: RESULT_BINARY_SCHEMA,
+    handler: (params) => {
+      const cat = getCatalog();
+      const info = cat.viewGet(
+        toUint8Array(params.attach_id),
+        params.schema_name,
+        params.name,
+        params.transaction_id ? toUint8Array(params.transaction_id) : undefined
+      );
+      return wrapResult({
+        items: info ? [info.serialize()] : [],
+      }, listBinaryResponseSchema);
+    },
+  });
+
+  // catalog_view_create
+  protocol.unary("catalog_view_create", {
+    params: new Schema([
+      new Field("attach_id", new Binary(), true),
+      new Field("schema_name", new Utf8(), false),
+      new Field("name", new Utf8(), false),
+      new Field("definition", new Utf8(), false),
+      new Field("on_conflict", new Utf8(), false),
+      new Field("transaction_id", new Binary(), true),
+    ]),
+    result: emptyResult,
+    handler: (params) => {
+      const cat = getCatalog();
+      cat.viewCreate(
+        toUint8Array(params.attach_id),
+        params.schema_name,
+        params.name,
+        params.definition,
+        params.on_conflict,
+        params.transaction_id ? toUint8Array(params.transaction_id) : undefined
+      );
+      return {};
+    },
+  });
+
+  // catalog_view_drop
+  protocol.unary("catalog_view_drop", {
+    params: schemaNameIgnoreNotFoundTxnParams,
+    result: emptyResult,
+    handler: (params) => {
+      const cat = getCatalog();
+      cat.viewDrop(
+        toUint8Array(params.attach_id),
+        params.schema_name,
+        params.name,
+        params.ignore_not_found,
+        params.transaction_id ? toUint8Array(params.transaction_id) : undefined
+      );
+      return {};
+    },
+  });
+
+  // catalog_view_rename
+  protocol.unary("catalog_view_rename", {
+    params: schemaNameRenameParams,
+    result: emptyResult,
+    handler: (params) => {
+      const cat = getCatalog();
+      cat.viewRename(
+        toUint8Array(params.attach_id),
+        params.schema_name,
+        params.name,
+        params.new_name,
+        params.ignore_not_found,
+        params.transaction_id ? toUint8Array(params.transaction_id) : undefined
+      );
+      return {};
+    },
+  });
+
+  // catalog_view_comment_set
+  protocol.unary("catalog_view_comment_set", {
+    params: schemaNameCommentParams,
+    result: emptyResult,
+    handler: (params) => {
+      const cat = getCatalog();
+      cat.viewCommentSet(
+        toUint8Array(params.attach_id),
+        params.schema_name,
+        params.name,
+        params.comment,
+        params.ignore_not_found,
+        params.transaction_id ? toUint8Array(params.transaction_id) : undefined
+      );
+      return {};
+    },
+  });
+}
+
+function toUint8Array(val: any): Uint8Array {
+  if (val instanceof Uint8Array) return val;
+  if (val instanceof ArrayBuffer) return new Uint8Array(val);
+  if (Buffer.isBuffer(val)) return new Uint8Array(val);
+  if (val && val.buffer instanceof ArrayBuffer) {
+    return new Uint8Array(val.buffer, val.byteOffset, val.byteLength);
+  }
+  return new Uint8Array(0);
+}

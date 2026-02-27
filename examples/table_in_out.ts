@@ -1,0 +1,382 @@
+// Example table-in/table-out function implementations.
+// Ports all 7 table-in-out functions from vgi-python/vgi/examples/table_in_out.py.
+
+import {
+  Schema,
+  Field,
+  Int64,
+  Float64,
+  Bool,
+  Utf8,
+  DataType,
+  RecordBatch,
+} from "apache-arrow";
+import {
+  defineTableInOutFunction,
+  batchFromColumns,
+  emptyBatch,
+  type TableInOutBindParams,
+  type TableInOutProcessParams,
+} from "../src/index.js";
+import type { OutputCollector } from "vgi-rpc";
+import type { VgiFunction } from "../src/index.js";
+
+// ============================================================================
+// 1. echo - Passthrough
+// ============================================================================
+
+const echo = defineTableInOutFunction({
+  name: "echo",
+  description: "Passthrough function that emits each input batch unchanged",
+  projectionPushdown: true,
+  filterPushdown: true,
+  autoApplyFilters: true,
+  onBind: (params: TableInOutBindParams) => {
+    if (!params.bindCall.inputSchema) {
+      throw new Error("input_schema is required");
+    }
+    return { outputSchema: params.bindCall.inputSchema };
+  },
+  // Default process: emits input batch unchanged (passthrough)
+  examples: [
+    { sql: "SELECT * FROM echo((SELECT * FROM input_table))", description: "Pass through all rows unchanged" },
+  ],
+  categories: ["utility", "debug"],
+  tags: { category: "debug", type: "passthrough" },
+});
+
+// ============================================================================
+// 2. buffer_input - Buffer all input, emit on finalize
+// ============================================================================
+
+interface BufferInputState {
+  buffered: RecordBatch[];
+}
+
+const buffer_input = defineTableInOutFunction<Record<string, any>, BufferInputState>({
+  name: "buffer_input",
+  description: "Collects all input batches and emits during finalization",
+  maxWorkers: 1,
+  onInit: (params) => ({
+    maxWorkers: 1,
+    executionId: params.executionId,
+    opaqueData: null,
+  }),
+  initialState: () => ({
+    buffered: [],
+  }),
+  process: (
+    params: TableInOutProcessParams,
+    state: BufferInputState,
+    batch: RecordBatch,
+    out: OutputCollector
+  ) => {
+    state.buffered.push(batch);
+    out.emit(emptyBatch(params.outputSchema));
+  },
+  finalize: (_params: TableInOutProcessParams, state: BufferInputState) => {
+    return state.buffered;
+  },
+  examples: [
+    { sql: "SELECT * FROM buffer_input((SELECT * FROM input_table))", description: "Buffer all input and emit on finalize" },
+  ],
+  categories: ["utility", "buffer"],
+});
+
+// ============================================================================
+// 3. repeat_inputs - Duplicate batches N times
+// ============================================================================
+
+interface RepeatInputsArgs {
+  repeat_count: number;
+}
+
+const repeat_inputs = defineTableInOutFunction<RepeatInputsArgs>({
+  name: "repeat_inputs",
+  description: "Duplicates each input batch N times",
+  args: {
+    repeat_count: new Int64(),
+  },
+  onBind: (params: TableInOutBindParams<RepeatInputsArgs>) => {
+    if (params.args.repeat_count < 1) {
+      throw new Error("Repeat count must be at least 1");
+    }
+    if (!params.bindCall.inputSchema) {
+      throw new Error("input_schema is required but was None");
+    }
+    return { outputSchema: params.bindCall.inputSchema };
+  },
+  process: (
+    params: TableInOutProcessParams<RepeatInputsArgs>,
+    _state: null,
+    batch: RecordBatch,
+    out: OutputCollector
+  ) => {
+    // Concatenate the batch repeat_count times
+    const repeatCount = params.args.repeat_count;
+    const columns: Record<string, any[]> = {};
+
+    for (const field of params.outputSchema.fields) {
+      const col = batch.getChild(field.name);
+      const values: any[] = [];
+      if (col) {
+        for (let rep = 0; rep < repeatCount; rep++) {
+          for (let i = 0; i < col.length; i++) {
+            values.push(col.get(i));
+          }
+        }
+      }
+      columns[field.name] = values;
+    }
+
+    out.emit(batchFromColumns(columns, params.outputSchema));
+  },
+  examples: [
+    { sql: "SELECT * FROM repeat_inputs(3, (SELECT * FROM input_table))", description: "Repeat each row 3 times" },
+  ],
+  categories: ["transform", "augmentation"],
+});
+
+// ============================================================================
+// 4. sum_all_columns - Column-wise sum aggregation
+// ============================================================================
+
+interface SumAllColumnsArgs {
+  logging: boolean;
+}
+
+interface SumAllColumnsState {
+  sums: Record<string, bigint | number>;
+}
+
+function buildNumericOutputSchema(inputSchema: Schema): Schema {
+  const fields: Field[] = [];
+  for (const field of inputSchema.fields) {
+    if (DataType.isInt(field.type)) {
+      fields.push(new Field(field.name, new Int64(), true));
+    } else if (DataType.isFloat(field.type)) {
+      fields.push(new Field(field.name, new Float64(), true));
+    }
+    // Skip non-numeric types
+  }
+  return new Schema(fields);
+}
+
+const sum_all_columns = defineTableInOutFunction<SumAllColumnsArgs, SumAllColumnsState>({
+  name: "sum_all_columns",
+  description: "Computes column-wise sums across all batches",
+  namedArgs: {
+    logging: new Bool(),
+  },
+  argDefaults: {
+    logging: false,
+  },
+  onBind: (params: TableInOutBindParams<SumAllColumnsArgs>) => {
+    if (!params.bindCall.inputSchema) {
+      throw new Error("input_schema is required");
+    }
+    return { outputSchema: buildNumericOutputSchema(params.bindCall.inputSchema) };
+  },
+  initialState: (params: TableInOutProcessParams<SumAllColumnsArgs>) => {
+    const sums: Record<string, bigint | number> = {};
+    for (const field of params.outputSchema.fields) {
+      if (DataType.isInt(field.type)) {
+        sums[field.name] = BigInt(0);
+      } else {
+        sums[field.name] = 0;
+      }
+    }
+    return { sums };
+  },
+  process: (
+    params: TableInOutProcessParams<SumAllColumnsArgs>,
+    state: SumAllColumnsState,
+    batch: RecordBatch,
+    out: OutputCollector
+  ) => {
+    if (params.args.logging) {
+      out.clientLog("INFO", `Processing batch with ${batch.numRows} rows`);
+    }
+
+    for (const name of Object.keys(state.sums)) {
+      const col = batch.getChild(name);
+      if (!col) continue;
+      for (let i = 0; i < col.length; i++) {
+        const v = col.get(i);
+        if (v === null || v === undefined) continue;
+        if (typeof state.sums[name] === "bigint") {
+          const bigV = typeof v === "bigint" ? v : BigInt(v);
+          state.sums[name] = (state.sums[name] as bigint) + bigV;
+        } else {
+          state.sums[name] = (state.sums[name] as number) + Number(v);
+        }
+      }
+    }
+
+    out.emit(emptyBatch(params.outputSchema));
+  },
+  finalize: (params: TableInOutProcessParams<SumAllColumnsArgs>, state: SumAllColumnsState) => {
+    const columns: Record<string, any[]> = {};
+    for (const field of params.outputSchema.fields) {
+      columns[field.name] = [state.sums[field.name] ?? (DataType.isInt(field.type) ? BigInt(0) : 0)];
+    }
+    return [batchFromColumns(columns, params.outputSchema)];
+  },
+  examples: [
+    { sql: "SELECT * FROM sum_all_columns((SELECT * FROM input_table))", description: "Sum all numeric columns" },
+  ],
+  categories: ["aggregation", "numeric"],
+});
+
+// ============================================================================
+// 5. exception_process - Throws on even batches
+// ============================================================================
+
+interface ExceptionProcessState {
+  batchCount: number;
+}
+
+const exception_process = defineTableInOutFunction<SumAllColumnsArgs, ExceptionProcessState>({
+  name: "exception_process",
+  description: "Test function that raises exception during process",
+  namedArgs: {
+    logging: new Bool(),
+  },
+  argDefaults: {
+    logging: false,
+  },
+  onBind: (params: TableInOutBindParams<SumAllColumnsArgs>) => {
+    if (!params.bindCall.inputSchema) {
+      throw new Error("input_schema is required");
+    }
+    return { outputSchema: buildNumericOutputSchema(params.bindCall.inputSchema) };
+  },
+  initialState: () => ({
+    batchCount: 0,
+  }),
+  process: (
+    params: TableInOutProcessParams<SumAllColumnsArgs>,
+    state: ExceptionProcessState,
+    _batch: RecordBatch,
+    out: OutputCollector
+  ) => {
+    state.batchCount += 1;
+    if (state.batchCount % 2 === 0) {
+      throw new Error(`Intentional exception on batch ${state.batchCount}`);
+    }
+    out.emit(emptyBatch(params.outputSchema));
+  },
+  categories: ["test", "error"],
+});
+
+// ============================================================================
+// 6. exception_finalize - Throws during finalize
+// ============================================================================
+
+const exception_finalize = defineTableInOutFunction<SumAllColumnsArgs>({
+  name: "exception_finalize",
+  description: "Test function that raises exception during finalize",
+  namedArgs: {
+    logging: new Bool(),
+  },
+  argDefaults: {
+    logging: false,
+  },
+  onBind: (params: TableInOutBindParams<SumAllColumnsArgs>) => {
+    if (!params.bindCall.inputSchema) {
+      throw new Error("input_schema is required");
+    }
+    return { outputSchema: buildNumericOutputSchema(params.bindCall.inputSchema) };
+  },
+  process: (
+    params: TableInOutProcessParams<SumAllColumnsArgs>,
+    _state: null,
+    _batch: RecordBatch,
+    out: OutputCollector
+  ) => {
+    out.emit(emptyBatch(params.outputSchema));
+  },
+  finalize: (_params: TableInOutProcessParams<SumAllColumnsArgs>, _state: null) => {
+    throw new Error("Intentional exception during finalize()");
+  },
+  categories: ["test", "error"],
+});
+
+// ============================================================================
+// 7. sum_all_columns_simple_distributed - Simpler distributed sum
+// ============================================================================
+
+interface SimpleDistributedState {
+  partialSums: Record<string, bigint | number>;
+}
+
+const sum_all_columns_simple_distributed = defineTableInOutFunction<Record<string, any>, SimpleDistributedState>({
+  name: "sum_all_columns_simple_distributed",
+  description: "Distributed sum using simple callback API",
+  onBind: (params: TableInOutBindParams) => {
+    if (!params.bindCall.inputSchema) {
+      throw new Error("input_schema is required");
+    }
+    return { outputSchema: buildNumericOutputSchema(params.bindCall.inputSchema) };
+  },
+  initialState: (params: TableInOutProcessParams) => {
+    const partialSums: Record<string, bigint | number> = {};
+    for (const field of params.outputSchema.fields) {
+      if (DataType.isInt(field.type)) {
+        partialSums[field.name] = BigInt(0);
+      } else {
+        partialSums[field.name] = 0;
+      }
+    }
+    return { partialSums };
+  },
+  process: (
+    params: TableInOutProcessParams,
+    state: SimpleDistributedState,
+    batch: RecordBatch,
+    out: OutputCollector
+  ) => {
+    // Accumulate column sums
+    for (const name of Object.keys(state.partialSums)) {
+      const col = batch.getChild(name);
+      if (!col) continue;
+      for (let i = 0; i < col.length; i++) {
+        const v = col.get(i);
+        if (v === null || v === undefined) continue;
+        if (typeof state.partialSums[name] === "bigint") {
+          const bigV = typeof v === "bigint" ? v : BigInt(v);
+          state.partialSums[name] = (state.partialSums[name] as bigint) + bigV;
+        } else {
+          state.partialSums[name] = (state.partialSums[name] as number) + Number(v);
+        }
+      }
+    }
+
+    out.emit(emptyBatch(params.outputSchema));
+  },
+  finalize: (params: TableInOutProcessParams, state: SimpleDistributedState) => {
+    const columns: Record<string, any[]> = {};
+    for (const field of params.outputSchema.fields) {
+      columns[field.name] = [state.partialSums[field.name] ?? (DataType.isInt(field.type) ? BigInt(0) : 0)];
+    }
+    return [batchFromColumns(columns, params.outputSchema)];
+  },
+  examples: [
+    { sql: "SELECT * FROM sum_all_columns_simple_distributed((SELECT * FROM input_table))", description: "Sum columns using distributed workers with callback API" },
+  ],
+  categories: ["aggregation", "numeric", "distributed"],
+});
+
+// ============================================================================
+// Export all table-in-out functions
+// ============================================================================
+
+export const tableInOutFunctions: VgiFunction[] = [
+  echo,
+  buffer_input,
+  repeat_inputs,
+  sum_all_columns,
+  exception_process,
+  exception_finalize,
+  sum_all_columns_simple_distributed,
+];

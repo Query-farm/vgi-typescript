@@ -1,0 +1,45 @@
+// Wire-format protocol types matching Python's ArrowSerializableDataclass definitions.
+
+import type { Schema, RecordBatch } from "apache-arrow";
+import type { Arguments } from "../arguments/arguments.js";
+import { FunctionType, TableInOutPhase, type TableCardinality } from "../types.js";
+
+export interface BindRequest {
+  functionName: string;
+  arguments: Arguments;
+  functionType: FunctionType;
+  inputSchema: Schema | null;
+  settings: RecordBatch | null;
+  secrets: RecordBatch | null;
+  attachId: Uint8Array | null;
+  transactionId: Uint8Array | null;
+}
+
+export interface BindResponse {
+  outputSchema: Schema;
+  opaqueData: Uint8Array | null;
+}
+
+export interface InitRequest {
+  bindCall: BindRequest;
+  outputSchema: Schema;
+  bindOpaqueData: Uint8Array | null;
+  projectionIds: number[] | null;
+  pushdownFilters: RecordBatch | null;
+  phase: TableInOutPhase | null;
+  executionId: Uint8Array | null;
+  initOpaqueData: Uint8Array | null;
+}
+
+export interface GlobalInitResponse {
+  maxWorkers: number;
+  executionId: Uint8Array;
+  opaqueData: Uint8Array | null;
+}
+
+export interface TableFunctionCardinalityRequest {
+  bindCall: BindRequest;
+  bindOpaqueData: Uint8Array | null;
+}
+
+export { TableCardinality };

@@ -1,0 +1,926 @@
+// Example table function implementations.
+// Ports all 10 table functions from vgi-python/vgi/examples/table.py.
+
+import {
+  Schema,
+  Field,
+  Int64,
+  Float64,
+  Bool,
+  Utf8,
+  Null,
+  DataType,
+  Struct,
+  List,
+  Decimal,
+  FixedSizeBinary,
+} from "apache-arrow";
+import {
+  defineTableFunction,
+  batchFromColumns,
+  emptyBatch,
+  DEFAULT_MAX_WORKERS,
+  type TableBindParams,
+  type TableProcessParams,
+  type TableCardinality,
+  type BoundStorage,
+} from "../src/index.js";
+import type { OutputCollector } from "vgi-rpc";
+import type { VgiFunction } from "../src/index.js";
+
+// ============================================================================
+// 1. sequence - Args: count, batch_size?, increment?. Produces {n: int64}
+// ============================================================================
+
+interface SequenceArgs {
+  count: number;
+  batch_size: number;
+  increment: number;
+}
+
+interface CountdownState {
+  remaining: number;
+  currentIndex: number;
+}
+
+const SEQUENCE_SCHEMA = new Schema([new Field("n", new Int64(), true)]);
+
+const sequence = defineTableFunction<SequenceArgs, CountdownState>({
+  name: "sequence",
+  description: "Generates a sequence of integers from 0 to n-1",
+  args: {
+    count: new Int64(),
+    batch_size: new Int64(),
+    increment: new Int64(),
+  },
+  argDefaults: {
+    batch_size: 1000,
+    increment: 1,
+  },
+  projectionPushdown: true,
+  filterPushdown: true,
+  autoApplyFilters: true,
+  onBind: () => ({ outputSchema: SEQUENCE_SCHEMA }),
+  cardinality: (params: TableBindParams<SequenceArgs>) => ({
+    estimate: params.args.count,
+    max: params.args.count,
+  }),
+  initialState: (params: TableProcessParams<SequenceArgs>) => ({
+    remaining: params.args.count,
+    currentIndex: 0,
+  }),
+  process: (
+    params: TableProcessParams<SequenceArgs>,
+    state: CountdownState,
+    out: OutputCollector
+  ) => {
+    if (state.remaining <= 0) {
+      out.finish();
+      return;
+    }
+
+    const size = Math.min(state.remaining, params.args.batch_size);
+    const values: bigint[] = [];
+    for (let i = 0; i < size; i++) {
+      values.push(BigInt((state.currentIndex + i) * params.args.increment));
+    }
+
+    out.emit(batchFromColumns({ n: values }, params.outputSchema));
+
+    state.currentIndex += size;
+    state.remaining -= size;
+  },
+  examples: [
+    { sql: "SELECT * FROM sequence(10)", description: "Generate integers 0-9" },
+    { sql: "SELECT * FROM sequence(1000, batch_size := 100)", description: "Generate integers 0-999 in batches of 100" },
+    { sql: "SELECT * FROM sequence(5, batch_size := 10000, increment := 10)", description: "Generate 0, 10, 20, 30, 40" },
+  ],
+  categories: ["generator", "utility"],
+  tags: { category: "generator", type: "utility" },
+});
+
+// ============================================================================
+// 2. nested_sequence - Args: count, batch_size?, history_size?
+// ============================================================================
+
+interface NestedSequenceArgs {
+  count: number;
+  batch_size: number;
+  history_size: number;
+}
+
+const NESTED_SEQUENCE_SCHEMA = new Schema([
+  new Field("n", new Int64(), true),
+  new Field(
+    "metadata",
+    new Struct([
+      new Field("index", new Int64(), true),
+      new Field("label", new Utf8(), true),
+    ]),
+    true
+  ),
+  new Field("history", new List(new Field("item", new Int64(), true)), true),
+]);
+
+const nested_sequence = defineTableFunction<NestedSequenceArgs, CountdownState>({
+  name: "nested_sequence",
+  description: "Generates a sequence with nested struct and list columns",
+  args: {
+    count: new Int64(),
+    batch_size: new Int64(),
+    history_size: new Int64(),
+  },
+  argDefaults: {
+    batch_size: 1000,
+    history_size: 20,
+  },
+  projectionPushdown: true,
+  filterPushdown: true,
+  autoApplyFilters: true,
+  onBind: () => ({ outputSchema: NESTED_SEQUENCE_SCHEMA }),
+  cardinality: (params: TableBindParams<NestedSequenceArgs>) => ({
+    estimate: params.args.count,
+    max: params.args.count,
+  }),
+  initialState: (params: TableProcessParams<NestedSequenceArgs>) => ({
+    remaining: params.args.count,
+    currentIndex: 0,
+  }),
+  process: (
+    params: TableProcessParams<NestedSequenceArgs>,
+    state: CountdownState,
+    out: OutputCollector
+  ) => {
+    if (state.remaining <= 0) {
+      out.finish();
+      return;
+    }
+
+    const size = Math.min(state.remaining, params.args.batch_size);
+    const projectionIds = params.initCall.projectionIds;
+    const projectedCols = projectionIds
+      ? new Set(projectionIds.map((i) => NESTED_SEQUENCE_SCHEMA.fields[i].name))
+      : new Set(NESTED_SEQUENCE_SCHEMA.fields.map((f) => f.name));
+
+    const data: Record<string, any[]> = {};
+
+    if (projectedCols.has("n")) {
+      const nValues: bigint[] = [];
+      for (let i = 0; i < size; i++) {
+        nValues.push(BigInt(state.currentIndex + i));
+      }
+      data["n"] = nValues;
+    }
+
+    if (projectedCols.has("metadata")) {
+      const metaValues: { index: bigint; label: string }[] = [];
+      for (let i = 0; i < size; i++) {
+        const idx = state.currentIndex + i;
+        metaValues.push({ index: BigInt(idx), label: `row_${idx}` });
+      }
+      data["metadata"] = metaValues;
+    }
+
+    if (projectedCols.has("history")) {
+      const histValues: bigint[][] = [];
+      for (let i = 0; i < size; i++) {
+        const idx = state.currentIndex + i;
+        const start = Math.max(0, idx - params.args.history_size + 1);
+        const hist: bigint[] = [];
+        for (let j = start; j <= idx; j++) {
+          hist.push(BigInt(j));
+        }
+        histValues.push(hist);
+      }
+      data["history"] = histValues;
+    }
+
+    out.emit(batchFromColumns(data, params.outputSchema));
+
+    state.currentIndex += size;
+    state.remaining -= size;
+  },
+  examples: [
+    { sql: "SELECT * FROM nested_sequence(10)", description: "Generate 10 rows with nested columns" },
+    { sql: "SELECT n, metadata FROM nested_sequence(100) WHERE n >= 50", description: "Filter and project nested sequence" },
+  ],
+  categories: ["generator", "utility", "testing"],
+  tags: { category: "generator", type: "testing" },
+});
+
+// ============================================================================
+// 3. double_sequence - Args: count, batch_size?, increment?. {n: float64}
+// ============================================================================
+
+interface DoubleSequenceArgs {
+  count: number;
+  batch_size: number;
+  increment: number;
+}
+
+const DOUBLE_SEQUENCE_SCHEMA = new Schema([new Field("n", new Float64(), true)]);
+
+const double_sequence = defineTableFunction<DoubleSequenceArgs, CountdownState>({
+  name: "double_sequence",
+  description: "Generates a sequence of floating-point numbers from 0 to n-1",
+  args: {
+    count: new Int64(),
+    batch_size: new Int64(),
+    increment: new Float64(),
+  },
+  argDefaults: {
+    batch_size: 1000,
+    increment: 1.0,
+  },
+  onBind: () => ({ outputSchema: DOUBLE_SEQUENCE_SCHEMA }),
+  cardinality: (params: TableBindParams<DoubleSequenceArgs>) => ({
+    estimate: params.args.count,
+    max: params.args.count,
+  }),
+  initialState: (params: TableProcessParams<DoubleSequenceArgs>) => ({
+    remaining: params.args.count,
+    currentIndex: 0,
+  }),
+  process: (
+    params: TableProcessParams<DoubleSequenceArgs>,
+    state: CountdownState,
+    out: OutputCollector
+  ) => {
+    if (state.remaining <= 0) {
+      out.finish();
+      return;
+    }
+
+    const size = Math.min(state.remaining, params.args.batch_size);
+    const values: number[] = [];
+    for (let i = 0; i < size; i++) {
+      values.push((state.currentIndex + i) * params.args.increment);
+    }
+
+    out.emit(batchFromColumns({ n: values }, params.outputSchema));
+
+    state.currentIndex += size;
+    state.remaining -= size;
+  },
+  examples: [
+    { sql: "SELECT * FROM double_sequence(10)", description: "Generate floats 0.0-9.0" },
+    { sql: "SELECT * FROM double_sequence(1000, batch_size := 100)", description: "Generate floats 0.0-999.0 in batches of 100" },
+    { sql: "SELECT * FROM double_sequence(5, increment=0.5)", description: "Generate 0.0, 0.5, 1.0, 1.5, 2.0" },
+  ],
+  categories: ["generator", "utility"],
+  tags: { category: "generator", type: "utility" },
+});
+
+// ============================================================================
+// 4. generator_exception - Args: fail_after. Throws after N batches
+// ============================================================================
+
+interface GeneratorExceptionArgs {
+  fail_after: number;
+}
+
+interface GeneratorExceptionState {
+  batchCount: number;
+}
+
+const GENERATOR_EXCEPTION_SCHEMA = new Schema([new Field("n", new Int64(), true)]);
+
+const generator_exception = defineTableFunction<GeneratorExceptionArgs, GeneratorExceptionState>({
+  name: "generator_exception",
+  description: "Raises an exception after N batches for testing",
+  args: {
+    fail_after: new Int64(),
+  },
+  onBind: () => ({ outputSchema: GENERATOR_EXCEPTION_SCHEMA }),
+  initialState: () => ({ batchCount: 0 }),
+  process: (
+    params: TableProcessParams<GeneratorExceptionArgs>,
+    state: GeneratorExceptionState,
+    out: OutputCollector
+  ) => {
+    if (state.batchCount >= params.args.fail_after) {
+      throw new Error(`Intentional failure after ${params.args.fail_after} batches`);
+    }
+
+    out.emit(batchFromColumns({ n: [BigInt(state.batchCount)] }, params.outputSchema));
+    state.batchCount += 1;
+  },
+  categories: ["testing"],
+  tags: { category: "testing", type: "error-handling" },
+});
+
+// ============================================================================
+// 5. logging_generator - Args: count. Logs via out.clientLog
+// ============================================================================
+
+interface LoggingGeneratorArgs {
+  count: number;
+}
+
+interface LoggingGeneratorState {
+  index: number;
+}
+
+const LOGGING_GENERATOR_SCHEMA = new Schema([new Field("n", new Int64(), true)]);
+
+const logging_generator = defineTableFunction<LoggingGeneratorArgs, LoggingGeneratorState>({
+  name: "logging_generator",
+  description: "Emits log messages during generation",
+  args: {
+    count: new Int64(),
+  },
+  onBind: () => ({ outputSchema: LOGGING_GENERATOR_SCHEMA }),
+  initialState: () => ({ index: 0 }),
+  process: (
+    params: TableProcessParams<LoggingGeneratorArgs>,
+    state: LoggingGeneratorState,
+    out: OutputCollector
+  ) => {
+    if (state.index === 0) {
+      out.clientLog("INFO", `Starting generation of ${params.args.count} values`);
+    }
+
+    if (state.index >= params.args.count) {
+      out.clientLog("INFO", "Generation complete");
+      out.finish();
+      return;
+    }
+
+    out.emit(batchFromColumns({ n: [BigInt(state.index)] }, params.outputSchema));
+    state.index += 1;
+  },
+  categories: ["testing"],
+});
+
+// ============================================================================
+// 6. partitioned_sequence - Multi-worker with shared queue
+// ============================================================================
+
+interface PartitionedSequenceArgs {
+  count: number;
+  increment: number;
+}
+
+interface PartitionedSequenceState {
+  currentStart: number | null;
+  currentEnd: number | null;
+  currentIdx: number;
+}
+
+const PARTITIONED_SEQUENCE_SCHEMA = new Schema([new Field("n", new Int64(), true)]);
+const CHUNK_SIZE = 1000;
+const BATCH_SIZE = 1000;
+
+/** Pack two numbers as big-endian uint64 pair (16 bytes), matching Python struct.pack(">QQ") */
+function packQQ(a: number, b: number): Uint8Array {
+  const buf = new DataView(new ArrayBuffer(16));
+  buf.setBigUint64(0, BigInt(a));
+  buf.setBigUint64(8, BigInt(b));
+  return new Uint8Array(buf.buffer);
+}
+
+/** Unpack big-endian uint64 pair, matching Python struct.unpack(">QQ") */
+function unpackQQ(data: Uint8Array): [number, number] {
+  const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
+  return [Number(view.getBigUint64(0)), Number(view.getBigUint64(8))];
+}
+
+const partitioned_sequence = defineTableFunction<PartitionedSequenceArgs, PartitionedSequenceState>({
+  name: "partitioned_sequence",
+  description: "Generates a partitioned sequence for multi-worker execution",
+  args: {
+    count: new Int64(),
+    increment: new Int64(),
+  },
+  argDefaults: {
+    increment: 1,
+  },
+  maxWorkers: DEFAULT_MAX_WORKERS,
+  onBind: () => ({ outputSchema: PARTITIONED_SEQUENCE_SCHEMA }),
+  cardinality: (params: TableBindParams<PartitionedSequenceArgs>) => ({
+    estimate: params.args.count,
+    max: params.args.count,
+  }),
+  onInit: (params) => {
+    const workItems: Uint8Array[] = [];
+    for (let start = 0; start < params.args.count; start += CHUNK_SIZE) {
+      const end = Math.min(start + CHUNK_SIZE, params.args.count);
+      workItems.push(packQQ(start, end));
+    }
+    params.storage.queuePush(workItems);
+    return {
+      maxWorkers: DEFAULT_MAX_WORKERS,
+      executionId: params.executionId,
+      opaqueData: null,
+    };
+  },
+  initialState: () => ({
+    currentStart: null,
+    currentEnd: null,
+    currentIdx: 0,
+  }),
+  process: (
+    params: TableProcessParams<PartitionedSequenceArgs>,
+    state: PartitionedSequenceState,
+    out: OutputCollector
+  ) => {
+    // Need a new chunk?
+    if (state.currentStart === null || state.currentIdx >= (state.currentEnd ?? 0)) {
+      const workData = params.storage!.queuePop();
+      if (workData === null) {
+        out.finish();
+        return;
+      }
+      [state.currentStart, state.currentEnd] = unpackQQ(workData);
+      state.currentIdx = state.currentStart;
+    }
+
+    const batchEnd = Math.min(state.currentIdx + BATCH_SIZE, state.currentEnd!);
+    const values: bigint[] = [];
+    for (let idx = state.currentIdx; idx < batchEnd; idx++) {
+      values.push(BigInt(idx * params.args.increment));
+    }
+
+    out.emit(batchFromColumns({ n: values }, params.outputSchema));
+    state.currentIdx = batchEnd;
+  },
+  examples: [
+    { sql: "SELECT * FROM partitioned_sequence(100)", description: "Generate 0-99 in parallel across workers" },
+    { sql: "SELECT * FROM partitioned_sequence(5, increment=10)", description: "Generate 0, 10, 20, 30, 40 in parallel" },
+  ],
+  categories: ["generator", "utility"],
+});
+
+// ============================================================================
+// 7. projected_data - 4 columns, projection pushdown
+// ============================================================================
+
+interface ProjectedDataArgs {
+  count: number;
+}
+
+const PROJECTED_DATA_SCHEMA = new Schema([
+  new Field("id", new Int64(), true),
+  new Field("name", new Utf8(), true),
+  new Field("value", new Float64(), true),
+  new Field("extra", new Int64(), true),
+]);
+
+const PROJECTED_BATCH_SIZE = 1000;
+
+const projected_data = defineTableFunction<ProjectedDataArgs, CountdownState>({
+  name: "projected_data",
+  description: "Generates data with 4 columns, supporting projection pushdown",
+  args: {
+    count: new Int64(),
+  },
+  projectionPushdown: true,
+  onBind: () => ({ outputSchema: PROJECTED_DATA_SCHEMA }),
+  cardinality: (params: TableBindParams<ProjectedDataArgs>) => ({
+    estimate: params.args.count,
+    max: params.args.count,
+  }),
+  initialState: (params: TableProcessParams<ProjectedDataArgs>) => ({
+    remaining: params.args.count,
+    currentIndex: 0,
+  }),
+  process: (
+    params: TableProcessParams<ProjectedDataArgs>,
+    state: CountdownState,
+    out: OutputCollector
+  ) => {
+    if (state.remaining <= 0) {
+      out.finish();
+      return;
+    }
+
+    const projectionIds = params.initCall.projectionIds;
+    const projectedIndices = projectionIds ?? [0, 1, 2, 3];
+    const batchSize = Math.min(state.remaining, PROJECTED_BATCH_SIZE);
+
+    const columns: Record<string, any[]> = {};
+
+    for (const idx of projectedIndices) {
+      const fieldName = PROJECTED_DATA_SCHEMA.fields[idx].name;
+      if (fieldName === "id") {
+        const vals: bigint[] = [];
+        for (let i = 0; i < batchSize; i++) {
+          vals.push(BigInt(state.currentIndex + i));
+        }
+        columns["id"] = vals;
+      } else if (fieldName === "name") {
+        const vals: string[] = [];
+        for (let i = 0; i < batchSize; i++) {
+          vals.push(`item_${state.currentIndex + i}`);
+        }
+        columns["name"] = vals;
+      } else if (fieldName === "value") {
+        const vals: number[] = [];
+        for (let i = 0; i < batchSize; i++) {
+          vals.push((state.currentIndex + i) * 1.5);
+        }
+        columns["value"] = vals;
+      } else if (fieldName === "extra") {
+        const vals: bigint[] = [];
+        for (let i = 0; i < batchSize; i++) {
+          const v = state.currentIndex + i;
+          vals.push(BigInt(v * v));
+        }
+        columns["extra"] = vals;
+      }
+    }
+
+    out.emit(batchFromColumns(columns, params.outputSchema));
+
+    state.currentIndex += batchSize;
+    state.remaining -= batchSize;
+  },
+  examples: [
+    { sql: "SELECT * FROM projected_data(10)", description: "Generate 10 rows with all 4 columns" },
+    { sql: "SELECT id, value FROM projected_data(10)", description: "Generate 10 rows with only id and value columns" },
+  ],
+  categories: ["generator", "utility"],
+});
+
+// ============================================================================
+// 8. settings_aware - Dynamic schema from Settings
+// ============================================================================
+
+interface SettingsAwareArgs {
+  count: number;
+}
+
+interface SettingsAwareState {
+  remaining: number;
+  currentIndex: number;
+}
+
+const SETTINGS_AWARE_BATCH_SIZE = 1000;
+
+const settings_aware = defineTableFunction<SettingsAwareArgs, SettingsAwareState>({
+  name: "settings_aware",
+  description: "Generates data demonstrating settings are passed",
+  args: {
+    count: new Int64(),
+  },
+  requiredSettings: ["vgi_verbose_mode", "greeting", "multiplier"],
+  onBind: (params: TableBindParams<SettingsAwareArgs>) => {
+    const fields: Field[] = [
+      new Field("id", new Int64(), true),
+      new Field("greeting", new Utf8(), true),
+      new Field("value", new Float64(), true),
+    ];
+
+    const verboseValue = params.settings.vgi_verbose_mode ?? "false";
+    const verboseStr = typeof verboseValue === "bigint" ? String(verboseValue) : String(verboseValue);
+    if (verboseStr === "true") {
+      fields.push(new Field("details", new Utf8(), true));
+    }
+
+    return { outputSchema: new Schema(fields) };
+  },
+  cardinality: (params: TableBindParams<SettingsAwareArgs>) => ({
+    estimate: params.args.count,
+    max: params.args.count,
+  }),
+  initialState: (params: TableProcessParams<SettingsAwareArgs>) => ({
+    remaining: params.args.count,
+    currentIndex: 0,
+  }),
+  process: (
+    params: TableProcessParams<SettingsAwareArgs>,
+    state: SettingsAwareState,
+    out: OutputCollector
+  ) => {
+    if (state.remaining <= 0) {
+      out.finish();
+      return;
+    }
+
+    const verboseRaw = params.settings.vgi_verbose_mode ?? "false";
+    const verbose = String(verboseRaw) === "true";
+    const greeting = String(params.settings.greeting ?? "Hello");
+    const multiplierStr = String(params.settings.multiplier ?? "1");
+    const multiplier = parseInt(multiplierStr, 10) || 1;
+
+    const size = Math.min(state.remaining, SETTINGS_AWARE_BATCH_SIZE);
+
+    const ids: bigint[] = [];
+    const greetings: string[] = [];
+    const values: number[] = [];
+    const details: string[] = [];
+
+    for (let i = 0; i < size; i++) {
+      const idx = state.currentIndex + i;
+      ids.push(BigInt(idx));
+      greetings.push(greeting);
+      values.push(idx * 2.5 * multiplier);
+      if (verbose) {
+        details.push(`row_${idx}`);
+      }
+    }
+
+    const data: Record<string, any[]> = {
+      id: ids,
+      greeting: greetings,
+      value: values,
+    };
+
+    if (verbose) {
+      data["details"] = details;
+    }
+
+    out.emit(batchFromColumns(data, params.outputSchema));
+
+    state.currentIndex += size;
+    state.remaining -= size;
+  },
+  examples: [
+    { sql: "SELECT * FROM settings_aware(5)", description: "Generate 5 rows showing setting values" },
+  ],
+  categories: ["generator", "settings"],
+});
+
+// ============================================================================
+// 9. ten_thousand - No args, fixed 10k rows
+// ============================================================================
+
+interface TenThousandState {
+  start: number;
+}
+
+const TEN_THOUSAND_SCHEMA = new Schema([new Field("n", new Int64(), true)]);
+const TEN_THOUSAND_BATCH_SIZE = 1000;
+
+const ten_thousand = defineTableFunction<Record<string, any>, TenThousandState>({
+  name: "ten_thousand",
+  description: "Generates 10000 integers from 0 to 9999",
+  onBind: () => ({ outputSchema: TEN_THOUSAND_SCHEMA }),
+  cardinality: () => ({
+    estimate: 10000,
+    max: 10000,
+  }),
+  initialState: () => ({ start: 0 }),
+  process: (
+    _params: TableProcessParams<Record<string, any>>,
+    state: TenThousandState,
+    out: OutputCollector
+  ) => {
+    if (state.start >= 10000) {
+      out.finish();
+      return;
+    }
+
+    const end = Math.min(state.start + TEN_THOUSAND_BATCH_SIZE, 10000);
+    const values: bigint[] = [];
+    for (let i = state.start; i < end; i++) {
+      values.push(BigInt(i));
+    }
+
+    out.emit(batchFromColumns({ n: values }, _params.outputSchema));
+    state.start = end;
+  },
+  examples: [
+    { sql: "SELECT * FROM ten_thousand()", description: "Generate integers 0-9999" },
+  ],
+  categories: ["generator", "utility"],
+});
+
+// ============================================================================
+// 10. constant_columns - Varargs with dynamic schema
+// ============================================================================
+
+interface ConstantColumnsArgs {
+  count: number;
+  [key: string]: any;
+}
+
+interface ConstantColumnsState {
+  remaining: number;
+}
+
+const CONSTANT_COLUMNS_BATCH_SIZE = 2048;
+
+const constant_columns = defineTableFunction<ConstantColumnsArgs, ConstantColumnsState>({
+  name: "constant_columns",
+  description: "Generates rows with constant values from varargs",
+  args: {
+    count: new Int64(),
+    values: new Null(),
+  },
+  varargs: ["values"],
+  onBind: (params: TableBindParams<ConstantColumnsArgs>) => {
+    // The vararg values come from the bind call arguments starting at position 1
+    const bindArgs = params.bindCall.arguments;
+    const argsSchema = bindArgs.argumentsSchema;
+    const fields: Field[] = [];
+
+    // Iterate over all positional args after count (position 0)
+    for (let i = 1; i < bindArgs.length; i++) {
+      // Use the argument's Arrow type from the schema when available
+      let dt: DataType;
+      const schemaField = argsSchema?.fields.find(
+        f => f.name === `positional_${i}`
+      );
+      if (schemaField && !(schemaField.type instanceof Null)) {
+        dt = schemaField.type;
+        // Convert DuckDB extension types to Arrow-native types
+        const extName = schemaField.metadata?.get?.("ARROW:extension:name");
+        if (extName === "arrow.bool8") {
+          dt = new Bool();
+        } else if (dt instanceof FixedSizeBinary) {
+          const extMeta = schemaField.metadata?.get?.("ARROW:extension:metadata");
+          if (extMeta) {
+            try {
+              const parsed = JSON.parse(extMeta);
+              if (parsed.type_name === "hugeint" || parsed.type_name === "uhugeint") {
+                dt = new Decimal(0, 38, 128);
+              }
+            } catch { /* ignore */ }
+          }
+        }
+      } else {
+        // Fallback: infer from JS value
+        const val = bindArgs.positional[i];
+        if (val === null || val === undefined) {
+          dt = new Null();
+        } else if (typeof val === "bigint") {
+          dt = new Int64();
+        } else if (typeof val === "number") {
+          dt = Number.isInteger(val) ? new Int64() : new Float64();
+        } else if (typeof val === "string") {
+          dt = new Utf8();
+        } else {
+          dt = new Utf8();
+        }
+      }
+      fields.push(new Field(`col_${i - 1}`, dt, true));
+    }
+
+    return { outputSchema: new Schema(fields) };
+  },
+  cardinality: (params: TableBindParams<ConstantColumnsArgs>) => ({
+    estimate: params.args.count,
+    max: params.args.count,
+  }),
+  initialState: (params: TableProcessParams<ConstantColumnsArgs>) => ({
+    remaining: params.args.count,
+  }),
+  process: (
+    params: TableProcessParams<ConstantColumnsArgs>,
+    state: ConstantColumnsState,
+    out: OutputCollector
+  ) => {
+    if (state.remaining <= 0) {
+      out.finish();
+      return;
+    }
+
+    const size = Math.min(state.remaining, CONSTANT_COLUMNS_BATCH_SIZE);
+
+    // Extract the constant values from bind call arguments
+    const bindArgs = params.initCall.bindCall.arguments;
+    const columns: Record<string, any[]> = {};
+
+    for (let i = 0; i < params.outputSchema.fields.length; i++) {
+      const field = params.outputSchema.fields[i];
+      const rawVal = bindArgs.positional[i + 1]; // +1 to skip count
+      let val: any = rawVal;
+
+      // For complex types (Decimal, List, Map, Struct), keep raw Arrow value
+      // since buildColumnData handles them directly
+      if (DataType.isDecimal(field.type) || DataType.isList(field.type) ||
+          DataType.isMap(field.type) || DataType.isStruct(field.type)) {
+        // Keep val as-is — batchFromColumns handles complex types
+      } else {
+        // Unwrap arrow scalar if needed
+        if (val !== null && val !== undefined && typeof val === "object" && typeof val.valueOf === "function") {
+          val = val.valueOf();
+        }
+        // For Int64 fields, convert to BigInt
+        if (DataType.isInt(field.type) && (field.type as any).bitWidth === 64) {
+          if (typeof val === "number") val = BigInt(val);
+        }
+      }
+      const arr = new Array(size).fill(val);
+      columns[field.name] = arr;
+    }
+
+    out.emit(batchFromColumns(columns, params.outputSchema));
+
+    state.remaining -= size;
+  },
+  examples: [
+    { sql: "SELECT * FROM constant_columns(5, 42, 'hello')", description: "Generate 5 rows with columns containing 42 and 'hello'" },
+    { sql: "SELECT * FROM constant_columns(3, 1, 2, 3, 'test')", description: "Generate 3 rows with 4 columns of mixed types" },
+  ],
+  categories: ["generator", "utility"],
+});
+
+// ============================================================================
+// 11. named_params_echo - Echoes named parameter values in output columns
+// ============================================================================
+
+interface NamedParamsEchoArgs {
+  count: number;
+  greeting: string;
+  multiplier: number;
+  scale: number;
+  enabled: boolean;
+}
+
+const NAMED_PARAMS_ECHO_SCHEMA = new Schema([
+  new Field("id", new Int64(), true),
+  new Field("greeting", new Utf8(), true),
+  new Field("value", new Int64(), true),
+  new Field("float_value", new Float64(), true),
+  new Field("enabled", new Bool(), true),
+]);
+
+const named_params_echo = defineTableFunction<NamedParamsEchoArgs, CountdownState>({
+  name: "named_params_echo",
+  description: "Echoes named parameter values in output columns",
+  args: {
+    count: new Int64(),
+    greeting: new Utf8(),
+    multiplier: new Int64(),
+    scale: new Float64(),
+    enabled: new Bool(),
+  },
+  argDefaults: {
+    greeting: "hello",
+    multiplier: 1,
+    scale: 1.0,
+    enabled: true,
+  },
+  onBind: () => ({ outputSchema: NAMED_PARAMS_ECHO_SCHEMA }),
+  cardinality: (params: TableBindParams<NamedParamsEchoArgs>) => ({
+    estimate: params.args.count,
+    max: params.args.count,
+  }),
+  initialState: (params: TableProcessParams<NamedParamsEchoArgs>) => ({
+    remaining: params.args.count,
+    currentIndex: 0,
+  }),
+  process: (
+    params: TableProcessParams<NamedParamsEchoArgs>,
+    state: CountdownState,
+    out: OutputCollector
+  ) => {
+    if (state.remaining <= 0) {
+      out.finish();
+      return;
+    }
+
+    const size = Math.min(state.remaining, 1000);
+    const ids: bigint[] = [];
+    const greetings: string[] = [];
+    const values: bigint[] = [];
+    const floatValues: number[] = [];
+    const enabledValues: boolean[] = [];
+
+    for (let i = 0; i < size; i++) {
+      const idx = state.currentIndex + i;
+      ids.push(BigInt(idx));
+      greetings.push(params.args.greeting);
+      values.push(BigInt(idx * params.args.multiplier));
+      floatValues.push(idx * params.args.scale);
+      enabledValues.push(params.args.enabled);
+    }
+
+    out.emit(batchFromColumns({
+      id: ids,
+      greeting: greetings,
+      value: values,
+      float_value: floatValues,
+      enabled: enabledValues,
+    }, params.outputSchema));
+
+    state.currentIndex += size;
+    state.remaining -= size;
+  },
+  examples: [
+    { sql: "SELECT * FROM named_params_echo(3)", description: "Echo default parameter values for 3 rows" },
+    { sql: "SELECT * FROM named_params_echo(3, greeting := 'hi', multiplier := 10)", description: "Echo custom greeting and multiplier" },
+  ],
+  categories: ["generator", "testing"],
+  tags: { category: "testing", type: "params" },
+});
+
+// ============================================================================
+// Export all table functions
+// ============================================================================
+
+export const tableFunctions: VgiFunction[] = [
+  sequence,
+  nested_sequence,
+  double_sequence,
+  generator_exception,
+  logging_generator,
+  partitioned_sequence,
+  projected_data,
+  settings_aware,
+  ten_thousand,
+  constant_columns,
+  named_params_echo,
+];

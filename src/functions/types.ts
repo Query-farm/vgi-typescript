@@ -1,0 +1,81 @@
+// Function config interfaces and VgiFunction base type.
+
+import type { Schema, RecordBatch, DataType } from "apache-arrow";
+import type { OutputCollector } from "vgi-rpc";
+import type {
+  FunctionStability,
+  NullHandling,
+  OrderPreservation,
+  OrderDependence,
+  DistinctDependence,
+  TableCardinality,
+} from "../types.js";
+import type {
+  BindRequest,
+  BindResponse,
+  InitRequest,
+  GlobalInitResponse,
+  TableFunctionCardinalityRequest,
+} from "../protocol/types.js";
+import type { Arguments } from "../arguments/arguments.js";
+import type { ArgumentSpec } from "../arguments/argument-spec.js";
+
+export interface FunctionExample {
+  sql: string;
+  description: string;
+  expectedOutput?: string;
+}
+
+export interface FunctionMeta {
+  name: string;
+  description?: string;
+  stability?: FunctionStability;
+  nullHandling?: NullHandling;
+  examples?: FunctionExample[];
+  categories?: string[];
+  tags?: Record<string, string>;
+  projectionPushdown?: boolean;
+  filterPushdown?: boolean;
+  autoApplyFilters?: boolean;
+  preservesOrder?: OrderPreservation;
+  maxWorkers?: number;
+  requiredSettings?: string[];
+  requiredSecrets?: string[];
+  orderDependent?: OrderDependence;
+  distinctDependent?: DistinctDependence;
+}
+
+export interface StreamHandlers {
+  // For producer streams (table functions, finalize phase)
+  producerInit?: () => any;
+  producerFn?: (state: any, out: OutputCollector) => void | Promise<void>;
+  // For exchange streams (scalar, table-in-out input phase)
+  exchangeInit?: () => any;
+  exchangeFn?: (
+    state: any,
+    input: RecordBatch,
+    out: OutputCollector
+  ) => void | Promise<void>;
+  // Output schema for the stream
+  outputSchema: Schema;
+  // Input schema for exchange (empty for producer)
+  inputSchema?: Schema;
+}
+
+/**
+ * A resolved, registered VGI function definition.
+ */
+export interface VgiFunction {
+  kind: "scalar" | "table" | "table_in_out";
+  meta: FunctionMeta;
+  argumentSpecs: ArgumentSpec[];
+  /** Default output schema (for catalog registration). May be overridden at bind time. */
+  defaultOutputSchema?: Schema;
+  bind(request: BindRequest): BindResponse;
+  globalInit(request: InitRequest): GlobalInitResponse;
+  createStreamHandlers(
+    request: InitRequest,
+    response: GlobalInitResponse
+  ): StreamHandlers;
+  cardinality?(request: TableFunctionCardinalityRequest): TableCardinality;
+}
