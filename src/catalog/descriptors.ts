@@ -23,10 +23,21 @@ export interface ViewDescriptor {
   tags?: Record<string, string>;
 }
 
+export interface MacroDescriptor {
+  name: string;
+  macroType: "scalar" | "table";
+  parameters: string[];
+  parameterDefaultValues?: Uint8Array | null;
+  definition: string;
+  comment?: string;
+  tags?: Record<string, string>;
+}
+
 export interface SchemaDescriptor {
   name: string;
   tables?: TableDescriptor[];
   views?: ViewDescriptor[];
+  macros?: MacroDescriptor[];
   functions?: VgiFunction[];
   comment?: string;
   tags?: Record<string, string>;

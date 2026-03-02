@@ -146,7 +146,14 @@ export function defineTableFunction<
         config.argDefaults?.[spec.name] !== undefined
           ? config.argDefaults[spec.name]
           : undefined;
-      let val = request.arguments.get(spec.position, defaultVal);
+      let val: any;
+      try {
+        val = request.arguments.get(spec.position, defaultVal);
+      } catch {
+        // Fallback: try by name (for scan function tables where DuckDB
+        // converts positional args to named args)
+        val = request.arguments.get(spec.name, defaultVal);
+      }
       // Arrow Int64 values come through as BigInt — coerce to number
       if (typeof val === "bigint") val = safeNumber(val);
       args[spec.name] = val;

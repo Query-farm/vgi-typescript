@@ -501,8 +501,12 @@ export function projectSchema(
   schema: Schema
 ): Schema {
   if (!projectionIds) return schema;
-  const fields = projectionIds.map((i) => schema.fields[i]);
-  return new Schema(fields);
+  // Filter to valid column indices (DuckDB may send -1 for row_id sentinel)
+  const validIds = projectionIds.filter((i) => i >= 0 && i < schema.fields.length);
+  // If no valid projections, return full schema so functions still produce
+  // rows with data (DuckDB only needs the row count for COUNT(*) etc.)
+  if (validIds.length === 0) return schema;
+  return new Schema(validIds.map((i) => schema.fields[i]));
 }
 
 /**

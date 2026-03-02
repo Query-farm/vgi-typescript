@@ -1,6 +1,6 @@
 // ReadOnlyCatalogInterface: derives catalog from registered functions + descriptors.
 
-import { Schema, Field, Int64 } from "apache-arrow";
+import { Schema, Field, Int64, DataType, Utf8, Binary, Bool, Null } from "apache-arrow";
 import {
   CatalogInterface,
   type AttachId,
@@ -10,12 +10,14 @@ import {
   TableInfo,
   ViewInfo,
   FunctionInfo,
+  MacroInfo,
+  MacroType,
 } from "./interface.js";
-import type { CatalogDescriptor, SchemaDescriptor, TableDescriptor, ViewDescriptor } from "./descriptors.js";
+import type { CatalogDescriptor, SchemaDescriptor, TableDescriptor, ViewDescriptor, MacroDescriptor } from "./descriptors.js";
 import type { VgiFunction } from "../functions/types.js";
 import type { FunctionRegistry } from "../functions/registry.js";
 import { argumentSpecsToSchema } from "../arguments/argument-spec.js";
-import { serializeSchema, serializeBatch } from "../util/arrow.js";
+import { serializeSchema, serializeBatch, emptyBatch, batchFromColumns } from "../util/arrow.js";
 import { resolveMetadata } from "../metadata/resolve.js";
 import { FunctionStability, NullHandling, OrderPreservation, DEFAULT_MAX_WORKERS } from "../types.js";
 import { Arguments } from "../arguments/arguments.js";
@@ -221,6 +223,49 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
       });
   }
 
+  override schemaContentsMacros(
+    attachId: AttachId,
+    name: string,
+    type: string,
+    transactionId?: TransactionId
+  ): MacroInfo[] {
+    const schema = this._descriptor.schemas.find((s) => s.name === name);
+    if (!schema || !schema.macros) return [];
+
+    return schema.macros
+      .filter((m) => {
+        const t = type.toLowerCase();
+        if (t === "scalar_macro" && m.macroType !== "scalar") return false;
+        if (t === "table_macro" && m.macroType !== "table") return false;
+        return true;
+      })
+      .map(
+        (m) =>
+          new MacroInfo(
+            m.name,
+            name,
+            m.macroType === "scalar" ? MacroType.SCALAR : MacroType.TABLE,
+            m.parameters,
+            m.parameterDefaultValues ?? null,
+            m.definition,
+            m.comment ?? null,
+            m.tags ?? {}
+          )
+      );
+  }
+
+  override macroGet(
+    attachId: AttachId,
+    schemaName: string,
+    name: string,
+    transactionId?: TransactionId
+  ): MacroInfo | null {
+    const macros = this.schemaContentsMacros(attachId, schemaName, "scalar_macro", transactionId);
+    const tableMacros = this.schemaContentsMacros(attachId, schemaName, "table_macro", transactionId);
+    const all = [...macros, ...tableMacros];
+    return all.find((m) => m.name.toLowerCase() === name.toLowerCase()) ?? null;
+  }
+
   override tableScanFunctionGet(
     attachId: AttachId,
     schemaName: string,
@@ -283,28 +328,47 @@ function bufferEquals(a: Uint8Array, b: Uint8Array): boolean {
   return true;
 }
 
-function serializeArgsBatch(args: Arguments, schema: Schema): Uint8Array {
-  // Serialize arguments as an Arrow IPC batch matching the expected schema
-  // This creates a batch with positional args as numbered columns and named args
-  const { serializeBatch, batchFromColumns } = require("../util/arrow.js");
+function serializeArgsBatch(args: Arguments, argSpecSchema: Schema): Uint8Array {
+  // Serialize arguments as a FLAT batch using the argument spec field names.
+  // DuckDB's VGI extension reads each column as a named argument and wraps it
+  // with "named_" prefix when sending the bind request. The function extractArgs
+  // will look up these by name as a fallback.
+  const fields: Field[] = [];
   const values: Record<string, any[]> = {};
 
   for (let i = 0; i < args.positional.length; i++) {
-    const field = schema.fields[i];
-    if (field) {
-      values[field.name] = [args.positional[i]];
+    const val = args.positional[i];
+    const specField = argSpecSchema.fields[i];
+    const fieldName = specField ? specField.name : `positional_${i}`;
+    const fieldType = specField ? specField.type : inferScalarType(val);
+    fields.push(new Field(fieldName, fieldType, true));
+    let coerced = val;
+    if (DataType.isInt(fieldType) && (fieldType as any).bitWidth === 64) {
+      coerced = typeof val === "number" ? BigInt(val) : val;
     }
+    values[fieldName] = [coerced];
   }
 
   for (const [name, val] of args.named) {
+    fields.push(new Field(name, inferScalarType(val), true));
     values[name] = [val];
   }
 
-  if (Object.keys(values).length === 0) {
-    // Empty arguments
-    const { emptyBatch } = require("../util/arrow.js");
-    return serializeBatch(emptyBatch(schema));
+  const batchSchema = new Schema(fields);
+
+  if (fields.length === 0) {
+    return serializeBatch(emptyBatch(batchSchema));
   }
 
-  return serializeBatch(batchFromColumns(values, schema));
+  return serializeBatch(batchFromColumns(values, batchSchema));
+}
+
+function inferScalarType(val: any): DataType {
+  if (val === null || val === undefined) return new Null();
+  if (typeof val === "string") return new Utf8();
+  if (typeof val === "boolean") return new Bool();
+  if (typeof val === "number") return new Int64();
+  if (typeof val === "bigint") return new Int64();
+  if (val instanceof Uint8Array || val instanceof ArrayBuffer) return new Binary();
+  return new Utf8();
 }

@@ -19,7 +19,7 @@ import {
   vectorFromArray,
 } from "apache-arrow";
 import { CatalogReadOnlyError, CatalogNotFoundError } from "../errors.js";
-import { serializeSchema, serializeBatch } from "../util/arrow.js";
+import { serializeSchema, serializeBatch, deserializeBatch, batchToScalarDict, deserializeSchema } from "../util/arrow.js";
 
 // Helper to create a Map_ type properly
 function mapType(keyType: any, valueType: any): Map_ {
@@ -32,6 +32,11 @@ function mapType(keyType: any, valueType: any): Map_ {
 
 export type AttachId = Uint8Array;
 export type TransactionId = Uint8Array;
+
+export enum MacroType {
+  SCALAR = "scalar",
+  TABLE = "table",
+}
 
 export interface CatalogAttachResult {
   attachId: AttachId;
@@ -73,6 +78,22 @@ export class SchemaInfo {
       tags: Object.entries(this.tags).map(([k, v]) => [k, v]),
     });
   }
+
+  static deserialize(bytes: Uint8Array): SchemaInfo {
+    const d = deserializeInfoRow(bytes);
+    const tags: Record<string, string> = {};
+    if (d.tags) {
+      for (const [k, v] of iterMapEntries(d.tags)) {
+        tags[k] = v;
+      }
+    }
+    return new SchemaInfo(
+      toU8(d.attach_id),
+      d.name,
+      d.comment ?? null,
+      tags,
+    );
+  }
 }
 
 const TABLE_INFO_SCHEMA = new Schema([
@@ -110,6 +131,26 @@ export class TableInfo {
       tags: Object.entries(this.tags).map(([k, v]) => [k, v]),
     });
   }
+
+  static deserialize(bytes: Uint8Array): TableInfo {
+    const d = deserializeInfoRow(bytes);
+    const tags: Record<string, string> = {};
+    if (d.tags) {
+      for (const [k, v] of iterMapEntries(d.tags)) {
+        tags[k] = v;
+      }
+    }
+    return new TableInfo(
+      d.name,
+      d.schema_name,
+      toU8(d.columns),
+      toNumberArray(d.not_null_constraints),
+      toNestedNumberArray(d.unique_constraints),
+      toStringArray(d.check_constraints),
+      d.comment ?? null,
+      tags,
+    );
+  }
 }
 
 const VIEW_INFO_SCHEMA = new Schema([
@@ -137,6 +178,23 @@ export class ViewInfo {
       comment: this.comment,
       tags: Object.entries(this.tags).map(([k, v]) => [k, v]),
     });
+  }
+
+  static deserialize(bytes: Uint8Array): ViewInfo {
+    const d = deserializeInfoRow(bytes);
+    const tags: Record<string, string> = {};
+    if (d.tags) {
+      for (const [k, v] of iterMapEntries(d.tags)) {
+        tags[k] = v;
+      }
+    }
+    return new ViewInfo(
+      d.name,
+      d.schema_name,
+      d.definition,
+      d.comment ?? null,
+      tags,
+    );
   }
 }
 
@@ -213,6 +271,106 @@ export class FunctionInfo {
       comment: this.comment,
       tags: Object.entries(this.tags).map(([k, v]) => [k, v]),
     });
+  }
+
+  static deserialize(bytes: Uint8Array): FunctionInfo {
+    const d = deserializeInfoRow(bytes);
+    const tags: Record<string, string> = {};
+    if (d.tags) {
+      for (const [k, v] of iterMapEntries(d.tags)) {
+        tags[k] = v;
+      }
+    }
+    const examples: { sql: string; description: string }[] = [];
+    if (d.examples) {
+      const exArr = Array.isArray(d.examples) ? d.examples : [...d.examples];
+      for (const ex of exArr) {
+        if (ex) {
+          examples.push({
+            sql: ex.sql ?? ex.get?.("sql") ?? "",
+            description: ex.description ?? ex.get?.("description") ?? "",
+          });
+        }
+      }
+    }
+    return new FunctionInfo(
+      d.name,
+      d.schema_name,
+      d.function_type,
+      toU8(d.arguments),
+      toU8(d.output_schema),
+      d.stability ?? null,
+      d.null_handling ?? null,
+      d.description ?? "",
+      examples,
+      toStringArray(d.categories),
+      d.projection_pushdown ?? null,
+      d.filter_pushdown ?? null,
+      d.order_preservation ?? null,
+      d.max_workers != null ? Number(d.max_workers) : null,
+      d.order_dependent ?? "NOT_ORDER_DEPENDENT",
+      d.distinct_dependent ?? "NOT_DISTINCT_DEPENDENT",
+      toStringArray(d.required_settings),
+      d.comment ?? null,
+      tags,
+    );
+  }
+}
+
+const MACRO_INFO_SCHEMA = new Schema([
+  new Field("name", new Utf8(), false),
+  new Field("schema_name", new Utf8(), false),
+  new Field("macro_type", new Utf8(), false),
+  new Field("parameters", new List(new Field("item", new Utf8(), false)), false),
+  new Field("parameter_default_values", new Binary(), true),
+  new Field("definition", new Utf8(), false),
+  new Field("comment", new Utf8(), true),
+  new Field("tags", mapType(new Utf8(), new Utf8()), true),
+]);
+
+export class MacroInfo {
+  constructor(
+    public readonly name: string,
+    public readonly schemaName: string,
+    public readonly macroType: MacroType,
+    public readonly parameters: string[],
+    public readonly parameterDefaultValues: Uint8Array | null,
+    public readonly definition: string,
+    public readonly comment: string | null = null,
+    public readonly tags: Record<string, string> = {}
+  ) {}
+
+  serialize(): Uint8Array {
+    return serializeInfoBatch(MACRO_INFO_SCHEMA, {
+      name: this.name,
+      schema_name: this.schemaName,
+      macro_type: this.macroType,
+      parameters: this.parameters,
+      parameter_default_values: this.parameterDefaultValues,
+      definition: this.definition,
+      comment: this.comment,
+      tags: Object.entries(this.tags).map(([k, v]) => [k, v]),
+    });
+  }
+
+  static deserialize(bytes: Uint8Array): MacroInfo {
+    const d = deserializeInfoRow(bytes);
+    const tags: Record<string, string> = {};
+    if (d.tags) {
+      for (const [k, v] of iterMapEntries(d.tags)) {
+        tags[k] = v;
+      }
+    }
+    return new MacroInfo(
+      d.name,
+      d.schema_name,
+      d.macro_type as MacroType,
+      toStringArray(d.parameters),
+      d.parameter_default_values ? toU8(d.parameter_default_values) : null,
+      d.definition,
+      d.comment ?? null,
+      tags,
+    );
   }
 }
 
@@ -484,6 +642,44 @@ export abstract class CatalogInterface {
   ): void {
     throw new CatalogReadOnlyError("view_comment_set");
   }
+  macroGet(
+    attachId: AttachId,
+    schemaName: string,
+    name: string,
+    transactionId?: TransactionId
+  ): MacroInfo | null {
+    return null;
+  }
+  macroCreate(
+    attachId: AttachId,
+    schemaName: string,
+    name: string,
+    macroType: MacroType,
+    parameters: string[],
+    definition: string,
+    onConflict: string,
+    parameterDefaultValues?: Uint8Array | null,
+    transactionId?: TransactionId
+  ): void {
+    throw new CatalogReadOnlyError("macro_create");
+  }
+  macroDrop(
+    attachId: AttachId,
+    schemaName: string,
+    name: string,
+    ignoreNotFound?: boolean,
+    transactionId?: TransactionId
+  ): void {
+    throw new CatalogReadOnlyError("macro_drop");
+  }
+  schemaContentsMacros(
+    attachId: AttachId,
+    name: string,
+    type: string,
+    transactionId?: TransactionId
+  ): MacroInfo[] {
+    return [];
+  }
   transactionBegin(attachId: AttachId): Uint8Array | null {
     return null;
   }
@@ -495,6 +691,61 @@ export abstract class CatalogInterface {
     attachId: AttachId,
     transactionId: TransactionId
   ): void {}
+}
+
+// Helper to deserialize a single-row info batch from IPC bytes
+function deserializeInfoRow(bytes: Uint8Array): Record<string, any> {
+  const batch = deserializeBatch(bytes);
+  return batchToScalarDict(batch);
+}
+
+// Helper to convert Arrow value to Uint8Array
+function toU8(val: any): Uint8Array {
+  if (val instanceof Uint8Array) return val;
+  if (val instanceof ArrayBuffer) return new Uint8Array(val);
+  if (val && val.buffer instanceof ArrayBuffer) {
+    return new Uint8Array(val.buffer, val.byteOffset, val.byteLength);
+  }
+  return new Uint8Array(0);
+}
+
+// Helper to iterate Map entries (Arrow MapRow or JS iterable)
+function* iterMapEntries(mapVal: any): Generator<[string, string]> {
+  if (!mapVal) return;
+  if (typeof mapVal[Symbol.iterator] === "function") {
+    for (const entry of mapVal) {
+      if (Array.isArray(entry)) {
+        yield [String(entry[0]), String(entry[1])];
+      } else if (entry && typeof entry === "object") {
+        yield [String(entry.key ?? entry[0] ?? ""), String(entry.value ?? entry[1] ?? "")];
+      }
+    }
+  }
+}
+
+// Helper to convert iterable to number[]
+function toNumberArray(val: any): number[] {
+  if (!val) return [];
+  const arr = Array.isArray(val) ? val : [...val];
+  return arr.map(Number);
+}
+
+// Helper to convert iterable of iterables to number[][]
+function toNestedNumberArray(val: any): number[][] {
+  if (!val) return [];
+  const arr = Array.isArray(val) ? val : [...val];
+  return arr.map((inner: any) => {
+    if (!inner) return [];
+    const innerArr = Array.isArray(inner) ? inner : [...inner];
+    return innerArr.map(Number);
+  });
+}
+
+// Helper to convert iterable to string[]
+function toStringArray(val: any): string[] {
+  if (!val) return [];
+  const arr = Array.isArray(val) ? val : [...val];
+  return arr.filter((v: any) => v != null).map(String);
 }
 
 // Helper to serialize a single-row info batch to IPC bytes

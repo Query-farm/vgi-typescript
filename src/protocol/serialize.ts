@@ -38,6 +38,7 @@ import {
   emptyBatch,
   batchFromColumns,
 } from "../util/arrow.js";
+import { toUint8Array as toUint8ArrayBase } from "../util/bytes.js";
 
 // ============================================================================
 // Schema definitions matching Python's ArrowSerializableDataclass ARROW_SCHEMA
@@ -204,7 +205,6 @@ function deserializeArguments(bytes: Uint8Array): Arguments {
   }
 
   const batch = batches[0];
-
   // Arguments are serialized as a single "args" Struct column.
   // The struct has fields named "positional_0", "positional_1", etc.
   // for positional args, and "named_<name>" for named args.
@@ -496,15 +496,12 @@ export function serializeTableCardinality(
 // ============================================================================
 
 function toUint8Array(val: any): Uint8Array {
-  if (val instanceof Uint8Array) return val;
-  if (val instanceof ArrayBuffer) return new Uint8Array(val);
-  if (Buffer.isBuffer(val)) return new Uint8Array(val);
   if (typeof val === "string") return new TextEncoder().encode(val);
-  // Handle arrow Binary array element (may be typed array view)
-  if (val && val.buffer instanceof ArrayBuffer) {
-    return new Uint8Array(val.buffer, val.byteOffset, val.byteLength);
+  const result = toUint8ArrayBase(val);
+  if (result.length === 0 && val != null) {
+    throw new Error(`Cannot convert ${typeof val} to Uint8Array`);
   }
-  throw new Error(`Cannot convert ${typeof val} to Uint8Array`);
+  return result;
 }
 
 function buildSingleRowBatch(

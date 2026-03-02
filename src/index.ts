@@ -12,8 +12,8 @@ export { Worker, type WorkerConfig } from "./worker.js";
 export type { VgiFunction, FunctionMeta, StreamHandlers, FunctionExample } from "./functions/types.js";
 
 // Catalog
-export { CatalogInterface, type CatalogAttachResult, SchemaInfo, TableInfo, ViewInfo, FunctionInfo, type AttachId } from "./catalog/interface.js";
-export type { CatalogDescriptor, SchemaDescriptor, TableDescriptor, ViewDescriptor } from "./catalog/descriptors.js";
+export { CatalogInterface, type CatalogAttachResult, SchemaInfo, TableInfo, ViewInfo, FunctionInfo, MacroInfo, MacroType, type AttachId } from "./catalog/interface.js";
+export type { CatalogDescriptor, SchemaDescriptor, TableDescriptor, ViewDescriptor, MacroDescriptor } from "./catalog/descriptors.js";
 export { ReadOnlyCatalogInterface } from "./catalog/read-only.js";
 
 // Core types
@@ -75,6 +75,9 @@ export {
   type StructFilter,
 } from "./util/filter-pushdown.js";
 
+// Byte utilities
+export { toUint8Array } from "./util/bytes.js";
+
 // Arrow utilities
 export {
   iterRows,
@@ -102,5 +105,18 @@ export {
   storage as functionStorage,
 } from "./storage/function-storage.js";
 
+// Client
+export { VgiClient, VgiClientError } from "./client/index.js";
+export type {
+  VgiClientOptions,
+  TableFunctionOptions,
+  ScalarFunctionOptions,
+  TableInOutFunctionOptions,
+  OnCreateConflict,
+  CatalogFunctionType as ClientCatalogFunctionType,
+} from "./client/index.js";
+
 // Re-export from vgi-rpc for convenience
 export { str, bytes, int, int32, float, float32, bool, toSchema, OutputCollector } from "vgi-rpc";
+export { subprocessConnect, httpConnect } from "vgi-rpc";
+export type { RpcClient, StreamSession, LogMessage } from "vgi-rpc";
