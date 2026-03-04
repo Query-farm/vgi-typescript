@@ -354,10 +354,14 @@ function serializeSetting(setting: SettingDescriptor): Uint8Array {
   // Serialize the default value as a single-row batch, or null
   let defaultBytes: Uint8Array | null = null;
   if (setting.defaultValue != null) {
-    let val = setting.defaultValue;
-    // Coerce number to BigInt for Int64 types
+    let val: any = setting.defaultValue;
+    // Coerce JS numbers to BigInt for 64-bit integer Arrow types
     if (DataType.isInt(setting.type) && (setting.type as any).bitWidth === 64) {
       if (typeof val === "number") val = BigInt(val);
+    }
+    // Coerce BigInt to Number for 32-bit integer Arrow types
+    if (DataType.isInt(setting.type) && (setting.type as any).bitWidth <= 32) {
+      if (typeof val === "bigint") val = Number(val);
     }
     defaultBytes = serializeBatch(
       batchFromColumns({ value: [val] }, typeSchema)

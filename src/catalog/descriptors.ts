@@ -8,7 +8,8 @@ export interface SettingDescriptor {
   name: string;
   description: string;
   type: DataType;
-  defaultValue?: any;
+  /** Must be a JS primitive compatible with `type` (string, number, bigint, boolean). */
+  defaultValue?: string | number | bigint | boolean;
 }
 
 export interface TableDescriptor {

@@ -5,3 +5,5 @@ duckdb_unittest_tempdir/
 *.db-wal
 *.db-shm
 test_*.ts
+.playwright-mcp/
+browser-test-*.png

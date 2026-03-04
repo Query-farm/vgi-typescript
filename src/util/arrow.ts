@@ -494,6 +494,27 @@ export function emptyBatch(schema: Schema): RecordBatch {
 }
 
 /**
+ * Validate and filter projection IDs. Returns only valid column indices.
+ * -1 is DuckDB's row_id sentinel (filtered out). IDs < -1 throw.
+ * IDs >= fieldCount are out-of-bounds and logged as warnings.
+ */
+function validateProjectionIds(
+  caller: string,
+  projectionIds: number[],
+  fieldCount: number,
+): number[] {
+  for (const id of projectionIds) {
+    if (id < -1) {
+      throw new Error(`${caller}: unexpected negative projection ID ${id} (only -1 for row_id is allowed)`);
+    }
+    if (id >= fieldCount) {
+      console.warn(`${caller}: projection ID ${id} is out of bounds (schema has ${fieldCount} fields), ignoring`);
+    }
+  }
+  return projectionIds.filter((i) => i >= 0 && i < fieldCount);
+}
+
+/**
  * Project a schema by column indices, preserving only selected fields.
  */
 export function projectSchema(
@@ -501,14 +522,7 @@ export function projectSchema(
   schema: Schema
 ): Schema {
   if (!projectionIds) return schema;
-  // Validate projection IDs: -1 is the row_id sentinel (expected), others are errors
-  for (const id of projectionIds) {
-    if (id < -1) {
-      throw new Error(`projectSchema: unexpected negative projection ID ${id} (only -1 for row_id is allowed)`);
-    }
-  }
-  // Filter to valid column indices (DuckDB sends -1 for row_id sentinel)
-  const validIds = projectionIds.filter((i) => i >= 0 && i < schema.fields.length);
+  const validIds = validateProjectionIds("projectSchema", projectionIds, schema.fields.length);
   // If no valid projections, return full schema so functions still produce
   // rows with data (DuckDB only needs the row count for COUNT(*) etc.)
   if (validIds.length === 0) return schema;
@@ -523,14 +537,7 @@ export function projectBatch(
   batch: RecordBatch
 ): RecordBatch {
   if (!projectionIds) return batch;
-  // Validate projection IDs: -1 is the row_id sentinel (expected), others are errors
-  for (const id of projectionIds) {
-    if (id < -1) {
-      throw new Error(`projectBatch: unexpected negative projection ID ${id} (only -1 for row_id is allowed)`);
-    }
-  }
-  // Filter to valid column indices (DuckDB sends -1 for row_id sentinel)
-  const validIds = projectionIds.filter((i) => i >= 0 && i < batch.schema.fields.length);
+  const validIds = validateProjectionIds("projectBatch", projectionIds, batch.schema.fields.length);
   if (validIds.length === 0) return batch;
   const projectedSchema = projectSchema(projectionIds, batch.schema);
   const children = validIds.map((i) => {

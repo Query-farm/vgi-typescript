@@ -33,7 +33,6 @@ import type { CatalogInterface } from "../catalog/interface.js";
 import { MacroType } from "../catalog/interface.js";
 import { NoCatalogError } from "../errors.js";
 
-
 // ============================================================================
 // Protocol building
 // ============================================================================
