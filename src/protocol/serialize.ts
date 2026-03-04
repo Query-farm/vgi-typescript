@@ -19,7 +19,7 @@ import {
   makeData,
   RecordBatchStreamWriter,
   RecordBatchReader,
-} from "apache-arrow";
+} from "@query-farm/apache-arrow";
 import { Arguments } from "../arguments/arguments.js";
 import { FunctionType, TableInOutPhase } from "../types.js";
 import type {
@@ -62,14 +62,21 @@ const BIND_REQUEST_SCHEMA = new Schema([
   new Field("secrets", new Binary(), true),
   new Field("attach_id", new Binary(), true),
   new Field("transaction_id", new Binary(), true),
+  new Field("resolved_secrets_provided", new Bool(), false),
 ]);
 
 // BindResponse schema:
 //   output_schema: binary
 //   opaque_data: binary (nullable)
+//   lookup_secret_types: list<utf8> (nullable)
+//   lookup_scopes: list<utf8> (nullable)
+//   lookup_names: list<utf8> (nullable)
 const BIND_RESPONSE_SCHEMA = new Schema([
   new Field("output_schema", new Binary(), false),
   new Field("opaque_data", new Binary(), true),
+  new Field("lookup_secret_types", new List(new Field("item", new Utf8(), true)), false),
+  new Field("lookup_scopes", new List(new Field("item", new Utf8(), true)), false),
+  new Field("lookup_names", new List(new Field("item", new Utf8(), true)), false),
 ]);
 
 // InitRequest schema:
@@ -286,6 +293,7 @@ export function serializeBindRequest(req: BindRequest): RecordBatch {
     secrets: req.secrets ? serializeBatch(req.secrets) : null,
     attach_id: req.attachId ?? null,
     transaction_id: req.transactionId ?? null,
+    resolved_secrets_provided: req.resolvedSecretsProvided ?? false,
   };
   return buildSingleRowBatch(BIND_REQUEST_SCHEMA, row);
 }
@@ -329,6 +337,7 @@ export function deserializeBindRequest(
     transactionId: params.transaction_id
       ? toUint8Array(params.transaction_id)
       : null,
+    resolvedSecretsProvided: params.resolved_secrets_provided ?? false,
   };
 }
 
@@ -342,15 +351,26 @@ export function serializeBindResponse(
   return {
     output_schema: serializeSchema(resp.outputSchema),
     opaque_data: resp.opaqueData ?? null,
+    lookup_secret_types: resp.lookupSecretTypes ?? [],
+    lookup_scopes: resp.lookupScopes ?? [],
+    lookup_names: resp.lookupNames ?? [],
   };
 }
 
 export function deserializeBindResponse(
   params: Record<string, any>
 ): BindResponse {
+  const toStrArray = (val: any): string[] => {
+    if (!val) return [];
+    const arr = Array.isArray(val) ? val : [...val];
+    return arr.filter((v: any) => v != null).map(String);
+  };
   return {
     outputSchema: deserializeSchema(toUint8Array(params.output_schema)),
     opaqueData: params.opaque_data ? toUint8Array(params.opaque_data) : null,
+    lookupSecretTypes: toStrArray(params.lookup_secret_types),
+    lookupScopes: toStrArray(params.lookup_scopes),
+    lookupNames: toStrArray(params.lookup_names),
   };
 }
 
@@ -388,6 +408,7 @@ export function deserializeInitRequest(
     const col = bindCallBatch.getChild(field.name);
     bindParams[field.name] = col ? col.get(0) : null;
   }
+
   const bindCall = deserializeBindRequest(bindParams);
 
   // Parse projection_ids - may be a list/array of Int32

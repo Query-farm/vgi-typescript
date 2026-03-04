@@ -21,7 +21,7 @@ import {
   DataType,
   Struct,
   RecordBatch,
-} from "apache-arrow";
+} from "@query-farm/apache-arrow";
 import {
   defineScalarFunction,
   FunctionStability,
@@ -531,13 +531,13 @@ const return_secret_value = defineScalarFunction({
   name: "return_secret_value",
   description: "Return a secret's value",
   returns: new Utf8(),
-  requiredSecrets: ["vgi_example_secret"],
+  requiredSecrets: ["vgi_example"],
   compute: (
     batch: RecordBatch,
     _consts: Record<string, any>,
     info: { settings: Record<string, any>; secrets: Record<string, Record<string, any>> }
   ) => {
-    const secretDict = info.secrets.vgi_example_secret ?? {};
+    const secretDict = info.secrets.vgi_example ?? {};
     // Convert values to plain JS for JSON serialization
     const plainDict: Record<string, any> = {};
     for (const [k, v] of Object.entries(secretDict)) {

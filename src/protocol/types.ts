@@ -1,6 +1,6 @@
 // Wire-format protocol types matching Python's ArrowSerializableDataclass definitions.
 
-import type { Schema, RecordBatch } from "apache-arrow";
+import type { Schema, RecordBatch } from "@query-farm/apache-arrow";
 import type { Arguments } from "../arguments/arguments.js";
 import { FunctionType, TableInOutPhase, type TableCardinality } from "../types.js";
 
@@ -13,11 +13,15 @@ export interface BindRequest {
   secrets: RecordBatch | null;
   attachId: Uint8Array | null;
   transactionId: Uint8Array | null;
+  resolvedSecretsProvided: boolean;
 }
 
 export interface BindResponse {
   outputSchema: Schema;
   opaqueData: Uint8Array | null;
+  lookupSecretTypes?: string[];
+  lookupScopes?: string[];
+  lookupNames?: string[];
 }
 
 export interface InitRequest {

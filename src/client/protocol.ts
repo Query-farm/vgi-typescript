@@ -7,7 +7,7 @@ import {
   batchToScalarDict,
 } from "../util/arrow.js";
 import { toUint8Array } from "../util/bytes.js";
-import type { RecordBatch } from "apache-arrow";
+import type { RecordBatch } from "@query-farm/apache-arrow";
 
 export { toUint8Array };
 

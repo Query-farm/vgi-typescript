@@ -41,8 +41,8 @@ TEST_TARGETS := $(patsubst $(TEST_DIR)/%.test,test/%,$(TEST_FILES))
 # Tests expected to fail (arrow-js doesn't support TIMESTAMP_NS)
 XFAIL_TESTS := integration/table/constant_columns_types
 
-# Tests expected to fail over HTTP (use vgi_table_function/vgi_catalogs which are subprocess-only)
-HTTP_XFAIL_TESTS := $(XFAIL_TESTS) vgi_integration vgi_table_function vgi_worker_pool
+# Tests expected to fail over HTTP (worker pooling / multi-worker is subprocess-only)
+HTTP_XFAIL_TESTS := vgi_table_function vgi_worker_pool integration/table/partitioned_sequence integration/table/constant_columns_types
 
 test: $(TEST_TARGETS)
 

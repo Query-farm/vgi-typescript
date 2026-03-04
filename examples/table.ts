@@ -14,7 +14,7 @@ import {
   List,
   Decimal,
   FixedSizeBinary,
-} from "apache-arrow";
+} from "@query-farm/apache-arrow";
 import {
   defineTableFunction,
   batchFromColumns,
@@ -908,6 +908,209 @@ const named_params_echo = defineTableFunction<NamedParamsEchoArgs, CountdownStat
 });
 
 // ============================================================================
+// 12. struct_settings - Generates sequence configured by struct setting
+// ============================================================================
+
+interface StructSettingsArgs {
+  count: number;
+}
+
+interface StructSettingsState {
+  remaining: number;
+  currentIndex: number;
+  start: number;
+  step: number;
+  label: string;
+}
+
+const STRUCT_SETTINGS_SCHEMA = new Schema([
+  new Field("n", new Int64(), true),
+  new Field("label", new Utf8(), true),
+]);
+
+const struct_settings = defineTableFunction<StructSettingsArgs, StructSettingsState>({
+  name: "struct_settings",
+  description: "Generate a sequence configured by a struct setting",
+  args: {
+    count: new Int64(),
+  },
+  requiredSettings: ["config"],
+  onBind: () => ({ outputSchema: STRUCT_SETTINGS_SCHEMA }),
+  cardinality: (params: TableBindParams<StructSettingsArgs>) => ({
+    estimate: params.args.count,
+    max: params.args.count,
+  }),
+  initialState: (params: TableProcessParams<StructSettingsArgs>) => {
+    const config = params.settings.config;
+    // config is a struct — could be an Arrow StructRow or a plain object
+    let cfg: Record<string, any>;
+    if (config && typeof config === "object" && typeof config.toJSON === "function") {
+      cfg = config.toJSON();
+    } else if (config && typeof config === "object") {
+      cfg = config;
+    } else {
+      cfg = { start: 0, step: 1, label: "item" };
+    }
+    return {
+      remaining: params.args.count,
+      currentIndex: 0,
+      start: Number(cfg.start ?? 0),
+      step: Number(cfg.step ?? 1),
+      label: String(cfg.label ?? "item"),
+    };
+  },
+  process: (
+    params: TableProcessParams<StructSettingsArgs>,
+    state: StructSettingsState,
+    out: OutputCollector
+  ) => {
+    if (state.remaining <= 0) {
+      out.finish();
+      return;
+    }
+
+    const size = Math.min(state.remaining, 1000);
+    const nValues: bigint[] = [];
+    const labelValues: string[] = [];
+
+    for (let i = 0; i < size; i++) {
+      nValues.push(BigInt(state.start + (state.currentIndex + i) * state.step));
+      labelValues.push(`${state.label}_${state.currentIndex + i}`);
+    }
+
+    out.emit(batchFromColumns({ n: nValues, label: labelValues }, params.outputSchema));
+
+    state.currentIndex += size;
+    state.remaining -= size;
+  },
+  examples: [
+    { sql: "SELECT * FROM struct_settings(5)", description: "Generate 5 rows configured by the config setting" },
+  ],
+  categories: ["generator", "settings"],
+});
+
+// ============================================================================
+// 13. secret_demo - Lists secret key-value pairs as rows
+// ============================================================================
+
+const SECRET_DEMO_SCHEMA = new Schema([
+  new Field("key", new Utf8(), true),
+  new Field("value", new Utf8(), true),
+  new Field("arrow_type", new Utf8(), true),
+]);
+
+const secret_demo = defineTableFunction<Record<string, any>, null>({
+  name: "secret_demo",
+  description: "Lists secret key-value pairs as rows",
+  requiredSecrets: ["vgi_example"],
+  onBind: () => ({ outputSchema: SECRET_DEMO_SCHEMA }),
+  process: (
+    params: TableProcessParams<Record<string, any>>,
+    _state: null,
+    out: OutputCollector
+  ) => {
+    const secretDict = params.secrets.vgi_example;
+    if (!secretDict || Object.keys(secretDict).length === 0) {
+      out.emit(emptyBatch(params.outputSchema));
+      out.finish();
+      return;
+    }
+
+    const keys: string[] = [];
+    const values: string[] = [];
+    const arrowTypes: string[] = [];
+
+    for (const [k, v] of Object.entries(secretDict)) {
+      keys.push(k);
+      if (v === null || v === undefined) {
+        values.push("NULL");
+      } else if (typeof v === "bigint") {
+        values.push(String(Number(v)));
+      } else if (typeof v === "boolean") {
+        values.push(v ? "true" : "false");
+      } else {
+        values.push(String(v));
+      }
+      // Determine arrow type name
+      if (typeof v === "string") arrowTypes.push("Utf8");
+      else if (typeof v === "bigint") arrowTypes.push("Int64");
+      else if (typeof v === "number") {
+        if (Number.isInteger(v)) arrowTypes.push("Int32");
+        else arrowTypes.push("Float64");
+      }
+      else if (typeof v === "boolean") arrowTypes.push("Bool");
+      else arrowTypes.push("Utf8");
+    }
+
+    out.emit(batchFromColumns({
+      key: keys,
+      value: values,
+      arrow_type: arrowTypes,
+    }, params.outputSchema));
+    out.finish();
+  },
+  examples: [
+    { sql: "SELECT * FROM secret_demo()", description: "List secret key-value pairs" },
+  ],
+  categories: ["testing", "secrets"],
+});
+
+// ============================================================================
+// 14. scoped_secret_demo - Two-phase bind with scoped secret lookup
+// ============================================================================
+
+const SCOPED_SECRET_DEMO_SCHEMA = new Schema([
+  new Field("scope", new Utf8(), true),
+  new Field("found", new Bool(), true),
+  new Field("secret_keys", new Utf8(), true),
+]);
+
+const scoped_secret_demo = defineTableFunction<{ path: string }, null>({
+  name: "scoped_secret_demo",
+  description: "Demonstrates scoped secret lookup via two-phase bind",
+  args: {
+    path: new Utf8(),
+  },
+  onBind: (params: TableBindParams<{ path: string }>) => {
+    if (!params.resolvedSecretsProvided) {
+      // First bind: request secret lookup with scope from args
+      return {
+        outputSchema: SCOPED_SECRET_DEMO_SCHEMA,
+        lookupSecretTypes: ["vgi_example"],
+        lookupScopes: [params.args.path],
+        lookupNames: [null as any],
+      };
+    }
+
+    // Second bind: secrets are resolved
+    return { outputSchema: SCOPED_SECRET_DEMO_SCHEMA };
+  },
+  process: (
+    params: TableProcessParams<{ path: string }>,
+    _state: null,
+    out: OutputCollector
+  ) => {
+    const scope = params.args.path;
+    const secretDict = params.secrets.vgi_example;
+    const found = !!secretDict && Object.keys(secretDict).length > 0;
+    const secretKeys = found
+      ? Object.keys(secretDict).sort().join(",")
+      : "";
+
+    out.emit(batchFromColumns({
+      scope: [scope],
+      found: [found],
+      secret_keys: [secretKeys],
+    }, params.outputSchema));
+    out.finish();
+  },
+  examples: [
+    { sql: "SELECT * FROM scoped_secret_demo('/my/scope')", description: "Lookup scoped secret" },
+  ],
+  categories: ["testing", "secrets"],
+});
+
+// ============================================================================
 // Export all table functions
 // ============================================================================
 
@@ -923,4 +1126,7 @@ export const tableFunctions: VgiFunction[] = [
   ten_thousand,
   constant_columns,
   named_params_echo,
+  struct_settings,
+  secret_demo,
+  scoped_secret_demo,
 ];

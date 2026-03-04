@@ -22,7 +22,7 @@
     "src"
   ],
   "dependencies": {
-    "apache-arrow": "github:Query-farm/arrow-js#feat_query_farm_1",
+    "@query-farm/apache-arrow": "*",
     "vgi-rpc": "file:../vgi-rpc-typescript"
   },
   "devDependencies": {
@@ -31,8 +31,8 @@
   "scripts": {
     "build": "bun run build:types && bun run build:js",
     "build:types": "bunx tsc -p tsconfig.build.json",
-    "build:js": "bun build ./src/index.ts --outdir dist --target node --format esm --sourcemap=external --external apache-arrow --external vgi-rpc && bun build ./src/client-entry.ts --outdir dist --target browser --format esm --sourcemap=external --external apache-arrow --external vgi-rpc",
-    "postinstall": "cd node_modules/apache-arrow && node -e \"const fs=require('fs');const p=JSON.parse(fs.readFileSync('package.json','utf8'));p.main='index.ts';fs.writeFileSync('package.json',JSON.stringify(p,null,2)+'\\n')\"",
+    "build:js": "bun build ./src/index.ts --outdir dist --target node --format esm --sourcemap=external --external @query-farm/apache-arrow --external vgi-rpc && bun build ./src/client-entry.ts --outdir dist --target browser --format esm --sourcemap=external --external @query-farm/apache-arrow --external vgi-rpc",
+    "postinstall": "node scripts/postinstall.cjs",
     "build:browser-test": "bun build examples/browser/main.ts --outdir examples/browser/dist --target browser --format esm --sourcemap=external",
     "test": "bun test"
   }

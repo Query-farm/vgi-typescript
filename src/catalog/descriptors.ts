@@ -1,8 +1,15 @@
 // Declarative catalog descriptor types.
 
-import type { Schema } from "apache-arrow";
+import type { Schema, DataType } from "@query-farm/apache-arrow";
 import type { VgiFunction } from "../functions/types.js";
 import type { Arguments } from "../arguments/arguments.js";
+
+export interface SettingDescriptor {
+  name: string;
+  description: string;
+  type: DataType;
+  defaultValue?: any;
+}
 
 export interface TableDescriptor {
   name: string;
@@ -43,8 +50,16 @@ export interface SchemaDescriptor {
   tags?: Record<string, string>;
 }
 
+export interface SecretTypeDescriptor {
+  name: string;
+  description: string;
+  schema: Schema; // Field metadata {redact: "true"} marks redacted fields
+}
+
 export interface CatalogDescriptor {
   name: string;
   defaultSchema?: string;
   schemas: SchemaDescriptor[];
+  settings?: SettingDescriptor[];
+  secretTypes?: SecretTypeDescriptor[];
 }

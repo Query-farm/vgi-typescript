@@ -1,7 +1,7 @@
 // ArgumentSpec: converts function argument definitions to Arrow schema with VGI metadata keys.
 // Must produce byte-identical schemas to Python's argument_specs_to_schema().
 
-import { Schema, Field, DataType, Null } from "apache-arrow";
+import { Schema, Field, DataType, Null } from "@query-farm/apache-arrow";
 import {
   VGI_ARG_KEY,
   VGI_ARG_NAMED,

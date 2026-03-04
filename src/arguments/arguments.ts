@@ -1,7 +1,7 @@
 // Arguments container for VGI function invocations.
 // Holds positional and named scalar values from DuckDB.
 
-import type { Schema } from "apache-arrow";
+import type { Schema } from "@query-farm/apache-arrow";
 import { safeNumber } from "../util/arrow.js";
 
 export class Arguments {

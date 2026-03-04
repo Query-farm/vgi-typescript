@@ -17,7 +17,7 @@ import {
   Struct,
   makeData,
   vectorFromArray,
-} from "apache-arrow";
+} from "@query-farm/apache-arrow";
 import { CatalogReadOnlyError, CatalogNotFoundError } from "../errors.js";
 import { serializeSchema, serializeBatch, deserializeBatch, batchToScalarDict, deserializeSchema } from "../util/arrow.js";
 
@@ -47,6 +47,7 @@ export interface CatalogAttachResult {
   attachIdRequired?: boolean;
   defaultSchema?: string;
   settings?: Uint8Array[];
+  secretTypes?: Uint8Array[];
 }
 
 // ============================================================================
@@ -219,32 +220,82 @@ const FUNCTION_INFO_SCHEMA = new Schema([
   new Field("order_dependent", new Utf8(), false),
   new Field("distinct_dependent", new Utf8(), false),
   new Field("required_settings", new List(new Field("item", new Utf8(), true)), false),
+  new Field("required_secrets", new List(new Field("item", new Struct([
+    new Field("secret_type", new Utf8(), false),
+    new Field("scope", new Utf8(), true),
+    new Field("secret_name", new Utf8(), true),
+  ]), true)), false),
   new Field("comment", new Utf8(), true),
   new Field("tags", mapType(new Utf8(), new Utf8()), true),
 ]);
 
+export interface FunctionInfoOptions {
+  name: string;
+  schemaName: string;
+  functionType: string;
+  functionArguments: Uint8Array;
+  outputSchema: Uint8Array;
+  stability?: string | null;
+  nullHandling?: string | null;
+  description?: string;
+  examples?: { sql: string; description: string }[];
+  categories?: string[];
+  projectionPushdown?: boolean | null;
+  filterPushdown?: boolean | null;
+  orderPreservation?: string | null;
+  maxWorkers?: number | null;
+  orderDependent?: string;
+  distinctDependent?: string;
+  requiredSettings?: string[];
+  requiredSecrets?: Array<{secret_type: string, scope: string | null, secret_name: string | null}>;
+  comment?: string | null;
+  tags?: Record<string, string>;
+}
+
 export class FunctionInfo {
-  constructor(
-    public readonly name: string,
-    public readonly schemaName: string,
-    public readonly functionType: string,
-    public readonly functionArguments: Uint8Array,
-    public readonly outputSchema: Uint8Array,
-    public readonly stability: string | null = null,
-    public readonly nullHandling: string | null = null,
-    public readonly description: string = "",
-    public readonly examples: { sql: string; description: string }[] = [],
-    public readonly categories: string[] = [],
-    public readonly projectionPushdown: boolean | null = null,
-    public readonly filterPushdown: boolean | null = null,
-    public readonly orderPreservation: string | null = null,
-    public readonly maxWorkers: number | null = null,
-    public readonly orderDependent: string = "NOT_ORDER_DEPENDENT",
-    public readonly distinctDependent: string = "NOT_DISTINCT_DEPENDENT",
-    public readonly requiredSettings: string[] = [],
-    public readonly comment: string | null = null,
-    public readonly tags: Record<string, string> = {}
-  ) {}
+  readonly name: string;
+  readonly schemaName: string;
+  readonly functionType: string;
+  readonly functionArguments: Uint8Array;
+  readonly outputSchema: Uint8Array;
+  readonly stability: string | null;
+  readonly nullHandling: string | null;
+  readonly description: string;
+  readonly examples: { sql: string; description: string }[];
+  readonly categories: string[];
+  readonly projectionPushdown: boolean | null;
+  readonly filterPushdown: boolean | null;
+  readonly orderPreservation: string | null;
+  readonly maxWorkers: number | null;
+  readonly orderDependent: string;
+  readonly distinctDependent: string;
+  readonly requiredSettings: string[];
+  readonly requiredSecrets: Array<{secret_type: string, scope: string | null, secret_name: string | null}>;
+  readonly comment: string | null;
+  readonly tags: Record<string, string>;
+
+  constructor(opts: FunctionInfoOptions) {
+    this.name = opts.name;
+    this.schemaName = opts.schemaName;
+    this.functionType = opts.functionType;
+    this.functionArguments = opts.functionArguments;
+    this.outputSchema = opts.outputSchema;
+    this.stability = opts.stability ?? null;
+    this.nullHandling = opts.nullHandling ?? null;
+    this.description = opts.description ?? "";
+    this.examples = opts.examples ?? [];
+    this.categories = opts.categories ?? [];
+    this.projectionPushdown = opts.projectionPushdown ?? null;
+    this.filterPushdown = opts.filterPushdown ?? null;
+    this.orderPreservation = opts.orderPreservation ?? null;
+    this.maxWorkers = opts.maxWorkers ?? null;
+    this.orderDependent = opts.orderDependent ?? "NOT_ORDER_DEPENDENT";
+    this.distinctDependent = opts.distinctDependent ?? "NOT_DISTINCT_DEPENDENT";
+    this.requiredSettings = opts.requiredSettings ?? [];
+    this.requiredSecrets = opts.requiredSecrets ?? [];
+    this.comment = opts.comment ?? null;
+    this.tags = opts.tags ?? {};
+  }
 
   serialize(): Uint8Array {
     return serializeInfoBatch(FUNCTION_INFO_SCHEMA, {
@@ -268,6 +319,11 @@ export class FunctionInfo {
       order_dependent: this.orderDependent,
       distinct_dependent: this.distinctDependent,
       required_settings: this.requiredSettings,
+      required_secrets: this.requiredSecrets.map(s => ({
+        secret_type: s.secret_type,
+        scope: s.scope,
+        secret_name: s.secret_name,
+      })),
       comment: this.comment,
       tags: Object.entries(this.tags).map(([k, v]) => [k, v]),
     });
@@ -293,27 +349,41 @@ export class FunctionInfo {
         }
       }
     }
-    return new FunctionInfo(
-      d.name,
-      d.schema_name,
-      d.function_type,
-      toU8(d.arguments),
-      toU8(d.output_schema),
-      d.stability ?? null,
-      d.null_handling ?? null,
-      d.description ?? "",
+    const requiredSecrets: Array<{secret_type: string, scope: string | null, secret_name: string | null}> = [];
+    if (d.required_secrets) {
+      const secArr = Array.isArray(d.required_secrets) ? d.required_secrets : [...d.required_secrets];
+      for (const entry of secArr) {
+        if (entry) {
+          requiredSecrets.push({
+            secret_type: entry.secret_type ?? entry.get?.("secret_type") ?? "",
+            scope: entry.scope ?? entry.get?.("scope") ?? null,
+            secret_name: entry.secret_name ?? entry.get?.("secret_name") ?? null,
+          });
+        }
+      }
+    }
+    return new FunctionInfo({
+      name: d.name,
+      schemaName: d.schema_name,
+      functionType: d.function_type,
+      functionArguments: toU8(d.arguments),
+      outputSchema: toU8(d.output_schema),
+      stability: d.stability ?? null,
+      nullHandling: d.null_handling ?? null,
+      description: d.description ?? "",
       examples,
-      toStringArray(d.categories),
-      d.projection_pushdown ?? null,
-      d.filter_pushdown ?? null,
-      d.order_preservation ?? null,
-      d.max_workers != null ? Number(d.max_workers) : null,
-      d.order_dependent ?? "NOT_ORDER_DEPENDENT",
-      d.distinct_dependent ?? "NOT_DISTINCT_DEPENDENT",
-      toStringArray(d.required_settings),
-      d.comment ?? null,
+      categories: toStringArray(d.categories),
+      projectionPushdown: d.projection_pushdown ?? null,
+      filterPushdown: d.filter_pushdown ?? null,
+      orderPreservation: d.order_preservation ?? null,
+      maxWorkers: d.max_workers != null ? Number(d.max_workers) : null,
+      orderDependent: d.order_dependent ?? "NOT_ORDER_DEPENDENT",
+      distinctDependent: d.distinct_dependent ?? "NOT_DISTINCT_DEPENDENT",
+      requiredSettings: toStringArray(d.required_settings),
+      requiredSecrets,
+      comment: d.comment ?? null,
       tags,
-    );
+    });
   }
 }
 

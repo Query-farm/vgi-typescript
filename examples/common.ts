@@ -1,7 +1,7 @@
 // Shared function and catalog registration for example workers.
 // Used by both the IPC worker (worker.ts) and HTTP worker (http-worker.ts).
 
-import { Schema, Field, Int64 } from "apache-arrow";
+import { Schema, Field, Int32, Int64, Float64, Bool, Utf8, Struct } from "@query-farm/apache-arrow";
 import { type CatalogDescriptor, type MacroDescriptor, Arguments, serializeBatch, batchFromColumns } from "../src/index.js";
 import { scalarFunctions } from "./scalar.js";
 import { tableFunctions } from "./table.js";
@@ -28,6 +28,34 @@ const clampDefaults = serializeBatch(
 export const catalog: CatalogDescriptor = {
   name: "example",
   defaultSchema: "main",
+  secretTypes: [
+    {
+      name: "vgi_example",
+      description: "Example VGI secret for testing",
+      schema: new Schema([
+        new Field("secret_string", new Utf8(), true, new Map([["redact", "true"]])),
+        new Field("api_key", new Utf8(), true, new Map([["redact", "true"]])),
+        new Field("port", new Int32(), true),
+        new Field("use_ssl", new Bool(), true),
+        new Field("timeout", new Float64(), true),
+      ]),
+    },
+  ],
+  settings: [
+    { name: "vgi_verbose_mode", description: "Enable verbose output", type: new Bool(), defaultValue: false },
+    { name: "greeting", description: "Custom greeting message", type: new Utf8(), defaultValue: "Hello" },
+    { name: "multiplier", description: "Value multiplier", type: new Int64(), defaultValue: 1 },
+    { name: "threshold", description: "Filter threshold", type: new Int64(), defaultValue: 0 },
+    {
+      name: "config",
+      description: "Sequence configuration struct",
+      type: new Struct([
+        new Field("start", new Int64(), true),
+        new Field("step", new Int64(), true),
+        new Field("label", new Utf8(), true),
+      ]),
+    },
+  ],
   schemas: [
     {
       name: "main",

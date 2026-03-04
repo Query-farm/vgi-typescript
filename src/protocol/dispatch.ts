@@ -1,7 +1,7 @@
 // Build VGI protocol from worker implementation.
 // Registers bind, init, table_function_cardinality, and catalog methods on vgi-rpc Protocol.
 
-import { Schema, Field, Binary, Utf8, Int64, Int32, Bool, List, RecordBatch } from "apache-arrow";
+import { Schema, Field, Binary, Utf8, Int64, Int32, Bool, List, RecordBatch } from "@query-farm/apache-arrow";
 import { Protocol, type OutputCollector } from "vgi-rpc";
 
 // NOTE: We must NOT use vgi-rpc's str/bytes/int/etc. singletons in Schema objects
@@ -9,7 +9,7 @@ import { Protocol, type OutputCollector } from "vgi-rpc";
 // compiled dist. Instead, we pre-build Schema objects and pass them directly to Protocol
 // methods (toSchema() passes Schema instances through without instanceof checks).
 import type { FunctionRegistry } from "../functions/registry.js";
-import type { VgiFunction, StreamHandlers } from "../functions/types.js";
+import type { VgiFunction, StreamHandlers, HandlerState } from "../functions/types.js";
 import {
   deserializeBindRequest,
   serializeBindResponse,
@@ -33,6 +33,7 @@ import type { CatalogInterface } from "../catalog/interface.js";
 import { MacroType } from "../catalog/interface.js";
 import { NoCatalogError } from "../errors.js";
 
+
 // ============================================================================
 // Protocol building
 // ============================================================================
@@ -41,6 +42,13 @@ export interface ProtocolConfig {
   registry: FunctionRegistry;
   catalogInterface?: CatalogInterface;
   catalogName?: string;
+  /**
+   * Recover accumulated exchange state from FINALIZE init_opaque_data.
+   * For HTTP transport, this unpacks the state token that the C++ extension
+   * passes from the last INPUT exchange to the FINALIZE init request.
+   * Returns the deserialized VGI dispatch state object (with userState field).
+   */
+  recoverExchangeState?: (opaqueData: Uint8Array) => any;
 }
 
 // The Python vgi-rpc framework wraps ALL non-void unary results in a single
@@ -85,6 +93,22 @@ function wrapResult(
   return { result: serializeBatch(batch) };
 }
 
+/**
+ * Recover accumulated exchange state from a FINALIZE init request.
+ * Used by both init and exchange handlers to avoid duplicating the try/catch.
+ */
+function recoverFinalizeState(request: InitRequest, config: ProtocolConfig): any {
+  if (request.phase === TableInOutPhase.FINALIZE && request.initOpaqueData && config.recoverExchangeState) {
+    try {
+      const recovered = config.recoverExchangeState(request.initOpaqueData);
+      return recovered?.userState;
+    } catch (e: any) {
+      throw new Error(`Failed to recover FINALIZE state from init_opaque_data: ${e.message}`);
+    }
+  }
+  return undefined;
+}
+
 export function buildVgiProtocol(config: ProtocolConfig): Protocol {
   const { registry, catalogInterface } = config;
   const protocol = new Protocol("vgi");
@@ -93,6 +117,9 @@ export function buildVgiProtocol(config: ProtocolConfig): Protocol {
   const bindResponseInnerSchema = new Schema([
     new Field("output_schema", new Binary(), false),
     new Field("opaque_data", new Binary(), true),
+    new Field("lookup_secret_types", new List(new Field("item", new Utf8(), true)), false),
+    new Field("lookup_scopes", new List(new Field("item", new Utf8(), true)), false),
+    new Field("lookup_names", new List(new Field("item", new Utf8(), true)), false),
   ]);
 
   const initHeaderSchema = new Schema([
@@ -141,17 +168,22 @@ export function buildVgiProtocol(config: ProtocolConfig): Protocol {
     inputSchema: dummyInputSchema,
     outputSchema: emptySchema,
     init: (params) => {
+      // Preserve raw request IPC bytes for exchange reconstruction
+      const requestIpcBytes = toUint8Array(params.request);
       const innerParams = unwrapRequest(params.request);
       const request = deserializeInitRequest(innerParams);
       const func = registry.get(request.bindCall.functionName);
 
-
       const initResponse = func.globalInit(request);
 
-      const handlers = func.createStreamHandlers(request, initResponse);
+      // For FINALIZE over HTTP, recover accumulated INPUT state from init_opaque_data.
+      // The C++ extension passes the last exchange state token as init_opaque_data.
+      const accumulatedState = recoverFinalizeState(request, config);
+
+      const handlers = func.createStreamHandlers(request, initResponse, accumulatedState);
 
       // Initialize the appropriate handler
-      let handlerState: any;
+      let handlerState: HandlerState | undefined;
       if (handlers.producerInit) {
         handlerState = handlers.producerInit();
       } else if (handlers.exchangeInit) {
@@ -160,22 +192,75 @@ export function buildVgiProtocol(config: ProtocolConfig): Protocol {
 
       const isProducer = !!handlers.producerFn;
 
-      return {
-        request,
-        func,
-        initResponse,
-        handlers,
-        handlerState,
+      // Extract mutable user state from handler (e.g. { remaining, currentIndex })
+      // for serialization across HTTP exchanges. The processParams/infrastructure
+      // is reconstructed fresh; only user state needs to persist.
+      const userState = handlerState?.state ?? null;
+
+      // Build state object with raw binary data (no base64/hex encoding).
+      // The Arrow state serializer picks fields by name; live objects
+      // (_handlers, _handlerState, _initResponse, __outputSchema) are ignored.
+      const state: any = {
+        functionName: request.bindCall.functionName,
+        initRequestIpc: requestIpcBytes,
+        executionId: initResponse.executionId,
+        maxWorkers: Number(initResponse.maxWorkers),
+        opaqueData: initResponse.opaqueData ?? null,
         isProducer,
-        // Dynamic output schema for this invocation (vgi-rpc dispatch uses this)
-        __outputSchema: handlers.outputSchema ?? emptySchema,
-        // Tell dispatch whether this is a producer or exchange
+        userState,
         __isProducer: isProducer,
+        // Live Schema for vgi-rpc to read during init (not serializable).
+        __outputSchema: handlers.outputSchema ?? emptySchema,
+        // Live objects for immediate use during init (producer mode).
+        _handlers: handlers,
+        _handlerState: handlerState,
+        _initResponse: initResponse,
       };
+      return state;
     },
     exchange: async (state, input, out) => {
-      const { handlers, handlerState, isProducer } = state;
-      if (isProducer && handlers.producerFn) {
+      // Reconstruct live objects from serializable state.
+      // This handles both immediate use (producer during init, where _handlers
+      // is still present) and deserialized exchange (where we reconstruct).
+      let handlers: StreamHandlers;
+      let handlerState: HandlerState | undefined;
+
+      if (state._handlers) {
+        // Immediate use (same request, state still in memory)
+        handlers = state._handlers;
+        handlerState = state._handlerState;
+      } else {
+        // Deserialized from token — reconstruct from serializable refs.
+        // Infrastructure (processParams, BoundStorage) is recreated fresh.
+        // Mutable user state is merged from state.userState.
+        const func = registry.get(state.functionName);
+        const initRequestBatch = deserializeBatch(state.initRequestIpc);
+        const initRequestDict = batchToScalarDict(initRequestBatch);
+        const request = deserializeInitRequest(initRequestDict);
+        const executionId = state.executionId;
+        const opaqueData = state.opaqueData ?? null;
+        const initResponse: GlobalInitResponse = {
+          executionId,
+          maxWorkers: Number(state.maxWorkers ?? 1),
+          opaqueData,
+        };
+
+        // Recover accumulated state for FINALIZE phase from initOpaqueData
+        const recoveredState = recoverFinalizeState(request, config);
+
+        handlers = func.createStreamHandlers(request, initResponse, recoveredState);
+        if (handlers.producerInit) {
+          handlerState = handlers.producerInit();
+        } else if (handlers.exchangeInit) {
+          handlerState = handlers.exchangeInit();
+        }
+        // Merge preserved user state (e.g. { remaining, currentIndex })
+        if (state.userState != null && handlerState?.state !== undefined) {
+          handlerState!.state = state.userState;
+        }
+      }
+
+      if (state.isProducer && handlers.producerFn) {
         // Producer mode inside an exchange dispatch: patch finish() to bypass
         // OutputCollector's producerMode check (since dispatch created it
         // in exchange mode but we're actually producing).
@@ -184,10 +269,20 @@ export function buildVgiProtocol(config: ProtocolConfig): Protocol {
       } else if (handlers.exchangeFn) {
         await handlers.exchangeFn(handlerState, input, out);
       }
+
+      // Save mutated user state for the next exchange round
+      if (handlerState?.state !== undefined) {
+        state.userState = handlerState!.state;
+      }
     },
     headerSchema: initHeaderSchema,
     headerInit: (params: any, state: any, ctx: any) => {
-      return serializeGlobalInitResponse(state.initResponse);
+      // During init, _initResponse is still in memory.
+      // For exchange, this is never called (headers are only in init response).
+      if (!state._initResponse) {
+        throw new Error("headerInit called on deserialized state: _initResponse not available");
+      }
+      return serializeGlobalInitResponse(state._initResponse);
     },
   });
 
@@ -247,6 +342,7 @@ function registerCatalogMethods(
     new Field("attach_id_required", new Bool(), false),
     new Field("default_schema", new Utf8(), false),
     new Field("settings", new List(new Field("item", new Binary(), true)), false),
+    new Field("secret_types", new List(new Field("item", new Binary(), true)), false),
   ]);
 
   const versionResponseSchema = new Schema([
@@ -319,6 +415,7 @@ function registerCatalogMethods(
         attach_id_required: result.attachIdRequired ?? true,
         default_schema: result.defaultSchema ?? "main",
         settings: result.settings ?? [],
+        secret_types: result.secretTypes ?? [],
       }, attachResultInnerSchema);
     },
   });

@@ -1,6 +1,6 @@
 // ReadOnlyCatalogInterface: derives catalog from registered functions + descriptors.
 
-import { Schema, Field, Int64, DataType, Utf8, Binary, Bool, Null } from "apache-arrow";
+import { Schema, Field, Int64, DataType, Utf8, Binary, Bool, Null } from "@query-farm/apache-arrow";
 import {
   CatalogInterface,
   type AttachId,
@@ -13,7 +13,7 @@ import {
   MacroInfo,
   MacroType,
 } from "./interface.js";
-import type { CatalogDescriptor, SchemaDescriptor, TableDescriptor, ViewDescriptor, MacroDescriptor } from "./descriptors.js";
+import type { CatalogDescriptor, SchemaDescriptor, TableDescriptor, ViewDescriptor, MacroDescriptor, SettingDescriptor, SecretTypeDescriptor } from "./descriptors.js";
 import type { VgiFunction } from "../functions/types.js";
 import type { FunctionRegistry } from "../functions/registry.js";
 import { argumentSpecsToSchema } from "../arguments/argument-spec.js";
@@ -46,6 +46,15 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
     const attachId = new Uint8Array(16);
     crypto.getRandomValues(attachId);
     this._attachments.set(name, attachId);
+
+    const settings = (this._descriptor.settings ?? []).map((s) =>
+      serializeSetting(s)
+    );
+
+    const secretTypes = (this._descriptor.secretTypes ?? []).map((s) =>
+      serializeSecretType(s)
+    );
+
     return {
       attachId,
       supportsTransactions: false,
@@ -54,6 +63,8 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
       catalogVersion: this._version,
       attachIdRequired: true,
       defaultSchema: this._descriptor.defaultSchema ?? "main",
+      settings,
+      secretTypes,
     };
   }
 
@@ -124,6 +135,7 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
             secrets: null,
             attachId: attachId,
             transactionId: null,
+            resolvedSecretsProvided: false,
           };
           const response = func.bind(bindRequest);
           columns = serializeSchema(response.outputSchema);
@@ -199,27 +211,30 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
           f.defaultOutputSchema ?? new Schema([])
         );
 
-        return new FunctionInfo(
-          f.meta.name,
-          name,
-          meta.functionType.toLowerCase(),
-          argBytes,
-          outputSchemaBytes,
-          meta.stability,
-          meta.nullHandling,
-          meta.description,
-          meta.examples.map((e) => ({ sql: e.sql, description: e.description })),
-          meta.categories,
-          meta.projectionPushdown,
-          meta.filterPushdown,
-          meta.preservesOrder,
-          meta.maxWorkers,
-          meta.orderDependent,
-          meta.distinctDependent,
-          meta.requiredSettings,
-          null,
-          {}
+        const requiredSecrets = (meta.requiredSecrets ?? []).map(
+          (secretType: string) => ({ secret_type: secretType, scope: null, secret_name: null })
         );
+
+        return new FunctionInfo({
+          name: f.meta.name,
+          schemaName: name,
+          functionType: meta.functionType.toLowerCase(),
+          functionArguments: argBytes,
+          outputSchema: outputSchemaBytes,
+          stability: meta.stability,
+          nullHandling: meta.nullHandling,
+          description: meta.description,
+          examples: meta.examples.map((e) => ({ sql: e.sql, description: e.description })),
+          categories: meta.categories,
+          projectionPushdown: meta.projectionPushdown,
+          filterPushdown: meta.filterPushdown,
+          orderPreservation: meta.preservesOrder,
+          maxWorkers: meta.maxWorkers,
+          orderDependent: meta.orderDependent,
+          distinctDependent: meta.distinctDependent,
+          requiredSettings: meta.requiredSettings,
+          requiredSecrets,
+        });
       });
   }
 
@@ -318,6 +333,74 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
     const views = this.schemaContentsViews(attachId, schemaName, transactionId);
     return views.find((v) => v.name === name) ?? null;
   }
+}
+
+// ============================================================================
+// Setting serialization (matches Python SettingSpec.serialize() format)
+// ============================================================================
+
+const SETTING_SCHEMA = new Schema([
+  new Field("name", new Utf8(), false),
+  new Field("description", new Utf8(), false),
+  new Field("type", new Binary(), false),
+  new Field("default_value", new Binary(), true),
+]);
+
+function serializeSetting(setting: SettingDescriptor): Uint8Array {
+  // Serialize the Arrow type as a schema with a single "value" field
+  const typeSchema = new Schema([new Field("value", setting.type, true)]);
+  const typeBytes = serializeSchema(typeSchema);
+
+  // Serialize the default value as a single-row batch, or null
+  let defaultBytes: Uint8Array | null = null;
+  if (setting.defaultValue != null) {
+    let val = setting.defaultValue;
+    // Coerce number to BigInt for Int64 types
+    if (DataType.isInt(setting.type) && (setting.type as any).bitWidth === 64) {
+      if (typeof val === "number") val = BigInt(val);
+    }
+    defaultBytes = serializeBatch(
+      batchFromColumns({ value: [val] }, typeSchema)
+    );
+  }
+
+  // Serialize the outer setting spec batch
+  return serializeBatch(
+    batchFromColumns(
+      {
+        name: [setting.name],
+        description: [setting.description],
+        type: [typeBytes],
+        default_value: [defaultBytes],
+      },
+      SETTING_SCHEMA
+    )
+  );
+}
+
+// ============================================================================
+// Secret type serialization (matches Python SecretTypeSpec.serialize() format)
+// ============================================================================
+
+const SECRET_TYPE_SCHEMA = new Schema([
+  new Field("name", new Utf8(), false),
+  new Field("description", new Utf8(), false),
+  new Field("parameters_schema", new Binary(), false),
+]);
+
+function serializeSecretType(spec: SecretTypeDescriptor): Uint8Array {
+  const parametersSchemaBytes = serializeSchema(spec.schema);
+
+  return serializeBatch(
+    batchFromColumns(
+      {
+        name: [spec.name],
+        description: [spec.description],
+        parameters_schema: [parametersSchemaBytes],
+      },
+      SECRET_TYPE_SCHEMA
+    )
+  );
 }
 
 function bufferEquals(a: Uint8Array, b: Uint8Array): boolean {

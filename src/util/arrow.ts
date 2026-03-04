@@ -15,7 +15,7 @@ import {
   RecordBatchReader,
   Int64,
   Map_,
-} from "apache-arrow";
+} from "@query-farm/apache-arrow";
 
 /**
  * Iterate rows of a RecordBatch as plain objects.
@@ -501,7 +501,13 @@ export function projectSchema(
   schema: Schema
 ): Schema {
   if (!projectionIds) return schema;
-  // Filter to valid column indices (DuckDB may send -1 for row_id sentinel)
+  // Validate projection IDs: -1 is the row_id sentinel (expected), others are errors
+  for (const id of projectionIds) {
+    if (id < -1) {
+      throw new Error(`projectSchema: unexpected negative projection ID ${id} (only -1 for row_id is allowed)`);
+    }
+  }
+  // Filter to valid column indices (DuckDB sends -1 for row_id sentinel)
   const validIds = projectionIds.filter((i) => i >= 0 && i < schema.fields.length);
   // If no valid projections, return full schema so functions still produce
   // rows with data (DuckDB only needs the row count for COUNT(*) etc.)
@@ -517,8 +523,17 @@ export function projectBatch(
   batch: RecordBatch
 ): RecordBatch {
   if (!projectionIds) return batch;
+  // Validate projection IDs: -1 is the row_id sentinel (expected), others are errors
+  for (const id of projectionIds) {
+    if (id < -1) {
+      throw new Error(`projectBatch: unexpected negative projection ID ${id} (only -1 for row_id is allowed)`);
+    }
+  }
+  // Filter to valid column indices (DuckDB sends -1 for row_id sentinel)
+  const validIds = projectionIds.filter((i) => i >= 0 && i < batch.schema.fields.length);
+  if (validIds.length === 0) return batch;
   const projectedSchema = projectSchema(projectionIds, batch.schema);
-  const children = projectionIds.map((i) => {
+  const children = validIds.map((i) => {
     const col = batch.getChildAt(i);
     return col!.data[0];
   });
@@ -553,6 +568,8 @@ export function batchToScalarDict(
 
 /**
  * Extract single-row batch to a secret dict (column per secret, each value is a struct).
+ * Handles both named secrets (column name = secret type) and scoped secrets
+ * (column name = "secret_N" with secret_type in field metadata).
  */
 export function batchToSecretDict(
   batch: RecordBatch | null
@@ -563,6 +580,18 @@ export function batchToSecretDict(
     const col = batch.getChild(field.name);
     if (col) {
       const val = col.get(0);
+
+      // Determine the key: for scoped secrets (secret_N), use secret_type from metadata
+      let key = field.name;
+      let scope: string | undefined;
+      if (field.name.startsWith("secret_")) {
+        const secretType = field.metadata?.get?.("secret_type");
+        if (secretType) {
+          key = secretType;
+          scope = field.metadata?.get?.("scope") ?? undefined;
+        }
+      }
+
       if (val && typeof val === "object" && !ArrayBuffer.isView(val)) {
         // Struct scalar -> convert to plain object
         const dict: Record<string, any> = {};
@@ -571,9 +600,21 @@ export function batchToSecretDict(
         } else {
           Object.assign(dict, val);
         }
-        result[field.name] = dict;
+        if (key in result) {
+          throw new Error(
+            `batchToSecretDict: duplicate secret_type '${key}' (scope=${scope ?? "none"}). ` +
+            `Use scoped secrets with distinct scopes to avoid collisions.`
+          );
+        }
+        result[key] = dict;
+        // Store scope-qualified key for disambiguation
+        if (scope) {
+          result[`${key}:${scope}`] = dict;
+        }
+      } else if (val === null || val === undefined) {
+        // Skip null struct values (secret not found)
       } else {
-        result[field.name] = {};
+        result[key] = {};
       }
     }
   }

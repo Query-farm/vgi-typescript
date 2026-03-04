@@ -1,7 +1,7 @@
 // VgiClient — high-level client for calling VGI worker functions and catalog API.
 // Works with any RpcClient (subprocess or HTTP transport).
 
-import { Schema, Field, RecordBatch, Utf8, Binary } from "apache-arrow";
+import { Schema, Field, RecordBatch, Utf8, Binary } from "@query-farm/apache-arrow";
 import type { RpcClient, StreamSession } from "vgi-rpc";
 import {
   serializeBindRequest,
@@ -101,6 +101,7 @@ export class VgiClient {
       secrets: secrets ?? null,
       attachId: this.attachId,
       transactionId: transactionId ?? null,
+      resolvedSecretsProvided: false,
     };
 
     const requestBatch = serializeBindRequest(request);

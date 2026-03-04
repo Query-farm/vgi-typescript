@@ -10,11 +10,13 @@ import {
   Utf8,
   DataType,
   RecordBatch,
-} from "apache-arrow";
+} from "@query-farm/apache-arrow";
 import {
   defineTableInOutFunction,
   batchFromColumns,
   emptyBatch,
+  serializeBatch,
+  deserializeBatch,
   type TableInOutBindParams,
   type TableInOutProcessParams,
 } from "../src/index.js";
@@ -49,11 +51,7 @@ const echo = defineTableInOutFunction({
 // 2. buffer_input - Buffer all input, emit on finalize
 // ============================================================================
 
-interface BufferInputState {
-  buffered: RecordBatch[];
-}
-
-const buffer_input = defineTableInOutFunction<Record<string, any>, BufferInputState>({
+const buffer_input = defineTableInOutFunction({
   name: "buffer_input",
   description: "Collects all input batches and emits during finalization",
   maxWorkers: 1,
@@ -62,20 +60,25 @@ const buffer_input = defineTableInOutFunction<Record<string, any>, BufferInputSt
     executionId: params.executionId,
     opaqueData: null,
   }),
-  initialState: () => ({
-    buffered: [],
-  }),
   process: (
     params: TableInOutProcessParams,
-    state: BufferInputState,
+    _state: null,
     batch: RecordBatch,
     out: OutputCollector
   ) => {
-    state.buffered.push(batch);
+    if (batch.numRows > 0) {
+      params.storage.queuePush([serializeBatch(batch)]);
+    }
     out.emit(emptyBatch(params.outputSchema));
   },
-  finalize: (_params: TableInOutProcessParams, state: BufferInputState) => {
-    return state.buffered;
+  finalize: (params: TableInOutProcessParams, _state: null) => {
+    const batches: RecordBatch[] = [];
+    for (;;) {
+      const item = params.storage.queuePop();
+      if (!item) break;
+      batches.push(deserializeBatch(item));
+    }
+    return batches;
   },
   examples: [
     { sql: "SELECT * FROM buffer_input((SELECT * FROM input_table))", description: "Buffer all input and emit on finalize" },
@@ -149,6 +152,45 @@ interface SumAllColumnsState {
   sums: Record<string, bigint | number>;
 }
 
+/** Build a single-row batch of current sums for storage persistence. */
+function buildSumBatch(
+  outputSchema: Schema,
+  sums: Record<string, bigint | number>,
+): RecordBatch {
+  const columns: Record<string, any[]> = {};
+  for (const field of outputSchema.fields) {
+    columns[field.name] = [sums[field.name] ?? (DataType.isInt(field.type) ? BigInt(0) : 0)];
+  }
+  return batchFromColumns(columns, outputSchema);
+}
+
+/** Collect partial sum batches from storage and merge into a single sum record. */
+function mergeSumBatches(
+  outputSchema: Schema,
+  partials: Uint8Array[],
+): Record<string, bigint | number> {
+  const merged: Record<string, bigint | number> = {};
+  for (const field of outputSchema.fields) {
+    merged[field.name] = DataType.isInt(field.type) ? BigInt(0) : 0;
+  }
+  for (const bytes of partials) {
+    const batch = deserializeBatch(bytes);
+    if (batch.numRows === 0) continue;
+    for (const field of outputSchema.fields) {
+      const col = batch.getChild(field.name);
+      if (!col) continue;
+      const v = col.get(0);
+      if (v === null || v === undefined) continue;
+      if (typeof merged[field.name] === "bigint") {
+        merged[field.name] = (merged[field.name] as bigint) + (typeof v === "bigint" ? v : BigInt(v));
+      } else {
+        merged[field.name] = (merged[field.name] as number) + Number(v);
+      }
+    }
+  }
+  return merged;
+}
+
 function buildNumericOutputSchema(inputSchema: Schema): Schema {
   const fields: Field[] = [];
   for (const field of inputSchema.fields) {
@@ -213,12 +255,19 @@ const sum_all_columns = defineTableInOutFunction<SumAllColumnsArgs, SumAllColumn
       }
     }
 
+    // Persist partial sums to storage for FINALIZE phase
+    const sumBatch = buildSumBatch(params.outputSchema, state.sums);
+    params.storage.put(serializeBatch(sumBatch));
+
     out.emit(emptyBatch(params.outputSchema));
   },
-  finalize: (params: TableInOutProcessParams<SumAllColumnsArgs>, state: SumAllColumnsState) => {
+  finalize: (params: TableInOutProcessParams<SumAllColumnsArgs>, _state: SumAllColumnsState) => {
+    // Collect partial sums from all workers and merge
+    const partials = params.storage.collect();
+    const merged = mergeSumBatches(params.outputSchema, partials);
     const columns: Record<string, any[]> = {};
     for (const field of params.outputSchema.fields) {
-      columns[field.name] = [state.sums[field.name] ?? (DataType.isInt(field.type) ? BigInt(0) : 0)];
+      columns[field.name] = [merged[field.name] ?? (DataType.isInt(field.type) ? BigInt(0) : 0)];
     }
     return [batchFromColumns(columns, params.outputSchema)];
   },
@@ -352,12 +401,19 @@ const sum_all_columns_simple_distributed = defineTableInOutFunction<Record<strin
       }
     }
 
+    // Persist partial sums to storage for FINALIZE phase
+    const sumBatch = buildSumBatch(params.outputSchema, state.partialSums);
+    params.storage.put(serializeBatch(sumBatch));
+
     out.emit(emptyBatch(params.outputSchema));
   },
-  finalize: (params: TableInOutProcessParams, state: SimpleDistributedState) => {
+  finalize: (params: TableInOutProcessParams, _state: SimpleDistributedState) => {
+    // Collect partial sums from all workers and merge
+    const partials = params.storage.collect();
+    const merged = mergeSumBatches(params.outputSchema, partials);
     const columns: Record<string, any[]> = {};
     for (const field of params.outputSchema.fields) {
-      columns[field.name] = [state.partialSums[field.name] ?? (DataType.isInt(field.type) ? BigInt(0) : 0)];
+      columns[field.name] = [merged[field.name] ?? (DataType.isInt(field.type) ? BigInt(0) : 0)];
     }
     return [batchFromColumns(columns, params.outputSchema)];
   },
@@ -365,6 +421,73 @@ const sum_all_columns_simple_distributed = defineTableInOutFunction<Record<strin
     { sql: "SELECT * FROM sum_all_columns_simple_distributed((SELECT * FROM input_table))", description: "Sum columns using distributed workers with callback API" },
   ],
   categories: ["aggregation", "numeric", "distributed"],
+});
+
+// ============================================================================
+// 8. filter_by_setting - Filters rows where value >= threshold setting
+// ============================================================================
+
+const filter_by_setting = defineTableInOutFunction({
+  name: "filter_by_setting",
+  description: "Filter rows where value column >= threshold setting",
+  requiredSettings: ["threshold"],
+  onBind: (params: TableInOutBindParams) => {
+    if (!params.bindCall.inputSchema) {
+      throw new Error("input_schema is required");
+    }
+    return { outputSchema: params.bindCall.inputSchema };
+  },
+  process: (
+    params: TableInOutProcessParams,
+    _state: null,
+    batch: RecordBatch,
+    out: OutputCollector
+  ) => {
+    const rawThreshold = params.settings.threshold;
+    const threshold = typeof rawThreshold === "bigint" ? rawThreshold : BigInt(Number(rawThreshold));
+
+    const col = batch.getChild("value");
+    if (!col) {
+      out.emit(batch);
+      return;
+    }
+
+    // Filter rows where value >= threshold
+    const indices: number[] = [];
+    for (let i = 0; i < col.length; i++) {
+      const v = col.get(i);
+      if (v !== null && v !== undefined) {
+        const bv = typeof v === "bigint" ? v : BigInt(Number(v));
+        if (bv >= threshold) {
+          indices.push(i);
+        }
+      }
+    }
+
+    if (indices.length === 0) {
+      out.emit(emptyBatch(params.outputSchema));
+      return;
+    }
+
+    // Build filtered batch
+    const columns: Record<string, any[]> = {};
+    for (const field of params.outputSchema.fields) {
+      const srcCol = batch.getChild(field.name);
+      const values: any[] = [];
+      if (srcCol) {
+        for (const idx of indices) {
+          values.push(srcCol.get(idx));
+        }
+      }
+      columns[field.name] = values;
+    }
+
+    out.emit(batchFromColumns(columns, params.outputSchema));
+  },
+  examples: [
+    { sql: "SELECT * FROM filter_by_setting((SELECT * FROM input_table))", description: "Filter rows using the threshold setting" },
+  ],
+  categories: ["transform", "settings"],
 });
 
 // ============================================================================
@@ -379,4 +502,5 @@ export const tableInOutFunctions: VgiFunction[] = [
   exception_process,
   exception_finalize,
   sum_all_columns_simple_distributed,
+  filter_by_setting,
 ];

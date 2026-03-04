@@ -2,7 +2,7 @@
 // Two-phase: INPUT phase receives and transforms batches,
 // FINALIZE phase emits final results.
 
-import { Schema, Field, DataType, RecordBatch, Null } from "apache-arrow";
+import { Schema, Field, DataType, RecordBatch, Null } from "@query-farm/apache-arrow";
 import type { OutputCollector } from "vgi-rpc";
 import { DEFAULT_MAX_WORKERS, TableInOutPhase } from "../types.js";
 import type {
@@ -21,6 +21,7 @@ import type { ArgumentSpec } from "../arguments/argument-spec.js";
 import { batchToScalarDict, batchToSecretDict, projectSchema, emptyBatch } from "../util/arrow.js";
 import { deserializeFilters, FilteringOutputCollector, type PushdownFilters } from "../util/filter-pushdown.js";
 import { FunctionStability } from "../types.js";
+import { BoundStorage, storage as defaultStorage } from "../storage/function-storage.js";
 
 // ============================================================================
 // Table In-Out parameter bundles (reuse table function's)
@@ -41,6 +42,8 @@ export interface TableInOutProcessParams<TArgs = Record<string, any>> {
   settings: Record<string, any>;
   secrets: Record<string, Record<string, any>>;
   pushdownFilters?: PushdownFilters;
+  /** Shared storage for cross-phase and cross-worker data (SQLite-backed). */
+  storage: BoundStorage;
 }
 
 // ============================================================================
@@ -95,16 +98,10 @@ export interface TableInOutConfig<
   requiredSecrets?: string[];
 }
 
-function executionIdToKey(id: Uint8Array): string {
-  return Array.from(id).map(b => b.toString(16).padStart(2, "0")).join("");
-}
-
 export function defineTableInOutFunction<
   TArgs = Record<string, any>,
   TState = null,
 >(config: TableInOutConfig<TArgs, TState>): VgiFunction {
-  // State cache: stores INPUT phase state so FINALIZE phase can access it
-  const stateCache = new Map<string, TState>();
 
   // Build argument specs
   const specs: ArgumentSpec[] = [];
@@ -230,7 +227,8 @@ export function defineTableInOutFunction<
 
     createStreamHandlers(
       request: InitRequest,
-      response: GlobalInitResponse
+      response: GlobalInitResponse,
+      accumulatedState?: any,
     ): StreamHandlers {
       const args = extractArgs(request.bindCall);
       const settings = batchToScalarDict(request.bindCall.settings);
@@ -245,6 +243,12 @@ export function defineTableInOutFunction<
         ? deserializeFilters(request.pushdownFilters)
         : undefined;
 
+      // Create BoundStorage for cross-phase/cross-worker data sharing
+      const boundStorage = new BoundStorage(
+        defaultStorage,
+        response.executionId ?? new Uint8Array(16),
+      );
+
       const processParams: TableInOutProcessParams<TArgs> = {
         args,
         initCall: request,
@@ -253,42 +257,45 @@ export function defineTableInOutFunction<
         settings,
         secrets,
         pushdownFilters,
+        storage: boundStorage,
       };
 
       const phase = request.phase;
 
       if (phase === TableInOutPhase.FINALIZE) {
         // FINALIZE phase: producer mode
-        // Retrieve state accumulated during INPUT phase
-        const execKey = response.executionId
-          ? executionIdToKey(response.executionId)
-          : null;
-        const cachedState = execKey ? stateCache.get(execKey) : undefined;
-        if (execKey) stateCache.delete(execKey); // Clean up
-
-        const finalizeState = cachedState ?? (config.initialState
-          ? config.initialState(processParams)
-          : (null as TState));
+        // Retrieve state accumulated during INPUT phase.
+        // accumulatedState comes from the exchange state token (serialized via HTTP
+        // init_opaque_data or subprocess state round-trip). Falls back to fresh initial state.
+        let finalizeState: TState;
+        if (accumulatedState != null) {
+          // State integrity is guaranteed by HMAC-SHA256 on the state token
+          // (vgi-rpc's packStateToken/unpackStateToken). No shape validation needed.
+          finalizeState = accumulatedState as TState;
+        } else {
+          finalizeState = config.initialState
+            ? config.initialState(processParams)
+            : (null as TState);
+        }
 
         const batches = config.finalize
           ? config.finalize(processParams, finalizeState)
           : [];
-        let batchIdx = 0;
 
         return {
           outputSchema,
-          producerInit: () => ({ batches, batchIdx }),
+          producerInit: () => ({ state: { batchIdx: 0 }, batches }),
           producerFn: (
-            state: { batches: RecordBatch[]; batchIdx: number },
+            pState: { state: { batchIdx: number }; batches: RecordBatch[] },
             out: OutputCollector
           ) => {
-            if (state.batchIdx >= state.batches.length) {
+            if (pState.state.batchIdx >= pState.batches.length) {
               out.finish();
               return;
             }
-            out.emit(state.batches[state.batchIdx]);
-            state.batchIdx++;
-            if (state.batchIdx >= state.batches.length) {
+            out.emit(pState.batches[pState.state.batchIdx]);
+            pState.state.batchIdx++;
+            if (pState.state.batchIdx >= pState.batches.length) {
               out.finish();
             }
           },
@@ -299,14 +306,6 @@ export function defineTableInOutFunction<
       const state = config.initialState
         ? config.initialState(processParams)
         : (null as TState);
-
-      // Store state in cache so FINALIZE phase can access it
-      const execKey = response.executionId
-        ? executionIdToKey(response.executionId)
-        : null;
-      if (execKey) {
-        stateCache.set(execKey, state);
-      }
 
       const processFn =
         config.process ??

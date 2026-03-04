@@ -1,6 +1,6 @@
 // Client option types for VgiClient.
 
-import type { RecordBatch } from "apache-arrow";
+import type { RecordBatch } from "@query-farm/apache-arrow";
 import type { Arguments } from "../arguments/arguments.js";
 
 /** Conflict resolution strategy for create operations. */

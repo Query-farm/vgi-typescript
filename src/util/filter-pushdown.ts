@@ -1,7 +1,7 @@
 // Filter pushdown: deserialize, evaluate, and apply DuckDB filter predicates.
 // Ported from vgi-python/vgi/table_filter_pushdown.py
 
-import { RecordBatch, Schema } from "apache-arrow";
+import { RecordBatch, Schema } from "@query-farm/apache-arrow";
 import type { OutputCollector } from "vgi-rpc";
 import { batchFromColumns, emptyBatch } from "./arrow.js";
 

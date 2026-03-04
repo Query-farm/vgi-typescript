@@ -11,9 +11,13 @@ make install              # bun install
 make build                # Build types + JS bundle
 make clean                # Remove dist/
 
-make test                 # Run all integration tests (sequentially)
-make -j8 test             # Run all tests in parallel (8 jobs)
-make test/vgi_cardinality # Run a single test by name
+make test                 # Run all subprocess transport tests (sequentially)
+make -j8 test             # Run all subprocess tests in parallel (8 jobs)
+make test-http            # Run all HTTP transport tests
+make -j8 test-http        # Run all HTTP tests in parallel
+make -j8 test-all         # Run both subprocess and HTTP tests
+make test/vgi_cardinality # Run a single subprocess test by name
+make test-http/vgi_cardinality  # Run a single HTTP test by name
 make test/integration/table/sequence  # Subdirectory tests work too
 
 # Override defaults:
@@ -27,6 +31,12 @@ Test target names mirror the test file paths under `vgi/test/sql/`, minus the `.
 - `vgi/test/sql/integration/table/sequence.test` → `make test/integration/table/sequence`
 
 Each test runs the **release** binary first. On failure, it reruns with the **debug** binary (`-s` flag) to show verbose diagnostic output.
+
+### Both transports must pass
+
+Always run tests on **both** subprocess and HTTP transports. Use `make -j8 test-all`
+or run `make -j8 test` and `make -j8 test-http` separately. A change is not complete
+until both transports pass.
 
 ## Build (raw commands)
 
@@ -131,6 +141,17 @@ VGI_WORKER_STDERR_PASSTHROUGH=1 /Users/rusty/Development/vgi/build/debug/duckdb 
 # Full debug mode:
 VGI_WORKER_DEBUG=1 /Users/rusty/Development/vgi/build/debug/duckdb -c "..."
 ```
+
+## Design Principles
+
+### No in-memory state for HTTP transport
+
+Never use single-process in-memory stores for state (e.g., in-memory maps keyed by
+session ID). Always assume the HTTP transport will be used and requests will go to
+different hosts via a load balancer. All state must be fully serializable and
+self-contained in the state token that round-trips through the client. If something
+can't be serialized, rearchitect the approach rather than falling back to in-memory
+storage.
 
 ## Dependencies
 

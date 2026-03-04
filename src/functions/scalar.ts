@@ -12,7 +12,7 @@ import {
   makeData,
   vectorFromArray,
   Int64,
-} from "apache-arrow";
+} from "@query-farm/apache-arrow";
 import type { OutputCollector } from "vgi-rpc";
 import {
   FunctionType,
@@ -181,7 +181,7 @@ export function defineScalarFunction(config: ScalarFunctionConfig): VgiFunction 
       // DuckDB only sends const arg values in Arguments (column args are in inputSchema).
       // Arguments are indexed sequentially (0, 1, ...) for const args only.
       const constArgs: Record<string, any> = {};
-      if (config.constParams) {
+      {
         let constIdx = 0;
         for (const spec of specs) {
           if (spec.isConst) {
@@ -243,9 +243,11 @@ export function defineScalarFunction(config: ScalarFunctionConfig): VgiFunction 
         }
       }
 
+      const inputSchema = request.bindCall.inputSchema;
+
       return {
         outputSchema,
-        inputSchema: request.bindCall.inputSchema ?? undefined,
+        inputSchema: inputSchema ?? undefined,
         exchangeInit: () => ({}),
         exchangeFn: (state: any, input: RecordBatch, out: OutputCollector) => {
           const result = config.compute(input, constArgs, { settings, secrets });

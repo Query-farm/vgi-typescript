@@ -14,7 +14,7 @@ import {
   vectorFromArray,
   makeData,
   Data,
-} from "apache-arrow";
+} from "@query-farm/apache-arrow";
 import type { ResolvedMetadata, ParameterInfo, FunctionExample } from "./types.js";
 
 // Helper to create a Map_ type properly

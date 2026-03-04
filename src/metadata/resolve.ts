@@ -16,7 +16,7 @@ import {
   type ParameterInfo,
   type FunctionExample,
 } from "./types.js";
-import { DataType, Utf8, Binary, Int64, Int32, Float64, Float32, Bool, Null } from "apache-arrow";
+import { DataType, Utf8, Binary, Int64, Int32, Float64, Float32, Bool, Null } from "@query-farm/apache-arrow";
 
 function arrowTypeToName(type: DataType): string | null {
   if (type instanceof Utf8) return "VARCHAR";

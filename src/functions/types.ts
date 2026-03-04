@@ -1,6 +1,6 @@
 // Function config interfaces and VgiFunction base type.
 
-import type { Schema, RecordBatch, DataType } from "apache-arrow";
+import type { Schema, RecordBatch, DataType } from "@query-farm/apache-arrow";
 import type { OutputCollector } from "vgi-rpc";
 import type {
   FunctionStability,
@@ -19,6 +19,13 @@ import type {
 } from "../protocol/types.js";
 import type { Arguments } from "../arguments/arguments.js";
 import type { ArgumentSpec } from "../arguments/argument-spec.js";
+
+/** Convention for handler state: mutable user state lives in `.state`. */
+export interface HandlerState<T = any> {
+  /** Serializable user state for HTTP exchange round-trips. */
+  state: T;
+  [key: string]: any;
+}
 
 export interface FunctionExample {
   sql: string;
@@ -75,7 +82,8 @@ export interface VgiFunction {
   globalInit(request: InitRequest): GlobalInitResponse;
   createStreamHandlers(
     request: InitRequest,
-    response: GlobalInitResponse
+    response: GlobalInitResponse,
+    accumulatedState?: any,
   ): StreamHandlers;
   cardinality?(request: TableFunctionCardinalityRequest): TableCardinality;
 }

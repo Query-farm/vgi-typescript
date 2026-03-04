@@ -9,11 +9,11 @@ export { defineTableInOutFunction, type TableInOutConfig, type TableInOutBindPar
 export { Worker, type WorkerConfig } from "./worker.js";
 
 // Function types
-export type { VgiFunction, FunctionMeta, StreamHandlers, FunctionExample } from "./functions/types.js";
+export type { VgiFunction, FunctionMeta, StreamHandlers, FunctionExample, HandlerState } from "./functions/types.js";
 
 // Catalog
-export { CatalogInterface, type CatalogAttachResult, SchemaInfo, TableInfo, ViewInfo, FunctionInfo, MacroInfo, MacroType, type AttachId } from "./catalog/interface.js";
-export type { CatalogDescriptor, SchemaDescriptor, TableDescriptor, ViewDescriptor, MacroDescriptor } from "./catalog/descriptors.js";
+export { CatalogInterface, type CatalogAttachResult, SchemaInfo, TableInfo, ViewInfo, FunctionInfo, type FunctionInfoOptions, MacroInfo, MacroType, type AttachId } from "./catalog/interface.js";
+export type { CatalogDescriptor, SchemaDescriptor, TableDescriptor, ViewDescriptor, MacroDescriptor, SettingDescriptor, SecretTypeDescriptor } from "./catalog/descriptors.js";
 export { ReadOnlyCatalogInterface } from "./catalog/read-only.js";
 
 // Core types
@@ -74,6 +74,9 @@ export {
   type OrFilter,
   type StructFilter,
 } from "./util/filter-pushdown.js";
+
+// State serializer
+export { arrowStateSerializer, EXCHANGE_STATE_SCHEMA } from "./protocol/state-serializer.js";
 
 // Byte utilities
 export { toUint8Array } from "./util/bytes.js";

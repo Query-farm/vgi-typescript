@@ -1,7 +1,7 @@
 // Table function implementation.
 // Table functions produce output batches from arguments (no streaming input).
 
-import { Schema, Field, DataType, Null } from "apache-arrow";
+import { Schema, Field, DataType, Null } from "@query-farm/apache-arrow";
 import type { OutputCollector } from "vgi-rpc";
 import { DEFAULT_MAX_WORKERS } from "../types.js";
 import type {
@@ -33,6 +33,7 @@ export interface TableBindParams<TArgs = Record<string, any>> {
   bindCall: BindRequest;
   settings: Record<string, any>;
   secrets: Record<string, Record<string, any>>;
+  resolvedSecretsProvided: boolean;
 }
 
 export interface TableProcessParams<TArgs = Record<string, any>> {
@@ -68,6 +69,9 @@ export interface TableFunctionConfig<
   onBind: (params: TableBindParams<TArgs>) => {
     outputSchema: Schema;
     opaqueData?: Uint8Array;
+    lookupSecretTypes?: string[];
+    lookupScopes?: string[];
+    lookupNames?: string[];
   };
   /** Init (optional) */
   onInit?: (params: {
@@ -170,10 +174,16 @@ export function defineTableFunction<
       const args = extractArgs(request);
       const settings = batchToScalarDict(request.settings);
       const secrets = batchToSecretDict(request.secrets);
-      const result = config.onBind({ args, bindCall: request, settings, secrets });
+      const result = config.onBind({
+        args, bindCall: request, settings, secrets,
+        resolvedSecretsProvided: request.resolvedSecretsProvided ?? false,
+      });
       return {
         outputSchema: result.outputSchema,
         opaqueData: result.opaqueData ?? null,
+        lookupSecretTypes: result.lookupSecretTypes,
+        lookupScopes: result.lookupScopes,
+        lookupNames: result.lookupNames,
       };
     },
 
@@ -269,6 +279,7 @@ export function defineTableFunction<
             bindCall: request.bindCall,
             settings,
             secrets,
+            resolvedSecretsProvided: request.bindCall.resolvedSecretsProvided ?? false,
           });
         }
       : undefined,
