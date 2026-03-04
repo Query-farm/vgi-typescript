@@ -262,11 +262,62 @@ function evaluateStruct(
 // PushdownFilters
 // ============================================================================
 
+const OP_SYMBOLS: Record<ComparisonOp, string> = {
+  [ComparisonOp.EQ]: "=",
+  [ComparisonOp.NE]: "!=",
+  [ComparisonOp.GT]: ">",
+  [ComparisonOp.GE]: ">=",
+  [ComparisonOp.LT]: "<",
+  [ComparisonOp.LE]: "<=",
+};
+
+function formatValue(v: any): string {
+  if (typeof v === "string") return `'${v}'`;
+  if (typeof v === "bigint") return String(v);
+  return String(v);
+}
+
+function filterToSql(f: Filter): string {
+  const col = f.columnName;
+
+  switch (f.type) {
+    case "constant":
+      return `${col} ${OP_SYMBOLS[f.op]} ${formatValue(f.value)}`;
+    case "is_null":
+      return `${col} IS NULL`;
+    case "is_not_null":
+      return `${col} IS NOT NULL`;
+    case "in": {
+      const vals = [...f.values].map(formatValue).join(", ");
+      return `${col} IN (${vals})`;
+    }
+    case "and": {
+      const parts = f.children.map(filterToSql);
+      return `(${parts.join(" AND ")})`;
+    }
+    case "or": {
+      const parts = f.children.map(filterToSql);
+      return `(${parts.join(" OR ")})`;
+    }
+    case "struct": {
+      const nested = `${f.columnName}.${f.childName}`;
+      const remapped = { ...f.childFilter, columnName: nested };
+      return filterToSql(remapped);
+    }
+  }
+}
+
 export class PushdownFilters {
   constructor(
     readonly filters: Filter[],
     readonly version: string,
   ) {}
+
+  /** Convert filters to a human-readable SQL-like string. */
+  toSql(): string {
+    if (this.filters.length === 0) return "";
+    return this.filters.map(filterToSql).join(" AND ");
+  }
 
   /** Evaluate filters against a batch, returning a Uint8Array mask (0=fail, 1=pass). */
   evaluate(batch: RecordBatch): Uint8Array {
@@ -437,6 +488,16 @@ export function deserializeFilters(batch: RecordBatch): PushdownFilters {
  * Wraps an OutputCollector to automatically apply pushdown filters
  * to every emitted batch.
  */
+/**
+ * Format pushdown filters as a human-readable SQL-like string.
+ * Returns "(none)" when no filters exist.
+ */
+export function formatPushedFilters(filters: PushdownFilters | undefined): string {
+  if (!filters || filters.filters.length === 0) return "(none)";
+  const sql = filters.toSql();
+  return sql || "(none)";
+}
+
 export class FilteringOutputCollector {
   constructor(
     private inner: OutputCollector,

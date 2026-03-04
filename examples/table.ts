@@ -19,6 +19,7 @@ import {
   defineTableFunction,
   batchFromColumns,
   emptyBatch,
+  formatPushedFilters,
   DEFAULT_MAX_WORKERS,
   type TableBindParams,
   type TableProcessParams,
@@ -1111,6 +1112,88 @@ const scoped_secret_demo = defineTableFunction<{ path: string }, null>({
 });
 
 // ============================================================================
+// 15. filter_echo - Echoes pushed-down filter predicates in output
+// ============================================================================
+
+interface FilterEchoArgs {
+  count: number;
+  batch_size: number;
+}
+
+interface FilterEchoState {
+  remaining: number;
+  currentIndex: number;
+  filterStr: string;
+}
+
+const FILTER_ECHO_SCHEMA = new Schema([
+  new Field("n", new Int64(), true),
+  new Field("s", new Utf8(), true),
+  new Field("pushed_filters", new Utf8(), true),
+]);
+
+const filter_echo = defineTableFunction<FilterEchoArgs, FilterEchoState>({
+  name: "filter_echo",
+  description: "Echoes pushed-down filter predicates in output",
+  args: {
+    count: new Int64(),
+    batch_size: new Int64(),
+  },
+  argDefaults: {
+    batch_size: 2048,
+  },
+  projectionPushdown: true,
+  filterPushdown: true,
+  autoApplyFilters: true,
+  onBind: () => ({ outputSchema: FILTER_ECHO_SCHEMA }),
+  cardinality: (params: TableBindParams<FilterEchoArgs>) => ({
+    estimate: params.args.count,
+    max: params.args.count,
+  }),
+  initialState: (params: TableProcessParams<FilterEchoArgs>) => ({
+    remaining: params.args.count,
+    currentIndex: 0,
+    filterStr: formatPushedFilters(params.pushdownFilters),
+  }),
+  process: (
+    params: TableProcessParams<FilterEchoArgs>,
+    state: FilterEchoState,
+    out: OutputCollector
+  ) => {
+    if (state.remaining <= 0) {
+      out.finish();
+      return;
+    }
+
+    const size = Math.min(state.remaining, params.args.batch_size);
+    const nValues: bigint[] = [];
+    const sValues: string[] = [];
+    const filterValues: string[] = [];
+
+    for (let i = 0; i < size; i++) {
+      const idx = state.currentIndex + i;
+      nValues.push(BigInt(idx));
+      sValues.push(`row_${idx}`);
+      filterValues.push(state.filterStr);
+    }
+
+    out.emit(batchFromColumns({
+      n: nValues,
+      s: sValues,
+      pushed_filters: filterValues,
+    }, params.outputSchema));
+
+    state.currentIndex += size;
+    state.remaining -= size;
+  },
+  examples: [
+    { sql: "SELECT * FROM filter_echo(10)", description: "Generate 10 rows showing pushed filters" },
+    { sql: "SELECT pushed_filters FROM filter_echo(10) WHERE n >= 8", description: "See which filters were pushed down" },
+  ],
+  categories: ["generator", "diagnostic"],
+});
+
+// ============================================================================
 // Export all table functions
 // ============================================================================
 
@@ -1129,4 +1212,5 @@ export const tableFunctions: VgiFunction[] = [
   struct_settings,
   secret_demo,
   scoped_secret_demo,
+  filter_echo,
 ];

@@ -562,6 +562,29 @@ const return_secret_value = defineScalarFunction({
 });
 
 // ============================================================================
+// 14. hash_seed - Deterministic integers from a constant seed
+// ============================================================================
+
+const hash_seed = defineScalarFunction({
+  name: "hash_seed",
+  description: "Generate deterministic integers from a constant seed",
+  constParams: { seed: new Int64() },
+  returns: new Int64(),
+  stability: FunctionStability.CONSISTENT,
+  compute: (batch: RecordBatch, consts: Record<string, any>) => {
+    const seed = typeof consts.seed === "bigint" ? Number(consts.seed) : (consts.seed as number);
+    const result: bigint[] = [];
+    for (let i = 0; i < batch.numRows; i++) {
+      result.push(BigInt(seed + i));
+    }
+    return result;
+  },
+  examples: [
+    { sql: "SELECT hash_seed(42) FROM data", description: "Generate deterministic integers seeded at 42" },
+  ],
+});
+
+// ============================================================================
 // Export all scalar functions
 // ============================================================================
 
@@ -579,4 +602,5 @@ export const scalarFunctions: VgiFunction[] = [
   random_bytes,
   multiply_by_setting,
   return_secret_value,
+  hash_seed,
 ];
