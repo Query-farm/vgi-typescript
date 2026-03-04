@@ -71,7 +71,7 @@ const buffer_input = defineTableInOutFunction({
     }
     out.emit(emptyBatch(params.outputSchema));
   },
-  finalize: (params: TableInOutProcessParams, _state: null) => {
+  finalize: (params: TableInOutProcessParams, _states: null[]) => {
     const batches: RecordBatch[] = [];
     for (;;) {
       const item = params.storage.queuePop();
@@ -152,45 +152,6 @@ interface SumAllColumnsState {
   sums: Record<string, bigint | number>;
 }
 
-/** Build a single-row batch of current sums for storage persistence. */
-function buildSumBatch(
-  outputSchema: Schema,
-  sums: Record<string, bigint | number>,
-): RecordBatch {
-  const columns: Record<string, any[]> = {};
-  for (const field of outputSchema.fields) {
-    columns[field.name] = [sums[field.name] ?? (DataType.isInt(field.type) ? BigInt(0) : 0)];
-  }
-  return batchFromColumns(columns, outputSchema);
-}
-
-/** Collect partial sum batches from storage and merge into a single sum record. */
-function mergeSumBatches(
-  outputSchema: Schema,
-  partials: Uint8Array[],
-): Record<string, bigint | number> {
-  const merged: Record<string, bigint | number> = {};
-  for (const field of outputSchema.fields) {
-    merged[field.name] = DataType.isInt(field.type) ? BigInt(0) : 0;
-  }
-  for (const bytes of partials) {
-    const batch = deserializeBatch(bytes);
-    if (batch.numRows === 0) continue;
-    for (const field of outputSchema.fields) {
-      const col = batch.getChild(field.name);
-      if (!col) continue;
-      const v = col.get(0);
-      if (v === null || v === undefined) continue;
-      if (typeof merged[field.name] === "bigint") {
-        merged[field.name] = (merged[field.name] as bigint) + (typeof v === "bigint" ? v : BigInt(v));
-      } else {
-        merged[field.name] = (merged[field.name] as number) + Number(v);
-      }
-    }
-  }
-  return merged;
-}
-
 function buildNumericOutputSchema(inputSchema: Schema): Schema {
   const fields: Field[] = [];
   for (const field of inputSchema.fields) {
@@ -255,16 +216,26 @@ const sum_all_columns = defineTableInOutFunction<SumAllColumnsArgs, SumAllColumn
       }
     }
 
-    // Persist partial sums to storage for FINALIZE phase
-    const sumBatch = buildSumBatch(params.outputSchema, state.sums);
-    params.storage.put(serializeBatch(sumBatch));
-
     out.emit(emptyBatch(params.outputSchema));
   },
-  finalize: (params: TableInOutProcessParams<SumAllColumnsArgs>, _state: SumAllColumnsState) => {
-    // Collect partial sums from all workers and merge
-    const partials = params.storage.collect();
-    const merged = mergeSumBatches(params.outputSchema, partials);
+  finalize: (params: TableInOutProcessParams<SumAllColumnsArgs>, states: SumAllColumnsState[]) => {
+    // Merge sums from all workers (framework auto-collected from SQLite)
+    const merged: Record<string, bigint | number> = {};
+    for (const field of params.outputSchema.fields) {
+      merged[field.name] = DataType.isInt(field.type) ? BigInt(0) : 0;
+    }
+    for (const s of states) {
+      if (!s?.sums) continue;
+      for (const field of params.outputSchema.fields) {
+        const v = s.sums[field.name];
+        if (v === null || v === undefined) continue;
+        if (typeof merged[field.name] === "bigint") {
+          merged[field.name] = (merged[field.name] as bigint) + (typeof v === "bigint" ? v : BigInt(v));
+        } else {
+          merged[field.name] = (merged[field.name] as number) + Number(v);
+        }
+      }
+    }
     const columns: Record<string, any[]> = {};
     for (const field of params.outputSchema.fields) {
       columns[field.name] = [merged[field.name] ?? (DataType.isInt(field.type) ? BigInt(0) : 0)];
@@ -345,7 +316,7 @@ const exception_finalize = defineTableInOutFunction<SumAllColumnsArgs>({
   ) => {
     out.emit(emptyBatch(params.outputSchema));
   },
-  finalize: (_params: TableInOutProcessParams<SumAllColumnsArgs>, _state: null) => {
+  finalize: (_params: TableInOutProcessParams<SumAllColumnsArgs>, _states: null[]) => {
     throw new Error("Intentional exception during finalize()");
   },
   categories: ["test", "error"],
@@ -401,16 +372,26 @@ const sum_all_columns_simple_distributed = defineTableInOutFunction<Record<strin
       }
     }
 
-    // Persist partial sums to storage for FINALIZE phase
-    const sumBatch = buildSumBatch(params.outputSchema, state.partialSums);
-    params.storage.put(serializeBatch(sumBatch));
-
     out.emit(emptyBatch(params.outputSchema));
   },
-  finalize: (params: TableInOutProcessParams, _state: SimpleDistributedState) => {
-    // Collect partial sums from all workers and merge
-    const partials = params.storage.collect();
-    const merged = mergeSumBatches(params.outputSchema, partials);
+  finalize: (params: TableInOutProcessParams, states: SimpleDistributedState[]) => {
+    // Merge partial sums from all workers (framework auto-collected from SQLite)
+    const merged: Record<string, bigint | number> = {};
+    for (const field of params.outputSchema.fields) {
+      merged[field.name] = DataType.isInt(field.type) ? BigInt(0) : 0;
+    }
+    for (const s of states) {
+      if (!s?.partialSums) continue;
+      for (const field of params.outputSchema.fields) {
+        const v = s.partialSums[field.name];
+        if (v === null || v === undefined) continue;
+        if (typeof merged[field.name] === "bigint") {
+          merged[field.name] = (merged[field.name] as bigint) + (typeof v === "bigint" ? v : BigInt(v));
+        } else {
+          merged[field.name] = (merged[field.name] as number) + Number(v);
+        }
+      }
+    }
     const columns: Record<string, any[]> = {};
     for (const field of params.outputSchema.fields) {
       columns[field.name] = [merged[field.name] ?? (DataType.isInt(field.type) ? BigInt(0) : 0)];

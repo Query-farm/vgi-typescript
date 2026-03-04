@@ -65,7 +65,7 @@ export function inferFieldType(value: any): DataType {
  * Infers schema from the JS object at runtime. Arrow IPC is self-describing,
  * so deserialization doesn't need the schema ahead of time.
  */
-function serializeUserState(userState: any): Uint8Array | null {
+export function serializeUserState(userState: any): Uint8Array | null {
   if (userState == null) return null;
   const entries = Object.entries(userState);
   if (entries.length === 0) {
@@ -119,7 +119,7 @@ function extractTypedValue(col: any, index: number, type: DataType): any {
  * Deserialize userState from Arrow IPC bytes.
  * Reconstructs a plain JS object, preserving BigInt for Int64 columns.
  */
-function deserializeUserState(bytes: Uint8Array | null): any {
+export function deserializeUserState(bytes: Uint8Array | null): any {
   if (bytes == null) return null;
   const batch = deserializeBatch(bytes);
   if (batch.numRows === 0 && batch.schema.fields.length === 0) {

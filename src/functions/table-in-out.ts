@@ -22,6 +22,7 @@ import { batchToScalarDict, batchToSecretDict, projectSchema, emptyBatch } from 
 import { deserializeFilters, FilteringOutputCollector, type PushdownFilters } from "../util/filter-pushdown.js";
 import { FunctionStability } from "../types.js";
 import { BoundStorage, storage as defaultStorage } from "../storage/function-storage.js";
+import { serializeUserState, deserializeUserState } from "../protocol/state-serializer.js";
 
 // ============================================================================
 // Table In-Out parameter bundles (reuse table function's)
@@ -80,10 +81,11 @@ export interface TableInOutConfig<
     batch: RecordBatch,
     out: OutputCollector
   ) => void | Promise<void>;
-  /** Finalize: emit final batches after all input processed */
+  /** Finalize: emit final batches after all input processed.
+   *  Receives all worker states collected from SQLite (matches Python's finish(params, states)). */
   finalize?: (
     params: TableInOutProcessParams<TArgs>,
-    state: TState
+    states: TState[]
   ) => RecordBatch[];
   // Metadata
   projectionPushdown?: boolean;
@@ -264,22 +266,29 @@ export function defineTableInOutFunction<
 
       if (phase === TableInOutPhase.FINALIZE) {
         // FINALIZE phase: producer mode
-        // Retrieve state accumulated during INPUT phase.
-        // accumulatedState comes from the exchange state token (serialized via HTTP
-        // init_opaque_data or subprocess state round-trip). Falls back to fresh initial state.
-        let finalizeState: TState;
+        // Collect all worker states for the finalize callback.
+        // HTTP path: state recovered from state token.
+        // Subprocess path: collect all worker states from SQLite.
+        const finalizeStates: TState[] = [];
         if (accumulatedState != null) {
-          // State integrity is guaranteed by HMAC-SHA256 on the state token
-          // (vgi-rpc's packStateToken/unpackStateToken). No shape validation needed.
-          finalizeState = accumulatedState as TState;
-        } else {
-          finalizeState = config.initialState
-            ? config.initialState(processParams)
-            : (null as TState);
+          finalizeStates.push(accumulatedState as TState);
+        }
+        // Collect any states persisted to SQLite by INPUT exchanges
+        const stored = boundStorage.collect();
+        for (const bytes of stored) {
+          finalizeStates.push(deserializeUserState(bytes) as TState);
+        }
+        // Fall back to initial state if nothing was collected
+        if (finalizeStates.length === 0) {
+          finalizeStates.push(
+            config.initialState
+              ? config.initialState(processParams)
+              : (null as TState),
+          );
         }
 
         const batches = config.finalize
-          ? config.finalize(processParams, finalizeState)
+          ? config.finalize(processParams, finalizeStates)
           : [];
 
         return {
@@ -329,6 +338,14 @@ export function defineTableInOutFunction<
             ? new FilteringOutputCollector(out, pushdownFilters) as unknown as OutputCollector
             : out;
           await processFn(eState.processParams, eState.state, input, wrappedOut);
+
+          // Auto-persist accumulated state for FINALIZE recovery (matches Python/Go pattern)
+          if (eState.state != null) {
+            const serialized = serializeUserState(eState.state);
+            if (serialized != null) {
+              boundStorage.put(serialized);
+            }
+          }
         },
       };
     },

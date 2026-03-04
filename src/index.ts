@@ -76,7 +76,7 @@ export {
 } from "./util/filter-pushdown.js";
 
 // State serializer
-export { arrowStateSerializer, EXCHANGE_STATE_SCHEMA } from "./protocol/state-serializer.js";
+export { arrowStateSerializer, EXCHANGE_STATE_SCHEMA, serializeUserState, deserializeUserState } from "./protocol/state-serializer.js";
 
 // Byte utilities
 export { toUint8Array } from "./util/bytes.js";
