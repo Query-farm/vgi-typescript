@@ -20,6 +20,8 @@ import {
   Null,
   DataType,
   Struct,
+  List,
+  FixedSizeList,
   RecordBatch,
 } from "@query-farm/apache-arrow";
 import {
@@ -585,6 +587,482 @@ const hash_seed = defineScalarFunction({
 });
 
 // ============================================================================
+// 15. format_number (3 overloads by ConstParam count)
+// ============================================================================
+
+const format_number_default = defineScalarFunction({
+  name: "format_number",
+  description: "Format number with default precision (0 decimals)",
+  params: { value: new Float64() },
+  returns: new Utf8(),
+  compute: (batch: RecordBatch) => {
+    const values = getColumnValues(batch, 0);
+    return values.map((v: any) => {
+      if (v === null || v === undefined) return null;
+      return Number(v).toFixed(0);
+    });
+  },
+});
+
+const format_number_precision = defineScalarFunction({
+  name: "format_number",
+  description: "Format number with specified precision",
+  parameters: [
+    { name: "precision", type: new Int64(), const: true },
+    { name: "value", type: new Float64() },
+  ],
+  returns: new Utf8(),
+  compute: (batch: RecordBatch, consts: Record<string, any>) => {
+    const precision = typeof consts.precision === "bigint"
+      ? Number(consts.precision)
+      : (consts.precision as number);
+    const values = getColumnValues(batch, 0);
+    return values.map((v: any) => {
+      if (v === null || v === undefined) return null;
+      return Number(v).toFixed(precision);
+    });
+  },
+});
+
+const format_number_full = defineScalarFunction({
+  name: "format_number",
+  description: "Format number with precision and prefix",
+  parameters: [
+    { name: "precision", type: new Int64(), const: true },
+    { name: "prefix", type: new Utf8(), const: true },
+    { name: "value", type: new Float64() },
+  ],
+  returns: new Utf8(),
+  compute: (batch: RecordBatch, consts: Record<string, any>) => {
+    const precision = typeof consts.precision === "bigint"
+      ? Number(consts.precision)
+      : (consts.precision as number);
+    const prefix = consts.prefix as string;
+    const values = getColumnValues(batch, 0);
+    return values.map((v: any) => {
+      if (v === null || v === undefined) return null;
+      return prefix + Number(v).toFixed(precision);
+    });
+  },
+});
+
+// ============================================================================
+// 16. type_info (5 overloads by column type)
+// ============================================================================
+
+const type_info_int32 = defineScalarFunction({
+  name: "type_info",
+  description: "Returns type name for int32 values",
+  params: { v: new Int32() },
+  returns: new Utf8(),
+  compute: (batch: RecordBatch) => {
+    const values = getColumnValues(batch, 0);
+    return values.map((v: any) => v === null || v === undefined ? null : "int32");
+  },
+});
+
+const type_info_int64 = defineScalarFunction({
+  name: "type_info",
+  description: "Returns type name for int64 values",
+  params: { v: new Int64() },
+  returns: new Utf8(),
+  compute: (batch: RecordBatch) => {
+    const values = getColumnValues(batch, 0);
+    return values.map((v: any) => v === null || v === undefined ? null : "int64");
+  },
+});
+
+const type_info_uint32 = defineScalarFunction({
+  name: "type_info",
+  description: "Returns type name for uint32 values",
+  params: { v: new Uint32() },
+  returns: new Utf8(),
+  compute: (batch: RecordBatch) => {
+    const values = getColumnValues(batch, 0);
+    return values.map((v: any) => v === null || v === undefined ? null : "uint32");
+  },
+});
+
+const type_info_uint64 = defineScalarFunction({
+  name: "type_info",
+  description: "Returns type name for uint64 values",
+  params: { v: new Uint64() },
+  returns: new Utf8(),
+  compute: (batch: RecordBatch) => {
+    const values = getColumnValues(batch, 0);
+    return values.map((v: any) => v === null || v === undefined ? null : "uint64");
+  },
+});
+
+const type_info_string = defineScalarFunction({
+  name: "type_info",
+  description: "Returns type name for string values",
+  params: { v: new Utf8() },
+  returns: new Utf8(),
+  compute: (batch: RecordBatch) => {
+    const values = getColumnValues(batch, 0);
+    return values.map((v: any) => v === null || v === undefined ? null : "varchar");
+  },
+});
+
+// ============================================================================
+// 17. smart_format (2 overloads by ConstParam type)
+// ============================================================================
+
+function formatFloat(v: number): string {
+  const s = String(v);
+  // Ensure at least one decimal digit (like Python's str(float))
+  if (!s.includes(".") && !s.includes("e") && !s.includes("E")) {
+    return s + ".0";
+  }
+  return s;
+}
+
+const smart_format_width = defineScalarFunction({
+  name: "smart_format",
+  description: "Right-align a number in a field of given width",
+  parameters: [
+    { name: "width", type: new Int64(), const: true },
+    { name: "value", type: new Float64() },
+  ],
+  returns: new Utf8(),
+  compute: (batch: RecordBatch, consts: Record<string, any>) => {
+    const width = typeof consts.width === "bigint"
+      ? Number(consts.width)
+      : (consts.width as number);
+    const values = getColumnValues(batch, 0);
+    return values.map((v: any) => {
+      if (v === null || v === undefined) return null;
+      return formatFloat(Number(v)).padStart(width);
+    });
+  },
+});
+
+const smart_format_prefix = defineScalarFunction({
+  name: "smart_format",
+  description: "Prepend a prefix string to a formatted number",
+  parameters: [
+    { name: "prefix", type: new Utf8(), const: true },
+    { name: "value", type: new Float64() },
+  ],
+  returns: new Utf8(),
+  compute: (batch: RecordBatch, consts: Record<string, any>) => {
+    const prefix = consts.prefix as string;
+    const values = getColumnValues(batch, 0);
+    return values.map((v: any) => {
+      if (v === null || v === undefined) return null;
+      return prefix + formatFloat(Number(v));
+    });
+  },
+});
+
+// ============================================================================
+// 18. pair_type (3 overloads by column types)
+// ============================================================================
+
+const pair_type_int_int = defineScalarFunction({
+  name: "pair_type",
+  description: "Returns pair type for two int64 columns",
+  params: { a: new Int64(), b: new Int64() },
+  returns: new Utf8(),
+  compute: (batch: RecordBatch) => {
+    const values = getColumnValues(batch, 0);
+    return values.map((v: any) => v === null || v === undefined ? null : "int+int");
+  },
+});
+
+const pair_type_str_str = defineScalarFunction({
+  name: "pair_type",
+  description: "Returns pair type for two string columns",
+  params: { a: new Utf8(), b: new Utf8() },
+  returns: new Utf8(),
+  compute: (batch: RecordBatch) => {
+    const values = getColumnValues(batch, 0);
+    return values.map((v: any) => v === null || v === undefined ? null : "str+str");
+  },
+});
+
+const pair_type_int_str = defineScalarFunction({
+  name: "pair_type",
+  description: "Returns pair type for int64 + string columns",
+  params: { a: new Int64(), b: new Utf8() },
+  returns: new Utf8(),
+  compute: (batch: RecordBatch) => {
+    const values = getColumnValues(batch, 0);
+    return values.map((v: any) => v === null || v === undefined ? null : "int+str");
+  },
+});
+
+// ============================================================================
+// 19. concat_values (2 overloads by varargs type)
+// ============================================================================
+
+const concat_values_int = defineScalarFunction({
+  name: "concat_values",
+  description: "Sum integer varargs and return as string",
+  parameters: [
+    { name: "values", type: new Int64(), varargs: true },
+  ],
+  returns: new Utf8(),
+  compute: (batch: RecordBatch) => {
+    const numCols = batch.schema.fields.length;
+    const numRows = batch.numRows;
+    const result: (string | null)[] = [];
+    for (let row = 0; row < numRows; row++) {
+      let sum = 0n;
+      let hasNull = false;
+      for (let col = 0; col < numCols; col++) {
+        const child = batch.getChildAt(col);
+        const v = child ? child.get(row) : null;
+        if (v === null || v === undefined) { hasNull = true; break; }
+        sum += typeof v === "bigint" ? v : BigInt(v);
+      }
+      result.push(hasNull ? null : String(Number(sum)));
+    }
+    return result;
+  },
+});
+
+const concat_values_str = defineScalarFunction({
+  name: "concat_values",
+  description: "Concatenate string varargs",
+  parameters: [
+    { name: "values", type: new Utf8(), varargs: true },
+  ],
+  returns: new Utf8(),
+  compute: (batch: RecordBatch) => {
+    const numCols = batch.schema.fields.length;
+    const numRows = batch.numRows;
+    const result: (string | null)[] = [];
+    for (let row = 0; row < numRows; row++) {
+      const parts: string[] = [];
+      let hasNull = false;
+      for (let col = 0; col < numCols; col++) {
+        const child = batch.getChildAt(col);
+        const v = child ? child.get(row) : null;
+        if (v === null || v === undefined) { hasNull = true; break; }
+        parts.push(String(v));
+      }
+      result.push(hasNull ? null : parts.join(""));
+    }
+    return result;
+  },
+});
+
+// ============================================================================
+// 20. any_mixed (2 overloads)
+// ============================================================================
+
+const any_mixed_int = defineScalarFunction({
+  name: "any_mixed",
+  description: "Any + int64 parameter pair",
+  params: { a: new Null(), b: new Int64() },
+  returns: new Utf8(),
+  compute: (batch: RecordBatch) => {
+    const bValues = getColumnValues(batch, 1);
+    return bValues.map((v: any) => {
+      if (v === null || v === undefined) return null;
+      return `any+int: ${typeof v === "bigint" ? Number(v) : v}`;
+    });
+  },
+});
+
+const any_mixed_str = defineScalarFunction({
+  name: "any_mixed",
+  description: "Any + string parameter pair",
+  params: { a: new Null(), b: new Utf8() },
+  returns: new Utf8(),
+  compute: (batch: RecordBatch) => {
+    const bValues = getColumnValues(batch, 1);
+    return bValues.map((v: any) => {
+      if (v === null || v === undefined) return null;
+      return `any+str: ${v}`;
+    });
+  },
+});
+
+// ============================================================================
+// 21. geo_distance (3 distinct-named functions)
+// ============================================================================
+
+const GEO_STRUCT_TYPE = new Struct([
+  new Field("lat", new Float64(), true),
+  new Field("lon", new Float64(), true),
+]);
+
+function euclideanDistance(lat1: number, lon1: number, lat2: number, lon2: number): number {
+  return Math.sqrt((lat2 - lat1) ** 2 + (lon2 - lon1) ** 2);
+}
+
+function extractStructLatLon(v: any): { lat: number; lon: number } | null {
+  if (v === null || v === undefined) return null;
+  const lat = v.lat ?? v.get?.("lat") ?? (typeof v.toJSON === "function" ? v.toJSON().lat : null);
+  const lon = v.lon ?? v.get?.("lon") ?? (typeof v.toJSON === "function" ? v.toJSON().lon : null);
+  if (lat == null || lon == null) return null;
+  return { lat: Number(lat), lon: Number(lon) };
+}
+
+function extractListLatLon(v: any): { lat: number; lon: number } | null {
+  if (v === null || v === undefined) return null;
+  const arr = Array.isArray(v) ? v : [...v];
+  if (arr.length < 2) return null;
+  return { lat: Number(arr[0]), lon: Number(arr[1]) };
+}
+
+const geo_distance_struct = defineScalarFunction({
+  name: "geo_distance_struct",
+  description: "Euclidean distance between two struct points",
+  params: { p1: GEO_STRUCT_TYPE, p2: GEO_STRUCT_TYPE },
+  returns: new Float64(),
+  compute: (batch: RecordBatch) => {
+    const p1s = getColumnValues(batch, 0);
+    const p2s = getColumnValues(batch, 1);
+    return p1s.map((p1: any, i: number) => {
+      const a = extractStructLatLon(p1);
+      const b = extractStructLatLon(p2s[i]);
+      if (!a || !b) return null;
+      return euclideanDistance(a.lat, a.lon, b.lat, b.lon);
+    });
+  },
+});
+
+const GEO_LIST_TYPE = new List(new Field("item", new Float64(), true));
+
+const geo_distance_list = defineScalarFunction({
+  name: "geo_distance_list",
+  description: "Euclidean distance between two list points",
+  params: { p1: GEO_LIST_TYPE, p2: GEO_LIST_TYPE },
+  returns: new Float64(),
+  compute: (batch: RecordBatch) => {
+    const p1s = getColumnValues(batch, 0);
+    const p2s = getColumnValues(batch, 1);
+    return p1s.map((p1: any, i: number) => {
+      const a = extractListLatLon(p1);
+      const b = extractListLatLon(p2s[i]);
+      if (!a || !b) return null;
+      return euclideanDistance(a.lat, a.lon, b.lat, b.lon);
+    });
+  },
+});
+
+const GEO_FIXED_LIST_TYPE = new FixedSizeList(2, new Field("item", new Float64(), true));
+
+const geo_distance_fixed = defineScalarFunction({
+  name: "geo_distance_fixed",
+  description: "Euclidean distance between two fixed-size list points",
+  params: { p1: GEO_FIXED_LIST_TYPE, p2: GEO_FIXED_LIST_TYPE },
+  returns: new Float64(),
+  compute: (batch: RecordBatch) => {
+    const p1s = getColumnValues(batch, 0);
+    const p2s = getColumnValues(batch, 1);
+    return p1s.map((p1: any, i: number) => {
+      const a = extractListLatLon(p1);
+      const b = extractListLatLon(p2s[i]);
+      if (!a || !b) return null;
+      return euclideanDistance(a.lat, a.lon, b.lat, b.lon);
+    });
+  },
+});
+
+// ============================================================================
+// 22. geo_centroid (3 distinct-named functions)
+// ============================================================================
+
+function computeCentroid(lats: number[], lons: number[]): { lat: number; lon: number } {
+  const n = lats.length;
+  const avgLat = lats.reduce((a, b) => a + b, 0) / n;
+  const avgLon = lons.reduce((a, b) => a + b, 0) / n;
+  return { lat: avgLat, lon: avgLon };
+}
+
+const geo_centroid_struct = defineScalarFunction({
+  name: "geo_centroid_struct",
+  description: "Centroid of N struct points",
+  parameters: [
+    { name: "points", type: GEO_STRUCT_TYPE, varargs: true },
+  ],
+  returns: GEO_STRUCT_TYPE,
+  compute: (batch: RecordBatch) => {
+    const numCols = batch.schema.fields.length;
+    const numRows = batch.numRows;
+    const result: ({ lat: number; lon: number } | null)[] = [];
+    for (let row = 0; row < numRows; row++) {
+      const lats: number[] = [];
+      const lons: number[] = [];
+      let hasNull = false;
+      for (let col = 0; col < numCols; col++) {
+        const child = batch.getChildAt(col);
+        const v = child ? child.get(row) : null;
+        const pt = extractStructLatLon(v);
+        if (!pt) { hasNull = true; break; }
+        lats.push(pt.lat);
+        lons.push(pt.lon);
+      }
+      result.push(hasNull ? null : computeCentroid(lats, lons));
+    }
+    return result;
+  },
+});
+
+const geo_centroid_list = defineScalarFunction({
+  name: "geo_centroid_list",
+  description: "Centroid of N list points",
+  parameters: [
+    { name: "points", type: GEO_LIST_TYPE, varargs: true },
+  ],
+  returns: GEO_STRUCT_TYPE,
+  compute: (batch: RecordBatch) => {
+    const numCols = batch.schema.fields.length;
+    const numRows = batch.numRows;
+    const result: ({ lat: number; lon: number } | null)[] = [];
+    for (let row = 0; row < numRows; row++) {
+      const lats: number[] = [];
+      const lons: number[] = [];
+      let hasNull = false;
+      for (let col = 0; col < numCols; col++) {
+        const child = batch.getChildAt(col);
+        const v = child ? child.get(row) : null;
+        const pt = extractListLatLon(v);
+        if (!pt) { hasNull = true; break; }
+        lats.push(pt.lat);
+        lons.push(pt.lon);
+      }
+      result.push(hasNull ? null : computeCentroid(lats, lons));
+    }
+    return result;
+  },
+});
+
+const geo_centroid_fixed = defineScalarFunction({
+  name: "geo_centroid_fixed",
+  description: "Centroid of N fixed-size list points",
+  parameters: [
+    { name: "points", type: GEO_FIXED_LIST_TYPE, varargs: true },
+  ],
+  returns: GEO_STRUCT_TYPE,
+  compute: (batch: RecordBatch) => {
+    const numCols = batch.schema.fields.length;
+    const numRows = batch.numRows;
+    const result: ({ lat: number; lon: number } | null)[] = [];
+    for (let row = 0; row < numRows; row++) {
+      const lats: number[] = [];
+      const lons: number[] = [];
+      let hasNull = false;
+      for (let col = 0; col < numCols; col++) {
+        const child = batch.getChildAt(col);
+        const v = child ? child.get(row) : null;
+        const pt = extractListLatLon(v);
+        if (!pt) { hasNull = true; break; }
+        lats.push(pt.lat);
+        lons.push(pt.lon);
+      }
+      result.push(hasNull ? null : computeCentroid(lats, lons));
+    }
+    return result;
+  },
+});
+
+// ============================================================================
 // Export all scalar functions
 // ============================================================================
 
@@ -603,4 +1081,27 @@ export const scalarFunctions: VgiFunction[] = [
   multiply_by_setting,
   return_secret_value,
   hash_seed,
+  format_number_default,
+  format_number_precision,
+  format_number_full,
+  type_info_int32,
+  type_info_int64,
+  type_info_uint32,
+  type_info_uint64,
+  type_info_string,
+  smart_format_width,
+  smart_format_prefix,
+  pair_type_int_int,
+  pair_type_str_str,
+  pair_type_int_str,
+  concat_values_int,
+  concat_values_str,
+  any_mixed_int,
+  any_mixed_str,
+  geo_distance_struct,
+  geo_distance_list,
+  geo_distance_fixed,
+  geo_centroid_struct,
+  geo_centroid_list,
+  geo_centroid_fixed,
 ];

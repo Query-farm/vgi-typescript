@@ -8,7 +8,7 @@ import { Protocol, type OutputCollector } from "vgi-rpc";
 // because Bun loads apache-arrow as separate module instances for our code vs vgi-rpc's
 // compiled dist. Instead, we pre-build Schema objects and pass them directly to Protocol
 // methods (toSchema() passes Schema instances through without instanceof checks).
-import type { FunctionRegistry } from "../functions/registry.js";
+import type { FunctionRegistry, OverloadContext } from "../functions/registry.js";
 import type { VgiFunction, StreamHandlers, HandlerState } from "../functions/types.js";
 import {
   deserializeBindRequest,
@@ -152,7 +152,11 @@ export function buildVgiProtocol(config: ProtocolConfig): Protocol {
     handler: (params) => {
       const innerParams = unwrapRequest(params.request);
       const request = deserializeBindRequest(innerParams);
-      const func = registry.get(request.functionName);
+      const func = registry.get(request.functionName, {
+        arguments: request.arguments,
+        inputSchema: request.inputSchema,
+        isScalar: String(request.functionType).toLowerCase() === "scalar",
+      });
       const response = func.bind(request);
       const serialized = serializeBindResponse(response);
       return wrapResult(serialized, bindResponseInnerSchema);
@@ -171,7 +175,11 @@ export function buildVgiProtocol(config: ProtocolConfig): Protocol {
       const requestIpcBytes = toUint8Array(params.request);
       const innerParams = unwrapRequest(params.request);
       const request = deserializeInitRequest(innerParams);
-      const func = registry.get(request.bindCall.functionName);
+      const func = registry.get(request.bindCall.functionName, {
+        arguments: request.bindCall.arguments,
+        inputSchema: request.bindCall.inputSchema,
+        isScalar: String(request.bindCall.functionType).toLowerCase() === "scalar",
+      });
 
       const initResponse = func.globalInit(request);
 
@@ -232,10 +240,14 @@ export function buildVgiProtocol(config: ProtocolConfig): Protocol {
         // Deserialized from token — reconstruct from serializable refs.
         // Infrastructure (processParams, BoundStorage) is recreated fresh.
         // Mutable user state is merged from state.userState.
-        const func = registry.get(state.functionName);
         const initRequestBatch = deserializeBatch(state.initRequestIpc);
         const initRequestDict = batchToScalarDict(initRequestBatch);
         const request = deserializeInitRequest(initRequestDict);
+        const func = registry.get(state.functionName, {
+          arguments: request.bindCall.arguments,
+          inputSchema: request.bindCall.inputSchema,
+          isScalar: String(request.bindCall.functionType).toLowerCase() === "scalar",
+        });
         const executionId = state.executionId;
         const opaqueData = state.opaqueData ?? null;
         const initResponse: GlobalInitResponse = {
@@ -294,7 +306,11 @@ export function buildVgiProtocol(config: ProtocolConfig): Protocol {
     handler: (params) => {
       const innerParams = unwrapRequest(params.request);
       const request = deserializeCardinalityRequest(innerParams);
-      const func = registry.get(request.bindCall.functionName);
+      const func = registry.get(request.bindCall.functionName, {
+        arguments: request.bindCall.arguments,
+        inputSchema: request.bindCall.inputSchema,
+        isScalar: String(request.bindCall.functionType).toLowerCase() === "scalar",
+      });
       let cardResult: Record<string, any>;
       if (func.cardinality) {
         cardResult = serializeTableCardinality(func.cardinality(request));

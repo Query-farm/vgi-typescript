@@ -1194,6 +1194,269 @@ const filter_echo = defineTableFunction<FilterEchoArgs, FilterEchoState>({
 });
 
 // ============================================================================
+// 16. make_series (4 overloads)
+// ============================================================================
+
+const MAKE_SERIES_SCHEMA = new Schema([new Field("value", new Int64(), true)]);
+const MAKE_SERIES_BATCH_SIZE = 1024;
+
+interface MakeSeriesState {
+  values: bigint[];
+  offset: number;
+}
+
+function makeSeriesEmit(state: MakeSeriesState, params: TableProcessParams<any>, out: OutputCollector): void {
+  if (state.offset >= state.values.length) {
+    out.finish();
+    return;
+  }
+  const end = Math.min(state.offset + MAKE_SERIES_BATCH_SIZE, state.values.length);
+  const batch = state.values.slice(state.offset, end);
+  out.emit(batchFromColumns({ value: batch }, params.outputSchema));
+  state.offset = end;
+}
+
+const make_series_count = defineTableFunction<{ count: number }, MakeSeriesState>({
+  name: "make_series",
+  description: "Generate integers from 0 to count-1",
+  args: { count: new Int64() },
+  onBind: () => ({ outputSchema: MAKE_SERIES_SCHEMA }),
+  cardinality: (params: TableBindParams<{ count: number }>) => ({
+    estimate: params.args.count,
+    max: params.args.count,
+  }),
+  initialState: (params: TableProcessParams<{ count: number }>) => {
+    const values: bigint[] = [];
+    for (let i = 0; i < params.args.count; i++) values.push(BigInt(i));
+    return { values, offset: 0 };
+  },
+  process: (params, state, out) => makeSeriesEmit(state, params, out),
+});
+
+const make_series_csv = defineTableFunction<{ values: string }, MakeSeriesState>({
+  name: "make_series",
+  description: "Parse comma-separated integers into rows",
+  args: { values: new Utf8() },
+  onBind: () => ({ outputSchema: MAKE_SERIES_SCHEMA }),
+  initialState: (params: TableProcessParams<{ values: string }>) => {
+    const values = String(params.args.values)
+      .split(",")
+      .map(s => s.trim())
+      .filter(s => s.length > 0)
+      .map(s => BigInt(parseInt(s, 10)));
+    return { values, offset: 0 };
+  },
+  process: (params, state, out) => makeSeriesEmit(state, params, out),
+});
+
+const make_series_range = defineTableFunction<{ start: number; stop: number }, MakeSeriesState>({
+  name: "make_series",
+  description: "Generate integers from start to stop-1",
+  args: { start: new Int64(), stop: new Int64() },
+  onBind: () => ({ outputSchema: MAKE_SERIES_SCHEMA }),
+  cardinality: (params: TableBindParams<{ start: number; stop: number }>) => {
+    const count = Math.max(0, params.args.stop - params.args.start);
+    return { estimate: count, max: count };
+  },
+  initialState: (params: TableProcessParams<{ start: number; stop: number }>) => {
+    const values: bigint[] = [];
+    for (let i = params.args.start; i < params.args.stop; i++) values.push(BigInt(i));
+    return { values, offset: 0 };
+  },
+  process: (params, state, out) => makeSeriesEmit(state, params, out),
+});
+
+const make_series_step = defineTableFunction<{ start: number; stop: number; step: number }, MakeSeriesState>({
+  name: "make_series",
+  description: "Generate integers from start to stop-1 with step",
+  args: { start: new Int64(), stop: new Int64(), step: new Int64() },
+  onBind: () => ({ outputSchema: MAKE_SERIES_SCHEMA }),
+  initialState: (params: TableProcessParams<{ start: number; stop: number; step: number }>) => {
+    const values: bigint[] = [];
+    const step = params.args.step || 1;
+    if (step > 0) {
+      for (let i = params.args.start; i < params.args.stop; i += step) values.push(BigInt(i));
+    } else if (step < 0) {
+      for (let i = params.args.start; i > params.args.stop; i += step) values.push(BigInt(i));
+    }
+    return { values, offset: 0 };
+  },
+  process: (params, state, out) => makeSeriesEmit(state, params, out),
+});
+
+// ============================================================================
+// 17. make_pairs (2 overloads)
+// ============================================================================
+
+const MAKE_PAIRS_INT_SCHEMA = new Schema([
+  new Field("a", new Int64(), true),
+  new Field("b", new Int64(), true),
+]);
+
+const MAKE_PAIRS_STR_SCHEMA = new Schema([
+  new Field("a", new Utf8(), true),
+  new Field("b", new Utf8(), true),
+]);
+
+interface MakePairsIntState {
+  rows: { a: bigint; b: bigint }[];
+  offset: number;
+}
+
+interface MakePairsStrState {
+  rows: { a: string; b: string }[];
+  offset: number;
+}
+
+const make_pairs_int = defineTableFunction<{ start: number; stop: number }, MakePairsIntState>({
+  name: "make_pairs",
+  description: "Generate integer pairs (i, i*2) from start to stop-1",
+  args: { start: new Int64(), stop: new Int64() },
+  onBind: () => ({ outputSchema: MAKE_PAIRS_INT_SCHEMA }),
+  cardinality: (params: TableBindParams<{ start: number; stop: number }>) => {
+    const count = Math.max(0, params.args.stop - params.args.start);
+    return { estimate: count, max: count };
+  },
+  initialState: (params: TableProcessParams<{ start: number; stop: number }>) => {
+    const rows: { a: bigint; b: bigint }[] = [];
+    for (let i = params.args.start; i < params.args.stop; i++) {
+      rows.push({ a: BigInt(i), b: BigInt(i * 2) });
+    }
+    return { rows, offset: 0 };
+  },
+  process: (params, state, out) => {
+    if (state.offset >= state.rows.length) { out.finish(); return; }
+    const end = Math.min(state.offset + 1024, state.rows.length);
+    const batch = state.rows.slice(state.offset, end);
+    out.emit(batchFromColumns({
+      a: batch.map(r => r.a),
+      b: batch.map(r => r.b),
+    }, params.outputSchema));
+    state.offset = end;
+  },
+});
+
+const make_pairs_str = defineTableFunction<{ prefix: string; suffix: string }, MakePairsStrState>({
+  name: "make_pairs",
+  description: "Generate string pairs with prefix and suffix",
+  args: { prefix: new Utf8(), suffix: new Utf8() },
+  onBind: () => ({ outputSchema: MAKE_PAIRS_STR_SCHEMA }),
+  cardinality: () => ({ estimate: 5, max: 5 }),
+  initialState: (params: TableProcessParams<{ prefix: string; suffix: string }>) => {
+    const rows: { a: string; b: string }[] = [];
+    for (let i = 0; i < 5; i++) {
+      rows.push({ a: `${params.args.prefix}${i}`, b: `${params.args.suffix}${i}` });
+    }
+    return { rows, offset: 0 };
+  },
+  process: (params, state, out) => {
+    if (state.offset >= state.rows.length) { out.finish(); return; }
+    const end = Math.min(state.offset + 1024, state.rows.length);
+    const batch = state.rows.slice(state.offset, end);
+    out.emit(batchFromColumns({
+      a: batch.map(r => r.a),
+      b: batch.map(r => r.b),
+    }, params.outputSchema));
+    state.offset = end;
+  },
+});
+
+// ============================================================================
+// 18. repeat_value (2 overloads with varargs)
+// ============================================================================
+
+interface RepeatValueState {
+  rows: any[][];
+  offset: number;
+}
+
+const repeat_value_int = defineTableFunction<{ count: number; [key: string]: any }, RepeatValueState>({
+  name: "repeat_value",
+  description: "Repeat integer values for count rows",
+  args: {
+    count: new Int64(),
+    values: new Int64(),
+  },
+  varargs: ["values"],
+  onBind: (params: TableBindParams<any>) => {
+    const bindArgs = params.bindCall.arguments;
+    const numValues = bindArgs.length - 1; // subtract count
+    const fields: Field[] = [];
+    for (let i = 0; i < numValues; i++) {
+      fields.push(new Field(`v${i}`, new Int64(), true));
+    }
+    return { outputSchema: new Schema(fields) };
+  },
+  initialState: (params: TableProcessParams<any>) => {
+    const count = params.args.count;
+    const bindArgs = params.initCall.bindCall.arguments;
+    const numValues = bindArgs.length - 1;
+    const row: any[] = [];
+    for (let i = 0; i < numValues; i++) {
+      const v = bindArgs.positional[i + 1];
+      row.push(typeof v === "bigint" ? v : v != null ? BigInt(v) : null);
+    }
+    const rows: any[][] = [];
+    for (let i = 0; i < count; i++) rows.push(row);
+    return { rows, offset: 0 };
+  },
+  process: (params, state, out) => {
+    if (state.offset >= state.rows.length) { out.finish(); return; }
+    const end = Math.min(state.offset + 1024, state.rows.length);
+    const batch = state.rows.slice(state.offset, end);
+    const columns: Record<string, any[]> = {};
+    for (let i = 0; i < params.outputSchema.fields.length; i++) {
+      columns[params.outputSchema.fields[i].name] = batch.map(r => r[i]);
+    }
+    out.emit(batchFromColumns(columns, params.outputSchema));
+    state.offset = end;
+  },
+});
+
+const repeat_value_str = defineTableFunction<{ count: number; [key: string]: any }, RepeatValueState>({
+  name: "repeat_value",
+  description: "Repeat string values for count rows",
+  args: {
+    count: new Int64(),
+    values: new Utf8(),
+  },
+  varargs: ["values"],
+  onBind: (params: TableBindParams<any>) => {
+    const bindArgs = params.bindCall.arguments;
+    const numValues = bindArgs.length - 1;
+    const fields: Field[] = [];
+    for (let i = 0; i < numValues; i++) {
+      fields.push(new Field(`v${i}`, new Utf8(), true));
+    }
+    return { outputSchema: new Schema(fields) };
+  },
+  initialState: (params: TableProcessParams<any>) => {
+    const count = params.args.count;
+    const bindArgs = params.initCall.bindCall.arguments;
+    const numValues = bindArgs.length - 1;
+    const row: any[] = [];
+    for (let i = 0; i < numValues; i++) {
+      const v = bindArgs.positional[i + 1];
+      row.push(v != null ? String(v) : null);
+    }
+    const rows: any[][] = [];
+    for (let i = 0; i < count; i++) rows.push(row);
+    return { rows, offset: 0 };
+  },
+  process: (params, state, out) => {
+    if (state.offset >= state.rows.length) { out.finish(); return; }
+    const end = Math.min(state.offset + 1024, state.rows.length);
+    const batch = state.rows.slice(state.offset, end);
+    const columns: Record<string, any[]> = {};
+    for (let i = 0; i < params.outputSchema.fields.length; i++) {
+      columns[params.outputSchema.fields[i].name] = batch.map(r => r[i]);
+    }
+    out.emit(batchFromColumns(columns, params.outputSchema));
+    state.offset = end;
+  },
+});
+
+// ============================================================================
 // Export all table functions
 // ============================================================================
 
@@ -1213,4 +1476,12 @@ export const tableFunctions: VgiFunction[] = [
   secret_demo,
   scoped_secret_demo,
   filter_echo,
+  make_series_count,
+  make_series_csv,
+  make_series_range,
+  make_series_step,
+  make_pairs_int,
+  make_pairs_str,
+  repeat_value_int,
+  repeat_value_str,
 ];
