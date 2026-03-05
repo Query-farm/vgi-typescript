@@ -33,6 +33,14 @@ import type { CatalogInterface } from "../catalog/interface.js";
 import { MacroType } from "../catalog/interface.js";
 import { NoCatalogError } from "../errors.js";
 
+function overloadContext(req: { functionName: string; arguments: any; inputSchema: any; functionType: any }): OverloadContext {
+  return {
+    arguments: req.arguments,
+    inputSchema: req.inputSchema,
+    isScalar: String(req.functionType).toLowerCase() === "scalar",
+  };
+}
+
 // ============================================================================
 // Protocol building
 // ============================================================================
@@ -152,11 +160,7 @@ export function buildVgiProtocol(config: ProtocolConfig): Protocol {
     handler: (params) => {
       const innerParams = unwrapRequest(params.request);
       const request = deserializeBindRequest(innerParams);
-      const func = registry.get(request.functionName, {
-        arguments: request.arguments,
-        inputSchema: request.inputSchema,
-        isScalar: String(request.functionType).toLowerCase() === "scalar",
-      });
+      const func = registry.get(request.functionName, overloadContext(request));
       const response = func.bind(request);
       const serialized = serializeBindResponse(response);
       return wrapResult(serialized, bindResponseInnerSchema);
@@ -175,11 +179,7 @@ export function buildVgiProtocol(config: ProtocolConfig): Protocol {
       const requestIpcBytes = toUint8Array(params.request);
       const innerParams = unwrapRequest(params.request);
       const request = deserializeInitRequest(innerParams);
-      const func = registry.get(request.bindCall.functionName, {
-        arguments: request.bindCall.arguments,
-        inputSchema: request.bindCall.inputSchema,
-        isScalar: String(request.bindCall.functionType).toLowerCase() === "scalar",
-      });
+      const func = registry.get(request.bindCall.functionName, overloadContext(request.bindCall));
 
       const initResponse = func.globalInit(request);
 
@@ -243,11 +243,7 @@ export function buildVgiProtocol(config: ProtocolConfig): Protocol {
         const initRequestBatch = deserializeBatch(state.initRequestIpc);
         const initRequestDict = batchToScalarDict(initRequestBatch);
         const request = deserializeInitRequest(initRequestDict);
-        const func = registry.get(state.functionName, {
-          arguments: request.bindCall.arguments,
-          inputSchema: request.bindCall.inputSchema,
-          isScalar: String(request.bindCall.functionType).toLowerCase() === "scalar",
-        });
+        const func = registry.get(state.functionName, overloadContext(request.bindCall));
         const executionId = state.executionId;
         const opaqueData = state.opaqueData ?? null;
         const initResponse: GlobalInitResponse = {
@@ -306,11 +302,7 @@ export function buildVgiProtocol(config: ProtocolConfig): Protocol {
     handler: (params) => {
       const innerParams = unwrapRequest(params.request);
       const request = deserializeCardinalityRequest(innerParams);
-      const func = registry.get(request.bindCall.functionName, {
-        arguments: request.bindCall.arguments,
-        inputSchema: request.bindCall.inputSchema,
-        isScalar: String(request.bindCall.functionType).toLowerCase() === "scalar",
-      });
+      const func = registry.get(request.bindCall.functionName, overloadContext(request.bindCall));
       let cardResult: Record<string, any>;
       if (func.cardinality) {
         cardResult = serializeTableCardinality(func.cardinality(request));

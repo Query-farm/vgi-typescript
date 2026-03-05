@@ -1,5 +1,5 @@
 // Example table function implementations.
-// Ports all 10 table functions from vgi-python/vgi/examples/table.py.
+// Ports all 18 table function groups from vgi-python/vgi/examples/table.py.
 
 import {
   Schema,
@@ -1194,18 +1194,38 @@ const filter_echo = defineTableFunction<FilterEchoArgs, FilterEchoState>({
 });
 
 // ============================================================================
-// 16. make_series (4 overloads)
+// 16. make_series (5 overloads)
 // ============================================================================
 
 const MAKE_SERIES_SCHEMA = new Schema([new Field("value", new Int64(), true)]);
 const MAKE_SERIES_BATCH_SIZE = 1024;
 
-interface MakeSeriesState {
+interface MakeSeriesRangeState {
+  current: bigint;
+  stop: bigint;
+  step: bigint;
+  offset: number;
+}
+
+interface MakeSeriesCsvState {
   values: bigint[];
   offset: number;
 }
 
-function makeSeriesEmit(state: MakeSeriesState, params: TableProcessParams<any>, out: OutputCollector): void {
+function makeSeriesRangeEmit(state: MakeSeriesRangeState, params: TableProcessParams<any>, out: OutputCollector): void {
+  if (state.step > 0n ? state.current >= state.stop : state.current <= state.stop) {
+    out.finish();
+    return;
+  }
+  const batch: bigint[] = [];
+  for (let i = 0; i < MAKE_SERIES_BATCH_SIZE && (state.step > 0n ? state.current < state.stop : state.current > state.stop); i++) {
+    batch.push(state.current);
+    state.current += state.step;
+  }
+  out.emit(batchFromColumns({ value: batch }, params.outputSchema));
+}
+
+function makeSeriesCsvEmit(state: MakeSeriesCsvState, params: TableProcessParams<any>, out: OutputCollector): void {
   if (state.offset >= state.values.length) {
     out.finish();
     return;
@@ -1216,7 +1236,7 @@ function makeSeriesEmit(state: MakeSeriesState, params: TableProcessParams<any>,
   state.offset = end;
 }
 
-const make_series_count = defineTableFunction<{ count: number }, MakeSeriesState>({
+const make_series_count = defineTableFunction<{ count: number }, MakeSeriesRangeState>({
   name: "make_series",
   description: "Generate integers from 0 to count-1",
   args: { count: new Int64() },
@@ -1225,15 +1245,13 @@ const make_series_count = defineTableFunction<{ count: number }, MakeSeriesState
     estimate: params.args.count,
     max: params.args.count,
   }),
-  initialState: (params: TableProcessParams<{ count: number }>) => {
-    const values: bigint[] = [];
-    for (let i = 0; i < params.args.count; i++) values.push(BigInt(i));
-    return { values, offset: 0 };
-  },
-  process: (params, state, out) => makeSeriesEmit(state, params, out),
+  initialState: (params: TableProcessParams<{ count: number }>) => ({
+    current: 0n, stop: BigInt(params.args.count), step: 1n, offset: 0,
+  }),
+  process: (params, state, out) => makeSeriesRangeEmit(state, params, out),
 });
 
-const make_series_csv = defineTableFunction<{ values: string }, MakeSeriesState>({
+const make_series_csv = defineTableFunction<{ values: string }, MakeSeriesCsvState>({
   name: "make_series",
   description: "Parse comma-separated integers into rows",
   args: { values: new Utf8() },
@@ -1246,10 +1264,10 @@ const make_series_csv = defineTableFunction<{ values: string }, MakeSeriesState>
       .map(s => BigInt(parseInt(s, 10)));
     return { values, offset: 0 };
   },
-  process: (params, state, out) => makeSeriesEmit(state, params, out),
+  process: (params, state, out) => makeSeriesCsvEmit(state, params, out),
 });
 
-const make_series_range = defineTableFunction<{ start: number; stop: number }, MakeSeriesState>({
+const make_series_range = defineTableFunction<{ start: number; stop: number }, MakeSeriesRangeState>({
   name: "make_series",
   description: "Generate integers from start to stop-1",
   args: { start: new Int64(), stop: new Int64() },
@@ -1258,34 +1276,57 @@ const make_series_range = defineTableFunction<{ start: number; stop: number }, M
     const count = Math.max(0, params.args.stop - params.args.start);
     return { estimate: count, max: count };
   },
-  initialState: (params: TableProcessParams<{ start: number; stop: number }>) => {
-    const values: bigint[] = [];
-    for (let i = params.args.start; i < params.args.stop; i++) values.push(BigInt(i));
-    return { values, offset: 0 };
-  },
-  process: (params, state, out) => makeSeriesEmit(state, params, out),
+  initialState: (params: TableProcessParams<{ start: number; stop: number }>) => ({
+    current: BigInt(params.args.start), stop: BigInt(params.args.stop), step: 1n, offset: 0,
+  }),
+  process: (params, state, out) => makeSeriesRangeEmit(state, params, out),
 });
 
-const make_series_step = defineTableFunction<{ start: number; stop: number; step: number }, MakeSeriesState>({
+const MAKE_SERIES_FLOAT_SCHEMA = new Schema([new Field("value", new Float64(), true)]);
+
+interface MakeSeriesFloatState {
+  current: number;
+  stop: number;
+  step: number;
+  offset: number;
+}
+
+const make_series_float_step = defineTableFunction<{ step: number }, MakeSeriesFloatState>({
+  name: "make_series",
+  description: "Generate 10 float values with given step size",
+  args: { step: new Float64() },
+  onBind: () => ({ outputSchema: MAKE_SERIES_FLOAT_SCHEMA }),
+  cardinality: () => ({ estimate: 10, max: 10 }),
+  initialState: (params: TableProcessParams<{ step: number }>) => ({
+    current: 0, stop: 10, step: params.args.step, offset: 0,
+  }),
+  process: (params, state, out) => {
+    if (state.offset >= state.stop) { out.finish(); return; }
+    const batch: number[] = [];
+    const end = Math.min(state.offset + MAKE_SERIES_BATCH_SIZE, state.stop);
+    for (let i = state.offset; i < end; i++) {
+      batch.push(i * state.step);
+    }
+    out.emit(batchFromColumns({ value: batch }, params.outputSchema));
+    state.offset = end;
+  },
+});
+
+const make_series_step = defineTableFunction<{ start: number; stop: number; step: number }, MakeSeriesRangeState>({
   name: "make_series",
   description: "Generate integers from start to stop-1 with step",
   args: { start: new Int64(), stop: new Int64(), step: new Int64() },
   onBind: () => ({ outputSchema: MAKE_SERIES_SCHEMA }),
   initialState: (params: TableProcessParams<{ start: number; stop: number; step: number }>) => {
-    const values: bigint[] = [];
-    const step = params.args.step || 1;
-    if (step > 0) {
-      for (let i = params.args.start; i < params.args.stop; i += step) values.push(BigInt(i));
-    } else if (step < 0) {
-      for (let i = params.args.start; i > params.args.stop; i += step) values.push(BigInt(i));
-    }
-    return { values, offset: 0 };
+    const step = params.args.step;
+    if (step === 0) throw new Error("make_series step cannot be zero");
+    return { current: BigInt(params.args.start), stop: BigInt(params.args.stop), step: BigInt(step), offset: 0 };
   },
-  process: (params, state, out) => makeSeriesEmit(state, params, out),
+  process: (params, state, out) => makeSeriesRangeEmit(state, params, out),
 });
 
 // ============================================================================
-// 17. make_pairs (2 overloads)
+// 17. make_pairs (3 overloads)
 // ============================================================================
 
 const MAKE_PAIRS_INT_SCHEMA = new Schema([
@@ -1299,7 +1340,8 @@ const MAKE_PAIRS_STR_SCHEMA = new Schema([
 ]);
 
 interface MakePairsIntState {
-  rows: { a: bigint; b: bigint }[];
+  current: bigint;
+  stop: bigint;
   offset: number;
 }
 
@@ -1310,29 +1352,61 @@ interface MakePairsStrState {
 
 const make_pairs_int = defineTableFunction<{ start: number; stop: number }, MakePairsIntState>({
   name: "make_pairs",
-  description: "Generate integer pairs (i, i*2) from start to stop-1",
+  description: "Generate integer pairs (i, i*2)",
   args: { start: new Int64(), stop: new Int64() },
   onBind: () => ({ outputSchema: MAKE_PAIRS_INT_SCHEMA }),
   cardinality: (params: TableBindParams<{ start: number; stop: number }>) => {
     const count = Math.max(0, params.args.stop - params.args.start);
     return { estimate: count, max: count };
   },
-  initialState: (params: TableProcessParams<{ start: number; stop: number }>) => {
-    const rows: { a: bigint; b: bigint }[] = [];
-    for (let i = params.args.start; i < params.args.stop; i++) {
-      rows.push({ a: BigInt(i), b: BigInt(i * 2) });
-    }
-    return { rows, offset: 0 };
-  },
+  initialState: (params: TableProcessParams<{ start: number; stop: number }>) => ({
+    current: BigInt(params.args.start), stop: BigInt(params.args.stop), offset: 0,
+  }),
   process: (params, state, out) => {
-    if (state.offset >= state.rows.length) { out.finish(); return; }
-    const end = Math.min(state.offset + 1024, state.rows.length);
-    const batch = state.rows.slice(state.offset, end);
-    out.emit(batchFromColumns({
-      a: batch.map(r => r.a),
-      b: batch.map(r => r.b),
-    }, params.outputSchema));
-    state.offset = end;
+    if (state.current >= state.stop) { out.finish(); return; }
+    const a: bigint[] = [];
+    const b: bigint[] = [];
+    for (let i = 0; i < 1024 && state.current < state.stop; i++) {
+      a.push(state.current);
+      b.push(state.current * 2n);
+      state.current += 1n;
+    }
+    out.emit(batchFromColumns({ a, b }, params.outputSchema));
+  },
+});
+
+const MAKE_PAIRS_MIXED_SCHEMA = new Schema([
+  new Field("a", new Int64(), true),
+  new Field("b", new Utf8(), true),
+]);
+
+interface MakePairsMixedState {
+  current: bigint;
+  stop: bigint;
+  label: string;
+  offset: number;
+}
+
+const make_pairs_mixed = defineTableFunction<{ start: number; label: string }, MakePairsMixedState>({
+  name: "make_pairs",
+  description: "Generate mixed int/string pairs",
+  args: { start: new Int64(), label: new Utf8() },
+  onBind: () => ({ outputSchema: MAKE_PAIRS_MIXED_SCHEMA }),
+  initialState: (params: TableProcessParams<{ start: number; label: string }>) => ({
+    current: BigInt(params.args.start), stop: BigInt(params.args.start) + 5n, label: params.args.label, offset: 0,
+  }),
+  process: (params, state, out) => {
+    if (state.current >= state.stop) { out.finish(); return; }
+    const a: bigint[] = [];
+    const b: string[] = [];
+    let idx = Number(state.current - BigInt(params.args.start));
+    for (let i = 0; i < 1024 && state.current < state.stop; i++) {
+      a.push(state.current);
+      b.push(`${state.label}${idx}`);
+      state.current += 1n;
+      idx++;
+    }
+    out.emit(batchFromColumns({ a, b }, params.outputSchema));
   },
 });
 
@@ -1479,8 +1553,10 @@ export const tableFunctions: VgiFunction[] = [
   make_series_count,
   make_series_csv,
   make_series_range,
+  make_series_float_step,
   make_series_step,
   make_pairs_int,
+  make_pairs_mixed,
   make_pairs_str,
   repeat_value_int,
   repeat_value_str,

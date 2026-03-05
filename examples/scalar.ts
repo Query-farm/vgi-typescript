@@ -1,5 +1,5 @@
 // Example scalar function implementations.
-// Ports all 13 scalar functions from vgi-python/vgi/examples/scalar.py.
+// Ports all 22 scalar function groups from vgi-python/vgi/examples/scalar.py.
 
 import {
   Schema,
@@ -613,9 +613,9 @@ const format_number_precision = defineScalarFunction({
   ],
   returns: new Utf8(),
   compute: (batch: RecordBatch, consts: Record<string, any>) => {
-    const precision = typeof consts.precision === "bigint"
+    const precision = Math.max(0, Math.min(100, typeof consts.precision === "bigint"
       ? Number(consts.precision)
-      : (consts.precision as number);
+      : (consts.precision as number)));
     const values = getColumnValues(batch, 0);
     return values.map((v: any) => {
       if (v === null || v === undefined) return null;
@@ -634,9 +634,9 @@ const format_number_full = defineScalarFunction({
   ],
   returns: new Utf8(),
   compute: (batch: RecordBatch, consts: Record<string, any>) => {
-    const precision = typeof consts.precision === "bigint"
+    const precision = Math.max(0, Math.min(100, typeof consts.precision === "bigint"
       ? Number(consts.precision)
-      : (consts.precision as number);
+      : (consts.precision as number)));
     const prefix = consts.prefix as string;
     const values = getColumnValues(batch, 0);
     return values.map((v: any) => {
@@ -817,7 +817,7 @@ const concat_values_int = defineScalarFunction({
         if (v === null || v === undefined) { hasNull = true; break; }
         sum += typeof v === "bigint" ? v : BigInt(v);
       }
-      result.push(hasNull ? null : String(Number(sum)));
+      result.push(hasNull ? null : String(sum));
     }
     return result;
   },
