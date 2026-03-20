@@ -1531,6 +1531,198 @@ const repeat_value_str = defineTableFunction<{ count: number; [key: string]: any
 });
 
 // ============================================================================
+// 19. rowid_sequence - Generates rows with a row_id column
+// ============================================================================
+
+interface RowIdSequenceArgs {
+  count: number;
+  layout: string;
+  row_id_type: string;
+}
+
+const rowid_sequence = defineTableFunction<RowIdSequenceArgs, CountdownState>({
+  name: "rowid_sequence",
+  description: "Sequence with row_id column",
+  args: {
+    count: new Int64(),
+    layout: new Utf8(),
+    row_id_type: new Utf8(),
+  },
+  argDefaults: {
+    layout: "first",
+    row_id_type: "int64",
+  },
+  projectionPushdown: true,
+  onBind: (params: TableBindParams<RowIdSequenceArgs>) => {
+    const layout = params.args.layout;
+    const rowIdType = params.args.row_id_type;
+
+    // Build the row_id field with is_row_id metadata
+    const ridMetadata = new Map([["is_row_id", ""]]);
+    let ridField: Field;
+    if (rowIdType === "string") {
+      ridField = new Field("row_id", new Utf8(), true, ridMetadata);
+    } else if (rowIdType === "struct") {
+      ridField = new Field("row_id", new Struct([
+        new Field("a", new Int64(), true),
+        new Field("b", new Utf8(), true),
+      ]), true, ridMetadata);
+    } else {
+      ridField = new Field("row_id", new Int64(), true, ridMetadata);
+    }
+
+    const nameField = new Field("name", new Utf8(), true);
+    const valueField = new Field("value", new Utf8(), true);
+
+    let fields: Field[];
+    if (layout === "middle") {
+      fields = [nameField, ridField, valueField];
+    } else if (layout === "last") {
+      fields = [nameField, valueField, ridField];
+    } else {
+      fields = [ridField, nameField, valueField];
+    }
+
+    return { outputSchema: new Schema(fields) };
+  },
+  cardinality: (params: TableBindParams<RowIdSequenceArgs>) => ({
+    estimate: params.args.count,
+    max: params.args.count,
+  }),
+  initialState: (params: TableProcessParams<RowIdSequenceArgs>) => ({
+    remaining: params.args.count,
+    currentIndex: 0,
+  }),
+  process: (params: TableProcessParams<RowIdSequenceArgs>, state: CountdownState, out: OutputCollector) => {
+    if (state.remaining <= 0) {
+      out.finish();
+      return;
+    }
+
+    const size = Math.min(state.remaining, 1000);
+    const start = state.currentIndex;
+
+    const columns: Record<string, any[]> = {};
+    for (const f of params.outputSchema.fields) {
+      if (f.name === "row_id") {
+        if (DataType.isUtf8(f.type)) {
+          columns.row_id = Array.from({ length: size }, (_, i) => `rid_${start + i}`);
+        } else if (DataType.isStruct(f.type)) {
+          columns.row_id = Array.from({ length: size }, (_, i) => ({
+            a: BigInt(start + i),
+            b: `s_${start + i}`,
+          }));
+        } else {
+          columns.row_id = Array.from({ length: size }, (_, i) => BigInt(start + i));
+        }
+      } else if (f.name === "name") {
+        columns.name = Array.from({ length: size }, (_, i) => `item_${start + i}`);
+      } else if (f.name === "value") {
+        columns.value = Array.from({ length: size }, (_, i) => `val_${start + i}`);
+      }
+    }
+
+    out.emit(batchFromColumns(columns, params.outputSchema));
+    state.currentIndex += size;
+    state.remaining -= size;
+  },
+});
+
+// ============================================================================
+// versioned_data_scan — time travel with schema evolution
+// ============================================================================
+
+const VERSIONED_SCHEMAS: Record<number, Schema> = {
+  1: new Schema([new Field("id", new Int64(), true)]),
+  2: new Schema([
+    new Field("id", new Int64(), true),
+    new Field("name", new Utf8(), true),
+    new Field("score", new Float64(), true),
+    new Field("active", new Bool(), true),
+  ]),
+  3: new Schema([
+    new Field("id", new Int64(), true),
+    new Field("score", new Float64(), true),
+  ]),
+};
+
+const VERSIONED_DATA: Record<number, Record<string, any[]>> = {
+  1: { id: [1n, 2n, 3n] },
+  2: {
+    id: [1n, 2n, 3n, 4n, 5n],
+    name: ["alice", "bob", "carol", "dave", "eve"],
+    score: [10.0, 20.0, 30.0, 40.0, 50.0],
+    active: [true, false, true, false, true],
+  },
+  3: { id: [1n, 2n, 3n, 4n], score: [15.0, 25.0, 35.0, 45.0] },
+};
+
+const CURRENT_VERSION = 3;
+
+export function resolveVersion(atUnit?: string | null, atValue?: string | null): number {
+  if (!atUnit) return CURRENT_VERSION;
+
+  if (atUnit.toUpperCase() === "VERSION") {
+    const version = parseInt(String(atValue), 10);
+    if (!(version in VERSIONED_SCHEMAS)) {
+      throw new Error(`Unknown version: ${version}. Valid versions: ${Object.keys(VERSIONED_SCHEMAS).map(Number).sort()}`);
+    }
+    return version;
+  }
+
+  if (atUnit.toUpperCase() === "TIMESTAMP") {
+    const year = parseInt(String(atValue).slice(0, 4), 10);
+    if (year < 2020) {
+      throw new Error(`No version exists at timestamp '${atValue}': table did not exist before 2020`);
+    }
+    if (year <= 2020) return 1;
+    if (year <= 2021) return 2;
+    return 3;
+  }
+
+  throw new Error(`Unsupported at_unit: '${atUnit}'`);
+}
+
+export function getVersionedSchema(version: number): Schema {
+  return VERSIONED_SCHEMAS[version];
+}
+
+interface VersionedDataArgs {
+  version: number;
+}
+
+interface VersionedDataState {
+  done: boolean;
+}
+
+const versioned_data_scan = defineTableFunction<VersionedDataArgs, VersionedDataState>({
+  name: "versioned_data_scan",
+  description: "Returns versioned data with schema evolution",
+  args: { version: new Int64() },
+  argDefaults: { version: CURRENT_VERSION },
+  categories: ["generator", "testing"],
+  maxWorkers: 1,
+  onBind: (params: TableBindParams<VersionedDataArgs>) => {
+    const version = params.args.version;
+    if (!(version in VERSIONED_SCHEMAS)) {
+      throw new Error(`Unknown version: ${version}. Valid versions: ${Object.keys(VERSIONED_SCHEMAS).map(Number).sort()}`);
+    }
+    return { outputSchema: VERSIONED_SCHEMAS[version] };
+  },
+  initialState: () => ({ done: false }),
+  process(params: TableProcessParams<VersionedDataArgs>, state: VersionedDataState, out: OutputCollector) {
+    if (state.done) {
+      out.finish();
+      return;
+    }
+    state.done = true;
+    const version = params.args.version;
+    const data = VERSIONED_DATA[version];
+    out.emit(batchFromColumns(data, params.outputSchema));
+  },
+});
+
+// ============================================================================
 // Export all table functions
 // ============================================================================
 
@@ -1560,4 +1752,6 @@ export const tableFunctions: VgiFunction[] = [
   make_pairs_str,
   repeat_value_int,
   repeat_value_str,
+  rowid_sequence,
+  versioned_data_scan,
 ];

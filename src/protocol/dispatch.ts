@@ -657,7 +657,14 @@ function registerCatalogMethods(
 
   // catalog_table_get
   protocol.unary("catalog_table_get", {
-    params: attachIdSchemaNameTxnParams,
+    params: new Schema([
+      new Field("attach_id", new Binary(), true),
+      new Field("schema_name", new Utf8(), false),
+      new Field("name", new Utf8(), false),
+      new Field("at_unit", new Utf8(), true),
+      new Field("at_value", new Utf8(), true),
+      new Field("transaction_id", new Binary(), true),
+    ]),
     result: RESULT_BINARY_SCHEMA,
     handler: (params) => {
       const cat = getCatalog();
@@ -665,6 +672,8 @@ function registerCatalogMethods(
         toUint8Array(params.attach_id),
         params.schema_name,
         params.name,
+        params.at_unit,
+        params.at_value,
         params.transaction_id ? toUint8Array(params.transaction_id) : undefined
       );
       return wrapResult({

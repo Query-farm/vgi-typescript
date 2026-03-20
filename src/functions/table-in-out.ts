@@ -236,8 +236,12 @@ export function defineTableInOutFunction<
       const settings = batchToScalarDict(request.bindCall.settings);
       const secrets = batchToSecretDict(request.bindCall.secrets);
 
-      const outputSchema = request.projectionIds
-        ? projectSchema(request.projectionIds, request.outputSchema)
+      // Apply projection pushdown only if the function supports it
+      const projIds = request.projectionIds && meta.projectionPushdown
+        ? request.projectionIds
+        : null;
+      const outputSchema = projIds
+        ? projectSchema(projIds, request.outputSchema)
         : request.outputSchema;
 
       // Deserialize pushdown filters

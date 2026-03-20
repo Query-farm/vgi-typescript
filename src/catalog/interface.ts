@@ -524,6 +524,8 @@ export abstract class CatalogInterface {
     attachId: AttachId,
     schemaName: string,
     name: string,
+    atUnit?: string,
+    atValue?: string,
     transactionId?: TransactionId
   ): TableInfo | null {
     return null;

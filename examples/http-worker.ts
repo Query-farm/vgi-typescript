@@ -7,14 +7,14 @@ import { arrowStateSerializer } from "../src/protocol/state-serializer.js";
 import { FunctionRegistry } from "../src/functions/registry.js";
 import { buildVgiProtocol } from "../src/protocol/dispatch.js";
 import { ReadOnlyCatalogInterface } from "../src/catalog/read-only.js";
-import { allFunctions, catalog } from "./common.js";
+import { allFunctions, catalog, createExampleCatalog } from "./common.js";
 
 const registry = new FunctionRegistry();
 for (const func of allFunctions) {
   registry.register(func);
 }
 
-const catalogInterface = new ReadOnlyCatalogInterface(catalog, registry);
+const catalogInterface = createExampleCatalog(new ReadOnlyCatalogInterface(catalog, registry));
 
 // Shared signing key so buildVgiProtocol can decode state tokens created by createHttpHandler
 const signingKey = crypto.getRandomValues(new Uint8Array(32));

@@ -20,6 +20,7 @@ export interface TableDescriptor {
   notNull?: string[];
   unique?: string[][];
   check?: string[];
+  supportsTimeTravel?: boolean;
   comment?: string;
   tags?: Record<string, string>;
 }

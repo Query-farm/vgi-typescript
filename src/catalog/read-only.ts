@@ -55,10 +55,15 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
       serializeSecretType(s)
     );
 
+    // Auto-derive supportsTimeTravel from table descriptors
+    const hasTimeTravel = this._descriptor.schemas.some(
+      (s) => s.tables?.some((t) => t.supportsTimeTravel) ?? false
+    );
+
     return {
       attachId,
       supportsTransactions: false,
-      supportsTimeTravel: false,
+      supportsTimeTravel: hasTimeTravel,
       catalogVersionFrozen: false,
       catalogVersion: this._version,
       attachIdRequired: true,
@@ -289,6 +294,8 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
     atValue?: string,
     transactionId?: TransactionId
   ): any {
+    validateAtParams(atUnit, atValue);
+
     // Find the table descriptor
     const schema = this._descriptor.schemas.find((s) => s.name === schemaName);
     if (!schema || !schema.tables) {
@@ -297,6 +304,11 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
     const table = schema.tables.find((t) => t.name === name);
     if (!table) {
       throw new Error(`Table '${name}' not found in schema '${schemaName}'`);
+    }
+
+    // Reject AT clause on tables that don't support time travel
+    if (atUnit && !table.supportsTimeTravel) {
+      throw new Error(`Table '${schemaName}.${name}' does not support time travel queries`);
     }
 
     if (table.function) {
@@ -318,8 +330,21 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
     attachId: AttachId,
     schemaName: string,
     name: string,
+    atUnit?: string,
+    atValue?: string,
     transactionId?: TransactionId
   ): TableInfo | null {
+    validateAtParams(atUnit, atValue);
+
+    // Find the table descriptor to check supports_time_travel
+    const schema = this._descriptor.schemas.find((s) => s.name === schemaName);
+    if (schema?.tables) {
+      const tableDesc = schema.tables.find((t) => t.name === name);
+      if (tableDesc && atUnit && !tableDesc.supportsTimeTravel) {
+        throw new Error(`Table '${schemaName}.${name}' does not support time travel queries`);
+      }
+    }
+
     const tables = this.schemaContentsTables(attachId, schemaName, transactionId);
     return tables.find((t) => t.name === name) ?? null;
   }
@@ -448,6 +473,12 @@ function serializeArgsBatch(args: Arguments, argSpecSchema: Schema): Uint8Array 
   }
 
   return serializeBatch(batchFromColumns(values, batchSchema));
+}
+
+function validateAtParams(atUnit?: string, atValue?: string): void {
+  if (Boolean(atUnit) !== Boolean(atValue)) {
+    throw new Error("at_unit and at_value must both be provided or both be absent");
+  }
 }
 
 function inferScalarType(val: any): DataType {

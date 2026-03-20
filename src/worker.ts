@@ -12,6 +12,8 @@ export interface WorkerConfig {
   functions?: VgiFunction[];
   catalog?: CatalogDescriptor;
   catalogInterface?: CatalogInterface;
+  /** Factory that receives the built ReadOnlyCatalogInterface and returns a custom catalog. */
+  catalogInterfaceFactory?: (base: ReadOnlyCatalogInterface) => CatalogInterface;
   catalogName?: string;
 }
 
@@ -46,10 +48,13 @@ export class Worker {
     if (config.catalogInterface) {
       this._catalogInterface = config.catalogInterface;
     } else if (config.catalog) {
-      this._catalogInterface = new ReadOnlyCatalogInterface(
+      const base = new ReadOnlyCatalogInterface(
         config.catalog,
         this._registry
       );
+      this._catalogInterface = config.catalogInterfaceFactory
+        ? config.catalogInterfaceFactory(base)
+        : base;
     }
   }
 
