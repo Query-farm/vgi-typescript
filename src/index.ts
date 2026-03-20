@@ -121,6 +121,6 @@ export type {
 } from "./client/index.js";
 
 // Re-export from vgi-rpc for convenience
-export { str, bytes, int, int32, float, float32, bool, toSchema, OutputCollector } from "vgi-rpc";
+export { str, bytes, int, int32, float, float32, bool, toSchema, OutputCollector, AuthContext } from "vgi-rpc";
 export { subprocessConnect, httpConnect } from "vgi-rpc";
 export type { RpcClient, StreamSession, LogMessage } from "vgi-rpc";

@@ -1063,6 +1063,22 @@ const geo_centroid_fixed = defineScalarFunction({
 });
 
 // ============================================================================
+// 23. whoami — Returns the authenticated principal name
+// ============================================================================
+
+const whoami = defineScalarFunction({
+  name: "whoami",
+  description: "Return the authenticated principal name",
+  params: { x: new Int64() },
+  returns: new Utf8(),
+  compute: (batch, _consts, info) => {
+    const name = info.auth.principal ?? "anonymous";
+    return Array.from({ length: batch.numRows }, () => name);
+  },
+  categories: ["auth", "testing"],
+});
+
+// ============================================================================
 // Export all scalar functions
 // ============================================================================
 
@@ -1104,4 +1120,5 @@ export const scalarFunctions: VgiFunction[] = [
   geo_centroid_struct,
   geo_centroid_list,
   geo_centroid_fixed,
+  whoami,
 ];

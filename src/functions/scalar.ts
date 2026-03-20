@@ -13,7 +13,7 @@ import {
   vectorFromArray,
   Int64,
 } from "@query-farm/apache-arrow";
-import type { OutputCollector } from "vgi-rpc";
+import type { OutputCollector, AuthContext } from "vgi-rpc";
 import {
   FunctionType,
   FunctionStability,
@@ -89,6 +89,7 @@ export interface ScalarFunctionConfig {
     info: {
       settings: Record<string, any>;
       secrets: Record<string, Record<string, any>>;
+      auth: AuthContext;
     }
   ) => any;
   // Metadata
@@ -250,7 +251,7 @@ export function defineScalarFunction(config: ScalarFunctionConfig): VgiFunction 
         inputSchema: inputSchema ?? undefined,
         exchangeInit: () => ({}),
         exchangeFn: (state: any, input: RecordBatch, out: OutputCollector) => {
-          const result = config.compute(input, constArgs, { settings, secrets });
+          const result = config.compute(input, constArgs, { settings, secrets, auth: out.auth });
 
           // Build output batch
           let outputBatch: RecordBatch;
