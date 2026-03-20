@@ -104,6 +104,8 @@ const TABLE_INFO_SCHEMA = new Schema([
   new Field("not_null_constraints", new List(new Field("item", new Int32(), false)), false),
   new Field("unique_constraints", new List(new Field("item", new List(new Field("item", new Int32(), false)), false)), false),
   new Field("check_constraints", new List(new Field("item", new Utf8(), false)), false),
+  new Field("primary_key_constraints", new List(new Field("item", new List(new Field("item", new Int32(), false)), false)), false),
+  new Field("foreign_key_constraints", new List(new Field("item", new Binary(), false)), false),
   new Field("comment", new Utf8(), true),
   new Field("tags", mapType(new Utf8(), new Utf8()), true),
 ]);
@@ -116,6 +118,8 @@ export class TableInfo {
     public readonly notNullConstraints: number[] = [],
     public readonly uniqueConstraints: number[][] = [],
     public readonly checkConstraints: string[] = [],
+    public readonly primaryKeyConstraints: number[][] = [],
+    public readonly foreignKeyConstraints: Uint8Array[] = [],
     public readonly comment: string | null = null,
     public readonly tags: Record<string, string> = {}
   ) {}
@@ -128,6 +132,8 @@ export class TableInfo {
       not_null_constraints: this.notNullConstraints,
       unique_constraints: this.uniqueConstraints,
       check_constraints: this.checkConstraints,
+      primary_key_constraints: this.primaryKeyConstraints,
+      foreign_key_constraints: this.foreignKeyConstraints,
       comment: this.comment,
       tags: Object.entries(this.tags).map(([k, v]) => [k, v]),
     });
@@ -148,6 +154,8 @@ export class TableInfo {
       toNumberArray(d.not_null_constraints),
       toNestedNumberArray(d.unique_constraints),
       toStringArray(d.check_constraints),
+      toNestedNumberArray(d.primary_key_constraints),
+      toBinaryArray(d.foreign_key_constraints),
       d.comment ?? null,
       tags,
     );
@@ -818,6 +826,13 @@ function toStringArray(val: any): string[] {
   if (!val) return [];
   const arr = Array.isArray(val) ? val : [...val];
   return arr.filter((v: any) => v != null).map(String);
+}
+
+// Helper to convert iterable to Uint8Array[]
+function toBinaryArray(val: any): Uint8Array[] {
+  if (!val) return [];
+  const arr = Array.isArray(val) ? val : [...val];
+  return arr.filter((v: any) => v != null).map(toU8);
 }
 
 // Helper to serialize a single-row info batch to IPC bytes

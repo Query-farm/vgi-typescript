@@ -12,6 +12,15 @@ export interface SettingDescriptor {
   defaultValue?: string | number | bigint | boolean;
 }
 
+export interface ForeignKeyDef {
+  columns: string[];
+  referencedTable: string;
+  referencedColumns: string[];
+  referencedSchema?: string;
+}
+
+export type DefaultValue = string | number | boolean | null;
+
 export interface TableDescriptor {
   name: string;
   columns?: Schema;
@@ -20,6 +29,9 @@ export interface TableDescriptor {
   notNull?: string[];
   unique?: string[][];
   check?: string[];
+  primaryKey?: string[][];
+  foreignKey?: ForeignKeyDef[];
+  defaults?: Record<string, DefaultValue>;
   supportsTimeTravel?: boolean;
   comment?: string;
   tags?: Record<string, string>;

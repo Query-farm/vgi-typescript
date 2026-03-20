@@ -13,7 +13,7 @@ export type { VgiFunction, FunctionMeta, StreamHandlers, FunctionExample, Handle
 
 // Catalog
 export { CatalogInterface, type CatalogAttachResult, SchemaInfo, TableInfo, ViewInfo, FunctionInfo, type FunctionInfoOptions, MacroInfo, MacroType, type AttachId } from "./catalog/interface.js";
-export type { CatalogDescriptor, SchemaDescriptor, TableDescriptor, ViewDescriptor, MacroDescriptor, SettingDescriptor, SecretTypeDescriptor } from "./catalog/descriptors.js";
+export type { CatalogDescriptor, SchemaDescriptor, TableDescriptor, ViewDescriptor, MacroDescriptor, SettingDescriptor, SecretTypeDescriptor, ForeignKeyDef, DefaultValue } from "./catalog/descriptors.js";
 export { ReadOnlyCatalogInterface } from "./catalog/read-only.js";
 
 // Core types

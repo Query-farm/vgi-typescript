@@ -1723,6 +1723,161 @@ const versioned_data_scan = defineTableFunction<VersionedDataArgs, VersionedData
 });
 
 // ============================================================================
+// Static scan function helper (equivalent to Python _static_scan_function)
+// ============================================================================
+
+function defineStaticScanFunction(
+  funcName: string,
+  funcDescription: string,
+  outputSchema: Schema,
+  data: Record<string, any[]>,
+): VgiFunction {
+  return defineTableFunction<Record<string, never>, { done: boolean }>({
+    name: funcName,
+    description: funcDescription,
+    maxWorkers: 1,
+    onBind: () => ({ outputSchema }),
+    initialState: () => ({ done: false }),
+    process(_params, state, out) {
+      if (state.done) { out.finish(); return; }
+      state.done = true;
+      out.emit(batchFromColumns(data, outputSchema));
+    },
+  });
+}
+
+// ============================================================================
+// Constraint example scan functions
+// ============================================================================
+
+const DEPARTMENTS_SCHEMA = new Schema([
+  new Field("id", new Int64(), true),
+  new Field("name", new Utf8(), true),
+  new Field("budget", new Float64(), true),
+]);
+
+const departments_scan = defineStaticScanFunction(
+  "departments_scan", "Scan departments table", DEPARTMENTS_SCHEMA, {
+    id: [1n, 2n, 3n],
+    name: ["Engineering", "Sales", "HR"],
+    budget: [500000.0, 300000.0, 200000.0],
+  },
+);
+
+const EMPLOYEES_SCHEMA = new Schema([
+  new Field("id", new Int64(), true),
+  new Field("name", new Utf8(), true),
+  new Field("email", new Utf8(), true),
+  new Field("department_id", new Int64(), true),
+]);
+
+const employees_scan = defineStaticScanFunction(
+  "employees_scan", "Scan employees table", EMPLOYEES_SCHEMA, {
+    id: [1n, 2n, 3n, 4n, 5n],
+    name: ["Alice", "Bob", "Carol", "Dave", "Eve"],
+    email: ["alice@co.com", "bob@co.com", "carol@co.com", "dave@co.com", "eve@co.com"],
+    department_id: [1n, 1n, 2n, 2n, 3n],
+  },
+);
+
+const PRODUCTS_SCHEMA = new Schema([
+  new Field("id", new Int64(), true),
+  new Field("name", new Utf8(), true),
+  new Field("quantity", new Int64(), true),
+  new Field("price", new Float64(), true),
+]);
+
+const products_scan = defineStaticScanFunction(
+  "products_scan", "Scan products table", PRODUCTS_SCHEMA, {
+    id: [1n, 2n, 3n],
+    name: ["Widget", "Gadget", "Doohickey"],
+    quantity: [100n, 50n, 200n],
+    price: [9.99, 24.99, 4.99],
+  },
+);
+
+const PROJECTS_SCHEMA = new Schema([
+  new Field("department_id", new Int64(), true),
+  new Field("project_code", new Utf8(), true),
+  new Field("title", new Utf8(), true),
+]);
+
+const projects_scan = defineStaticScanFunction(
+  "projects_scan", "Scan projects table", PROJECTS_SCHEMA, {
+    department_id: [1n, 1n, 2n],
+    project_code: ["P001", "P002", "P003"],
+    title: ["Backend API", "Frontend UI", "Sales Portal"],
+  },
+);
+
+// ============================================================================
+// versioned_constraints_scan — time travel with evolving constraints
+// ============================================================================
+
+const VC_SCHEMAS: Record<number, Schema> = {
+  1: new Schema([new Field("id", new Int64(), true), new Field("name", new Utf8(), true)]),
+  2: new Schema([
+    new Field("id", new Int64(), true),
+    new Field("name", new Utf8(), true),
+    new Field("email", new Utf8(), true),
+  ]),
+  3: new Schema([
+    new Field("id", new Int64(), true),
+    new Field("name", new Utf8(), true),
+    new Field("email", new Utf8(), true),
+    new Field("department_id", new Int64(), true),
+  ]),
+};
+
+const VC_DATA: Record<number, Record<string, any[]>> = {
+  1: { id: [1n, 2n], name: ["Alice", "Bob"] },
+  2: { id: [1n, 2n, 3n], name: ["Alice", "Bob", "Carol"], email: ["a@co", "b@co", "c@co"] },
+  3: {
+    id: [1n, 2n, 3n], name: ["Alice", "Bob", "Carol"],
+    email: ["a@co", "b@co", "c@co"], department_id: [1n, 2n, 1n],
+  },
+};
+
+const VC_CURRENT = 3;
+
+export function resolveVersionedConstraintsVersion(atUnit?: string | null, atValue?: string | null): number {
+  if (!atUnit) return VC_CURRENT;
+  if (atUnit.toUpperCase() === "VERSION") {
+    const version = parseInt(String(atValue), 10);
+    if (!(version in VC_SCHEMAS)) {
+      throw new Error(`Unknown version: ${version}. Valid versions: ${Object.keys(VC_SCHEMAS).map(Number).sort()}`);
+    }
+    return version;
+  }
+  throw new Error(`Unsupported at_unit: '${atUnit}'`);
+}
+
+export function getVersionedConstraintsSchema(version: number): Schema {
+  return VC_SCHEMAS[version];
+}
+
+const versioned_constraints_scan = defineTableFunction<{ version: number }, { done: boolean }>({
+  name: "versioned_constraints_scan",
+  description: "Scan versioned constraints table",
+  args: { version: new Int64() },
+  argDefaults: { version: VC_CURRENT },
+  maxWorkers: 1,
+  onBind: (params: TableBindParams<{ version: number }>) => {
+    const version = params.args.version;
+    if (!(version in VC_SCHEMAS)) {
+      throw new Error(`Unknown version: ${version}`);
+    }
+    return { outputSchema: VC_SCHEMAS[version] };
+  },
+  initialState: () => ({ done: false }),
+  process(params: TableProcessParams<{ version: number }>, state: { done: boolean }, out: OutputCollector) {
+    if (state.done) { out.finish(); return; }
+    state.done = true;
+    out.emit(batchFromColumns(VC_DATA[params.args.version], params.outputSchema));
+  },
+});
+
+// ============================================================================
 // Export all table functions
 // ============================================================================
 
@@ -1754,4 +1909,9 @@ export const tableFunctions: VgiFunction[] = [
   repeat_value_str,
   rowid_sequence,
   versioned_data_scan,
+  departments_scan,
+  employees_scan,
+  products_scan,
+  projects_scan,
+  versioned_constraints_scan,
 ];

@@ -1,6 +1,6 @@
 // ReadOnlyCatalogInterface: derives catalog from registered functions + descriptors.
 
-import { Schema, Field, Int64, DataType, Utf8, Binary, Bool, Null } from "@query-farm/apache-arrow";
+import { Schema, Field, Int32, Int64, DataType, Utf8, Binary, Bool, Null, List } from "@query-farm/apache-arrow";
 import {
   CatalogInterface,
   type AttachId,
@@ -13,7 +13,7 @@ import {
   MacroInfo,
   MacroType,
 } from "./interface.js";
-import type { CatalogDescriptor, SchemaDescriptor, TableDescriptor, ViewDescriptor, MacroDescriptor, SettingDescriptor, SecretTypeDescriptor } from "./descriptors.js";
+import type { CatalogDescriptor, SchemaDescriptor, TableDescriptor, ViewDescriptor, MacroDescriptor, SettingDescriptor, SecretTypeDescriptor, ForeignKeyDef, DefaultValue } from "./descriptors.js";
 import type { VgiFunction } from "../functions/types.js";
 import type { FunctionRegistry } from "../functions/registry.js";
 import { argumentSpecsToSchema } from "../arguments/argument-spec.js";
@@ -123,11 +123,11 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
     if (!schema || !schema.tables) return [];
 
     return schema.tables.map((t) => {
-      let columns: Uint8Array;
+      // Resolve the column schema
+      let colSchema: Schema;
       if (t.columns) {
-        columns = serializeSchema(t.columns);
+        colSchema = t.columns;
       } else if (t.function) {
-        // Function-backed table: bind to get output schema
         const func = t.function;
         const dummyArgs = t.arguments ?? new Arguments();
         try {
@@ -143,25 +143,36 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
             resolvedSecretsProvided: false,
           };
           const response = func.bind(bindRequest);
-          columns = serializeSchema(response.outputSchema);
+          colSchema = response.outputSchema;
         } catch {
-          columns = serializeSchema(new Schema([]));
+          colSchema = new Schema([]);
         }
       } else {
-        columns = serializeSchema(new Schema([]));
+        colSchema = new Schema([]);
       }
 
-      // Convert named not_null constraints to column indices
-      const notNullIndices: number[] = [];
-      // (simplified - would need to cross-reference column names)
+      // Apply defaults as Arrow field metadata
+      if (t.defaults) {
+        colSchema = applyDefaults(colSchema, t.defaults);
+      }
+
+      const columns = serializeSchema(colSchema);
+
+      // Resolve constraint column names → indices
+      const notNullIndices = resolveIndices(colSchema, t.notNull);
+      const uniqueIndices = resolveIndexGroups(colSchema, t.unique);
+      const pkIndices = resolveIndexGroups(colSchema, t.primaryKey);
+      const fkBytes = serializeForeignKeys(t.foreignKey, name);
 
       return new TableInfo(
         t.name,
         name,
         columns,
         notNullIndices,
-        [], // unique constraints
+        uniqueIndices,
         t.check ?? [],
+        pkIndices,
+        fkBytes,
         t.comment ?? null,
         t.tags ?? {}
       );
@@ -358,6 +369,73 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
     const views = this.schemaContentsViews(attachId, schemaName, transactionId);
     return views.find((v) => v.name === name) ?? null;
   }
+}
+
+// ============================================================================
+// Constraint resolution helpers
+// ============================================================================
+
+function resolveIndices(schema: Schema, names?: string[]): number[] {
+  if (!names || names.length === 0) return [];
+  return names.map((n) => {
+    const idx = schema.fields.findIndex((f) => f.name === n);
+    if (idx < 0) throw new Error(`Column '${n}' not found in schema`);
+    return idx;
+  });
+}
+
+function resolveIndexGroups(schema: Schema, groups?: string[][]): number[][] {
+  if (!groups || groups.length === 0) return [];
+  return groups.map((group) => resolveIndices(schema, group));
+}
+
+const FK_SCHEMA = new Schema([
+  new Field("fk_columns", new List(new Field("item", new Utf8(), true)), false),
+  new Field("pk_columns", new List(new Field("item", new Utf8(), true)), false),
+  new Field("referenced_table", new Utf8(), false),
+  new Field("referenced_schema", new Utf8(), false),
+]);
+
+function serializeForeignKeys(fks?: ForeignKeyDef[], schemaName?: string): Uint8Array[] {
+  if (!fks || fks.length === 0) return [];
+  return fks.map((fk) =>
+    serializeBatch(
+      batchFromColumns(
+        {
+          fk_columns: [fk.columns],
+          pk_columns: [fk.referencedColumns],
+          referenced_table: [fk.referencedTable],
+          referenced_schema: [fk.referencedSchema ?? schemaName ?? "main"],
+        },
+        FK_SCHEMA
+      )
+    )
+  );
+}
+
+function defaultToSql(value: DefaultValue): string {
+  if (value === null || value === undefined) return "NULL";
+  if (typeof value === "boolean") return value ? "true" : "false";
+  if (typeof value === "number") return String(value);
+  // string — quote as SQL string literal
+  const escaped = value.replace(/'/g, "''");
+  return `'${escaped}'`;
+}
+
+function applyDefaults(schema: Schema, defaults: Record<string, DefaultValue>): Schema {
+  let result = schema;
+  for (const [colName, value] of Object.entries(defaults)) {
+    const idx = result.fields.findIndex((f) => f.name === colName);
+    if (idx < 0) continue;
+    const f = result.fields[idx];
+    const existingMeta = f.metadata ? new Map(f.metadata) : new Map<string, string>();
+    existingMeta.set("default", defaultToSql(value));
+    const newField = new Field(f.name, f.type, f.nullable, existingMeta);
+    const fields = [...result.fields];
+    fields[idx] = newField;
+    result = new Schema(fields);
+  }
+  return result;
 }
 
 // ============================================================================

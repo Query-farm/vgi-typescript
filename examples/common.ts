@@ -2,6 +2,7 @@
 // Used by both the IPC worker (worker.ts) and HTTP worker (http-worker.ts).
 
 import { Schema, Field, Int32, Int64, Float64, Bool, Utf8, Struct } from "@query-farm/apache-arrow";
+import { List } from "@query-farm/apache-arrow";
 import {
   type CatalogDescriptor, type MacroDescriptor, Arguments,
   serializeBatch, batchFromColumns,
@@ -11,7 +12,10 @@ import {
 import { serializeSchema } from "../src/util/arrow.js";
 import { argumentSpecsToSchema } from "../src/arguments/argument-spec.js";
 import { scalarFunctions } from "./scalar.js";
-import { tableFunctions, resolveVersion, getVersionedSchema } from "./table.js";
+import {
+  tableFunctions, resolveVersion, getVersionedSchema,
+  resolveVersionedConstraintsVersion, getVersionedConstraintsSchema,
+} from "./table.js";
 import { tableInOutFunctions } from "./table_in_out.js";
 
 // Find functions for table-backed catalog entries
@@ -186,6 +190,87 @@ export const catalog: CatalogDescriptor = {
           arguments: new Arguments([20], new Map<string, any>([["layout", "first"], ["row_id_type", "struct"]])),
           comment: "Table with struct row_id",
         },
+        // ----- Constraint example tables -----
+        {
+          name: "departments",
+          columns: new Schema([
+            new Field("id", new Int64(), true),
+            new Field("name", new Utf8(), true),
+            new Field("budget", new Float64(), true),
+          ]),
+          primaryKey: [["id"]],
+          notNull: ["id", "name"],
+          unique: [["name"]],
+          check: ["budget >= 0"],
+          defaults: { budget: 0 },
+          comment: "Department reference table",
+        },
+        {
+          name: "products",
+          columns: new Schema([
+            new Field("id", new Int64(), true),
+            new Field("name", new Utf8(), true),
+            new Field("quantity", new Int64(), true),
+            new Field("price", new Float64(), true),
+          ]),
+          notNull: ["id"],
+          primaryKey: [["id"]],
+          defaults: { quantity: 0, name: "unknown", price: 9.99 },
+          comment: "Product table with column defaults",
+        },
+        {
+          name: "employees",
+          columns: new Schema([
+            new Field("id", new Int64(), true),
+            new Field("name", new Utf8(), true),
+            new Field("email", new Utf8(), true),
+            new Field("department_id", new Int64(), true),
+          ]),
+          primaryKey: [["id"]],
+          notNull: ["id", "name", "email"],
+          unique: [["email"]],
+          foreignKey: [{
+            columns: ["department_id"],
+            referencedTable: "departments",
+            referencedColumns: ["id"],
+          }],
+          comment: "Employee table with FK to departments",
+        },
+        {
+          name: "projects",
+          columns: new Schema([
+            new Field("department_id", new Int64(), true),
+            new Field("project_code", new Utf8(), true),
+            new Field("title", new Utf8(), true),
+          ]),
+          primaryKey: [["department_id", "project_code"]],
+          notNull: ["department_id", "project_code", "title"],
+          foreignKey: [{
+            columns: ["department_id"],
+            referencedTable: "departments",
+            referencedColumns: ["id"],
+          }],
+          comment: "Projects with composite PK and FK to departments",
+        },
+        {
+          name: "versioned_constraints",
+          columns: new Schema([
+            new Field("id", new Int64(), true),
+            new Field("name", new Utf8(), true),
+            new Field("email", new Utf8(), true),
+            new Field("department_id", new Int64(), true),
+          ]),
+          supportsTimeTravel: true,
+          notNull: ["id", "name"],
+          primaryKey: [["id"]],
+          unique: [["email"]],
+          foreignKey: [{
+            columns: ["department_id"],
+            referencedTable: "departments",
+            referencedColumns: ["id"],
+          }],
+          comment: "Table with constraints that evolve across versions",
+        },
       ],
       views: [
         {
@@ -204,8 +289,29 @@ export const catalog: CatalogDescriptor = {
 
 const versionedDataScanFunction = tableFunctions.find((f) => f.meta.name === "versioned_data_scan");
 
+// FK serialization schema (matches Python wire format)
+const FK_BATCH_SCHEMA = new Schema([
+  new Field("fk_columns", new List(new Field("item", new Utf8(), true)), false),
+  new Field("pk_columns", new List(new Field("item", new Utf8(), true)), false),
+  new Field("referenced_table", new Utf8(), false),
+  new Field("referenced_schema", new Utf8(), false),
+]);
+
+function buildFkBytes(fkCols: string[], pkCols: string[], refTable: string, refSchema: string): Uint8Array {
+  return serializeBatch(batchFromColumns({
+    fk_columns: [fkCols],
+    pk_columns: [pkCols],
+    referenced_table: [refTable],
+    referenced_schema: [refSchema],
+  }, FK_BATCH_SCHEMA));
+}
+
+function buildVersionArgBytes(version: number): Uint8Array {
+  const argBatchSchema = new Schema([new Field("version", new Int64(), true)]);
+  return serializeBatch(batchFromColumns({ version: [BigInt(version)] }, argBatchSchema));
+}
+
 export function createExampleCatalog(base: ReadOnlyCatalogInterface): ReadOnlyCatalogInterface {
-  // Override tableGet and tableScanFunctionGet for time travel support
   const origTableGet = base.tableGet.bind(base);
   const origTableScanFunctionGet = base.tableScanFunctionGet.bind(base);
 
@@ -221,14 +327,33 @@ export function createExampleCatalog(base: ReadOnlyCatalogInterface): ReadOnlyCa
       const version = resolveVersion(atUnit, atValue);
       const cols = getVersionedSchema(version);
       return new TableInfo(
-        name,
-        schemaName,
-        serializeSchema(cols),
-        [],
-        [],
-        [],
-        "Versioned data table demonstrating time travel with schema evolution",
-        {},
+        name, schemaName, serializeSchema(cols),
+        [], [], [], [], [],
+        "Versioned data table demonstrating time travel with schema evolution", {},
+      );
+    }
+    if (schemaName.toLowerCase() === "data" && name.toLowerCase() === "versioned_constraints" && atUnit) {
+      const version = resolveVersionedConstraintsVersion(atUnit, atValue);
+      const cols = getVersionedConstraintsSchema(version);
+      // Constraints evolve: V1: NOT NULL(id), V2: +NOT NULL(name),PK(id),UNIQUE(email), V3: +FK
+      const colNames = cols.fields.map((f) => f.name);
+      const notNull: number[] = [];
+      const pk: number[][] = [];
+      const unique: number[][] = [];
+      const fk: Uint8Array[] = [];
+      if (version >= 1) notNull.push(colNames.indexOf("id"));
+      if (version >= 2) {
+        notNull.push(colNames.indexOf("name"));
+        pk.push([colNames.indexOf("id")]);
+        unique.push([colNames.indexOf("email")]);
+      }
+      if (version >= 3) {
+        fk.push(buildFkBytes(["department_id"], ["id"], "departments", schemaName));
+      }
+      return new TableInfo(
+        name, schemaName, serializeSchema(cols),
+        notNull, unique, [], pk, fk,
+        "Table with constraints that evolve across versions", {},
       );
     }
     return origTableGet(attachId, schemaName, name, atUnit, atValue, transactionId);
@@ -242,21 +367,25 @@ export function createExampleCatalog(base: ReadOnlyCatalogInterface): ReadOnlyCa
     atValue?: string,
     transactionId?: TransactionId,
   ): any => {
-    // Handle versioned_data with time travel
+    // Time-travel tables
     if (schemaName.toLowerCase() === "data" && name.toLowerCase() === "versioned_data") {
       const version = resolveVersion(atUnit, atValue);
-      // Build arguments batch with the version
-      const func = versionedDataScanFunction!;
-      const argSchema = argumentSpecsToSchema(func.argumentSpecs);
-      const args = new Arguments([version]);
-      const argFields = [new Field("version", new Int64(), true)];
-      const argBatchSchema = new Schema(argFields);
-      const argBytes = serializeBatch(batchFromColumns({ version: [BigInt(version)] }, argBatchSchema));
-      return {
-        function_name: "versioned_data_scan",
-        arguments: argBytes,
-        required_extensions: [],
-      };
+      return { function_name: "versioned_data_scan", arguments: buildVersionArgBytes(version), required_extensions: [] };
+    }
+    if (schemaName.toLowerCase() === "data" && name.toLowerCase() === "versioned_constraints") {
+      const version = resolveVersionedConstraintsVersion(atUnit, atValue);
+      return { function_name: "versioned_constraints_scan", arguments: buildVersionArgBytes(version), required_extensions: [] };
+    }
+
+    // Static constraint tables
+    const staticTables: Record<string, string> = {
+      departments: "departments_scan",
+      employees: "employees_scan",
+      products: "products_scan",
+      projects: "projects_scan",
+    };
+    if (schemaName.toLowerCase() === "data" && name.toLowerCase() in staticTables) {
+      return { function_name: staticTables[name.toLowerCase()], arguments: serializeBatch(batchFromColumns({}, new Schema([]))), required_extensions: [] };
     }
 
     return origTableScanFunctionGet(attachId, schemaName, name, atUnit, atValue, transactionId);
