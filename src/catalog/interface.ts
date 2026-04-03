@@ -48,6 +48,8 @@ export interface CatalogAttachResult {
   defaultSchema?: string;
   settings?: Uint8Array[];
   secretTypes?: Uint8Array[];
+  comment?: string | null;
+  tags?: Record<string, string>;
 }
 
 // ============================================================================

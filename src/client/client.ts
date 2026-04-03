@@ -390,6 +390,8 @@ export class VgiClient {
       settings: inner.settings
         ? (Array.isArray(inner.settings) ? inner.settings : [...inner.settings]).map(toUint8Array)
         : [],
+      comment: inner.comment ?? null,
+      tags: deserializeTags(inner.tags),
     };
   }
 
@@ -1075,6 +1077,23 @@ function deserializeInfoList<T>(
   return arr
     .filter((b: any) => b != null)
     .map((b: any) => deserializeFn(toUint8Array(b)));
+}
+
+/**
+ * Deserialize Arrow Map entries into a plain Record<string, string>.
+ */
+function deserializeTags(mapVal: any): Record<string, string> {
+  const tags: Record<string, string> = {};
+  if (!mapVal) return tags;
+  const entries = typeof mapVal[Symbol.iterator] === "function" ? mapVal : [];
+  for (const entry of entries) {
+    if (Array.isArray(entry)) {
+      tags[String(entry[0])] = String(entry[1]);
+    } else if (entry && typeof entry === "object") {
+      tags[String(entry.key ?? entry[0] ?? "")] = String(entry.value ?? entry[1] ?? "");
+    }
+  }
+  return tags;
 }
 
 /**

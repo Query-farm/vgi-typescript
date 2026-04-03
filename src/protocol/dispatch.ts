@@ -1,7 +1,7 @@
 // Build VGI protocol from worker implementation.
 // Registers bind, init, table_function_cardinality, and catalog methods on vgi-rpc Protocol.
 
-import { Schema, Field, Binary, Utf8, Int64, Int32, Bool, List, RecordBatch } from "@query-farm/apache-arrow";
+import { Schema, Field, Binary, Utf8, Int64, Int32, Bool, List, Map_, Struct, RecordBatch } from "@query-farm/apache-arrow";
 import { Protocol, type OutputCollector } from "vgi-rpc";
 
 // NOTE: We must NOT use vgi-rpc's str/bytes/int/etc. singletons in Schema objects
@@ -350,6 +350,11 @@ function registerCatalogMethods(
     new Field("default_schema", new Utf8(), false),
     new Field("settings", new List(new Field("item", new Binary(), true)), false),
     new Field("secret_types", new List(new Field("item", new Binary(), true)), false),
+    new Field("comment", new Utf8(), true),
+    new Field("tags", new Map_(new Field("entries", new Struct([
+      new Field("key", new Utf8() as any, false),
+      new Field("value", new Utf8() as any, true),
+    ] as any), false)), true),
   ]);
 
   const versionResponseSchema = new Schema([
@@ -423,6 +428,8 @@ function registerCatalogMethods(
         default_schema: result.defaultSchema ?? "main",
         settings: result.settings ?? [],
         secret_types: result.secretTypes ?? [],
+        comment: result.comment ?? null,
+        tags: result.tags ? Object.entries(result.tags).map(([k, v]) => [k, v]) : [],
       }, attachResultInnerSchema);
     },
   });
