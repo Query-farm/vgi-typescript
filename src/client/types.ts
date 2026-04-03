@@ -9,8 +9,8 @@ export type OnCreateConflict = "error" | "ignore" | "replace";
 /** DuckDB catalog function type filter (sent as uppercase wire values). */
 export type CatalogFunctionType = "SCALAR_FUNCTION" | "TABLE_FUNCTION";
 
-/** Macro type filter for schema contents listing. */
-export type CatalogMacroType = "scalar_macro" | "table_macro";
+/** Macro type filter for schema contents listing (uppercase wire values). */
+export type CatalogMacroType = "SCALAR_MACRO" | "TABLE_MACRO";
 
 /** Options for constructing a VgiClient. */
 export interface VgiClientOptions {

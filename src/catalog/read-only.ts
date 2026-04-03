@@ -291,8 +291,8 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
     name: string,
     transactionId?: TransactionId
   ): MacroInfo | null {
-    const macros = this.schemaContentsMacros(attachId, schemaName, "scalar_macro", transactionId);
-    const tableMacros = this.schemaContentsMacros(attachId, schemaName, "table_macro", transactionId);
+    const macros = this.schemaContentsMacros(attachId, schemaName, "SCALAR_MACRO", transactionId);
+    const tableMacros = this.schemaContentsMacros(attachId, schemaName, "TABLE_MACRO", transactionId);
     const all = [...macros, ...tableMacros];
     return all.find((m) => m.name.toLowerCase() === name.toLowerCase()) ?? null;
   }
