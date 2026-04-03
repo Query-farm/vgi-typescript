@@ -1,7 +1,7 @@
 // VgiClient — high-level client for calling VGI worker functions and catalog API.
 // Works with any RpcClient (subprocess or HTTP transport).
 
-import { Schema, Field, RecordBatch, Utf8, Binary } from "@query-farm/apache-arrow";
+import { Schema, Field, RecordBatch, Utf8, Binary, List } from "@query-farm/apache-arrow";
 import type { RpcClient, StreamSession } from "vgi-rpc";
 import {
   serializeBindRequest,
@@ -27,6 +27,8 @@ import {
   TableInfo,
   ViewInfo,
   FunctionInfo,
+  MacroInfo,
+  MacroType,
   type CatalogAttachResult,
   type AttachId,
   type TransactionId,
@@ -40,6 +42,7 @@ import type {
   TableInOutFunctionOptions,
   OnCreateConflict,
   CatalogFunctionType,
+  CatalogMacroType,
 } from "./types.js";
 
 /** Error thrown by VgiClient when an RPC call fails or returns unexpected data. */
@@ -947,6 +950,104 @@ export class VgiClient {
       schema_name: schemaName,
       name,
       comment: comment ?? null,
+      ignore_not_found: ignoreNotFound ?? null,
+      transaction_id: transactionId ?? null,
+    });
+  }
+
+  // ==========================================================================
+  // Macro Catalog API
+  // ==========================================================================
+
+  /** Get a macro by name, or null if not found. */
+  async macroGet(
+    attachId: AttachId,
+    schemaName: string,
+    name: string,
+    transactionId?: TransactionId,
+  ): Promise<MacroInfo | null> {
+    const result = await this.rpc.call("catalog_macro_get", {
+      attach_id: attachId,
+      schema_name: schemaName,
+      name,
+      transaction_id: transactionId ?? null,
+    });
+    if (!result) return null;
+    const inner = unwrapResult(result);
+    const items = deserializeInfoList(inner.items, MacroInfo.deserialize);
+    return items.length > 0 ? items[0] : null;
+  }
+
+  /** List macros in a schema, filtered by type. */
+  async schemaContentsMacros(
+    attachId: AttachId,
+    name: string,
+    type: CatalogMacroType,
+    transactionId?: TransactionId,
+  ): Promise<MacroInfo[]> {
+    const result = await this.rpc.call("catalog_schema_contents_macros", {
+      attach_id: attachId,
+      name,
+      type,
+      transaction_id: transactionId ?? null,
+    });
+    if (!result) return [];
+    const inner = unwrapResult(result);
+    return deserializeInfoList(inner.items, MacroInfo.deserialize);
+  }
+
+  /** Create a new macro. */
+  async macroCreate(
+    attachId: AttachId,
+    schemaName: string,
+    name: string,
+    macroType: MacroType,
+    parameters: string[],
+    definition: string,
+    onConflict: OnCreateConflict,
+    parameterDefaultValues?: Uint8Array | null,
+    transactionId?: TransactionId,
+  ): Promise<void> {
+    const schema = new Schema([
+      new Field("attach_id", new Binary(), true),
+      new Field("schema_name", new Utf8(), false),
+      new Field("name", new Utf8(), false),
+      new Field("macro_type", new Utf8(), false),
+      new Field("parameters", new List(new Field("item", new Utf8(), false)), false),
+      new Field("definition", new Utf8(), false),
+      new Field("on_conflict", new Utf8(), false),
+      new Field("parameter_default_values", new Binary(), true),
+      new Field("transaction_id", new Binary(), true),
+    ]);
+    const innerBatch = batchFromColumns(
+      {
+        attach_id: [attachId],
+        schema_name: [schemaName],
+        name: [name],
+        macro_type: [macroType],
+        parameters: [parameters],
+        definition: [definition],
+        on_conflict: [onConflict],
+        parameter_default_values: [parameterDefaultValues ?? null],
+        transaction_id: [transactionId ?? null],
+      },
+      schema,
+    );
+    await this.rpc.call("catalog_macro_create", wrapRequest(innerBatch));
+  }
+
+  /** Drop a macro by name. */
+  async macroDrop(
+    attachId: AttachId,
+    schemaName: string,
+    name: string,
+    ignoreNotFound?: boolean,
+    transactionId?: TransactionId,
+  ): Promise<void> {
+    await this.rpc.call("catalog_macro_drop", {
+      attach_id: attachId,
+      schema_name: schemaName,
+      name,
       ignore_not_found: ignoreNotFound ?? null,
       transaction_id: transactionId ?? null,
     });

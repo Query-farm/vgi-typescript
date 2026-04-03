@@ -8,4 +8,5 @@ export type {
   TableInOutFunctionOptions,
   OnCreateConflict,
   CatalogFunctionType,
+  CatalogMacroType,
 } from "./types.js";
