@@ -32,6 +32,25 @@ import { toUint8Array } from "../util/bytes.js";
 import type { CatalogInterface } from "../catalog/interface.js";
 import { MacroType } from "../catalog/interface.js";
 import { NoCatalogError } from "../errors.js";
+import {
+  BindResultSchema,
+  TableFunctionCardinalityResultSchema,
+  CatalogInfoSchema,
+  CatalogCatalogsResultSchema,
+  CatalogAttachResultSchema,
+  CatalogVersionResultSchema,
+  CatalogTransactionBeginResultSchema,
+  CatalogSchemasResultSchema,
+  CatalogSchemaGetResultSchema,
+  CatalogSchemaContentsTablesResultSchema,
+  CatalogSchemaContentsViewsResultSchema,
+  CatalogSchemaContentsFunctionsResultSchema,
+  CatalogSchemaContentsMacrosResultSchema,
+  CatalogTableGetResultSchema,
+  CatalogViewGetResultSchema,
+  CatalogMacroGetResultSchema,
+  ScanFunctionResultSchema,
+} from "../generated/vgi-protocol-schemas.js";
 
 function overloadContext(req: { functionName: string; arguments: any; inputSchema: any; functionType: any }): OverloadContext {
   return {
@@ -120,25 +139,15 @@ export function buildVgiProtocol(config: ProtocolConfig): Protocol {
   const { registry, catalogInterface } = config;
   const protocol = new Protocol("vgi");
 
-  // Inner schema for bind response (used to serialize into the "result" Binary column)
-  const bindResponseInnerSchema = new Schema([
-    new Field("output_schema", new Binary(), false),
-    new Field("opaque_data", new Binary(), true),
-    new Field("lookup_secret_types", new List(new Field("item", new Utf8(), true)), false),
-    new Field("lookup_scopes", new List(new Field("item", new Utf8(), true)), false),
-    new Field("lookup_names", new List(new Field("item", new Utf8(), true)), false),
-  ]);
+  // Response schemas sourced from generated/vgi-protocol-schemas.ts; these
+  // local aliases keep the rest of the function body stable.
+  const bindResponseInnerSchema = BindResultSchema;
+  const cardinalityInnerSchema = TableFunctionCardinalityResultSchema;
 
   const initHeaderSchema = new Schema([
     new Field("execution_id", new Binary(), false),
     new Field("opaque_data", new Binary(), true),
     new Field("max_workers", new Int64(), false),
-  ]);
-
-  // Inner schema for cardinality response
-  const cardinalityInnerSchema = new Schema([
-    new Field("estimate", new Int64(), true),
-    new Field("max", new Int64(), true),
   ]);
 
   const emptySchema = new Schema([]);
@@ -335,45 +344,15 @@ function registerCatalogMethods(
     return catalog;
   }
 
-  // Inner schemas for catalog result types (serialized into "result" Binary column)
-  const catalogsResponseSchema = new Schema([
-    new Field("items", new List(new Field("item", new Utf8(), true)), false),
-  ]);
-
-  const attachResultInnerSchema = new Schema([
-    new Field("attach_id", new Binary(), false),
-    new Field("supports_transactions", new Bool(), false),
-    new Field("supports_time_travel", new Bool(), false),
-    new Field("catalog_version_frozen", new Bool(), false),
-    new Field("catalog_version", new Int64(), false),
-    new Field("attach_id_required", new Bool(), false),
-    new Field("default_schema", new Utf8(), false),
-    new Field("settings", new List(new Field("item", new Binary(), true)), false),
-    new Field("secret_types", new List(new Field("item", new Binary(), true)), false),
-    new Field("comment", new Utf8(), true),
-    new Field("tags", new Map_(new Field("entries", new Struct([
-      new Field("key", new Utf8() as any, false),
-      new Field("value", new Utf8() as any, true),
-    ] as any), false)), true),
-  ]);
-
-  const versionResponseSchema = new Schema([
-    new Field("version", new Int64(), false),
-  ]);
-
-  const transactionBeginResponseSchema = new Schema([
-    new Field("transaction_id", new Binary(), true),
-  ]);
-
-  const listBinaryResponseSchema = new Schema([
-    new Field("items", new List(new Field("item", new Binary(), true)), false),
-  ]);
-
-  const scanFunctionResponseSchema = new Schema([
-    new Field("function_name", new Utf8(), false),
-    new Field("arguments", new Binary(), true),
-    new Field("required_extensions", new List(new Field("item", new Utf8(), true)), false),
-  ]);
+  // Response-schema aliases — sourced from generated/vgi-protocol-schemas.ts.
+  // Note: the hand-written `catalogsResponseSchema` was List<Utf8>, which was
+  // the original drift that motivated this codegen pipeline. The generated
+  // schema is List<Binary> matching vgi-python's Protocol.
+  const catalogsResponseSchema = CatalogCatalogsResultSchema;
+  const attachResultInnerSchema = CatalogAttachResultSchema;
+  const versionResponseSchema = CatalogVersionResultSchema;
+  const transactionBeginResponseSchema = CatalogTransactionBeginResultSchema;
+  const scanFunctionResponseSchema = ScanFunctionResultSchema;
 
   const emptyResult = new Schema([]);
 
@@ -406,7 +385,17 @@ function registerCatalogMethods(
     result: RESULT_BINARY_SCHEMA,
     handler: () => {
       const cat = getCatalog();
-      return wrapResult({ items: cat.catalogs() }, catalogsResponseSchema);
+      // Each catalog name becomes an IPC-serialized CatalogInfo batch
+      // {name, implementation_version?, data_version_spec?}. Matches the
+      // vgi-python Protocol's CatalogsResponse wire shape.
+      const items = cat.catalogs().map((name) => {
+        const infoBatch = batchFromColumns(
+          { name: [name], implementation_version: [null], data_version_spec: [null] },
+          CatalogInfoSchema,
+        );
+        return serializeBatch(infoBatch);
+      });
+      return wrapResult({ items }, catalogsResponseSchema);
     },
   });
 
@@ -538,7 +527,7 @@ function registerCatalogMethods(
       );
       return wrapResult({
         items: schemas.map((s) => s.serialize()),
-      }, listBinaryResponseSchema);
+      }, CatalogSchemasResultSchema);
     },
   });
 
@@ -555,7 +544,7 @@ function registerCatalogMethods(
       );
       return wrapResult({
         items: info ? [info.serialize()] : [],
-      }, listBinaryResponseSchema);
+      }, CatalogSchemaGetResultSchema);
     },
   });
 
@@ -618,7 +607,7 @@ function registerCatalogMethods(
       );
       return wrapResult({
         items: tables.map((t) => t.serialize()),
-      }, listBinaryResponseSchema);
+      }, CatalogSchemaContentsTablesResultSchema);
     },
   });
 
@@ -635,7 +624,7 @@ function registerCatalogMethods(
       );
       return wrapResult({
         items: views.map((v) => v.serialize()),
-      }, listBinaryResponseSchema);
+      }, CatalogSchemaContentsViewsResultSchema);
     },
   });
 
@@ -658,7 +647,7 @@ function registerCatalogMethods(
       );
       return wrapResult({
         items: funcs.map((f) => f.serialize()),
-      }, listBinaryResponseSchema);
+      }, CatalogSchemaContentsFunctionsResultSchema);
     },
   });
 
@@ -685,7 +674,7 @@ function registerCatalogMethods(
       );
       return wrapResult({
         items: info ? [info.serialize()] : [],
-      }, listBinaryResponseSchema);
+      }, CatalogTableGetResultSchema);
     },
   });
 
@@ -1036,7 +1025,7 @@ function registerCatalogMethods(
       );
       return wrapResult({
         items: info ? [info.serialize()] : [],
-      }, listBinaryResponseSchema);
+      }, CatalogViewGetResultSchema);
     },
   });
 
@@ -1132,7 +1121,7 @@ function registerCatalogMethods(
       );
       return wrapResult({
         items: info ? [info.serialize()] : [],
-      }, listBinaryResponseSchema);
+      }, CatalogMacroGetResultSchema);
     },
   });
 
@@ -1200,7 +1189,7 @@ function registerCatalogMethods(
       );
       return wrapResult({
         items: macros.map((m) => m.serialize()),
-      }, listBinaryResponseSchema);
+      }, CatalogSchemaContentsMacrosResultSchema);
     },
   });
 }

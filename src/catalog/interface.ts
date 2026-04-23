@@ -20,15 +20,13 @@ import {
 } from "@query-farm/apache-arrow";
 import { CatalogReadOnlyError, CatalogNotFoundError } from "../errors.js";
 import { serializeSchema, serializeBatch, deserializeBatch, batchToScalarDict, deserializeSchema } from "../util/arrow.js";
-
-// Helper to create a Map_ type properly
-function mapType(keyType: any, valueType: any): Map_ {
-  const entriesStruct = new Struct([
-    new Field("key", keyType, false),
-    new Field("value", valueType, true),
-  ]);
-  return new Map_(new Field("entries", entriesStruct, false));
-}
+import {
+  SchemaInfoSchema as SCHEMA_INFO_SCHEMA,
+  TableInfoSchema as TABLE_INFO_SCHEMA,
+  ViewInfoSchema as VIEW_INFO_SCHEMA,
+  FunctionInfoSchema as FUNCTION_INFO_SCHEMA,
+  MacroInfoSchema as MACRO_INFO_SCHEMA,
+} from "../generated/vgi-protocol-schemas.js";
 
 export type AttachId = Uint8Array;
 export type TransactionId = Uint8Array;
@@ -57,13 +55,6 @@ export interface CatalogAttachResult {
 // ============================================================================
 
 // These serialize themselves to Arrow IPC bytes for catalog responses
-
-const SCHEMA_INFO_SCHEMA = new Schema([
-  new Field("attach_id", new Binary(), false),
-  new Field("name", new Utf8(), false),
-  new Field("comment", new Utf8(), true),
-  new Field("tags", mapType(new Utf8(), new Utf8()), true),
-]);
 
 export class SchemaInfo {
   constructor(
@@ -98,19 +89,6 @@ export class SchemaInfo {
     );
   }
 }
-
-const TABLE_INFO_SCHEMA = new Schema([
-  new Field("name", new Utf8(), false),
-  new Field("schema_name", new Utf8(), false),
-  new Field("columns", new Binary(), false),
-  new Field("not_null_constraints", new List(new Field("item", new Int32(), false)), false),
-  new Field("unique_constraints", new List(new Field("item", new List(new Field("item", new Int32(), false)), false)), false),
-  new Field("check_constraints", new List(new Field("item", new Utf8(), false)), false),
-  new Field("primary_key_constraints", new List(new Field("item", new List(new Field("item", new Int32(), false)), false)), false),
-  new Field("foreign_key_constraints", new List(new Field("item", new Binary(), false)), false),
-  new Field("comment", new Utf8(), true),
-  new Field("tags", mapType(new Utf8(), new Utf8()), true),
-]);
 
 export class TableInfo {
   constructor(
@@ -164,14 +142,6 @@ export class TableInfo {
   }
 }
 
-const VIEW_INFO_SCHEMA = new Schema([
-  new Field("name", new Utf8(), false),
-  new Field("schema_name", new Utf8(), false),
-  new Field("definition", new Utf8(), false),
-  new Field("comment", new Utf8(), true),
-  new Field("tags", mapType(new Utf8(), new Utf8()), true),
-]);
-
 export class ViewInfo {
   constructor(
     public readonly name: string,
@@ -208,36 +178,6 @@ export class ViewInfo {
     );
   }
 }
-
-const FUNCTION_INFO_SCHEMA = new Schema([
-  new Field("name", new Utf8(), false),
-  new Field("schema_name", new Utf8(), false),
-  new Field("function_type", new Utf8(), false),
-  new Field("arguments", new Binary(), false),
-  new Field("output_schema", new Binary(), false),
-  new Field("stability", new Utf8(), true),
-  new Field("null_handling", new Utf8(), true),
-  new Field("description", new Utf8(), false),
-  new Field("examples", new List(new Field("item", new Struct([
-    new Field("sql", new Utf8(), false),
-    new Field("description", new Utf8(), false),
-  ]), true)), false),
-  new Field("categories", new List(new Field("item", new Utf8(), true)), false),
-  new Field("projection_pushdown", new Bool(), true),
-  new Field("filter_pushdown", new Bool(), true),
-  new Field("order_preservation", new Utf8(), true),
-  new Field("max_workers", new Int32(), true),
-  new Field("order_dependent", new Utf8(), false),
-  new Field("distinct_dependent", new Utf8(), false),
-  new Field("required_settings", new List(new Field("item", new Utf8(), true)), false),
-  new Field("required_secrets", new List(new Field("item", new Struct([
-    new Field("secret_type", new Utf8(), false),
-    new Field("scope", new Utf8(), true),
-    new Field("secret_name", new Utf8(), true),
-  ]), true)), false),
-  new Field("comment", new Utf8(), true),
-  new Field("tags", mapType(new Utf8(), new Utf8()), true),
-]);
 
 export interface FunctionInfoOptions {
   name: string;
@@ -396,17 +336,6 @@ export class FunctionInfo {
     });
   }
 }
-
-const MACRO_INFO_SCHEMA = new Schema([
-  new Field("name", new Utf8(), false),
-  new Field("schema_name", new Utf8(), false),
-  new Field("macro_type", new Utf8(), false),
-  new Field("parameters", new List(new Field("item", new Utf8(), false)), false),
-  new Field("parameter_default_values", new Binary(), true),
-  new Field("definition", new Utf8(), false),
-  new Field("comment", new Utf8(), true),
-  new Field("tags", mapType(new Utf8(), new Utf8()), true),
-]);
 
 export class MacroInfo {
   constructor(
