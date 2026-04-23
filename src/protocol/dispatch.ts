@@ -225,8 +225,13 @@ export function buildVgiProtocol(config: ProtocolConfig): Protocol {
         isProducer,
         userState,
         __isProducer: isProducer,
-        // Live Schema for vgi-rpc to read during init (not serializable).
+        // Live Schemas for vgi-rpc to read during init (not serializable).
+        // __inputSchema overrides dispatchStream's method.inputSchema per call
+        // — the TS worker registers `init` as exchange with the permissive
+        // `dummyInputSchema` sentinel; the real per-function input shape comes
+        // from the bound handlers here.
         __outputSchema: handlers.outputSchema ?? emptySchema,
+        __inputSchema: handlers.inputSchema ?? emptySchema,
         // Live objects for immediate use during init (producer mode).
         _handlers: handlers,
         _handlerState: handlerState,
