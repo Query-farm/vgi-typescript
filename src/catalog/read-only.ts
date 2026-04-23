@@ -40,7 +40,7 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
 
   attach(name: string, options?: any): CatalogAttachResult {
     if (!this.catalogs().includes(name)) {
-      throw new Error(`Unknown catalog: '${name}'`);
+      throw new Error(`No worker handles catalog '${name}'`);
     }
 
     const attachId = new Uint8Array(16);
@@ -210,10 +210,12 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
 
     return schema.functions
       .filter((f) => {
-        // Filter by type (DuckDB sends uppercase: SCALAR_FUNCTION, TABLE_FUNCTION)
+        // Filter by type (DuckDB sends uppercase: SCALAR_FUNCTION, TABLE_FUNCTION,
+        // AGGREGATE_FUNCTION). Unknown filter values pass everything through.
         const t = type.toUpperCase();
-        if (t === "SCALAR_FUNCTION" && f.kind !== "scalar") return false;
-        if (t === "TABLE_FUNCTION" && f.kind !== "table" && f.kind !== "table_in_out") return false;
+        if (t === "SCALAR_FUNCTION") return f.kind === "scalar";
+        if (t === "TABLE_FUNCTION") return f.kind === "table" || f.kind === "table_in_out";
+        if (t === "AGGREGATE_FUNCTION") return (f.kind as string) === "aggregate";
         return true;
       })
       .map((f) => {
@@ -234,7 +236,7 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
         return new FunctionInfo({
           name: f.meta.name,
           schemaName: name,
-          functionType: meta.functionType.toLowerCase(),
+          functionType: meta.functionType.toUpperCase(),
           functionArguments: argBytes,
           outputSchema: outputSchemaBytes,
           stability: meta.stability,

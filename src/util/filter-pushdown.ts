@@ -370,7 +370,7 @@ export class PushdownFilters {
 function parseFilter(
   spec: any,
   getValue: (ref: number) => any,
-): Filter {
+): Filter | null {
   const columnName: string = spec.column_name ?? "";
   const columnIndex: number = spec.column_index ?? 0;
 
@@ -406,31 +406,53 @@ function parseFilter(
       return { type: "in", columnName, columnIndex, values };
     }
 
-    case "and":
-      return {
-        type: "and",
-        columnName,
-        columnIndex,
-        children: (spec.children ?? []).map((c: any) => parseFilter(c, getValue)),
-      };
+    case "and": {
+      // AND: drop unparseable children; the remaining ones still filter correctly
+      // (conjunction is weaker with fewer children, which is safe — extra rows
+      // pass but DuckDB re-filters client-side).
+      const andChildren = (spec.children ?? [])
+        .map((c: any) => parseFilter(c, getValue))
+        .filter((f: Filter | null): f is Filter => f !== null);
+      if (andChildren.length === 0) return null;
+      return { type: "and", columnName, columnIndex, children: andChildren };
+    }
 
-    case "or":
-      return {
-        type: "or",
-        columnName,
-        columnIndex,
-        children: (spec.children ?? []).map((c: any) => parseFilter(c, getValue)),
-      };
+    case "or": {
+      // OR: dropping a child would strengthen the filter (fewer rows pass),
+      // which is unsafe. If any child fails to parse, drop the whole OR.
+      const orChildren: Filter[] = [];
+      for (const c of spec.children ?? []) {
+        const parsed = parseFilter(c, getValue);
+        if (parsed === null) return null;
+        orChildren.push(parsed);
+      }
+      return { type: "or", columnName, columnIndex, children: orChildren };
+    }
 
-    case "struct":
+    case "struct": {
+      const childFilter = parseFilter(spec.child_filter, getValue);
+      if (childFilter === null) return null;
       return {
         type: "struct",
         columnName,
         columnIndex,
         childIndex: spec.child_index ?? 0,
         childName: spec.child_name ?? "",
-        childFilter: parseFilter(spec.child_filter, getValue),
+        childFilter,
       };
+    }
+
+    case "join_keys":
+      // vgi-python `FilterType.JOIN_KEYS` — resolution requires a join-keys
+      // column lookup callback the TS worker doesn't plumb yet. Match Python's
+      // graceful-degradation contract: skip this filter and let DuckDB filter
+      // client-side rather than fail the whole query.
+      return null;
+
+    case "expression":
+      // vgi-python `FilterType.EXPRESSION` — full expression evaluator not
+      // ported to TS yet. Graceful skip (same rationale as join_keys).
+      return null;
 
     default:
       throw new Error(`Unknown filter type: ${spec.type}`);
@@ -476,7 +498,9 @@ export function deserializeFilters(batch: RecordBatch): PushdownFilters {
     return col.get(0);
   };
 
-  const filters = specs.map((spec) => parseFilter(spec, getValue));
+  const filters = specs
+    .map((spec) => parseFilter(spec, getValue))
+    .filter((f): f is Filter => f !== null);
   return new PushdownFilters(filters, version);
 }
 
