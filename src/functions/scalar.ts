@@ -12,7 +12,6 @@ import {
   makeData,
   vectorFromArray,
   Int64,
-  Type,
 } from "@query-farm/apache-arrow";
 import type { OutputCollector, AuthContext } from "vgi-rpc";
 import {
@@ -102,146 +101,6 @@ export interface ScalarFunctionConfig {
   maxWorkers?: number;
   requiredSettings?: string[];
   requiredSecrets?: string[];
-}
-
-const _decimalScratchBuf = new ArrayBuffer(8);
-const _decimalScratchDv = new DataView(_decimalScratchBuf);
-
-/**
- * Extract a Decimal column's numeric value for row `i`.
- *
- * The VGI DuckDB extension encodes Float64 literal arguments (e.g. `3.14`) as
- * 128-bit DECIMAL columns where the low 64 bits hold the IEEE 754 double bit
- * pattern and the upper 64 bits are zero. That's not a genuine scaled-integer
- * decimal, so the scale-aware path (`bn.valueOf(scale)`) produces a value that
- * overflows JS safe-integer range. Detect that case — the low 64 bits as a
- * bigint >2^53 — and reinterpret them as a Float64. Otherwise use the ordinary
- * scale path for honest Decimal wire values.
- */
-function decimalCellToNumber(col: any, i: number, scale: number): number | null {
-  const raw = col.get(i);
-  if (raw === null || raw === undefined) return null;
-
-  // Extract a bigint representation of the raw storage. BN.toString() emits the
-  // integer decimal form (no scale applied), suitable for BigInt().
-  let asBigint: bigint;
-  if (typeof raw === "bigint") {
-    asBigint = raw;
-  } else if (typeof raw === "number") {
-    asBigint = BigInt(Math.trunc(raw));
-  } else if (typeof raw === "object" && typeof (raw as any).toString === "function") {
-    try {
-      asBigint = BigInt((raw as any).toString());
-    } catch {
-      return null;
-    }
-  } else {
-    return null;
-  }
-
-  const low64 = BigInt.asIntN(64, asBigint);
-  const MAX_SAFE = BigInt(Number.MAX_SAFE_INTEGER);
-  if (low64 >= -MAX_SAFE && low64 <= MAX_SAFE && asBigint === low64) {
-    // Genuine small integer Decimal; apply scale.
-    const n = Number(low64);
-    return scale === 0 ? n : n / Math.pow(10, scale);
-  }
-  // Reinterpret low 64 bits as IEEE 754 double (little-endian) — the Float64
-  // literal-as-Decimal encoding path.
-  _decimalScratchDv.setBigInt64(0, low64, true);
-  return _decimalScratchDv.getFloat64(0, true);
-}
-
-/**
- * Cast each column of `batch` whose declared type differs from the wire type
- * into a JS-native representation matching the declared type. Rebuilds the
- * batch with a schema whose field types come from `declaredColumnTypes`. If
- * no casts are needed, returns the original batch unchanged.
- *
- * Currently handles: Decimal → Int/Float (reads via `decimalCellToNumber`).
- * Other same-family casts fall through to `vectorFromArray` which handles
- * int↔int and float↔float promotions losslessly.
- */
-function castBatchColumns(
-  batch: RecordBatch,
-  declaredColumnTypes: DataType[],
-): RecordBatch {
-  if (declaredColumnTypes.length === 0 || batch.numRows === 0) return batch;
-
-  let needsCast = false;
-  const newFields: Field[] = [];
-  const newChildren: any[] = [];
-
-  for (let colIdx = 0; colIdx < batch.schema.fields.length; colIdx++) {
-    const field = batch.schema.fields[colIdx];
-    const declared = declaredColumnTypes[colIdx];
-    const srcType = field.type;
-
-    // Skip when we have no declared type (unexpected extra column) or Null-typed
-    // declared (function accepts any) or types already match.
-    if (
-      !declared ||
-      declared.typeId === Type.Null ||
-      srcType.typeId === declared.typeId
-    ) {
-      newFields.push(field);
-      newChildren.push(batch.data.children[colIdx]);
-      continue;
-    }
-
-    // Currently only Decimal → numeric needs a custom cast path; everything
-    // else goes through arrow-js's vectorFromArray with the raw values.
-    const col = batch.getChildAt(colIdx);
-    if (!col) {
-      newFields.push(field);
-      newChildren.push(batch.data.children[colIdx]);
-      continue;
-    }
-
-    const values: any[] = [];
-    if (srcType.typeId === Type.Decimal) {
-      const scale = (srcType as any).scale as number;
-      for (let i = 0; i < batch.numRows; i++) {
-        values.push(decimalCellToNumber(col, i, scale));
-      }
-    } else {
-      for (let i = 0; i < batch.numRows; i++) {
-        const v = col.get(i);
-        if (v === null || v === undefined) {
-          values.push(null);
-        } else if (typeof v === "bigint") {
-          values.push(v);
-        } else {
-          values.push(v);
-        }
-      }
-    }
-
-    // Coerce to BigInt for 64-bit integer targets.
-    let emitValues = values;
-    if (DataType.isInt(declared) && (declared as any).bitWidth === 64) {
-      emitValues = values.map((v: any) =>
-        v == null ? null : typeof v === "bigint" ? v : BigInt(Math.trunc(v as number)),
-      );
-    }
-
-    const arr = vectorFromArray(emitValues, declared);
-    newFields.push(new Field(field.name, declared, field.nullable, field.metadata));
-    newChildren.push(arr.data[0]);
-    needsCast = true;
-  }
-
-  if (!needsCast) return batch;
-  const newSchema = new Schema(newFields);
-  const structType = new Struct(newFields);
-  const data = makeData({
-    type: structType,
-    length: batch.numRows,
-    children: newChildren,
-    nullCount: batch.data.nullCount,
-    nullBitmap: batch.data.nullBitmap,
-  });
-  return new RecordBatch(newSchema, data);
 }
 
 export function defineScalarFunction(config: ScalarFunctionConfig): VgiFunction {
@@ -387,23 +246,12 @@ export function defineScalarFunction(config: ScalarFunctionConfig): VgiFunction 
 
       const inputSchema = request.bindCall.inputSchema;
 
-      // Build an ordered list of declared column types from the function's
-      // non-const / non-table-input params, to cast incoming batches column-by-
-      // column. DuckDB may send Decimal-backed values for numeric literals
-      // (e.g. `3.14` → Decimal(3,2)) when the user function declared Float64;
-      // cast at the framework boundary so compute() always sees values matching
-      // the advertised signature.
-      const declaredColumnTypes: DataType[] = specs
-        .filter((s) => !s.isConst && !s.isTableInput)
-        .map((s) => s.arrowType);
-
       return {
         outputSchema,
         inputSchema: inputSchema ?? undefined,
         exchangeInit: () => ({}),
         exchangeFn: (state: any, input: RecordBatch, out: OutputCollector) => {
-          const castInput = castBatchColumns(input, declaredColumnTypes);
-          const result = config.compute(castInput, constArgs, { settings, secrets, auth: out.auth });
+          const result = config.compute(input, constArgs, { settings, secrets, auth: out.auth });
 
           // Build output batch
           let outputBatch: RecordBatch;
