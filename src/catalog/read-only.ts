@@ -157,6 +157,13 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
       if (t.defaults) {
         colSchema = applyDefaults(colSchema, t.defaults);
       }
+      // Apply generated-column expressions as Arrow field metadata
+      // (`generated_expression`). DuckDB registers these columns as GENERATED
+      // and evaluates the SQL expression client-side — the scan function
+      // should not return values for them.
+      if (t.generatedColumns) {
+        colSchema = applyGeneratedColumns(colSchema, t.generatedColumns);
+      }
       // Apply per-column comments as Arrow field metadata (matches Python's
       // `comment` metadata key on columns).
       if (t.columnComments) {
@@ -440,6 +447,22 @@ function applyDefaults(schema: Schema, defaults: Record<string, DefaultValue>): 
     const f = result.fields[idx];
     const existingMeta = f.metadata ? new Map(f.metadata) : new Map<string, string>();
     existingMeta.set("default", defaultToSql(value));
+    const newField = new Field(f.name, f.type, f.nullable, existingMeta);
+    const fields = [...result.fields];
+    fields[idx] = newField;
+    result = new Schema(fields);
+  }
+  return result;
+}
+
+function applyGeneratedColumns(schema: Schema, generated: Record<string, string>): Schema {
+  let result = schema;
+  for (const [colName, expression] of Object.entries(generated)) {
+    const idx = result.fields.findIndex((f) => f.name === colName);
+    if (idx < 0) continue;
+    const f = result.fields[idx];
+    const existingMeta = f.metadata ? new Map(f.metadata) : new Map<string, string>();
+    existingMeta.set("generated_expression", expression);
     const newField = new Field(f.name, f.type, f.nullable, existingMeta);
     const fields = [...result.fields];
     fields[idx] = newField;

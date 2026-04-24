@@ -167,6 +167,12 @@ export const catalog: CatalogDescriptor = {
             new Field("doubled", new Int64(), true),
             new Field("label", new Utf8(), true),
           ]),
+          function: sequenceFunction,
+          arguments: new Arguments([10]),
+          generatedColumns: {
+            doubled: "n * 2",
+            label: "'item_' || CAST(n AS VARCHAR)",
+          },
           comment: "Table with generated columns backed by sequence(10)",
         },
         // Row ID position tests (int64 row_id)

@@ -34,6 +34,14 @@ export interface TableDescriptor {
   defaults?: Record<string, DefaultValue>;
   /** Per-column comment strings, applied as field metadata `comment`. */
   columnComments?: Record<string, string>;
+  /**
+   * Generated (virtual) columns: map of column name → SQL expression computed
+   * from other physical columns. Applied as Arrow field metadata
+   * `generated_expression`, which the DuckDB VGI extension reads at table
+   * registration. The backing scan function should not return these columns —
+   * DuckDB evaluates the expressions client-side.
+   */
+  generatedColumns?: Record<string, string>;
   supportsTimeTravel?: boolean;
   comment?: string;
   tags?: Record<string, string>;
