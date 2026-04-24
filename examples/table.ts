@@ -819,7 +819,7 @@ const constant_columns = defineTableFunction<ConstantColumnsArgs, ConstantColumn
     const size = Math.min(state.remaining, CONSTANT_COLUMNS_BATCH_SIZE);
 
     // Extract the constant values from bind call arguments
-    const bindArgs = params.initCall.bindCall.arguments;
+    const bindArgs = params.initCall.bind_call.arguments;
     const columns: Record<string, any[]> = {};
 
     for (let i = 0; i < params.outputSchema.fields.length; i++) {
@@ -1502,7 +1502,7 @@ const repeat_value_int = defineTableFunction<{ count: number; [key: string]: any
   },
   initialState: (params: TableProcessParams<any>) => {
     const count = params.args.count;
-    const bindArgs = params.initCall.bindCall.arguments;
+    const bindArgs = params.initCall.bind_call.arguments;
     const numValues = bindArgs.length - 1;
     const row: any[] = [];
     for (let i = 0; i < numValues; i++) {
@@ -1545,7 +1545,7 @@ const repeat_value_str = defineTableFunction<{ count: number; [key: string]: any
   },
   initialState: (params: TableProcessParams<any>) => {
     const count = params.args.count;
-    const bindArgs = params.initCall.bindCall.arguments;
+    const bindArgs = params.initCall.bind_call.arguments;
     const numValues = bindArgs.length - 1;
     const row: any[] = [];
     for (let i = 0; i < numValues; i++) {

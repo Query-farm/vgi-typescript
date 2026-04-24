@@ -34,10 +34,10 @@ const echo = defineTableInOutFunction({
   filterPushdown: true,
   autoApplyFilters: true,
   onBind: (params: TableInOutBindParams) => {
-    if (!params.bindCall.inputSchema) {
+    if (!params.bindCall.input_schema) {
       throw new Error("input_schema is required");
     }
-    return { outputSchema: params.bindCall.inputSchema };
+    return { outputSchema: params.bindCall.input_schema };
   },
   // Default process: emits input batch unchanged (passthrough)
   examples: [
@@ -104,10 +104,10 @@ const repeat_inputs = defineTableInOutFunction<RepeatInputsArgs>({
     if (params.args.repeat_count < 1) {
       throw new Error("Repeat count must be at least 1");
     }
-    if (!params.bindCall.inputSchema) {
+    if (!params.bindCall.input_schema) {
       throw new Error("input_schema is required but was None");
     }
-    return { outputSchema: params.bindCall.inputSchema };
+    return { outputSchema: params.bindCall.input_schema };
   },
   process: (
     params: TableInOutProcessParams<RepeatInputsArgs>,
@@ -175,10 +175,10 @@ const sum_all_columns = defineTableInOutFunction<SumAllColumnsArgs, SumAllColumn
     logging: false,
   },
   onBind: (params: TableInOutBindParams<SumAllColumnsArgs>) => {
-    if (!params.bindCall.inputSchema) {
+    if (!params.bindCall.input_schema) {
       throw new Error("input_schema is required");
     }
-    return { outputSchema: buildNumericOutputSchema(params.bindCall.inputSchema) };
+    return { outputSchema: buildNumericOutputSchema(params.bindCall.input_schema) };
   },
   initialState: (params: TableInOutProcessParams<SumAllColumnsArgs>) => {
     const sums: Record<string, bigint | number> = {};
@@ -266,10 +266,10 @@ const exception_process = defineTableInOutFunction<SumAllColumnsArgs, ExceptionP
     logging: false,
   },
   onBind: (params: TableInOutBindParams<SumAllColumnsArgs>) => {
-    if (!params.bindCall.inputSchema) {
+    if (!params.bindCall.input_schema) {
       throw new Error("input_schema is required");
     }
-    return { outputSchema: buildNumericOutputSchema(params.bindCall.inputSchema) };
+    return { outputSchema: buildNumericOutputSchema(params.bindCall.input_schema) };
   },
   initialState: () => ({
     batchCount: 0,
@@ -303,10 +303,10 @@ const exception_finalize = defineTableInOutFunction<SumAllColumnsArgs>({
     logging: false,
   },
   onBind: (params: TableInOutBindParams<SumAllColumnsArgs>) => {
-    if (!params.bindCall.inputSchema) {
+    if (!params.bindCall.input_schema) {
       throw new Error("input_schema is required");
     }
-    return { outputSchema: buildNumericOutputSchema(params.bindCall.inputSchema) };
+    return { outputSchema: buildNumericOutputSchema(params.bindCall.input_schema) };
   },
   process: (
     params: TableInOutProcessParams<SumAllColumnsArgs>,
@@ -334,10 +334,10 @@ const sum_all_columns_simple_distributed = defineTableInOutFunction<Record<strin
   name: "sum_all_columns_simple_distributed",
   description: "Distributed sum using simple callback API",
   onBind: (params: TableInOutBindParams) => {
-    if (!params.bindCall.inputSchema) {
+    if (!params.bindCall.input_schema) {
       throw new Error("input_schema is required");
     }
-    return { outputSchema: buildNumericOutputSchema(params.bindCall.inputSchema) };
+    return { outputSchema: buildNumericOutputSchema(params.bindCall.input_schema) };
   },
   initialState: (params: TableInOutProcessParams) => {
     const partialSums: Record<string, bigint | number> = {};
@@ -413,10 +413,10 @@ const filter_by_setting = defineTableInOutFunction({
   description: "Filter rows where value column >= threshold setting",
   requiredSettings: ["threshold"],
   onBind: (params: TableInOutBindParams) => {
-    if (!params.bindCall.inputSchema) {
+    if (!params.bindCall.input_schema) {
       throw new Error("input_schema is required");
     }
-    return { outputSchema: params.bindCall.inputSchema };
+    return { outputSchema: params.bindCall.input_schema };
   },
   process: (
     params: TableInOutProcessParams,

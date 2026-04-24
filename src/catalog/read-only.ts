@@ -325,7 +325,7 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
         schema_name: name,
         macro_type: (m.macroType === "scalar" ? "SCALAR" : "TABLE") as "SCALAR" | "TABLE",
         parameters: m.parameters,
-        parameter_default_values: m.parameterDefaultValues ?? null,
+        parameter_default_values: m.parameterDefaultValues ?? new Uint8Array(0),
         definition: m.definition,
       }));
   }
