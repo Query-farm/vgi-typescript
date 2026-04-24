@@ -69,13 +69,15 @@ export class InMemoryCatalog extends CatalogInterface {
     this._attachments.set(key, { attachId, schemas });
 
     return {
-      attachId,
-      supportsTransactions: false,
-      supportsTimeTravel: false,
-      catalogVersionFrozen: false,
-      catalogVersion: this._version,
-      attachIdRequired: true,
-      defaultSchema: "main",
+      attach_id: attachId,
+      supports_transactions: false,
+      supports_time_travel: false,
+      catalog_version_frozen: false,
+      catalog_version: this._version,
+      attach_id_required: true,
+      default_schema: "main",
+      resolved_data_version: null,
+      resolved_implementation_version: null,
     };
   }
 

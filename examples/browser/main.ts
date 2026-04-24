@@ -29,9 +29,9 @@ async function main() {
     const catalogName = catalogs[0] ?? "trains";
     log(`\n=== Attach '${catalogName}' ===`);
     const attach = await client.catalogAttach(catalogName);
-    const attachId = attach.attachId;
+    const attachId = attach.attach_id;
     log(`  attachId: ${attachId.length} bytes`);
-    log(`  defaultSchema: ${attach.defaultSchema}`);
+    log(`  defaultSchema: ${attach.default_schema}`);
 
     // --- Schemas ---
     log("\n=== Schemas ===");

@@ -11,25 +11,13 @@ export enum MacroType {
   TABLE = "table",
 }
 
-export interface CatalogAttachResult {
-  attachId: AttachId;
-  supportsTransactions?: boolean;
-  supportsTimeTravel?: boolean;
-  catalogVersionFrozen?: boolean;
-  catalogVersion?: number;
-  attachIdRequired?: boolean;
-  defaultSchema?: string;
-  settings?: Uint8Array[];
-  secretTypes?: Uint8Array[];
-  comment?: string | null;
-  tags?: Record<string, string>;
-  /**
-   * Catalog-level opt-in for the catalog_table_column_statistics_get RPC.
-   * Defaults to true when unspecified — individual tables still need to set
-   * TableInfo.supportsColumnStatistics before DuckDB will actually call it.
-   */
-  supportsColumnStatistics?: boolean;
-}
+// CatalogAttachResult is the generated snake_case wire shape.
+// The `supports_column_statistics` field is a catalog-level opt-in for the
+// catalog_table_column_statistics_get RPC — defaults to true when unspecified;
+// individual tables still need to set TableInfo.supports_column_statistics
+// before DuckDB will actually call it.
+import type { CatalogAttachResult } from "../generated/vgi-client.js";
+export type { CatalogAttachResult };
 
 // ============================================================================
 // Serializable info types

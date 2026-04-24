@@ -62,17 +62,19 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
     );
 
     return {
-      attachId,
-      supportsTransactions: false,
-      supportsTimeTravel: hasTimeTravel,
-      catalogVersionFrozen: true,
-      catalogVersion: this._version,
-      attachIdRequired: true,
-      defaultSchema: this._descriptor.defaultSchema ?? "main",
+      attach_id: attachId,
+      supports_transactions: false,
+      supports_time_travel: hasTimeTravel,
+      catalog_version_frozen: true,
+      catalog_version: this._version,
+      attach_id_required: true,
+      default_schema: this._descriptor.defaultSchema ?? "main",
       settings,
-      secretTypes,
+      secret_types: secretTypes,
       comment: this._descriptor.comment ?? null,
       tags: this._descriptor.tags ?? {},
+      resolved_data_version: null,
+      resolved_implementation_version: null,
     };
   }
 

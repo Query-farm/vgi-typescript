@@ -392,18 +392,24 @@ export class VgiClient {
     if (!result) throw new VgiClientError("catalog_attach returned null");
     const inner = unwrapResult(result);
     return {
-      attachId: toUint8Array(inner.attach_id),
-      supportsTransactions: inner.supports_transactions ?? false,
-      supportsTimeTravel: inner.supports_time_travel ?? false,
-      catalogVersionFrozen: inner.catalog_version_frozen ?? false,
-      catalogVersion: Number(inner.catalog_version ?? 0),
-      attachIdRequired: inner.attach_id_required ?? true,
-      defaultSchema: inner.default_schema ?? "main",
+      attach_id: toUint8Array(inner.attach_id),
+      supports_transactions: inner.supports_transactions ?? false,
+      supports_time_travel: inner.supports_time_travel ?? false,
+      catalog_version_frozen: inner.catalog_version_frozen ?? false,
+      catalog_version: Number(inner.catalog_version ?? 0),
+      attach_id_required: inner.attach_id_required ?? true,
+      default_schema: inner.default_schema ?? "main",
       settings: inner.settings
         ? (Array.isArray(inner.settings) ? inner.settings : [...inner.settings]).map(toUint8Array)
         : [],
+      secret_types: inner.secret_types
+        ? (Array.isArray(inner.secret_types) ? inner.secret_types : [...inner.secret_types]).map(toUint8Array)
+        : [],
       comment: inner.comment ?? null,
       tags: deserializeTags(inner.tags),
+      supports_column_statistics: inner.supports_column_statistics ?? false,
+      resolved_data_version: inner.resolved_data_version ?? null,
+      resolved_implementation_version: inner.resolved_implementation_version ?? null,
     };
   }
 

@@ -20,11 +20,11 @@ async function main() {
     // --- Attach ---
     console.log("\n=== Attach 'example' ===");
     const attachResult = await client.catalogAttach("example");
-    console.log(`  attachId: ${attachResult.attachId.length} bytes`);
-    console.log(`  defaultSchema: ${attachResult.defaultSchema}`);
-    console.log(`  supportsTransactions: ${attachResult.supportsTransactions}`);
+    console.log(`  attachId: ${attachResult.attach_id.length} bytes`);
+    console.log(`  defaultSchema: ${attachResult.default_schema}`);
+    console.log(`  supportsTransactions: ${attachResult.supports_transactions}`);
 
-    const attachId = attachResult.attachId;
+    const attachId = attachResult.attach_id;
 
     // --- Version ---
     console.log("\n=== Catalog version ===");

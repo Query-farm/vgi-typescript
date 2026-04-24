@@ -780,22 +780,24 @@ function registerCatalogMethods(
       const cat = getCatalog();
       const result = cat.attach(innerParams.name, innerParams.options);
       return wrapResult({
-        attach_id: result.attachId,
-        supports_transactions: result.supportsTransactions ?? false,
-        supports_time_travel: result.supportsTimeTravel ?? false,
-        catalog_version_frozen: result.catalogVersionFrozen ?? false,
-        catalog_version: result.catalogVersion ?? 0,
-        attach_id_required: result.attachIdRequired ?? true,
-        default_schema: result.defaultSchema ?? "main",
+        attach_id: result.attach_id,
+        supports_transactions: result.supports_transactions,
+        supports_time_travel: result.supports_time_travel,
+        catalog_version_frozen: result.catalog_version_frozen,
+        catalog_version: result.catalog_version,
+        attach_id_required: result.attach_id_required ?? true,
+        default_schema: result.default_schema ?? "main",
         settings: result.settings ?? [],
-        secret_types: result.secretTypes ?? [],
+        secret_types: result.secret_types ?? [],
         comment: result.comment ?? null,
-        tags: result.tags ? Object.entries(result.tags).map(([k, v]) => [k, v]) : [],
+        tags: result.tags ?? {},
         // True so DuckDB will route catalog_table_column_statistics_get RPCs
         // to our handler for tables whose TableInfo.supports_column_statistics
         // is also true. Catalogs that never serve column stats can override
-        // this in attach() via CatalogAttachResult.supportsColumnStatistics.
-        supports_column_statistics: result.supportsColumnStatistics ?? true,
+        // this in attach() via CatalogAttachResult.supports_column_statistics.
+        supports_column_statistics: result.supports_column_statistics ?? true,
+        resolved_data_version: result.resolved_data_version ?? null,
+        resolved_implementation_version: result.resolved_implementation_version ?? null,
       }, attachResultInnerSchema);
     },
   });
