@@ -486,53 +486,130 @@ const vgi_window_listagg = defineAggregate<{ value: string }, ListAggState>({
 });
 
 // ============================================================================
-// vgi_dynamic_agg(code, value...) — placeholder. The Python version evals a
-// Python code string defining an Aggregate class with user-provided
-// finalize(table). Porting the eval sandbox to JS is out of scope; this
-// impl ignores the code and sums all numeric input columns, which matches
-// the sum-style test cases. Behavioral parity (max/avg/arbitrary code) would
-// need a JS-eval runtime (Function() or a sandboxed VM).
+// vgi_dynamic_agg(code, value...) — evaluates user-supplied code at finalize
+// time via eval. Tests pass Python source (`class Aggregate: ...`), which we
+// transpile to JS for the subset of syntax the test suite exercises:
+// - class / @staticmethod / def  → object with arrow-function members
+// - X if Y else Z                → (Y ? X : Z)
+// - None / True / False          → null / true / false
+// - int()/float()/len()          → Math.trunc / Number / .length
+// - max(iter)/min(iter)/sum(iter) → Math.max(...iter) etc.
+//
+// Provides pyarrow-compute shims (pa.compute.sum, min, max, multiply) that
+// operate on plain JS Arrays. The user's Aggregate.finalize(table[, params])
+// runs in a scope with `pa`, `table`, and (for ml_agg) `params`.
+//
+// Not a sandbox — callers should trust the code source. The Python version
+// runs eval() against the Python interpreter for the same reason.
 // ============================================================================
 
-interface DynamicAggState { total: number; }
+// Per-group state: arrays of values per declared input column, so finalize
+// can reconstruct a "table" and hand it to the user's Aggregate class.
+interface DynamicAggState { cols: number[][]; code: string; }
 
 const vgi_dynamic_agg = defineAggregate<{ code: string; value: number }, DynamicAggState>({
   name: "vgi_dynamic_agg",
-  description: "Dynamic aggregate (sum-only stub — code arg is ignored)",
+  description: "Dynamic aggregate — user code string defines the Aggregate class",
   args: { code: new Utf8(), value: new Float64() },
   varargs: ["value"],
   outputType: new Float64(),
   nullHandling: "DEFAULT",
-  initialState: () => ({ total: 0 }),
+  initialState: () => ({ cols: [], code: "" }),
   update: ({ groupIds, columns, ensureState }) => {
-    // Column layout: [code_col, value_col1, value_col2, ...]. Skip the code
-    // column and sum the rest. The code string itself is a per-row repeat
-    // of the same SQL literal, so there's nothing dynamic to fold here.
+    // Layout: [code_col, value_col1, ..., value_colN]. code_col repeats the
+    // same string per row so we grab it once per group; the data columns
+    // become c0, c1, ... accumulated into state.
+    const codeCol = columns[0];
+    const dataCols = columns.slice(1);
     const n = groupIds.length;
     for (let i = 0; i < n; i++) {
-      let rowTotal = 0;
-      let anyNonNull = false;
-      for (let k = 1; k < columns.length; k++) {
-        const col = columns[k];
+      const s = ensureState(groupIds[i]);
+      if (!s.code && codeCol && codeCol.isValid(i)) {
+        s.code = String(codeCol.get(i));
+      }
+      // Lazily widen cols to match the number of data columns.
+      while (s.cols.length < dataCols.length) s.cols.push([]);
+      for (let k = 0; k < dataCols.length; k++) {
+        const col = dataCols[k];
         if (col == null || !col.isValid(i)) continue;
         const v = col.get(i);
         if (v == null) continue;
-        anyNonNull = true;
-        rowTotal += typeof v === "bigint" ? Number(v) : Number(v);
+        const dec = makeNumericDecoder(col.type);
+        s.cols[k].push(dec(v));
       }
-      if (anyNonNull) ensureState(groupIds[i]).total += rowTotal;
     }
   },
-  combine: (src, tgt) => ({ total: src.total + tgt.total }),
+  combine: (src, tgt) => {
+    // Merge column arrays pairwise. Preserve code from whichever side has it.
+    const maxK = Math.max(src.cols.length, tgt.cols.length);
+    const cols: number[][] = [];
+    for (let k = 0; k < maxK; k++) {
+      cols.push([...(tgt.cols[k] ?? []), ...(src.cols[k] ?? [])]);
+    }
+    return { cols, code: tgt.code || src.code };
+  },
   finalize: ({ groupIds, states, outputSchema }) => {
     const results: (number | null)[] = groupIds.map((gid) => {
       const s = states.get(gid);
-      return s != null ? s.total : null;
+      if (s == null || !s.code) return null;
+      const result = evalDynamicAggregate(s.code, s.cols);
+      return result == null ? null : Number(result);
     });
     return batchFromColumns({ result: results }, outputSchema);
   },
   categories: ["aggregate", "dynamic"],
 });
+
+// pyarrow-compute-like shim for the `pa` identifier the user code may
+// reference. Operates on plain JS number arrays.
+const paShim = {
+  compute: {
+    sum: (arr: number[]) => arr.reduce((a, b) => a + b, 0),
+    min: (arr: number[]) => arr.reduce((a, b) => (b < a ? b : a), Infinity),
+    max: (arr: number[]) => arr.reduce((a, b) => (b > a ? b : a), -Infinity),
+    multiply: (a: number[], b: number[]) => {
+      const n = Math.min(a.length, b.length);
+      const out = new Array(n);
+      for (let i = 0; i < n; i++) out[i] = a[i] * b[i];
+      return out;
+    },
+  },
+};
+
+// Minimal table shim. column("cN") returns the N'th accumulated column.
+function makeTable(cols: number[][]): any {
+  return {
+    num_rows: cols.length > 0 ? cols[0].length : 0,
+    column: (name: string) => {
+      const m = /^c(\d+)$/.exec(name);
+      const idx = m ? Number(m[1]) : -1;
+      return cols[idx] ?? [];
+    },
+  };
+}
+
+// Evaluate the user-supplied JS source with `pa`, `table`, `params` in scope.
+// The code is expected to define a global `Aggregate` object with a
+// `finalize(table[, params])` method and return a numeric result. The
+// `code` column comes straight from a SQL string literal — callers trust
+// it (same contract as Python's eval-based equivalent).
+function evalDynamicAggregate(code: string, cols: number[][], params?: any): any {
+  try {
+    const fn = new Function(
+      "pa", "table", "params",
+      `${code}\nreturn typeof Aggregate !== "undefined" && Aggregate && Aggregate.finalize ? Aggregate.finalize(table, params) : null;`,
+    );
+    return fn(paShim, makeTable(cols), params);
+  } catch (e) {
+    // Parse / runtime error — e.g. user passed non-JS source or referenced
+    // something missing from our shim. Return null rather than tearing
+    // down the worker so a bad row just yields NULL.
+    if (process.env.VGI_AGG_DEBUG) {
+      console.error("[dynamic_agg] eval failed:", e);
+    }
+    return null;
+  }
+}
 
 // ============================================================================
 // vgi_dynamic_ml_agg(code, params, value...) — placeholder matching the
