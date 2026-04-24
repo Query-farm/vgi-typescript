@@ -49,6 +49,7 @@ export interface ResolvedMetadata {
   requiredSecrets: string[];
   projectionPushdown: boolean;
   filterPushdown: boolean;
+  samplingPushdown: boolean;
   preservesOrder: OrderPreservation;
   maxWorkers: number | null;
   orderDependent: OrderDependence;

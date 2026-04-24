@@ -11,6 +11,7 @@ import {
   Binary,
   Int64,
   Int32,
+  Float64,
   Bool,
   List,
   Null,
@@ -30,6 +31,7 @@ import type {
   TableFunctionCardinalityRequest,
   TableCardinality,
 } from "./types.js";
+import { OrderByDirection, OrderByNullOrder } from "./types.js";
 import {
   serializeSchema,
   deserializeSchema,
@@ -110,6 +112,14 @@ const INIT_REQUEST_SCHEMA = new Schema([
   new Field("phase", new Utf8(), true),
   new Field("execution_id", new Binary(), true),
   new Field("init_opaque_data", new Binary(), true),
+  // Order pushdown hints from DuckDB's RowGroupPruner (all null when no hint).
+  new Field("order_by_column_name", new Utf8(), true),
+  new Field("order_by_direction", new Utf8(), true),
+  new Field("order_by_null_order", new Utf8(), true),
+  new Field("order_by_limit", new Int64(), true),
+  // TABLESAMPLE pushdown hints from DuckDB's SamplingPushdown optimizer.
+  new Field("tablesample_percentage", new Float64(), true),
+  new Field("tablesample_seed", new Int64(), true),
 ]);
 
 // GlobalInitResponse schema:
@@ -407,6 +417,12 @@ export function serializeInitRequest(req: InitRequest): RecordBatch {
     phase: req.phase ?? null,
     execution_id: req.executionId ?? null,
     init_opaque_data: req.initOpaqueData ?? null,
+    order_by_column_name: req.orderByColumnName ?? null,
+    order_by_direction: req.orderByDirection ?? null,
+    order_by_null_order: req.orderByNullOrder ?? null,
+    order_by_limit: req.orderByLimit ?? null,
+    tablesample_percentage: req.tablesamplePercentage ?? null,
+    tablesample_seed: req.tablesampleSeed ?? null,
   };
   return buildSingleRowBatch(INIT_REQUEST_SCHEMA, row);
 }
@@ -484,7 +500,49 @@ export function deserializeInitRequest(
     initOpaqueData: params.init_opaque_data
       ? toUint8Array(params.init_opaque_data)
       : null,
+    orderByColumnName: parseEnum(params.order_by_column_name) ?? null,
+    orderByDirection: parseDirection(params.order_by_direction),
+    orderByNullOrder: parseNullOrder(params.order_by_null_order),
+    orderByLimit: parseBigInt(params.order_by_limit),
+    tablesamplePercentage: parseNumber(params.tablesample_percentage),
+    tablesampleSeed: parseBigInt(params.tablesample_seed),
   };
+}
+
+function parseEnum(v: any): string | null {
+  if (v === null || v === undefined) return null;
+  return String(v);
+}
+function parseDirection(v: any): OrderByDirection | null {
+  if (v === null || v === undefined) return null;
+  const s = String(v);
+  if (s === "ASC") return OrderByDirection.ASC;
+  if (s === "DESC") return OrderByDirection.DESC;
+  return null;
+}
+function parseNullOrder(v: any): OrderByNullOrder | null {
+  if (v === null || v === undefined) return null;
+  const s = String(v);
+  if (s === "NULLS_FIRST") return OrderByNullOrder.NULLS_FIRST;
+  if (s === "NULLS_LAST") return OrderByNullOrder.NULLS_LAST;
+  return null;
+}
+function parseBigInt(v: any): bigint | null {
+  if (v === null || v === undefined) return null;
+  if (typeof v === "bigint") return v;
+  if (typeof v === "number") return BigInt(v);
+  try {
+    return BigInt(String(v));
+  } catch {
+    return null;
+  }
+}
+function parseNumber(v: any): number | null {
+  if (v === null || v === undefined) return null;
+  if (typeof v === "number") return v;
+  if (typeof v === "bigint") return Number(v);
+  const n = Number(v);
+  return Number.isNaN(n) ? null : n;
 }
 
 // ============================================================================

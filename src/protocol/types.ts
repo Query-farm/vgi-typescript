@@ -39,6 +39,24 @@ export interface InitRequest {
   phase: TableInOutPhase | null;
   executionId: Uint8Array | null;
   initOpaqueData: Uint8Array | null;
+  // Order pushdown hints from DuckDB's RowGroupPruner (null when no hint).
+  orderByColumnName: string | null;
+  orderByDirection: OrderByDirection | null;
+  orderByNullOrder: OrderByNullOrder | null;
+  orderByLimit: bigint | null;
+  // TABLESAMPLE pushdown hints.
+  tablesamplePercentage: number | null;
+  tablesampleSeed: bigint | null;
+}
+
+export enum OrderByDirection {
+  ASC = "ASC",
+  DESC = "DESC",
+}
+
+export enum OrderByNullOrder {
+  NULLS_FIRST = "NULLS_FIRST",
+  NULLS_LAST = "NULLS_LAST",
 }
 
 export interface GlobalInitResponse {

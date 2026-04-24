@@ -43,6 +43,7 @@ export interface FunctionMeta {
   tags?: Record<string, string>;
   projectionPushdown?: boolean;
   filterPushdown?: boolean;
+  samplingPushdown?: boolean;
   autoApplyFilters?: boolean;
   preservesOrder?: OrderPreservation;
   maxWorkers?: number;

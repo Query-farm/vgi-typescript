@@ -99,6 +99,7 @@ export interface TableFunctionConfig<
   // Metadata
   projectionPushdown?: boolean;
   filterPushdown?: boolean;
+  samplingPushdown?: boolean;
   autoApplyFilters?: boolean;
   stability?: FunctionStability;
   examples?: FunctionExample[];
@@ -139,6 +140,7 @@ export function defineTableFunction<
     stability: config.stability,
     projectionPushdown: config.projectionPushdown,
     filterPushdown: config.filterPushdown,
+    samplingPushdown: config.samplingPushdown,
     autoApplyFilters: config.autoApplyFilters,
     examples: config.examples,
     categories: config.categories,

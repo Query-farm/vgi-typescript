@@ -133,6 +133,12 @@ export class VgiClient {
       pushdownFilters: opts?.pushdownFilters ?? null,
       joinKeys: [],
       phase: opts?.phase ?? null,
+      orderByColumnName: null,
+      orderByDirection: null,
+      orderByNullOrder: null,
+      orderByLimit: null,
+      tablesamplePercentage: null,
+      tablesampleSeed: null,
       executionId: opts?.executionId ?? null,
       initOpaqueData: null,
     };

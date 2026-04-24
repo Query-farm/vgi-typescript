@@ -1878,6 +1878,205 @@ const versioned_constraints_scan = defineTableFunction<{ version: number }, { do
 });
 
 // ============================================================================
+// order_echo - echoes ORDER BY + LIMIT pushdown hints
+// ============================================================================
+
+interface OrderEchoArgs {
+  count: number;
+  batch_size: number;
+}
+
+interface OrderEchoState {
+  remaining: number;
+  currentIndex: number;
+  orderColumn: string;
+  orderDirection: string;
+  orderNullOrder: string;
+  orderLimit: bigint;
+}
+
+const ORDER_ECHO_SCHEMA = new Schema([
+  new Field("n", new Int64(), true),
+  new Field("s", new Utf8(), true),
+  new Field("order_column", new Utf8(), true),
+  new Field("order_direction", new Utf8(), true),
+  new Field("order_null_order", new Utf8(), true),
+  new Field("order_limit", new Int64(), true),
+]);
+
+const order_echo = defineTableFunction<OrderEchoArgs, OrderEchoState>({
+  name: "order_echo",
+  description: "Echoes ORDER BY + LIMIT pushdown hints in output",
+  args: {
+    count: new Int64(),
+    batch_size: new Int64(),
+  },
+  argDefaults: {
+    batch_size: 2048,
+  },
+  projectionPushdown: true,
+  filterPushdown: true,
+  autoApplyFilters: true,
+  onBind: () => ({ outputSchema: ORDER_ECHO_SCHEMA }),
+  cardinality: (params: TableBindParams<OrderEchoArgs>) => ({
+    estimate: params.args.count,
+    max: params.args.count,
+  }),
+  initialState: (params: TableProcessParams<OrderEchoArgs>) => {
+    const init = params.initCall;
+    return {
+      remaining: params.args.count,
+      currentIndex: 0,
+      orderColumn: init.orderByColumnName ?? "(none)",
+      orderDirection: init.orderByDirection ? String(init.orderByDirection) : "(none)",
+      orderNullOrder: init.orderByNullOrder ? String(init.orderByNullOrder) : "(none)",
+      orderLimit: init.orderByLimit ?? -1n,
+    };
+  },
+  process: (
+    params: TableProcessParams<OrderEchoArgs>,
+    state: OrderEchoState,
+    out: OutputCollector
+  ) => {
+    if (state.remaining <= 0) {
+      out.finish();
+      return;
+    }
+    const size = Math.min(state.remaining, params.args.batch_size);
+    const n: bigint[] = [];
+    const s: string[] = [];
+    const oc: string[] = [];
+    const od: string[] = [];
+    const on: string[] = [];
+    const ol: bigint[] = [];
+    for (let i = 0; i < size; i++) {
+      const idx = state.currentIndex + i;
+      n.push(BigInt(idx));
+      s.push(`row_${idx}`);
+      oc.push(state.orderColumn);
+      od.push(state.orderDirection);
+      on.push(state.orderNullOrder);
+      ol.push(state.orderLimit);
+    }
+    out.emit(
+      batchFromColumns(
+        {
+          n,
+          s,
+          order_column: oc,
+          order_direction: od,
+          order_null_order: on,
+          order_limit: ol,
+        },
+        params.outputSchema
+      )
+    );
+    state.currentIndex += size;
+    state.remaining -= size;
+  },
+  examples: [
+    {
+      sql: "SELECT * FROM order_echo(100) ORDER BY n LIMIT 5",
+      description: "See which ORDER BY hint was pushed down",
+    },
+  ],
+  categories: ["generator", "diagnostic"],
+});
+
+// ============================================================================
+// sample_echo - echoes TABLESAMPLE pushdown hints
+// ============================================================================
+
+interface SampleEchoArgs {
+  count: number;
+  batch_size: number;
+}
+
+interface SampleEchoState {
+  remaining: number;
+  currentIndex: number;
+  samplePercentage: number;
+  sampleSeed: bigint;
+}
+
+const SAMPLE_ECHO_SCHEMA = new Schema([
+  new Field("n", new Int64(), true),
+  new Field("s", new Utf8(), true),
+  new Field("sample_percentage", new Float64(), true),
+  new Field("sample_seed", new Int64(), true),
+]);
+
+const sample_echo = defineTableFunction<SampleEchoArgs, SampleEchoState>({
+  name: "sample_echo",
+  description: "Echoes TABLESAMPLE pushdown hints in output",
+  args: {
+    count: new Int64(),
+    batch_size: new Int64(),
+  },
+  argDefaults: {
+    batch_size: 2048,
+  },
+  projectionPushdown: true,
+  samplingPushdown: true,
+  onBind: () => ({ outputSchema: SAMPLE_ECHO_SCHEMA }),
+  cardinality: (params: TableBindParams<SampleEchoArgs>) => ({
+    estimate: params.args.count,
+    max: params.args.count,
+  }),
+  initialState: (params: TableProcessParams<SampleEchoArgs>) => {
+    const init = params.initCall;
+    return {
+      remaining: params.args.count,
+      currentIndex: 0,
+      samplePercentage: init.tablesamplePercentage ?? -1.0,
+      sampleSeed: init.tablesampleSeed ?? -1n,
+    };
+  },
+  process: (
+    params: TableProcessParams<SampleEchoArgs>,
+    state: SampleEchoState,
+    out: OutputCollector
+  ) => {
+    if (state.remaining <= 0) {
+      out.finish();
+      return;
+    }
+    const size = Math.min(state.remaining, params.args.batch_size);
+    const n: bigint[] = [];
+    const s: string[] = [];
+    const sp: number[] = [];
+    const ss: bigint[] = [];
+    for (let i = 0; i < size; i++) {
+      const idx = state.currentIndex + i;
+      n.push(BigInt(idx));
+      s.push(`row_${idx}`);
+      sp.push(state.samplePercentage);
+      ss.push(state.sampleSeed);
+    }
+    out.emit(
+      batchFromColumns(
+        {
+          n,
+          s,
+          sample_percentage: sp,
+          sample_seed: ss,
+        },
+        params.outputSchema
+      )
+    );
+    state.currentIndex += size;
+    state.remaining -= size;
+  },
+  examples: [
+    {
+      sql: "SELECT * FROM sample_echo(100) TABLESAMPLE SYSTEM(10%)",
+      description: "See which TABLESAMPLE hint was pushed down",
+    },
+  ],
+  categories: ["generator", "diagnostic"],
+});
+
+// ============================================================================
 // Export all table functions
 // ============================================================================
 
@@ -1914,4 +2113,6 @@ export const tableFunctions: VgiFunction[] = [
   products_scan,
   projects_scan,
   versioned_constraints_scan,
+  order_echo,
+  sample_echo,
 ];

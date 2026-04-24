@@ -87,6 +87,7 @@ export function resolveMetadata(func: VgiFunction): ResolvedMetadata {
     requiredSecrets: meta.requiredSecrets ?? [],
     projectionPushdown: meta.projectionPushdown ?? false,
     filterPushdown: meta.filterPushdown ?? false,
+    samplingPushdown: meta.samplingPushdown ?? false,
     preservesOrder: meta.preservesOrder ?? OrderPreservation.NO_ORDER_GUARANTEE,
     maxWorkers: maxWorkers === DEFAULT_MAX_WORKERS ? null : maxWorkers,
     orderDependent: meta.orderDependent ?? OrderDependence.NOT_ORDER_DEPENDENT,
