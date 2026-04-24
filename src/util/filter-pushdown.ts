@@ -562,6 +562,65 @@ export function formatPushedFilters(filters: PushdownFilters | undefined): strin
   return sql || "(none)";
 }
 
+/**
+ * Format pushdown filters using Python-style `repr()` — e.g.
+ * `PushdownFilters([ConstantFilter(n < 4999)])`. Matches vgi-python's
+ * `_format_pushed_filters_safe` output so tests that pattern-match the
+ * repr (e.g. `dynamic_filter` checking for `ConstantFilter(n <`) work
+ * identically across workers.
+ */
+export function reprPushedFilters(filters: PushdownFilters | undefined): string {
+  if (!filters || filters.filters.length === 0) return "(none)";
+  const parts = filters.filters.map(reprFilter);
+  return `PushdownFilters([${parts.join(", ")}])`;
+}
+
+function opSymbol(op: ComparisonOp): string {
+  switch (op) {
+    case ComparisonOp.EQ: return "==";
+    case ComparisonOp.NE: return "!=";
+    case ComparisonOp.GT: return ">";
+    case ComparisonOp.GE: return ">=";
+    case ComparisonOp.LT: return "<";
+    case ComparisonOp.LE: return "<=";
+  }
+}
+
+function reprFilter(f: Filter): string {
+  switch (f.type) {
+    case "constant":
+      return `ConstantFilter(${f.columnName} ${opSymbol(f.op)} ${reprValue(f.value)})`;
+    case "is_null":
+      return `IsNullFilter(${f.columnName} IS NULL)`;
+    case "is_not_null":
+      return `IsNotNullFilter(${f.columnName} IS NOT NULL)`;
+    case "in": {
+      const values = [...f.values];
+      const preview = values.length > 5
+        ? `${JSON.stringify(values.slice(0, 3))}...(${values.length} total)`
+        : JSON.stringify(values);
+      return `InFilter(${f.columnName} IN ${preview})`;
+    }
+    case "and": {
+      const kids = f.children.map(reprFilter).join(" AND ");
+      return `AndFilter(${kids})`;
+    }
+    case "or": {
+      const kids = f.children.map(reprFilter).join(" OR ");
+      return `OrFilter(${kids})`;
+    }
+    case "struct":
+      return `StructFilter(${f.columnName}.${f.childName}: ${reprFilter(f.childFilter)})`;
+  }
+}
+
+function reprValue(v: any): string {
+  if (typeof v === "string") return JSON.stringify(v);
+  if (typeof v === "bigint") return String(v);
+  if (v === null || v === undefined) return "null";
+  return String(v);
+}
+
 export class FilteringOutputCollector {
   constructor(
     private inner: OutputCollector,

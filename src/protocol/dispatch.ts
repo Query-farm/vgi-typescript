@@ -286,6 +286,12 @@ export function buildVgiProtocol(config: ProtocolConfig): Protocol {
         // OutputCollector's producerMode check (since dispatch created it
         // in exchange mode but we're actually producing).
         out.finish = () => { (out as any)._finished = true; };
+        // Let the handler observe tick-batch metadata before producing. Used
+        // by table functions to apply dynamic-filter updates DuckDB attaches
+        // as `vgi_pushdown_filters` on each tick (Top-N heap tightening).
+        if (handlers.onTick) {
+          await handlers.onTick(handlerState, (input as any)?.metadata);
+        }
         await handlers.producerFn(handlerState, out);
       } else if (handlers.exchangeFn) {
         await handlers.exchangeFn(handlerState, input, out);

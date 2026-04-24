@@ -1,7 +1,7 @@
 // Table function implementation.
 // Table functions produce output batches from arguments (no streaming input).
 
-import { Schema, Field, DataType, Null } from "@query-farm/apache-arrow";
+import { Schema, Field, DataType, Null, RecordBatch, RecordBatchReader } from "@query-farm/apache-arrow";
 import type { OutputCollector } from "vgi-rpc";
 import { DEFAULT_MAX_WORKERS } from "../types.js";
 import type {
@@ -28,6 +28,23 @@ import {
 } from "../util/filter-pushdown.js";
 import { FunctionStability } from "../types.js";
 import { BoundStorage, storage as globalStorage } from "../storage/function-storage.js";
+
+// Base64-decode a string into raw bytes. Used to unpack the dynamic filter
+// update DuckDB attaches to each tick batch's custom metadata.
+function base64Decode(s: string): Uint8Array {
+  const bin = (globalThis as any).atob ? (globalThis as any).atob(s) : Buffer.from(s, "base64").toString("binary");
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+
+// Read the first RecordBatch from an Arrow IPC stream buffer. Returns null if
+// the stream has no batches.
+function deserializeFilterBatch(bytes: Uint8Array): RecordBatch | null {
+  const reader = RecordBatchReader.from(bytes);
+  for (const batch of reader) return batch;
+  return null;
+}
 
 // ============================================================================
 // Table function parameter bundles
@@ -270,12 +287,37 @@ export function defineTableFunction<
       return {
         outputSchema,
         producerInit: () => ({ state, processParams }),
+        onTick: (
+          pState: { state: TState; processParams: TableProcessParams<TArgs> },
+          tickMetadata: Map<string, string> | undefined,
+        ) => {
+          // Dynamic filter pushdown: DuckDB's Top-N optimizer tightens filters
+          // between ticks and serializes the current filter into the tick
+          // batch's custom metadata under `vgi_pushdown_filters` (base64 of a
+          // filter IPC stream). Decode and overwrite the current pushdown
+          // filters so process() sees the updated value.
+          if (!tickMetadata) return;
+          const encoded = tickMetadata.get("vgi_pushdown_filters");
+          if (!encoded) return;
+          try {
+            const bytes = base64Decode(encoded);
+            const filterBatch = deserializeFilterBatch(bytes);
+            if (filterBatch) {
+              const updated = deserializeFilters(filterBatch, joinKeysLookup);
+              pState.processParams.pushdownFilters = updated;
+            }
+          } catch {
+            // Malformed dynamic-filter update: keep the previous filter. Not
+            // fatal — this is a best-effort optimization hint from DuckDB.
+          }
+        },
         producerFn: async (
           pState: { state: TState; processParams: TableProcessParams<TArgs> },
           out: OutputCollector
         ) => {
-          const wrappedOut = (config.autoApplyFilters && pushdownFilters)
-            ? new FilteringOutputCollector(out, pushdownFilters) as unknown as OutputCollector
+          const current = pState.processParams.pushdownFilters;
+          const wrappedOut = (config.autoApplyFilters && current)
+            ? new FilteringOutputCollector(out, current) as unknown as OutputCollector
             : out;
           await config.process(pState.processParams, pState.state, wrappedOut);
         },

@@ -74,6 +74,7 @@ export {
   type OrFilter,
   type StructFilter,
   formatPushedFilters,
+  reprPushedFilters,
 } from "./util/filter-pushdown.js";
 
 // State serializer

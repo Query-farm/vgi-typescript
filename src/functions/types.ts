@@ -68,6 +68,13 @@ export interface StreamHandlers {
   outputSchema: Schema;
   // Input schema for exchange (empty for producer)
   inputSchema?: Schema;
+  /**
+   * Fires once per tick batch on the producer path, before `producerFn`.
+   * Receives the tick's Arrow custom metadata so the handler can pick up
+   * per-tick signals like `vgi_pushdown_filters` (dynamic filter updates
+   * from DuckDB's Top-N optimizer).
+   */
+  onTick?: (state: any, tickMetadata: Map<string, string> | undefined) => void | Promise<void>;
 }
 
 /**

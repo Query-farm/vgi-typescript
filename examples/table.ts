@@ -20,6 +20,7 @@ import {
   batchFromColumns,
   emptyBatch,
   formatPushedFilters,
+  reprPushedFilters,
   DEFAULT_MAX_WORKERS,
   type TableBindParams,
   type TableProcessParams,
@@ -2077,6 +2078,90 @@ const sample_echo = defineTableFunction<SampleEchoArgs, SampleEchoState>({
 });
 
 // ============================================================================
+// dynamic_filter_echo - generates descending integers and echoes the current
+// per-tick pushdown filter (so ORDER BY ... LIMIT demonstrates the filter
+// tightening as DuckDB's Top-N heap narrows). Filter is read from
+// params.pushdownFilters on every process() call, not once at init — the
+// framework updates it from vgi_pushdown_filters tick metadata.
+// ============================================================================
+
+interface DynFilterEchoArgs {
+  count: number;
+  batch_size: number;
+}
+
+interface DynFilterEchoState {
+  remaining: number;
+  currentIndex: number;
+  totalCount: number;
+}
+
+const DYN_FILTER_ECHO_SCHEMA = new Schema([
+  new Field("n", new Int64(), true),
+  new Field("pushed_filters", new Utf8(), true),
+]);
+
+const dynamic_filter_echo = defineTableFunction<DynFilterEchoArgs, DynFilterEchoState>({
+  name: "dynamic_filter_echo",
+  description: "Generates descending integers, echoes dynamic tick filter per batch",
+  args: {
+    count: new Int64(),
+    batch_size: new Int64(),
+  },
+  argDefaults: {
+    batch_size: 100,
+  },
+  projectionPushdown: true,
+  filterPushdown: true,
+  autoApplyFilters: true,
+  onBind: () => ({ outputSchema: DYN_FILTER_ECHO_SCHEMA }),
+  cardinality: (params: TableBindParams<DynFilterEchoArgs>) => ({
+    estimate: params.args.count,
+    max: params.args.count,
+  }),
+  initialState: (params: TableProcessParams<DynFilterEchoArgs>) => ({
+    remaining: params.args.count,
+    currentIndex: 0,
+    totalCount: params.args.count,
+  }),
+  process: (
+    params: TableProcessParams<DynFilterEchoArgs>,
+    state: DynFilterEchoState,
+    out: OutputCollector,
+  ) => {
+    if (state.remaining <= 0) {
+      out.finish();
+      return;
+    }
+    const size = Math.min(state.remaining, params.args.batch_size);
+    // Descending order so ORDER BY n ASC LIMIT K forces the Top-N heap to
+    // keep tightening as lower values arrive in later batches.
+    const ns: bigint[] = [];
+    for (let i = 0; i < size; i++) {
+      const idx = state.currentIndex + i;
+      ns.push(BigInt(state.totalCount - 1 - idx));
+    }
+    // reprPushedFilters mirrors vgi-python's _format_pushed_filters_safe so
+    // tests pattern-match the same Python-repr format ("ConstantFilter(n <…)")
+    // on both workers.
+    const filterStr = reprPushedFilters(params.pushdownFilters);
+    const filterValues = new Array(size).fill(filterStr);
+    out.emit(
+      batchFromColumns({ n: ns, pushed_filters: filterValues }, params.outputSchema),
+    );
+    state.currentIndex += size;
+    state.remaining -= size;
+  },
+  examples: [
+    {
+      sql: "SELECT n, pushed_filters FROM dynamic_filter_echo(10000) ORDER BY n LIMIT 5",
+      description: "See how the Top-N dynamic filter tightens per batch",
+    },
+  ],
+  categories: ["generator", "diagnostic"],
+});
+
+// ============================================================================
 // Export all table functions
 // ============================================================================
 
@@ -2115,4 +2200,5 @@ export const tableFunctions: VgiFunction[] = [
   versioned_constraints_scan,
   order_echo,
   sample_echo,
+  dynamic_filter_echo,
 ];
