@@ -1,7 +1,7 @@
 // Example aggregate function implementations.
 // Ports vgi_count, vgi_sum, vgi_avg from vgi-python/vgi/examples/aggregate.py.
 
-import { Schema, Field, Int64, Float64, Utf8, Decimal, DataType, RecordBatch } from "@query-farm/apache-arrow";
+import { Schema, Field, Int64, Float64, Utf8, Decimal, DataType, Null, RecordBatch } from "@query-farm/apache-arrow";
 import { defineAggregate } from "../src/functions/aggregate.js";
 import { batchFromColumns } from "../src/util/arrow.js";
 import type { VgiFunction } from "../src/index.js";
@@ -275,6 +275,55 @@ const vgi_weighted_sum = defineAggregate<{ value: number; weight: number }, Weig
   categories: ["aggregate"],
 });
 
+// ============================================================================
+// vgi_generic_sum — ANY-typed input, return type mirrors input. The onBind
+// hook reads the input column's Arrow type from the bind input_schema and
+// advertises the same type as output so `typeof(vgi_generic_sum(i::BIGINT))`
+// is BIGINT rather than the default DOUBLE. State keeps a double total
+// internally for precision; finalize() coerces back to the declared type.
+// ============================================================================
+
+interface GenericSumState { total: number; }
+
+const vgi_generic_sum = defineAggregate<{ value: any }, GenericSumState>({
+  name: "vgi_generic_sum",
+  description: "Sum any numeric type",
+  args: { value: new Null() },  // Null = ANY
+  outputType: new Float64(),
+  nullHandling: "DEFAULT",
+  onBind: (params) => {
+    // Output type mirrors the input column's declared type.
+    if (params.inputSchema && params.inputSchema.fields.length > 0) {
+      return params.inputSchema.fields[0].type;
+    }
+    return new Float64();
+  },
+  initialState: () => ({ total: 0 }),
+  update: ({ groupIds, columns, ensureState }) => {
+    const valueCol = columns[0];
+    const dec = makeNumericDecoder(valueCol?.type);
+    const n = groupIds.length;
+    for (let i = 0; i < n; i++) {
+      if (valueCol == null || !valueCol.isValid(i)) continue;
+      const v = valueCol.get(i);
+      if (v == null) continue;
+      ensureState(groupIds[i]).total += dec(v);
+    }
+  },
+  combine: (src, tgt) => ({ total: src.total + tgt.total }),
+  finalize: ({ groupIds, states, outputSchema }) => {
+    const outField = outputSchema.fields[0];
+    const isInt = DataType.isInt(outField.type) && (outField.type as any).bitWidth === 64;
+    const results: (any | null)[] = groupIds.map((gid) => {
+      const s = states.get(gid);
+      if (s == null) return null;
+      return isInt ? BigInt(Math.round(s.total)) : s.total;
+    });
+    return batchFromColumns({ result: results }, outputSchema);
+  },
+  categories: ["aggregate"],
+});
+
 export const aggregateFunctions: VgiFunction[] = [
-  vgi_count, vgi_sum, vgi_avg, vgi_sum_all, vgi_listagg, vgi_weighted_sum,
+  vgi_count, vgi_sum, vgi_avg, vgi_sum_all, vgi_listagg, vgi_weighted_sum, vgi_generic_sum,
 ];

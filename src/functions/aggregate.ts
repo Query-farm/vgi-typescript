@@ -12,7 +12,7 @@
 //   aggregate_finalize  → emit one result row per group_id
 //   aggregate_destructor → free states (best-effort; see Python worker.py)
 
-import { Schema, Field, RecordBatch, DataType } from "@query-farm/apache-arrow";
+import { Schema, Field, RecordBatch, DataType, Null } from "@query-farm/apache-arrow";
 import type { Arguments } from "../arguments/arguments.js";
 import type { ArgumentSpec } from "../arguments/argument-spec.js";
 import type {
@@ -21,6 +21,9 @@ import type {
 } from "./types.js";
 import { DEFAULT_MAX_WORKERS } from "../types.js";
 import type { FunctionExample } from "./types.js";
+import * as fs from "node:fs";
+import * as path from "node:path";
+import * as os from "node:os";
 
 // Column name DuckDB prepends to every aggregate_update batch. One entry per
 // input row; the value identifies which group the row belongs to.
@@ -74,9 +77,18 @@ export interface AggregateFunctionConfig<TArgs = Record<string, any>, TState = a
   varargs?: string[];
   /**
    * Arrow type of the aggregate's output (one value per group). DuckDB uses
-   * this to build the result column type at bind time.
+   * this to build the result column type at bind time. May be overridden
+   * at bind time by `onBind` (returning a different Arrow type) for
+   * aggregates whose return type depends on the input column type
+   * (e.g. vgi_generic_sum: BIGINT input → BIGINT output, DOUBLE → DOUBLE).
    */
   outputType: DataType;
+  /**
+   * Optional bind-time hook for dynamic output types. Receives the bind
+   * parameters (including input_schema) and returns the Arrow type to
+   * advertise for this invocation. Defaults to returning `config.outputType`.
+   */
+  onBind?: (params: AggregateBindParams<TArgs>) => DataType;
   /** Optional per-arg default values (positional only here). */
   argDefaults?: Record<string, any>;
 
@@ -97,11 +109,52 @@ export interface AggregateFunctionConfig<TArgs = Record<string, any>, TState = a
   nullHandling?: "DEFAULT" | "SPECIAL";
 }
 
-// Per-execution state registry. Key = execution_id hex (binary → hex for Map
-// keying). Value = (gid → state). Cleared on aggregate_destructor or worker
-// shutdown.
+// Per-execution state registry. Value = (gid → state) + bind context.
+//
+// Under DuckDB's parallel aggregate with worker pooling, aggregate_* RPCs for
+// the same execution_id can land on different worker processes — so state
+// needs to live in a place all workers can reach. We use a filesystem-backed
+// store (one directory per execution_id, one JSON file per group_id) with
+// atomic rename-on-write. Fine for subprocess transport and for
+// single-instance HTTP; multi-host HTTP would need a shared path or a
+// swap-in network backend. Override with VGI_AGG_STATE_DIR.
+//
+// In-memory cache sits in front of the filesystem to keep single-process
+// workloads fast — writes go to disk, reads prefer cache, and getExecutionState
+// lazily reconstructs from disk when a different worker's exec is requested.
+
 type StateMap = Map<bigint, any>;
-const stateStore = new Map<string, { states: StateMap; bindArgs: Arguments; bindParams: AggregateBindParams<any> }>();
+
+interface ExecEntry {
+  states: StateMap;
+  bindArgs: Arguments;
+  bindParams: AggregateBindParams<any>;
+  loaded: Set<bigint>; // gids fetched from disk (so we don't refetch in same call)
+}
+
+const stateStore = new Map<string, ExecEntry>();
+
+// Custom JSON codec: BigInt ↔ {"__bigint__":"…"}. Keep the encoder/decoder
+// centralized so aggregate state classes with int64 fields (CountState,
+// SumState, etc.) round-trip without extra wiring.
+function jsonReplacer(_: string, v: any): any {
+  if (typeof v === "bigint") return { __bigint__: v.toString() };
+  return v;
+}
+function jsonReviver(_: string, v: any): any {
+  if (v && typeof v === "object" && typeof (v as any).__bigint__ === "string") {
+    return BigInt((v as any).__bigint__);
+  }
+  return v;
+}
+
+function stateDirRoot(): string {
+  return process.env.VGI_AGG_STATE_DIR ?? path.join(os.tmpdir(), "vgi-agg");
+}
+
+function execDir(execHex: string): string {
+  return path.join(stateDirRoot(), execHex);
+}
 
 function execKey(executionId: Uint8Array): string {
   let s = "";
@@ -109,17 +162,113 @@ function execKey(executionId: Uint8Array): string {
   return s;
 }
 
-export function getExecutionState(executionId: Uint8Array) {
-  return stateStore.get(execKey(executionId));
+// Atomic write: write to tmp then rename. Avoids partial reads from another
+// worker mid-update. Node's fs.renameSync is atomic on POSIX for same FS.
+function atomicWriteJson(filePath: string, value: any): void {
+  const tmp = filePath + ".tmp." + process.pid + "." + Math.random().toString(36).slice(2);
+  const parent = path.dirname(filePath);
+  fs.mkdirSync(parent, { recursive: true });
+  fs.writeFileSync(tmp, JSON.stringify(value, jsonReplacer));
+  fs.renameSync(tmp, filePath);
 }
+
+function tryReadJson(filePath: string): any | undefined {
+  try {
+    const text = fs.readFileSync(filePath, "utf8");
+    return JSON.parse(text, jsonReviver);
+  } catch (e: any) {
+    if (e?.code === "ENOENT") return undefined;
+    throw e;
+  }
+}
+
+/**
+ * Fetch the execution context — bind args/params + states for requested gids.
+ * On cache miss, tries to reconstruct from on-disk files written by a
+ * sibling worker. Returns undefined if the exec never existed anywhere.
+ * `requestedGids` (optional) tells us which group states to pre-load.
+ */
+export function getExecutionState(
+  executionId: Uint8Array,
+  requestedGids?: Iterable<bigint>,
+): ExecEntry | undefined {
+  const key = execKey(executionId);
+  let entry = stateStore.get(key);
+  if (!entry) {
+    // Try to reconstruct bind context from disk.
+    const ctx = tryReadJson(path.join(execDir(key), "context.json"));
+    if (!ctx) return undefined;
+    // Restore bindParams + args from the serialized context. args is kept
+    // only as a plain dict; the Arguments instance isn't needed after bind.
+    entry = {
+      states: new Map(),
+      bindArgs: ctx.bindArgs, // placeholder — Arguments instance is only needed during bind
+      bindParams: ctx.bindParams,
+      loaded: new Set(),
+    };
+    stateStore.set(key, entry);
+  }
+  if (requestedGids) {
+    // Always re-read from disk each RPC. A sibling worker may have just
+    // written a newer value for this gid; relying on our in-memory cache
+    // would overwrite their update on our next persist (read-modify-write
+    // race). File I/O per-RPC is cheap compared to the RPC overhead.
+    for (const gid of requestedGids) {
+      const stateFile = path.join(execDir(key), gid.toString() + ".json");
+      const s = tryReadJson(stateFile);
+      if (s !== undefined) {
+        entry.states.set(gid, s);
+      } else {
+        entry.states.delete(gid);
+      }
+      entry.loaded.add(gid);
+    }
+  }
+  return entry;
+}
+
 export function setExecutionState(
   executionId: Uint8Array,
-  entry: { states: StateMap; bindArgs: Arguments; bindParams: AggregateBindParams<any> },
-) {
-  stateStore.set(execKey(executionId), entry);
+  entry: Omit<ExecEntry, "loaded">,
+): void {
+  const key = execKey(executionId);
+  stateStore.set(key, { ...entry, loaded: new Set() });
+  // Persist bind context so sibling workers can reconstruct it on demand.
+  atomicWriteJson(path.join(execDir(key), "context.json"), {
+    bindParams: entry.bindParams,
+    // bindArgs is a live Arguments instance; stash its args map separately
+    // if needed for future state-dependent behavior. Workers reading the
+    // context receive `bindParams.args` which is what update/finalize use.
+  });
 }
-export function deleteExecutionState(executionId: Uint8Array) {
-  stateStore.delete(execKey(executionId));
+
+/**
+ * Persist the given group states to disk so sibling workers can pick them up.
+ * Deletes the on-disk entry when the in-memory state was removed (gid no
+ * longer present in states map).
+ */
+export function persistGroupStates(
+  executionId: Uint8Array,
+  gids: Iterable<bigint>,
+): void {
+  const key = execKey(executionId);
+  const entry = stateStore.get(key);
+  if (!entry) return;
+  for (const gid of gids) {
+    const stateFile = path.join(execDir(key), gid.toString() + ".json");
+    if (entry.states.has(gid)) {
+      atomicWriteJson(stateFile, entry.states.get(gid));
+    } else {
+      try { fs.unlinkSync(stateFile); } catch { /* already gone */ }
+    }
+    entry.loaded.add(gid);
+  }
+}
+
+export function deleteExecutionState(executionId: Uint8Array): void {
+  const key = execKey(executionId);
+  stateStore.delete(key);
+  try { fs.rmSync(execDir(key), { recursive: true, force: true }); } catch { /* best-effort */ }
 }
 
 /**
@@ -136,11 +285,12 @@ export function defineAggregate<TArgs = Record<string, any>, TState = any>(
   if (config.args) {
     for (const [name, type] of Object.entries(config.args)) {
       const hasDefault = config.argDefaults?.[name] !== undefined;
+      const isAnyType = type instanceof Null;
       specs.push({
         name,
         position: hasDefault ? name : posIdx++,
-        arrowType: type,
-        isAnyType: false,
+        arrowType: isAnyType ? new Null() : type,
+        isAnyType,
         isVarargs: varargsSet.has(name),
       });
     }

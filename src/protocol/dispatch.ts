@@ -59,6 +59,7 @@ import {
   getExecutionState,
   setExecutionState,
   deleteExecutionState,
+  persistGroupStates,
   GROUP_COLUMN_NAME,
   type AggregateFunctionConfig,
   type AggregateBindParams,
@@ -427,9 +428,12 @@ function registerAggregateMethods(protocol: Protocol, registry: FunctionRegistry
         bindArgs: args,
         bindParams,
       });
-      // Output schema is a single "result" column typed per the aggregate's
-      // declared outputType. The column name matches vgi-python's convention.
-      const outSchema = new Schema([new Field("result", cfg.outputType, true)]);
+      // Output schema is a single "result" column. Type comes from the
+      // optional onBind hook (for aggregates whose return type depends on
+      // input — e.g. vgi_generic_sum takes ANY and returns the same type);
+      // otherwise the declared cfg.outputType.
+      const outType = cfg.onBind ? cfg.onBind(bindParams) : cfg.outputType;
+      const outSchema = new Schema([new Field("result", outType, true)]);
       return wrapResult(
         { output_schema: serializeSchema(outSchema), execution_id: executionId },
         bindInnerSchema,
@@ -448,10 +452,6 @@ function registerAggregateMethods(protocol: Protocol, registry: FunctionRegistry
       const functionName: string = innerParams.function_name;
       const executionId = toUint8Array(innerParams.execution_id);
       const cfg = resolveAggregate(functionName);
-      const exec = getExecutionState(executionId);
-      if (!exec) {
-        throw new Error(`aggregate_update: unknown execution_id for '${functionName}' (bind missing or state dropped)`);
-      }
       const batch = readSingleBatch(toUint8Array(innerParams.input_batch));
       if (!batch || batch.numRows === 0) return wrapResult({}, new Schema([]));
 
@@ -461,9 +461,16 @@ function registerAggregateMethods(protocol: Protocol, registry: FunctionRegistry
       }
       const gidCol = batch.getChildAt(gidIdx)!;
       const groupIds: bigint[] = [];
+      const uniqueGids = new Set<bigint>();
       for (let i = 0; i < batch.numRows; i++) {
         const v = gidCol.get(i);
-        groupIds.push(typeof v === "bigint" ? v : BigInt(v));
+        const g = typeof v === "bigint" ? v : BigInt(v);
+        groupIds.push(g);
+        uniqueGids.add(g);
+      }
+      const exec = getExecutionState(executionId, uniqueGids);
+      if (!exec) {
+        throw new Error(`aggregate_update: unknown execution_id for '${functionName}' (bind missing or state dropped)`);
       }
 
       // Build column-arg arrays — every non-__vgi_group_id column, in
@@ -491,6 +498,12 @@ function registerAggregateMethods(protocol: Protocol, registry: FunctionRegistry
         args: exec.bindParams.args,
         ensureState,
       });
+      // Flush mutated states to disk so sibling workers see them. We persist
+      // every group that was referenced this call — some may be unchanged
+      // (skipped by NULL handling), in which case the file simply reflects
+      // the pre-existing initial state; the idempotent rewrite is cheap
+      // relative to the RPC overhead.
+      persistGroupStates(executionId, uniqueGids);
       return wrapResult({}, new Schema([]));
     },
   });
@@ -506,38 +519,40 @@ function registerAggregateMethods(protocol: Protocol, registry: FunctionRegistry
       const functionName: string = innerParams.function_name;
       const executionId = toUint8Array(innerParams.execution_id);
       const cfg = resolveAggregate(functionName);
-      const exec = getExecutionState(executionId);
-      if (!exec) {
-        // Unknown execution_id: combine was routed to a different worker
-        // process than the one that ran bind/update. Happens under parallel
-        // aggregate when the worker pool spreads RPCs across processes —
-        // our state store is process-local (Python mitigates this with
-        // pluggable FunctionStorage). Surface a specific error rather than
-        // silently dropping state; callers can route around by pinning the
-        // pool or setting threads=1 on the query.
-        throw new Error(
-          `aggregate_combine: state for execution_id not found in this worker — ` +
-          `parallel aggregation across pooled workers is not yet supported ` +
-          `(function '${functionName}'). Consider SET threads=1 for aggregate queries.`,
-        );
-      }
       const batch = readSingleBatch(toUint8Array(innerParams.merge_batch));
       if (!batch || batch.numRows === 0) return wrapResult({}, new Schema([]));
 
       const srcCol = batch.getChild("source_group_id")!;
       const tgtCol = batch.getChild("target_group_id")!;
+      const referencedGids = new Set<bigint>();
+      const srcIds: bigint[] = [];
+      const tgtIds: bigint[] = [];
       for (let i = 0; i < batch.numRows; i++) {
         const src = BigInt(srcCol.get(i) as any);
         const tgt = BigInt(tgtCol.get(i) as any);
+        srcIds.push(src); tgtIds.push(tgt);
+        referencedGids.add(src); referencedGids.add(tgt);
+      }
+      const exec = getExecutionState(executionId, referencedGids);
+      if (!exec) {
+        throw new Error(
+          `aggregate_combine: unknown execution_id for '${functionName}' ` +
+          `(context missing on disk — bind may have failed or been cleaned up)`,
+        );
+      }
+      const touchedTargets = new Set<bigint>();
+      for (let i = 0; i < batch.numRows; i++) {
+        const src = srcIds[i];
+        const tgt = tgtIds[i];
         const srcHas = exec.states.has(src);
         const tgtHas = exec.states.has(tgt);
-        // If neither side ever saw an update there's nothing to merge — leave
-        // both groups out of states so finalize() returns SQL NULL.
         if (!srcHas && !tgtHas) continue;
         const srcState = srcHas ? exec.states.get(src)! : cfg.initialState(exec.bindParams);
         const tgtState = tgtHas ? exec.states.get(tgt)! : cfg.initialState(exec.bindParams);
         exec.states.set(tgt, cfg.combine(srcState, tgtState, exec.bindParams));
+        touchedTargets.add(tgt);
       }
+      persistGroupStates(executionId, touchedTargets);
       return wrapResult({}, new Schema([]));
     },
   });
@@ -553,19 +568,22 @@ function registerAggregateMethods(protocol: Protocol, registry: FunctionRegistry
       const functionName: string = innerParams.function_name;
       const executionId = toUint8Array(innerParams.execution_id);
       const cfg = resolveAggregate(functionName);
-      const exec = getExecutionState(executionId);
-      if (!exec) {
-        throw new Error(`aggregate_finalize: unknown execution_id for '${functionName}'`);
-      }
       const outputSchema = deserializeSchema(toUint8Array(innerParams.output_schema));
       const gidBatch = readSingleBatch(toUint8Array(innerParams.group_ids_batch));
       const groupIds: bigint[] = [];
+      const uniqueGids = new Set<bigint>();
       if (gidBatch) {
         const col = gidBatch.getChild("group_id")!;
         for (let i = 0; i < gidBatch.numRows; i++) {
           const v = col.get(i);
-          groupIds.push(typeof v === "bigint" ? v : BigInt(v));
+          const g = typeof v === "bigint" ? v : BigInt(v);
+          groupIds.push(g);
+          uniqueGids.add(g);
         }
+      }
+      const exec = getExecutionState(executionId, uniqueGids);
+      if (!exec) {
+        throw new Error(`aggregate_finalize: unknown execution_id for '${functionName}'`);
       }
       // Groups never updated pass state = null so finalize() can emit SQL NULL
       // (matches Python semantics for SUM/AVG/MIN/MAX over zero rows).
@@ -603,10 +621,16 @@ function registerAggregateMethods(protocol: Protocol, registry: FunctionRegistry
       const gidBatch = readSingleBatch(toUint8Array(innerParams.group_ids_batch));
       if (!gidBatch || gidBatch.numRows === 0) return wrapResult({}, new Schema([]));
       const col = gidBatch.getChild("group_id")!;
+      const toDrop = new Set<bigint>();
       for (let i = 0; i < gidBatch.numRows; i++) {
         const v = col.get(i);
-        exec.states.delete(typeof v === "bigint" ? v : BigInt(v));
+        const g = typeof v === "bigint" ? v : BigInt(v);
+        exec.states.delete(g);
+        toDrop.add(g);
       }
+      // Persist deletions (unlinks the per-group file so sibling workers
+      // don't revive the state via getExecutionState's lazy disk load).
+      persistGroupStates(executionId, toDrop);
       return wrapResult({}, new Schema([]));
     },
   });
