@@ -5,6 +5,7 @@
     "": {
       "name": "vgi",
       "dependencies": {
+        "@duckdb/node-api": "^1.5.2-r.1",
         "@query-farm/apache-arrow": "*",
         "vgi-rpc": "file:../vgi-rpc-typescript",
       },
@@ -14,6 +15,22 @@
     },
   },
   "packages": {
+    "@duckdb/node-api": ["@duckdb/node-api@1.5.2-r.1", "", { "dependencies": { "@duckdb/node-bindings": "1.5.2-r.1" } }, "sha512-OzBBnS0JGXMoS5mzKNY/Ylr7SshcRQiLFIoxQ4AlePwJ2fNeDL/fbHu/knjxUrXwW1fJBTUgwWftmxDdnZZb3A=="],
+
+    "@duckdb/node-bindings": ["@duckdb/node-bindings@1.5.2-r.1", "", { "optionalDependencies": { "@duckdb/node-bindings-darwin-arm64": "1.5.2-r.1", "@duckdb/node-bindings-darwin-x64": "1.5.2-r.1", "@duckdb/node-bindings-linux-arm64": "1.5.2-r.1", "@duckdb/node-bindings-linux-x64": "1.5.2-r.1", "@duckdb/node-bindings-win32-arm64": "1.5.2-r.1", "@duckdb/node-bindings-win32-x64": "1.5.2-r.1" } }, "sha512-bUg3bLVj70YVku6fKyQJS8ASORl7kM7YFVFznsEB9pWbtazPj+ME2x2FUk0WiTzjJdutjzSSGXF066mB4bGGZA=="],
+
+    "@duckdb/node-bindings-darwin-arm64": ["@duckdb/node-bindings-darwin-arm64@1.5.2-r.1", "", { "os": "darwin", "cpu": "arm64" }, "sha512-v35FyKOb8EJCvaiPF7k0gvKiJTXR7PPQDNoWR0Gu+YSX5O9b+DIguzt1348Of3HebHy6ATSMzlUekaVA9YXu+g=="],
+
+    "@duckdb/node-bindings-darwin-x64": ["@duckdb/node-bindings-darwin-x64@1.5.2-r.1", "", { "os": "darwin", "cpu": "x64" }, "sha512-SU9dIJ1BluKkkGxi4UsP4keqkkstB2YDySF9KcYu3EZKIVM3FTv2zc7XO38dXnHOq6+F3WqhWWZvD+XU945p7A=="],
+
+    "@duckdb/node-bindings-linux-arm64": ["@duckdb/node-bindings-linux-arm64@1.5.2-r.1", "", { "os": "linux", "cpu": "arm64" }, "sha512-3Tra9xM3aM3denaER4KhJ6//6PpmPbik9ECBQ+sh9PyKaEgHw/0kAcKnLm5EzWUnXF0qYmZlewvkCrse8KmOYw=="],
+
+    "@duckdb/node-bindings-linux-x64": ["@duckdb/node-bindings-linux-x64@1.5.2-r.1", "", { "os": "linux", "cpu": "x64" }, "sha512-pcQvZRHiIfJ9cq8parkSQczQHEml/IeGfnDCMAbEgD6+jaV9Y9Y5Ph1kP9aR+bm6him1S5ZIEr3kZbihjKnWbA=="],
+
+    "@duckdb/node-bindings-win32-arm64": ["@duckdb/node-bindings-win32-arm64@1.5.2-r.1", "", { "os": "win32", "cpu": "arm64" }, "sha512-Ji8tym+N3LkrhVt0Up3bsacD/kpg4/JXFJQqxswiYvBaNCQOk+D+aiVS0GN5pcqvmnG7V7TpsDRzkLEFaWp1vw=="],
+
+    "@duckdb/node-bindings-win32-x64": ["@duckdb/node-bindings-win32-x64@1.5.2-r.1", "", { "os": "win32", "cpu": "x64" }, "sha512-5XqcqC+4R8ghBEEbnc2a0sqfz1zyPBRb9YcmIWfiuDoCYSYFbKhmHcEyNftZDHcwCoLOHXnUin45jraex4STqQ=="],
+
     "@query-farm/apache-arrow": ["@query-farm/apache-arrow@21.1.0", "", { "dependencies": { "@swc/helpers": "^0.5.11", "@types/command-line-args": "^5.2.3", "@types/command-line-usage": "^5.0.4", "@types/node": "^25.2.0", "command-line-args": "^6.0.1", "command-line-usage": "^7.0.1", "flatbuffers": "^25.1.24", "json-with-bigint": "^3.5.3", "tslib": "^2.6.2" }, "bin": { "arrow2csv": "bin/arrow2csv.cjs" } }, "sha512-K+VyQUq5sDvUB4YOqA3cF+wttTy89ge2RUcWKt4rsrGh7g5KLTGcxdkfbtwCoAmsWstaA7Rf/ELQ8CySr9GeqQ=="],
 
     "@swc/helpers": ["@swc/helpers@0.5.19", "", { "dependencies": { "tslib": "^2.8.0" } }, "sha512-QamiFeIK3txNjgUTNppE6MiG3p7TdninpZu0E0PbqVh1a9FNLT2FRhisaa4NcaX52XVhA5l7Pk58Ft7Sqi/2sA=="],

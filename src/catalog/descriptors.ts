@@ -3,6 +3,7 @@
 import type { Schema, DataType } from "@query-farm/apache-arrow";
 import type { VgiFunction } from "../functions/types.js";
 import type { Arguments } from "../arguments/arguments.js";
+import type { ColumnStatistics } from "../util/statistics.js";
 
 export interface SettingDescriptor {
   name: string;
@@ -42,6 +43,20 @@ export interface TableDescriptor {
    * DuckDB evaluates the expressions client-side.
    */
   generatedColumns?: Record<string, string>;
+  /**
+   * Per-column statistics for the optimizer. Keys are column names; values
+   * are ColumnStatistics records with typed min/max and Arrow type info.
+   * DuckDB uses these for plan-time filter elimination and join reordering
+   * via the `catalog_table_column_statistics_get` RPC.
+   */
+  statistics?: Record<string, ColumnStatistics>;
+  /**
+   * Cache TTL for this table's column statistics. DuckDB caches the result
+   * of `catalog_table_column_statistics_get` for up to this many seconds.
+   * `undefined`/null means cache indefinitely; `0` means never cache
+   * (always re-fetch).
+   */
+  statisticsCacheMaxAgeSeconds?: number | null;
   supportsTimeTravel?: boolean;
   comment?: string;
   tags?: Record<string, string>;

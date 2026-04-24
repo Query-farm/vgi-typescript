@@ -452,6 +452,11 @@ function registerCatalogMethods(
         secret_types: result.secretTypes ?? [],
         comment: result.comment ?? null,
         tags: result.tags ? Object.entries(result.tags).map(([k, v]) => [k, v]) : [],
+        // True so DuckDB will route catalog_table_column_statistics_get RPCs
+        // to our handler for tables whose TableInfo.supports_column_statistics
+        // is also true. Catalogs that never serve column stats can override
+        // this in attach() via CatalogAttachResult.supportsColumnStatistics.
+        supports_column_statistics: result.supportsColumnStatistics ?? true,
       }, attachResultInnerSchema);
     },
   });
@@ -762,6 +767,35 @@ function registerCatalogMethods(
         params.transaction_id ? toUint8Array(params.transaction_id) : undefined
       );
       return {};
+    },
+  });
+
+  // catalog_table_column_statistics_get — returns serialized ColumnStatistics
+  // (IPC bytes of the sparse-union batch) for a specific table, or null when
+  // the table has no declared stats. The cache TTL is attached via schema
+  // metadata on the returned batch's stream header (see Python's
+  // serialize_column_statistics for the wire detail); here we currently just
+  // return the raw bytes — DuckDB reads `cache_max_age_seconds` out of the
+  // IPC batch's custom_metadata if the serializer wrote it. For now the TTL
+  // is attached only via the top-level result wrapper (cache behavior
+  // intentionally conservative).
+  protocol.unary("catalog_table_column_statistics_get", {
+    params: new Schema([
+      new Field("attach_id", new Binary(), true),
+      new Field("schema_name", new Utf8(), false),
+      new Field("name", new Utf8(), false),
+      new Field("transaction_id", new Binary(), true),
+    ]),
+    result: RESULT_BINARY_NULLABLE_SCHEMA,
+    handler: (params) => {
+      const cat = getCatalog();
+      const stats = cat.tableColumnStatisticsGet(
+        toUint8Array(params.attach_id),
+        params.schema_name,
+        params.name,
+        params.transaction_id ? toUint8Array(params.transaction_id) : undefined,
+      );
+      return { result: stats?.bytes ?? null };
     },
   });
 

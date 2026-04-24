@@ -48,6 +48,12 @@ export interface CatalogAttachResult {
   secretTypes?: Uint8Array[];
   comment?: string | null;
   tags?: Record<string, string>;
+  /**
+   * Catalog-level opt-in for the catalog_table_column_statistics_get RPC.
+   * Defaults to true when unspecified — individual tables still need to set
+   * TableInfo.supportsColumnStatistics before DuckDB will actually call it.
+   */
+  supportsColumnStatistics?: boolean;
 }
 
 // ============================================================================
@@ -101,7 +107,8 @@ export class TableInfo {
     public readonly primaryKeyConstraints: number[][] = [],
     public readonly foreignKeyConstraints: Uint8Array[] = [],
     public readonly comment: string | null = null,
-    public readonly tags: Record<string, string> = {}
+    public readonly tags: Record<string, string> = {},
+    public readonly supportsColumnStatistics: boolean = false,
   ) {}
 
   serialize(): Uint8Array {
@@ -116,6 +123,10 @@ export class TableInfo {
       foreign_key_constraints: this.foreignKeyConstraints,
       comment: this.comment,
       tags: Object.entries(this.tags).map(([k, v]) => [k, v]),
+      supports_insert: false,
+      supports_update: false,
+      supports_delete: false,
+      supports_column_statistics: this.supportsColumnStatistics,
     });
   }
 
@@ -138,6 +149,7 @@ export class TableInfo {
       toBinaryArray(d.foreign_key_constraints),
       d.comment ?? null,
       tags,
+      Boolean(d.supports_column_statistics ?? false),
     );
   }
 }
@@ -505,6 +517,22 @@ export abstract class CatalogInterface {
     transactionId?: TransactionId
   ): any {
     throw new CatalogReadOnlyError("table_scan_function_get");
+  }
+  /**
+   * Return serialized column statistics for a table, or null if none are
+   * available. The result is the IPC bytes of a ColumnStatistics RecordBatch
+   * (see src/util/statistics.ts for the schema) wrapped with an optional
+   * cache TTL. Callers typically override this to pull stats from a
+   * descriptor. Returning null signals "no stats" so DuckDB falls back to
+   * the function-level `table_function_statistics` path.
+   */
+  tableColumnStatisticsGet(
+    attachId: AttachId,
+    schemaName: string,
+    name: string,
+    transactionId?: TransactionId,
+  ): { bytes: Uint8Array; cacheMaxAgeSeconds: number | null } | null {
+    return null;
   }
   tableCommentSet(
     attachId: AttachId,

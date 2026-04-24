@@ -14,6 +14,7 @@ import {
   MacroType,
 } from "./interface.js";
 import type { CatalogDescriptor, SchemaDescriptor, TableDescriptor, ViewDescriptor, MacroDescriptor, SettingDescriptor, SecretTypeDescriptor, ForeignKeyDef, DefaultValue } from "./descriptors.js";
+import { serializeColumnStatistics } from "../util/statistics.js";
 import type { VgiFunction } from "../functions/types.js";
 import type { FunctionRegistry } from "../functions/registry.js";
 import { argumentSpecsToSchema } from "../arguments/argument-spec.js";
@@ -188,9 +189,28 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
         pkIndices,
         fkBytes,
         t.comment ?? null,
-        t.tags ?? {}
+        t.tags ?? {},
+        t.statistics != null && Object.keys(t.statistics).length > 0,
       );
     });
+  }
+
+  override tableColumnStatisticsGet(
+    attachId: AttachId,
+    schemaName: string,
+    name: string,
+    transactionId?: TransactionId,
+  ): { bytes: Uint8Array; cacheMaxAgeSeconds: number | null } | null {
+    const schema = this._descriptor.schemas.find((s) => s.name === schemaName);
+    if (!schema || !schema.tables) return null;
+    const table = schema.tables.find((t) => t.name === name);
+    if (!table || !table.statistics) return null;
+    const stats = Object.values(table.statistics);
+    if (stats.length === 0) return null;
+    return {
+      bytes: serializeColumnStatistics(stats),
+      cacheMaxAgeSeconds: table.statisticsCacheMaxAgeSeconds ?? null,
+    };
   }
 
   override schemaContentsViews(

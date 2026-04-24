@@ -14,6 +14,7 @@ import {
   List,
   Decimal,
   FixedSizeBinary,
+  Binary,
 } from "@query-farm/apache-arrow";
 import {
   defineTableFunction,
@@ -1848,6 +1849,65 @@ const projects_scan = defineStaticScanFunction(
   },
 );
 
+const COLORS_SCAN_SCHEMA = new Schema([
+  new Field("id", new Int64(), true),
+  new Field("color", new Utf8(), true),
+  new Field("hex_code", new Utf8(), true),
+]);
+
+const colors_scan = defineStaticScanFunction(
+  "colors_scan", "Scan colors table", COLORS_SCAN_SCHEMA, {
+    id: [1n, 2n, 3n],
+    color: ["blue", "green", "red"],
+    hex_code: ["#0000FF", "#00FF00", "#FF0000"],
+  },
+);
+
+// Build a little-endian WKB Point (byte_order=1, type=1, x, y) — same format
+// DuckDB's spatial extension produces from ST_Point. Shared by
+// geo_points_scan and (future) spatial_filter_example.
+function wkbPoint(x: number, y: number): Uint8Array {
+  const buf = new ArrayBuffer(21);
+  const view = new DataView(buf);
+  view.setUint8(0, 1);
+  view.setUint32(1, 1, true);
+  view.setFloat64(5, x, true);
+  view.setFloat64(13, y, true);
+  return new Uint8Array(buf);
+}
+
+// geo_points backing scan: 5x5 grid of WKB points (0..4 x 0..4).
+const GEO_POINTS_SCAN_SCHEMA = new Schema([
+  new Field("id", new Int64(), true),
+  new Field("geom", new Binary(), true, new Map<string, string>([
+    ["ARROW:extension:name", "geoarrow.wkb"],
+    ["ARROW:extension:metadata", "{}"],
+  ])),
+]);
+
+function geoGridWkb(): { ids: bigint[]; geoms: Uint8Array[] } {
+  const ids: bigint[] = [];
+  const geoms: Uint8Array[] = [];
+  let id = 1n;
+  for (let x = 0; x < 5; x++) {
+    for (let y = 0; y < 5; y++) {
+      ids.push(id++);
+      geoms.push(wkbPoint(x, y));
+    }
+  }
+  return { ids, geoms };
+}
+
+const geo_points_scan = (() => {
+  const { ids, geoms } = geoGridWkb();
+  return defineStaticScanFunction(
+    "geo_points_scan", "Scan geo_points table", GEO_POINTS_SCAN_SCHEMA, {
+      id: ids,
+      geom: geoms,
+    },
+  );
+})();
+
 // ============================================================================
 // versioned_constraints_scan — time travel with evolving constraints
 // ============================================================================
@@ -2234,6 +2294,8 @@ export const tableFunctions: VgiFunction[] = [
   employees_scan,
   products_scan,
   projects_scan,
+  colors_scan,
+  geo_points_scan,
   versioned_constraints_scan,
   order_echo,
   sample_echo,

@@ -22,6 +22,63 @@ import { tableInOutFunctions } from "./table_in_out.js";
 const sequenceFunction = tableFunctions.find((f) => f.meta.name === "sequence");
 const rowIdSequenceFunction = tableFunctions.find((f) => f.meta.name === "rowid_sequence");
 
+// Precompute stats for tables whose data is known at worker startup. The
+// statisticsFromDuckDB helper spins up an in-process DuckDB, builds the demo
+// dataset, and extracts typed ColumnStatistics so DuckDB's optimizer can do
+// plan-time filter elimination on these tables.
+import { statisticsFromDuckDB } from "../src/util/duckdb-stats.js";
+import { Binary } from "@query-farm/apache-arrow";
+
+const NUMBERS_STATS = await statisticsFromDuckDB(
+  "numbers",
+  async (c) => {
+    await c.run("CREATE TABLE numbers AS SELECT i AS value FROM range(0, 100) t(i)");
+  },
+);
+
+// Colors: ENUM column + plain VARCHAR hex_code. Proves the stats path
+// unwraps dictionary-encoded values back to strings.
+const COLORS_STATS = await statisticsFromDuckDB(
+  "colors",
+  async (c) => {
+    await c.run("CREATE TYPE color AS ENUM ('red', 'green', 'blue')");
+    await c.run(
+      "CREATE TABLE colors AS " +
+        "SELECT id::BIGINT AS id, color, hex_code FROM (VALUES " +
+        "(1, 'red'::color, '#FF0000'), (2, 'green'::color, '#00FF00'), (3, 'blue'::color, '#0000FF')" +
+        ") AS t(id, color, hex_code)",
+    );
+  },
+);
+
+// Geometry statistics via ST_Extent (requires the spatial extension).
+const GEO_POINTS_SCHEMA = new Schema([
+  new Field("id", new Int64(), true),
+  new Field("geom", new Binary(), true, new Map<string, string>([
+    ["ARROW:extension:name", "geoarrow.wkb"],
+    ["ARROW:extension:metadata", "{}"],
+  ])),
+]);
+const GEO_POINTS_STATS = await statisticsFromDuckDB(
+  "geo_points",
+  async (c) => {
+    await c.run(
+      "CREATE TABLE geo_points AS " +
+        "SELECT row_number() OVER () AS id, " +
+        "ST_Point(x::DOUBLE, y::DOUBLE)::GEOMETRY AS geom " +
+        "FROM range(5) t1(x), range(5) t2(y)",
+    );
+  },
+  { loadExtensions: ["spatial"] },
+);
+
+// colors_scan and geo_points_scan: minimal generator functions that emit the
+// fixed dataset for these catalog tables. The optimizer-side statistics above
+// come from the catalog, not the scan function, but the scan still needs to
+// return correct rows at query time.
+const colorsScanFunction = tableFunctions.find((f) => f.meta.name === "colors_scan");
+const geoPointsScanFunction = tableFunctions.find((f) => f.meta.name === "geo_points_scan");
+
 export const allFunctions = [
   ...scalarFunctions,
   ...tableFunctions,
@@ -133,8 +190,13 @@ export const catalog: CatalogDescriptor = {
         },
         {
           name: "numbers",
+          columns: new Schema([
+            new Field("value", new Int64(), true),
+          ]),
           function: sequenceFunction,
           arguments: new Arguments([100]),
+          statistics: NUMBERS_STATS,
+          statisticsCacheMaxAgeSeconds: 3600,
           comment: "First 100 integers (demonstrates explicit columns)",
         },
         {
@@ -144,7 +206,18 @@ export const catalog: CatalogDescriptor = {
             new Field("color", new Utf8(), true),
             new Field("hex_code", new Utf8(), true),
           ]),
+          function: colorsScanFunction,
+          statistics: COLORS_STATS,
+          statisticsCacheMaxAgeSeconds: 3600,
           comment: "Colors table with ENUM-derived statistics",
+        },
+        {
+          name: "geo_points",
+          columns: GEO_POINTS_SCHEMA,
+          function: geoPointsScanFunction,
+          statistics: GEO_POINTS_STATS,
+          statisticsCacheMaxAgeSeconds: 3600,
+          comment: "5x5 grid of points with spatial statistics",
         },
         {
           name: "funny_numbers",
@@ -160,6 +233,22 @@ export const catalog: CatalogDescriptor = {
           columns: new Schema([
             new Field("value", new Int64(), true),
           ]),
+          function: sequenceFunction,
+          arguments: new Arguments([100]),
+          statistics: {
+            value: {
+              columnName: "value",
+              arrowType: new Int64(),
+              min: 0n,
+              max: 99n,
+              hasNull: false,
+              hasNotNull: true,
+              distinctCount: 100n,
+              containsUnicode: null,
+              maxStringLength: null,
+            },
+          },
+          statisticsCacheMaxAgeSeconds: 0,
           comment: "Numbers with volatile stats (TTL=0, always re-fetched)",
         },
         {
@@ -245,6 +334,24 @@ export const catalog: CatalogDescriptor = {
           unique: [["name"]],
           check: ["budget >= 0"],
           defaults: { budget: 0 },
+          statistics: {
+            id: {
+              columnName: "id", arrowType: new Int64(),
+              min: 1n, max: 10n, hasNull: false, hasNotNull: true,
+              distinctCount: 10n, containsUnicode: null, maxStringLength: null,
+            },
+            name: {
+              columnName: "name", arrowType: new Utf8(),
+              min: "Accounting", max: "Sales", hasNull: false, hasNotNull: true,
+              distinctCount: 10n, containsUnicode: false, maxStringLength: 20n,
+            },
+            budget: {
+              columnName: "budget", arrowType: new Float64(),
+              min: 50000.0, max: 500000.0, hasNull: false, hasNotNull: true,
+              distinctCount: 10n, containsUnicode: null, maxStringLength: null,
+            },
+          },
+          statisticsCacheMaxAgeSeconds: 3600,
           comment: "Department reference table",
         },
         {
@@ -263,6 +370,29 @@ export const catalog: CatalogDescriptor = {
             name: "Product display name",
             price: "Unit price in USD",
           },
+          statistics: {
+            id: {
+              columnName: "id", arrowType: new Int64(),
+              min: 1n, max: 100n, hasNull: false, hasNotNull: true,
+              distinctCount: 100n, containsUnicode: null, maxStringLength: null,
+            },
+            name: {
+              columnName: "name", arrowType: new Utf8(),
+              min: "Anvil", max: "Zebra Tape", hasNull: false, hasNotNull: true,
+              distinctCount: 100n, containsUnicode: false, maxStringLength: 30n,
+            },
+            quantity: {
+              columnName: "quantity", arrowType: new Int64(),
+              min: 0n, max: 10000n, hasNull: true, hasNotNull: true,
+              distinctCount: 100n, containsUnicode: null, maxStringLength: null,
+            },
+            price: {
+              columnName: "price", arrowType: new Float64(),
+              min: 0.99, max: 999.99, hasNull: false, hasNotNull: true,
+              distinctCount: 100n, containsUnicode: null, maxStringLength: null,
+            },
+          },
+          statisticsCacheMaxAgeSeconds: 3600,
           comment: "Product table with column defaults",
         },
         {

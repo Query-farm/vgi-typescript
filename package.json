@@ -22,6 +22,7 @@
     "src"
   ],
   "dependencies": {
+    "@duckdb/node-api": "^1.5.2-r.1",
     "@query-farm/apache-arrow": "*",
     "vgi-rpc": "file:../vgi-rpc-typescript"
   },
