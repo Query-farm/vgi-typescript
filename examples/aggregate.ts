@@ -1,7 +1,7 @@
 // Example aggregate function implementations.
 // Ports vgi_count, vgi_sum, vgi_avg from vgi-python/vgi/examples/aggregate.py.
 
-import { Schema, Field, Int64, Float64, Utf8, Decimal, DataType, Null, RecordBatch } from "@query-farm/apache-arrow";
+import { Schema, Field, Int64, Float64, Utf8, Decimal, DataType, Null, List, Struct, RecordBatch } from "@query-farm/apache-arrow";
 import { defineAggregate } from "../src/functions/aggregate.js";
 import { batchFromColumns } from "../src/util/arrow.js";
 import type { VgiFunction } from "../src/index.js";
@@ -486,6 +486,270 @@ const vgi_window_listagg = defineAggregate<{ value: string }, ListAggState>({
 });
 
 // ============================================================================
+// nest_tensor(value, axes_struct) — collect rows into a dense N-D tensor plus
+// per-axis coordinate lists. The output is a struct {tensor, axes} where
+// `tensor` is a nested list (one level per axis) indexed by sorted distinct
+// coord values and `axes` is a struct with one list-of-coords field per axis.
+// Mirrors vgi-python/vgi/examples/nest_tensor.py.
+// ============================================================================
+
+class NestTensorError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "NestTensorError";
+  }
+}
+
+const NEST_TENSOR_DEFAULT_MAX_CELLS = 10_000_000;
+function nestTensorMaxCells(): number {
+  const raw = process.env.VGI_NEST_TENSOR_MAX_CELLS;
+  if (raw == null) return NEST_TENSOR_DEFAULT_MAX_CELLS;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0 || !Number.isInteger(n)) {
+    throw new NestTensorError(`VGI_NEST_TENSOR_MAX_CELLS must be a positive integer, got ${JSON.stringify(raw)}`);
+  }
+  return n;
+}
+
+function _validateCoordType(name: string, t: DataType): void {
+  if (DataType.isFloat(t)) {
+    throw new NestTensorError(
+      `nest_tensor: axis '${name}' has floating-point type ${t}; floats are not supported as coord types (NaN breaks equality)`,
+    );
+  }
+  if (DataType.isStruct(t) || DataType.isList(t) || DataType.isMap(t) || DataType.isFixedSizeList(t)) {
+    throw new NestTensorError(
+      `nest_tensor: axis '${name}' has nested type ${t}; only scalar coord types are supported`,
+    );
+  }
+}
+
+function _nestedListType(inner: DataType, depth: number): DataType {
+  let t: DataType = inner;
+  for (let i = 0; i < depth; i++) {
+    t = new List(new Field("item", t, true));
+  }
+  return t;
+}
+
+function _outputStructType(valueType: DataType, axesType: Struct): Struct {
+  const axisFields = (axesType as any).children as Field[];
+  const tensorType = _nestedListType(valueType, axisFields.length);
+  const axesOutFields = axisFields.map((f) => new Field(f.name, new List(new Field("item", f.type, true)), false));
+  return new Struct([
+    new Field("tensor", tensorType, true),
+    new Field("axes", new Struct(axesOutFields), false),
+  ]);
+}
+
+function _makeNestedLists(shape: number[], fill: any): any {
+  if (shape.length === 0) return fill;
+  const [head, ...rest] = shape;
+  const out: any[] = new Array(head);
+  for (let i = 0; i < head; i++) out[i] = _makeNestedLists(rest, fill);
+  return out;
+}
+
+// JSON-safe coord key for Set/Map lookups: serialize with BigInt handling.
+function _coordKey(coords: any[]): string {
+  return JSON.stringify(coords, (_, v) => (typeof v === "bigint" ? `__bi:${v.toString()}` : v));
+}
+
+// Stable comparator used for sorting coord values ascending. Supports the
+// primitive scalar types allowed by _validateCoordType.
+function _compareCoord(a: any, b: any): number {
+  if (typeof a === "bigint" || typeof b === "bigint") {
+    const ab = typeof a === "bigint" ? a : BigInt(a);
+    const bb = typeof b === "bigint" ? b : BigInt(b);
+    if (ab < bb) return -1; if (ab > bb) return 1; return 0;
+  }
+  if (typeof a === "number" || typeof b === "number") {
+    return Number(a) - Number(b);
+  }
+  if (typeof a === "string" || typeof b === "string") {
+    const as = String(a), bs = String(b);
+    return as < bs ? -1 : as > bs ? 1 : 0;
+  }
+  if (typeof a === "boolean" || typeof b === "boolean") {
+    return (a === b) ? 0 : (a ? 1 : -1);
+  }
+  return 0;
+}
+
+interface NestTensorState {
+  // Accumulated rows for the group. Each row = [value, ...axis_coords].
+  // Stored as parallel arrays to minimize JSON overhead on persist/load.
+  values: any[];
+  coords: any[][];  // coords[i] = axis values for row i, in axis order
+}
+
+const nest_tensor = defineAggregate<Record<string, never>, NestTensorState>({
+  name: "nest_tensor",
+  description: "Collect rows into a dense N-D tensor plus per-axis coordinates",
+  args: { value: new Null(), axes: new Null() },
+  outputType: new Null(),  // overridden by onBind
+  nullHandling: "DEFAULT",
+  onBind: (params) => {
+    const inputSchema = params.inputSchema;
+    if (!inputSchema || inputSchema.fields.length < 2) {
+      throw new NestTensorError("nest_tensor: expected 2 arguments (value, axes struct)");
+    }
+    const valueType = inputSchema.fields[0].type;
+    const axesType = inputSchema.fields[1].type;
+    if (!DataType.isStruct(axesType)) {
+      throw new NestTensorError(`nest_tensor: second argument must be a struct, got ${axesType}`);
+    }
+    const axisFields = (axesType as any).children as Field[];
+    if (axisFields.length === 0) {
+      throw new NestTensorError("nest_tensor: axes struct must have at least one field");
+    }
+    for (const f of axisFields) _validateCoordType(f.name, f.type);
+    return _outputStructType(valueType, axesType as Struct);
+  },
+  initialState: () => ({ values: [], coords: [] }),
+  update: ({ groupIds, columns, ensureState }) => {
+    const valueCol = columns[0];
+    const axesCol = columns[1];
+    if (valueCol == null || axesCol == null) return;
+    const axesType = (axesCol as any).type as Struct;
+    const axisFields = (axesType as any).children as Field[];
+    const axisNames = axisFields.map((f) => f.name);
+
+    // Per-group seen-coord sets for intra-batch duplicate detection.
+    const seenPerGroup = new Map<bigint, Set<string>>();
+
+    for (let i = 0; i < groupIds.length; i++) {
+      const gid = groupIds[i];
+      if (!axesCol.isValid(i)) continue;  // null axes struct -> skip
+      const row = axesCol.get(i);
+      const coords: any[] = [];
+      for (let a = 0; a < axisNames.length; a++) {
+        const name = axisNames[a];
+        // arrow-js StructRow exposes fields via [Symbol.iterator] or property access
+        let val: any;
+        if (row && typeof row === "object") {
+          val = (row as any)[name] ?? (row as any).get?.(name);
+        } else {
+          val = null;
+        }
+        if (val == null) {
+          throw new NestTensorError(
+            `nest_tensor: null coord value for axis '${name}' at row ${i} (group ${gid})`,
+          );
+        }
+        coords.push(val);
+      }
+      const key = _coordKey(coords);
+      let seen = seenPerGroup.get(gid);
+      if (seen == null) { seen = new Set(); seenPerGroup.set(gid, seen); }
+      if (seen.has(key)) {
+        const coordObj: Record<string, any> = {};
+        for (let a = 0; a < axisNames.length; a++) coordObj[axisNames[a]] = coords[a];
+        throw new NestTensorError(
+          `nest_tensor: duplicate coordinate ${JSON.stringify(coordObj)} in group ${gid}`,
+        );
+      }
+      seen.add(key);
+
+      const value = valueCol.isValid(i) ? valueCol.get(i) : null;
+      const s = ensureState(gid);
+      s.values.push(value);
+      s.coords.push(coords);
+    }
+  },
+  combine: (src, tgt) => ({
+    values: tgt.values.concat(src.values),
+    coords: tgt.coords.concat(src.coords),
+  }),
+  finalize: ({ groupIds, states, outputSchema }) => {
+    const outField = outputSchema.fields[0];
+    const outStruct = outField.type as Struct;
+    const outStructFields = (outStruct as any).children as Field[];
+    const axesOutField = outStructFields.find((f) => f.name === "axes")!;
+    const axesOutFields = (axesOutField.type as any).children as Field[];
+    const axisNames = axesOutFields.map((f) => f.name);
+    const maxCells = nestTensorMaxCells();
+
+    const tensors: any[] = [];
+    const axesRows: any[] = [];
+
+    for (const gid of groupIds) {
+      const state = states.get(gid);
+      if (state == null || state.values.length === 0) {
+        tensors.push(_makeNestedLists(new Array(axisNames.length).fill(0), null));
+        const empty: Record<string, any[]> = {};
+        for (const n of axisNames) empty[n] = [];
+        axesRows.push(empty);
+        continue;
+      }
+
+      // Distinct sorted axis values.
+      const axisValues: any[][] = [];
+      const axisIndex: Array<Map<string, number>> = [];
+      for (let a = 0; a < axisNames.length; a++) {
+        const seen = new Map<string, any>();
+        for (const coord of state.coords) {
+          const v = coord[a];
+          const k = _coordKey([v]);
+          if (!seen.has(k)) seen.set(k, v);
+        }
+        const distinct = [...seen.values()].sort(_compareCoord);
+        axisValues.push(distinct);
+        const idx = new Map<string, number>();
+        distinct.forEach((v, i) => idx.set(_coordKey([v]), i));
+        axisIndex.push(idx);
+      }
+
+      const shape = axisValues.map((v) => v.length);
+      let total = 1;
+      for (const s of shape) total *= s;
+      if (total > maxCells) {
+        throw new NestTensorError(
+          `nest_tensor: tensor has ${total} cells (shape [${shape.join(",")}]) exceeds VGI_NEST_TENSOR_MAX_CELLS=${maxCells} (group ${gid})`,
+        );
+      }
+
+      const tensor = _makeNestedLists(shape, null);
+      const filled = _makeNestedLists(shape, false);
+
+      for (let r = 0; r < state.values.length; r++) {
+        const coord = state.coords[r];
+        const idxTuple: number[] = [];
+        for (let a = 0; a < axisNames.length; a++) {
+          const k = _coordKey([coord[a]]);
+          idxTuple.push(axisIndex[a].get(k)!);
+        }
+        let cell: any = tensor;
+        let flag: any = filled;
+        for (let d = 0; d < idxTuple.length - 1; d++) {
+          cell = cell[idxTuple[d]];
+          flag = flag[idxTuple[d]];
+        }
+        const last = idxTuple[idxTuple.length - 1];
+        if (flag[last]) {
+          const coordObj: Record<string, any> = {};
+          for (let a = 0; a < axisNames.length; a++) coordObj[axisNames[a]] = coord[a];
+          throw new NestTensorError(
+            `nest_tensor: duplicate coordinate ${JSON.stringify(coordObj)} in group ${gid} (arrived from parallel partitions)`,
+          );
+        }
+        cell[last] = state.values[r];
+        flag[last] = true;
+      }
+
+      tensors.push(tensor);
+      const axesEntry: Record<string, any[]> = {};
+      for (let a = 0; a < axisNames.length; a++) axesEntry[axisNames[a]] = axisValues[a];
+      axesRows.push(axesEntry);
+    }
+
+    const results = groupIds.map((_, i) => ({ tensor: tensors[i], axes: axesRows[i] }));
+    return batchFromColumns({ result: results }, outputSchema);
+  },
+  categories: ["aggregate", "tensor"],
+});
+
+// ============================================================================
 // vgi_dynamic_agg(code, value...) — evaluates user-supplied code at finalize
 // time via eval. Tests pass Python source (`class Aggregate: ...`), which we
 // transpile to JS for the subset of syntax the test suite exercises:
@@ -703,6 +967,6 @@ const qf_llm_distill = defineLlmStub("qf_llm_distill", "Distill text using an LL
 
 export const aggregateFunctions: VgiFunction[] = [
   vgi_count, vgi_sum, vgi_avg, vgi_sum_all, vgi_listagg, vgi_weighted_sum, vgi_generic_sum,
-  vgi_percentile, vgi_window_sum, vgi_window_median, vgi_window_listagg, vgi_dynamic_agg,
-  vgi_dynamic_ml_agg, qf_llm_summarize, qf_llm_distill,
+  vgi_percentile, vgi_window_sum, vgi_window_median, vgi_window_listagg, nest_tensor,
+  vgi_dynamic_agg, vgi_dynamic_ml_agg, qf_llm_summarize, qf_llm_distill,
 ];

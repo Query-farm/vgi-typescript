@@ -1079,6 +1079,149 @@ const whoami = defineScalarFunction({
 });
 
 // ============================================================================
+// unnest_tensor — inverse of nest_tensor aggregate. Takes a {tensor, axes}
+// struct and returns a list of {value, axes} structs — one per cell of the
+// Cartesian product, including unfilled cells (value is NULL there).
+// ============================================================================
+
+class UnnestTensorError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "UnnestTensorError";
+  }
+}
+
+function _tensorDepth(t: DataType): { depth: number; inner: DataType } {
+  let depth = 0;
+  let inner = t;
+  while (DataType.isList(inner) || DataType.isFixedSizeList(inner)) {
+    depth += 1;
+    inner = (inner as any).children[0].type;
+  }
+  return { depth, inner };
+}
+
+function _cartesianProduct(lengths: number[]): number[][] {
+  if (lengths.length === 0) return [[]];
+  const result: number[][] = [];
+  const rec = (acc: number[], depth: number) => {
+    if (depth === lengths.length) {
+      result.push([...acc]);
+      return;
+    }
+    for (let i = 0; i < lengths[depth]; i++) {
+      acc.push(i);
+      rec(acc, depth + 1);
+      acc.pop();
+    }
+  };
+  rec([], 0);
+  return result;
+}
+
+function _unnestTensorOutputType(structType: DataType): DataType {
+  if (!DataType.isStruct(structType)) {
+    throw new UnnestTensorError(`unnest_tensor: argument must be a struct, got ${structType}`);
+  }
+  const children = (structType as any).children as Field[];
+  const fieldNames = new Set(children.map((f) => f.name));
+  if (!fieldNames.has("tensor") || !fieldNames.has("axes")) {
+    throw new UnnestTensorError(
+      `unnest_tensor: struct must have 'tensor' and 'axes' fields, got [${[...fieldNames].sort().join(", ")}]`,
+    );
+  }
+  const axesField = children.find((f) => f.name === "axes")!;
+  if (!DataType.isStruct(axesField.type)) {
+    throw new UnnestTensorError(`unnest_tensor: 'axes' field must be a struct, got ${axesField.type}`);
+  }
+  const axesChildren = (axesField.type as any).children as Field[];
+  const tensorField = children.find((f) => f.name === "tensor")!;
+  const { depth, inner } = _tensorDepth(tensorField.type);
+  if (depth !== axesChildren.length) {
+    throw new UnnestTensorError(
+      `unnest_tensor: tensor nesting depth ${depth} does not match number of axes ${axesChildren.length}`,
+    );
+  }
+  const outAxesType = new Struct(
+    axesChildren.map((f) => new Field(f.name, (f.type as any).children[0].type, true)),
+  );
+  const rowType = new Struct([new Field("value", inner, true), new Field("axes", outAxesType, true)]);
+  return new List(new Field("item", rowType, true));
+}
+
+function _asPlainAxes(axesScalar: any, axisNames: string[]): Record<string, any[]> {
+  // arrow-js StructRow for axes — fields are List<coord_type> each.
+  const out: Record<string, any[]> = {};
+  for (const name of axisNames) {
+    let arr: any;
+    if (axesScalar && typeof axesScalar === "object") {
+      arr = axesScalar[name] ?? axesScalar.get?.(name);
+    }
+    if (arr == null) { out[name] = []; continue; }
+    // arr is a Vector-like with .get(i) or an iterable
+    if (typeof arr[Symbol.iterator] === "function") {
+      out[name] = [...arr];
+    } else {
+      out[name] = [];
+    }
+  }
+  return out;
+}
+
+function _indexNested(t: any, idx: number[]): any {
+  let cell = t;
+  for (const d of idx) {
+    if (cell == null) return null;
+    cell = cell[d] ?? cell.get?.(d) ?? null;
+  }
+  return cell;
+}
+
+const unnest_tensor = defineScalarFunction({
+  name: "unnest_tensor",
+  description: "Invert nest_tensor: list of {value, axes} structs per cell",
+  params: { tensor: new Null() },
+  outputType: (params: ScalarBindParameters) => {
+    const structType = params.argumentsSchema.fields[0].type;
+    return _unnestTensorOutputType(structType);
+  },
+  compute: (batch: RecordBatch) => {
+    const col = batch.getChildAt(0);
+    if (col == null) return new Array(batch.numRows).fill(null);
+    const structType = (col as any).type as DataType;
+    const axesField = ((structType as any).children as Field[]).find((f) => f.name === "axes")!;
+    const axisNames = ((axesField.type as any).children as Field[]).map((f) => f.name);
+
+    const results: Array<any[] | null> = [];
+    for (let i = 0; i < batch.numRows; i++) {
+      if (!col.isValid(i)) { results.push(null); continue; }
+      const row = col.get(i);
+      if (row == null) { results.push(null); continue; }
+      const tensorVal = (row as any).tensor ?? (row as any).get?.("tensor");
+      const axesVal = (row as any).axes ?? (row as any).get?.("axes");
+      const axesPlain = _asPlainAxes(axesVal, axisNames);
+      const lengths = axisNames.map((n) => axesPlain[n].length);
+      if (lengths.some((l) => l === 0)) { results.push([]); continue; }
+
+      const cells: any[] = [];
+      for (const idxTuple of _cartesianProduct(lengths)) {
+        const value = _indexNested(tensorVal, idxTuple);
+        const axes: Record<string, any> = {};
+        for (let a = 0; a < axisNames.length; a++) {
+          axes[axisNames[a]] = axesPlain[axisNames[a]][idxTuple[a]];
+        }
+        cells.push({ value, axes });
+      }
+      results.push(cells);
+    }
+    return results;
+  },
+  examples: [
+    { sql: "SELECT * FROM UNNEST(unnest_tensor(nest_tensor(v, {i: i}))) FROM (VALUES (1,0),(2,1)) t(v,i)", description: "Round-trip nest_tensor" },
+  ],
+});
+
+// ============================================================================
 // Export all scalar functions
 // ============================================================================
 
@@ -1121,4 +1264,5 @@ export const scalarFunctions: VgiFunction[] = [
   geo_centroid_list,
   geo_centroid_fixed,
   whoami,
+  unnest_tensor,
 ];
