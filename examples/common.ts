@@ -452,7 +452,7 @@ export const catalog: CatalogDescriptor = {
       views: [
         {
           name: "small_numbers",
-          definition: "SELECT n AS value FROM numbers WHERE n < 10",
+          definition: "SELECT value FROM numbers WHERE value < 10",
           comment: "Numbers less than 10",
         },
       ],
