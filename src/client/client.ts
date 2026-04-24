@@ -131,6 +131,7 @@ export class VgiClient {
       bindOpaqueData: bindResponse.opaqueData,
       projectionIds: opts?.projectionIds ?? null,
       pushdownFilters: opts?.pushdownFilters ?? null,
+      joinKeys: [],
       phase: opts?.phase ?? null,
       executionId: opts?.executionId ?? null,
       initOpaqueData: null,

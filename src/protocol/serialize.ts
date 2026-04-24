@@ -88,12 +88,25 @@ const BIND_RESPONSE_SCHEMA = new Schema([
 //   phase: utf8 (nullable) - dictionary(int16,string) in Python, simplified to utf8
 //   execution_id: binary (nullable)
 //   init_opaque_data: binary (nullable)
+// vgi-python's InitRequest (vgi/protocol.py) — outer wire shape:
+//   bind_call: binary (nested IPC of BindRequest)
+//   output_schema: binary (nullable serialized Schema)
+//   bind_opaque_data: binary (nullable)
+//   projection_ids: list<int64> (nullable)
+//   pushdown_filters: large_binary (nullable) — nested IPC of filter batch
+//   join_keys: list<large_binary> (non-null list of IPC-serialized batches)
+//   phase: utf8 (nullable) — dictionary(int16,string) in Python, accepts utf8 for back-compat
+//   execution_id: binary (nullable)
+//   init_opaque_data: binary (nullable)
+// ORDER matches vgi-python's dataclass field declaration order so serialization
+// is positional-compatible with the Python reader.
 const INIT_REQUEST_SCHEMA = new Schema([
   new Field("bind_call", new Binary(), false),
   new Field("output_schema", new Binary(), false),
   new Field("bind_opaque_data", new Binary(), true),
-  new Field("projection_ids", new List(new Field("item", new Int32(), false)), true),
+  new Field("projection_ids", new List(new Field("item", new Int64(), false)), true),
   new Field("pushdown_filters", new Binary(), true),
+  new Field("join_keys", new List(new Field("item", new Binary(), true)), false),
   new Field("phase", new Utf8(), true),
   new Field("execution_id", new Binary(), true),
   new Field("init_opaque_data", new Binary(), true),
@@ -386,10 +399,11 @@ export function serializeInitRequest(req: InitRequest): RecordBatch {
     bind_call: bindCallBytes,
     output_schema: serializeSchema(req.outputSchema),
     bind_opaque_data: req.bindOpaqueData ?? null,
-    projection_ids: req.projectionIds ?? null,
+    projection_ids: req.projectionIds?.map((n) => BigInt(n)) ?? null,
     pushdown_filters: req.pushdownFilters
       ? serializeBatch(req.pushdownFilters)
       : null,
+    join_keys: (req.joinKeys ?? []).map((b) => serializeBatch(b)),
     phase: req.phase ?? null,
     execution_id: req.executionId ?? null,
     init_opaque_data: req.initOpaqueData ?? null,
@@ -433,6 +447,25 @@ export function deserializeInitRequest(
     }
   }
 
+  // Parse join_keys - list of IPC-serialized RecordBatches
+  const joinKeys: RecordBatch[] = [];
+  if (params.join_keys != null) {
+    const raw = params.join_keys;
+    const iter: Iterable<any> = Array.isArray(raw)
+      ? raw
+      : typeof raw[Symbol.iterator] === "function"
+      ? raw
+      : [];
+    for (const entry of iter) {
+      if (entry == null) continue;
+      try {
+        joinKeys.push(deserializeBatch(toUint8Array(entry)));
+      } catch {
+        // Skip malformed batches rather than failing init.
+      }
+    }
+  }
+
   return {
     bindCall,
     outputSchema: deserializeSchema(toUint8Array(params.output_schema)),
@@ -443,6 +476,7 @@ export function deserializeInitRequest(
     pushdownFilters: params.pushdown_filters
       ? deserializeBatch(toUint8Array(params.pushdown_filters))
       : null,
+    joinKeys,
     phase,
     executionId: params.execution_id
       ? toUint8Array(params.execution_id)

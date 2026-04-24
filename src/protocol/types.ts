@@ -30,6 +30,12 @@ export interface InitRequest {
   bindOpaqueData: Uint8Array | null;
   projectionIds: number[] | null;
   pushdownFilters: RecordBatch | null;
+  /**
+   * Join-key value batches, one per join-keys column. Keyed by the column
+   * name inside each batch's schema. Populated when DuckDB promotes
+   * IN/OR lists or join predicates to batched join-keys pushdowns.
+   */
+  joinKeys: RecordBatch[];
   phase: TableInOutPhase | null;
   executionId: Uint8Array | null;
   initOpaqueData: Uint8Array | null;

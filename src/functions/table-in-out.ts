@@ -19,7 +19,12 @@ import type {
 } from "./types.js";
 import type { ArgumentSpec } from "../arguments/argument-spec.js";
 import { batchToScalarDict, batchToSecretDict, projectSchema, emptyBatch } from "../util/arrow.js";
-import { deserializeFilters, FilteringOutputCollector, type PushdownFilters } from "../util/filter-pushdown.js";
+import {
+  buildJoinKeysLookup,
+  deserializeFilters,
+  FilteringOutputCollector,
+  type PushdownFilters,
+} from "../util/filter-pushdown.js";
 import { FunctionStability } from "../types.js";
 import { BoundStorage, storage as defaultStorage } from "../storage/function-storage.js";
 import { serializeUserState, deserializeUserState } from "../protocol/state-serializer.js";
@@ -244,9 +249,12 @@ export function defineTableInOutFunction<
         ? projectSchema(projIds, request.outputSchema)
         : request.outputSchema;
 
-      // Deserialize pushdown filters
+      // Deserialize pushdown filters. Pass a join-keys column lookup so that
+      // filters DuckDB promoted to join_keys (IN/OR lists, etc.) are
+      // materialized as InFilters rather than silently dropped.
+      const joinKeysLookup = buildJoinKeysLookup(request.joinKeys);
       const pushdownFilters = request.pushdownFilters
-        ? deserializeFilters(request.pushdownFilters)
+        ? deserializeFilters(request.pushdownFilters, joinKeysLookup)
         : undefined;
 
       // Create BoundStorage for cross-phase/cross-worker data sharing

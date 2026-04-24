@@ -288,6 +288,12 @@ function filterToSql(f: Filter): string {
     case "is_not_null":
       return `${col} IS NOT NULL`;
     case "in": {
+      // Match Python's repr: summarize large lists as `N values`, otherwise
+      // render each element. Threshold matches vgi-python's InFilter.__repr__.
+      const size = f.values.size;
+      if (size > 20) {
+        return `${col} IN (${size} values)`;
+      }
       const vals = [...f.values].map(formatValue).join(", ");
       return `${col} IN (${vals})`;
     }
@@ -370,6 +376,7 @@ export class PushdownFilters {
 function parseFilter(
   spec: any,
   getValue: (ref: number) => any,
+  getJoinKeysColumn?: (columnName: string) => any[] | null,
 ): Filter | null {
   const columnName: string = spec.column_name ?? "";
   const columnIndex: number = spec.column_index ?? 0;
@@ -411,7 +418,7 @@ function parseFilter(
       // (conjunction is weaker with fewer children, which is safe — extra rows
       // pass but DuckDB re-filters client-side).
       const andChildren = (spec.children ?? [])
-        .map((c: any) => parseFilter(c, getValue))
+        .map((c: any) => parseFilter(c, getValue, getJoinKeysColumn))
         .filter((f: Filter | null): f is Filter => f !== null);
       if (andChildren.length === 0) return null;
       return { type: "and", columnName, columnIndex, children: andChildren };
@@ -422,7 +429,7 @@ function parseFilter(
       // which is unsafe. If any child fails to parse, drop the whole OR.
       const orChildren: Filter[] = [];
       for (const c of spec.children ?? []) {
-        const parsed = parseFilter(c, getValue);
+        const parsed = parseFilter(c, getValue, getJoinKeysColumn);
         if (parsed === null) return null;
         orChildren.push(parsed);
       }
@@ -430,7 +437,7 @@ function parseFilter(
     }
 
     case "struct": {
-      const childFilter = parseFilter(spec.child_filter, getValue);
+      const childFilter = parseFilter(spec.child_filter, getValue, getJoinKeysColumn);
       if (childFilter === null) return null;
       return {
         type: "struct",
@@ -442,12 +449,19 @@ function parseFilter(
       };
     }
 
-    case "join_keys":
-      // vgi-python `FilterType.JOIN_KEYS` — resolution requires a join-keys
-      // column lookup callback the TS worker doesn't plumb yet. Match Python's
-      // graceful-degradation contract: skip this filter and let DuckDB filter
-      // client-side rather than fail the whole query.
-      return null;
+    case "join_keys": {
+      // vgi-python `FilterType.JOIN_KEYS`. DuckDB's dynamic_or_filter
+      // optimizer can promote IN / OR lists or join-predicate pushdowns into
+      // this shape. Look the keys_column up in the init request's join_keys
+      // batches and materialize as an InFilter. If no callback or no batch
+      // matches, fall through as null (graceful degradation).
+      const keysColumn: string = spec.keys_column ?? "";
+      if (!getJoinKeysColumn) return null;
+      const values = getJoinKeysColumn(keysColumn);
+      if (values === null) return null;
+      const set = new Set<any>(values);
+      return { type: "in", columnName, columnIndex, values: set };
+    }
 
     case "expression":
       // vgi-python `FilterType.EXPRESSION` — full expression evaluator not
@@ -466,7 +480,33 @@ function parseFilter(
  * - Column 0: UTF8 — JSON array of filter specs. Field metadata: vgi_filter_version: "1"
  * - Columns 1+: Scalar values referenced by value_ref → column N+1
  */
-export function deserializeFilters(batch: RecordBatch): PushdownFilters {
+/**
+ * Build a getJoinKeysColumn lookup from an InitRequest's `joinKeys` batches.
+ * Each batch typically has a single column whose name is the join-keys column
+ * referenced by `spec.keys_column` on a join_keys filter.
+ */
+export function buildJoinKeysLookup(
+  joinKeyBatches: RecordBatch[],
+): (columnName: string) => any[] | null {
+  const index = new Map<string, any[]>();
+  for (const batch of joinKeyBatches) {
+    for (const field of batch.schema.fields) {
+      const col = batch.getChild(field.name);
+      if (!col) continue;
+      const values: any[] = [];
+      for (let i = 0; i < batch.numRows; i++) {
+        values.push(col.get(i));
+      }
+      index.set(field.name, values);
+    }
+  }
+  return (name: string) => index.get(name) ?? null;
+}
+
+export function deserializeFilters(
+  batch: RecordBatch,
+  getJoinKeysColumn?: (columnName: string) => any[] | null,
+): PushdownFilters {
   // Validate version
   const field0 = batch.schema.fields[0];
   const version = field0.metadata?.get("vgi_filter_version");
@@ -499,7 +539,7 @@ export function deserializeFilters(batch: RecordBatch): PushdownFilters {
   };
 
   const filters = specs
-    .map((spec) => parseFilter(spec, getValue))
+    .map((spec) => parseFilter(spec, getValue, getJoinKeysColumn))
     .filter((f): f is Filter => f !== null);
   return new PushdownFilters(filters, version);
 }
