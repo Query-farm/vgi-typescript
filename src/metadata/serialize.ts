@@ -110,6 +110,7 @@ function metadataToRow(m: ResolvedMetadata): Record<string, any> {
     projection_pushdown: m.projectionPushdown,
     filter_pushdown: m.filterPushdown,
     sampling_pushdown: m.samplingPushdown,
+    supported_expression_filters: m.supportedExpressionFilters,
     preserves_order: m.preservesOrder,
     max_workers: m.maxWorkers,
     order_dependent: m.orderDependent,
@@ -258,6 +259,10 @@ export function arrowToMetadatas(batch: RecordBatch): ResolvedMetadata[] {
       projectionPushdown: get("projection_pushdown") ?? false,
       filterPushdown: get("filter_pushdown") ?? false,
       samplingPushdown: get("sampling_pushdown") ?? false,
+      supportedExpressionFilters: (() => {
+        const raw = get("supported_expression_filters") ?? [];
+        return raw ? [...raw].filter((s: any) => s != null).map(String) : [];
+      })(),
       preservesOrder: get("preserves_order") ?? "NO_ORDER_GUARANTEE",
       maxWorkers: get("max_workers") ?? null,
       orderDependent: get("order_dependent") ?? "NOT_ORDER_DEPENDENT",

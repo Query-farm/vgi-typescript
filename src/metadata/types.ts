@@ -50,6 +50,7 @@ export interface ResolvedMetadata {
   projectionPushdown: boolean;
   filterPushdown: boolean;
   samplingPushdown: boolean;
+  supportedExpressionFilters: string[];
   preservesOrder: OrderPreservation;
   maxWorkers: number | null;
   orderDependent: OrderDependence;

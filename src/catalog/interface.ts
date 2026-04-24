@@ -205,6 +205,7 @@ export interface FunctionInfoOptions {
   projectionPushdown?: boolean | null;
   filterPushdown?: boolean | null;
   samplingPushdown?: boolean | null;
+  supportedExpressionFilters?: string[];
   orderPreservation?: string | null;
   maxWorkers?: number | null;
   orderDependent?: string;
@@ -229,6 +230,7 @@ export class FunctionInfo {
   readonly projectionPushdown: boolean | null;
   readonly filterPushdown: boolean | null;
   readonly samplingPushdown: boolean | null;
+  readonly supportedExpressionFilters: string[];
   readonly orderPreservation: string | null;
   readonly maxWorkers: number | null;
   readonly orderDependent: string;
@@ -252,6 +254,7 @@ export class FunctionInfo {
     this.projectionPushdown = opts.projectionPushdown ?? null;
     this.filterPushdown = opts.filterPushdown ?? null;
     this.samplingPushdown = opts.samplingPushdown ?? null;
+    this.supportedExpressionFilters = opts.supportedExpressionFilters ?? [];
     this.orderPreservation = opts.orderPreservation ?? null;
     this.maxWorkers = opts.maxWorkers ?? null;
     this.orderDependent = opts.orderDependent ?? "NOT_ORDER_DEPENDENT";
@@ -280,6 +283,7 @@ export class FunctionInfo {
       projection_pushdown: this.projectionPushdown,
       filter_pushdown: this.filterPushdown,
       sampling_pushdown: this.samplingPushdown,
+      supported_expression_filters: this.supportedExpressionFilters,
       order_preservation: this.orderPreservation,
       max_workers: this.maxWorkers,
       order_dependent: this.orderDependent,
@@ -342,6 +346,7 @@ export class FunctionInfo {
       projectionPushdown: d.projection_pushdown ?? null,
       filterPushdown: d.filter_pushdown ?? null,
       samplingPushdown: d.sampling_pushdown ?? null,
+      supportedExpressionFilters: toStringArray(d.supported_expression_filters),
       orderPreservation: d.order_preservation ?? null,
       maxWorkers: d.max_workers != null ? Number(d.max_workers) : null,
       orderDependent: d.order_dependent ?? "NOT_ORDER_DEPENDENT",

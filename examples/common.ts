@@ -77,7 +77,6 @@ const GEO_POINTS_STATS = await statisticsFromDuckDB(
 // come from the catalog, not the scan function, but the scan still needs to
 // return correct rows at query time.
 const colorsScanFunction = tableFunctions.find((f) => f.meta.name === "colors_scan");
-const geoPointsScanFunction = tableFunctions.find((f) => f.meta.name === "geo_points_scan");
 
 export const allFunctions = [
   ...scalarFunctions,
@@ -214,7 +213,6 @@ export const catalog: CatalogDescriptor = {
         {
           name: "geo_points",
           columns: GEO_POINTS_SCHEMA,
-          function: geoPointsScanFunction,
           statistics: GEO_POINTS_STATS,
           statisticsCacheMaxAgeSeconds: 3600,
           comment: "5x5 grid of points with spatial statistics",

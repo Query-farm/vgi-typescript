@@ -281,6 +281,7 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
           projectionPushdown: meta.projectionPushdown,
           filterPushdown: meta.filterPushdown,
           samplingPushdown: meta.samplingPushdown,
+          supportedExpressionFilters: meta.supportedExpressionFilters,
           orderPreservation: meta.preservesOrder,
           maxWorkers: meta.maxWorkers,
           orderDependent: meta.orderDependent,

@@ -44,6 +44,7 @@ export interface FunctionMeta {
   projectionPushdown?: boolean;
   filterPushdown?: boolean;
   samplingPushdown?: boolean;
+  supportedExpressionFilters?: string[];
   autoApplyFilters?: boolean;
   preservesOrder?: OrderPreservation;
   maxWorkers?: number;

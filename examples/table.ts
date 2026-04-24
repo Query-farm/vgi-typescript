@@ -2259,6 +2259,116 @@ const dynamic_filter_echo = defineTableFunction<DynFilterEchoArgs, DynFilterEcho
 });
 
 // ============================================================================
+// spatial_filter_example — grid of WKB points for spatial filter pushdown
+// ============================================================================
+
+interface SpatialFilterArgs { count: number; batch_size: number; }
+interface SpatialFilterState {
+  remaining: number;
+  currentIndex: number;
+  totalCount: number;
+}
+
+const SPATIAL_FILTER_SCHEMA = new Schema([
+  new Field("n", new Int64(), true),
+  new Field("x", new Float64(), true),
+  new Field("y", new Float64(), true),
+  new Field("geom", new Binary(), true, new Map<string, string>([
+    ["ARROW:extension:name", "geoarrow.wkb"],
+    ["ARROW:extension:metadata", "{}"],
+  ])),
+]);
+
+const spatial_filter_example = defineTableFunction<SpatialFilterArgs, SpatialFilterState>({
+  name: "spatial_filter_example",
+  description: "Generates points on a grid with geometry for spatial filter testing",
+  args: { count: new Int64(), batch_size: new Int64() },
+  argDefaults: { batch_size: 1024 },
+  projectionPushdown: true,
+  filterPushdown: true,
+  autoApplyFilters: true,
+  supportedExpressionFilters: ["&&", "st_intersects_extent"],
+  onBind: () => ({ outputSchema: SPATIAL_FILTER_SCHEMA }),
+  cardinality: (p: TableBindParams<SpatialFilterArgs>) => ({ estimate: p.args.count, max: p.args.count }),
+  initialState: (p: TableProcessParams<SpatialFilterArgs>) => ({
+    remaining: p.args.count, currentIndex: 0, totalCount: p.args.count,
+  }),
+  process: (p, state, out) => {
+    if (state.remaining <= 0) { out.finish(); return; }
+    const cols = Math.max(1, Math.ceil(Math.sqrt(state.totalCount)));
+    const size = Math.min(state.remaining, p.args.batch_size);
+    const ns: bigint[] = [], xs: number[] = [], ys: number[] = [], geoms: Uint8Array[] = [];
+    for (let i = 0; i < size; i++) {
+      const idx = state.currentIndex + i;
+      const x = (idx % cols) / cols;
+      const y = Math.floor(idx / cols) / cols;
+      ns.push(BigInt(idx));
+      xs.push(x);
+      ys.push(y);
+      geoms.push(wkbPoint(x, y));
+    }
+    out.emit(batchFromColumns({ n: ns, x: xs, y: ys, geom: geoms }, p.outputSchema));
+    state.currentIndex += size;
+    state.remaining -= size;
+  },
+  examples: [{
+    sql: "SELECT * FROM spatial_filter_example(100) WHERE geom && ST_MakeEnvelope(0,0,0.5,0.5)",
+    description: "Filter grid points by bounding box",
+  }],
+  categories: ["generator", "spatial", "testing"],
+});
+
+// ============================================================================
+// expression_filter_test — rows with list + string cols for non-spatial filters
+// ============================================================================
+
+interface ExprFilterArgs { count: number; batch_size: number; }
+interface ExprFilterState { remaining: number; currentIndex: number; }
+
+const EXPR_FILTER_SCHEMA = new Schema([
+  new Field("id", new Int64(), true),
+  new Field("name", new Utf8(), true),
+  new Field("tags", new List(new Field("item", new Utf8(), true)), true),
+  new Field("score", new Float64(), true),
+]);
+
+const expression_filter_test = defineTableFunction<ExprFilterArgs, ExprFilterState>({
+  name: "expression_filter_test",
+  description: "Generates rows for non-spatial expression filter testing",
+  args: { count: new Int64(), batch_size: new Int64() },
+  argDefaults: { batch_size: 1024 },
+  projectionPushdown: true,
+  filterPushdown: true,
+  autoApplyFilters: true,
+  supportedExpressionFilters: ["list_contains", "prefix", "starts_with", "contains"],
+  onBind: () => ({ outputSchema: EXPR_FILTER_SCHEMA }),
+  cardinality: (p: TableBindParams<ExprFilterArgs>) => ({ estimate: p.args.count, max: p.args.count }),
+  initialState: (p: TableProcessParams<ExprFilterArgs>) => ({
+    remaining: p.args.count, currentIndex: 0,
+  }),
+  process: (p, state, out) => {
+    if (state.remaining <= 0) { out.finish(); return; }
+    const size = Math.min(state.remaining, p.args.batch_size);
+    const ids: bigint[] = [], names: string[] = [], tags: string[][] = [], scores: number[] = [];
+    for (let i = 0; i < size; i++) {
+      const idx = state.currentIndex + i;
+      ids.push(BigInt(idx));
+      names.push(`item_${idx}`);
+      tags.push([`tag_${idx % 5}`, `tag_${(idx + 1) % 5}`]);
+      scores.push(idx * 1.1);
+    }
+    out.emit(batchFromColumns({ id: ids, name: names, tags, score: scores }, p.outputSchema));
+    state.currentIndex += size;
+    state.remaining -= size;
+  },
+  examples: [{
+    sql: "SELECT * FROM expression_filter_test(100) WHERE list_contains(tags, 'tag_0')",
+    description: "Filter rows by tag presence",
+  }],
+  categories: ["generator", "testing"],
+});
+
+// ============================================================================
 // Export all table functions
 // ============================================================================
 
@@ -2295,9 +2405,10 @@ export const tableFunctions: VgiFunction[] = [
   products_scan,
   projects_scan,
   colors_scan,
-  geo_points_scan,
   versioned_constraints_scan,
   order_echo,
   sample_echo,
   dynamic_filter_echo,
+  spatial_filter_example,
+  expression_filter_test,
 ];

@@ -75,7 +75,28 @@ export type Filter =
   | InFilter
   | AndFilter
   | OrFilter
-  | StructFilter;
+  | StructFilter
+  | ExpressionFilter;
+
+/**
+ * Expression-tree filter. The expr is a parsed AST; evaluation matches
+ * DuckDB's semantics for the function names the table function advertises in
+ * `supportedExpressionFilters` (e.g. list_contains, starts_with, contains,
+ * &&/st_intersects_extent for spatial).
+ */
+export interface ExpressionFilter {
+  type: "expression";
+  columnName: string;
+  columnIndex: number;
+  expr: ExprNode;
+}
+
+export type ExprNode =
+  | { expr_type: "column_ref"; index: number }
+  | { expr_type: "constant"; value: any }
+  | { expr_type: "function"; function_name: string; children: ExprNode[] }
+  | { expr_type: "comparison"; op: ComparisonOp; left: ExprNode; right: ExprNode }
+  | { expr_type: "conjunction"; conjunction_type: "and" | "or"; children: ExprNode[] };
 
 // ============================================================================
 // Comparison helpers
@@ -123,6 +144,164 @@ function evaluateFilter(
     case "struct":
       evaluateStruct(filter, batch, mask);
       break;
+    case "expression":
+      evaluateExpression(filter, batch, mask);
+      break;
+  }
+}
+
+// Recursively evaluate an expression AST against a row of the batch, returning
+// the scalar value it produces. column_ref reads from the batch using the
+// caller-supplied remap (DuckDB rewrites column refs inside an ExpressionFilter
+// so index=0 means "this filter's column"); constant returns its pre-resolved
+// JS value; function dispatches on function_name; comparison/conjunction
+// combine children.
+function evaluateExpr(
+  node: ExprNode,
+  batch: RecordBatch,
+  rowIndex: number,
+  colRefToBatchIndex: (index: number) => number,
+): any {
+  switch (node.expr_type) {
+    case "column_ref": {
+      const col = batch.getChildAt(colRefToBatchIndex(node.index));
+      return col ? col.get(rowIndex) : null;
+    }
+    case "constant":
+      return node.value;
+    case "function":
+      return evalFunction(
+        node.function_name,
+        node.children.map((c) => evaluateExpr(c, batch, rowIndex, colRefToBatchIndex)),
+      );
+    case "comparison": {
+      const left = evaluateExpr(node.left, batch, rowIndex, colRefToBatchIndex);
+      const right = evaluateExpr(node.right, batch, rowIndex, colRefToBatchIndex);
+      if (left == null || right == null) return null;
+      return compare(left, right, node.op);
+    }
+    case "conjunction": {
+      if (node.conjunction_type === "and") {
+        for (const c of node.children) {
+          const v = evaluateExpr(c, batch, rowIndex, colRefToBatchIndex);
+          if (v !== true) return v === false ? false : null;
+        }
+        return true;
+      }
+      let sawNull = false;
+      for (const c of node.children) {
+        const v = evaluateExpr(c, batch, rowIndex, colRefToBatchIndex);
+        if (v === true) return true;
+        if (v == null) sawNull = true;
+      }
+      return sawNull ? null : false;
+    }
+  }
+}
+
+// Dispatch DuckDB scalar-function names we support as pushdown filters.
+// Return null for any missing argument (SQL three-valued logic).
+function evalFunction(name: string, args: any[]): any {
+  if (args.some((a) => a == null)) return null;
+  switch (name) {
+    case "list_contains":
+    case "array_contains": {
+      // args[0] is an Arrow ListVector row (iterable), args[1] is the needle.
+      const [list, needle] = args;
+      if (!list || typeof list[Symbol.iterator] !== "function") return false;
+      for (const v of list) {
+        if (v === needle) return true;
+      }
+      return false;
+    }
+    case "starts_with":
+    case "prefix": {
+      const [hay, needle] = args;
+      return typeof hay === "string" && typeof needle === "string"
+        ? hay.startsWith(needle) : false;
+    }
+    case "contains": {
+      const [hay, needle] = args;
+      return typeof hay === "string" && typeof needle === "string"
+        ? hay.includes(needle) : false;
+    }
+    case "&&":
+    case "st_intersects_extent": {
+      // Bounding-box intersection between two WKB geometries. Parses each
+      // geometry's XY bbox and checks for overlap in both dimensions.
+      const [a, b] = args;
+      const ba = wkbBBox(a);
+      const bb = wkbBBox(b);
+      if (!ba || !bb) return false;
+      return !(ba.maxX < bb.minX || ba.minX > bb.maxX ||
+               ba.maxY < bb.minY || ba.minY > bb.maxY);
+    }
+    default:
+      // Unsupported functions shouldn't make it past the C++-side
+      // `ExpressionTreeIsSupported` gate, but be defensive: evaluate to null
+      // so the row is filtered out conservatively rather than silently
+      // producing wrong results.
+      return null;
+  }
+}
+
+// Parse the XY bounding box of a WKB geometry. Supports Point and Polygon for
+// ST_MakeEnvelope output; extend as new geometry kinds are needed.
+function wkbBBox(bytes: any): { minX: number; minY: number; maxX: number; maxY: number } | null {
+  if (!(bytes instanceof Uint8Array)) return null;
+  if (bytes.length < 5) return null;
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const le = view.getUint8(0) === 1;
+  const type = view.getUint32(1, le);
+  // Point (type=1): 21 bytes total (5 header + 8+8 coords)
+  if (type === 1 && bytes.length >= 21) {
+    const x = view.getFloat64(5, le);
+    const y = view.getFloat64(13, le);
+    return { minX: x, minY: y, maxX: x, maxY: y };
+  }
+  // Polygon (type=3): used by ST_MakeEnvelope. One ring, 4 points, close.
+  // Header 5 + num_rings 4 + num_points 4 + 4*16 coord bytes = 81 bytes.
+  if (type === 3 && bytes.length >= 81) {
+    const numRings = view.getUint32(5, le);
+    if (numRings < 1) return null;
+    const numPoints = view.getUint32(9, le);
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    let off = 13;
+    for (let i = 0; i < numPoints && off + 16 <= bytes.length; i++, off += 16) {
+      const x = view.getFloat64(off, le);
+      const y = view.getFloat64(off + 8, le);
+      if (x < minX) minX = x;
+      if (x > maxX) maxX = x;
+      if (y < minY) minY = y;
+      if (y > maxY) maxY = y;
+    }
+    if (minX === Infinity) return null;
+    return { minX, minY, maxX, maxY };
+  }
+  return null;
+}
+
+function evaluateExpression(
+  filter: ExpressionFilter,
+  batch: RecordBatch,
+  mask: Uint8Array,
+): void {
+  const n = batch.numRows;
+  // DuckDB's FilterSerializer rewrites bound references inside an
+  // ExpressionFilter so that column_ref index 0 refers to the filter's own
+  // column (see ReplaceWithBoundReference in DuckDB's optimizer). Higher
+  // indices on the same filter aren't produced — the filter is always
+  // scoped to a single column in the outer batch — so we map every
+  // column_ref back to `filter.columnIndex` by name, resolving through the
+  // current batch in case projection reordered columns.
+  const colName = filter.columnName;
+  let targetIdx = batch.schema.fields.findIndex((f) => f.name === colName);
+  if (targetIdx < 0) targetIdx = filter.columnIndex;
+  const colRef = (_nodeIndex: number) => targetIdx;
+  for (let i = 0; i < n; i++) {
+    if (!mask[i]) continue;
+    const v = evaluateExpr(filter.expr, batch, i, colRef);
+    mask[i] = v === true ? 1 : 0;
   }
 }
 
@@ -310,6 +489,11 @@ function filterToSql(f: Filter): string {
       const remapped = { ...f.childFilter, columnName: nested };
       return filterToSql(remapped);
     }
+    case "expression":
+      // Expression filters don't have a natural SQL rendering here — the
+      // tree came from DuckDB's bound-expression serializer. Use a generic
+      // placeholder so debug output stays readable.
+      return `${f.columnName} MATCHES (expression)`;
   }
 }
 
@@ -463,10 +647,15 @@ function parseFilter(
       return { type: "in", columnName, columnIndex, values: set };
     }
 
-    case "expression":
-      // vgi-python `FilterType.EXPRESSION` — full expression evaluator not
-      // ported to TS yet. Graceful skip (same rationale as join_keys).
-      return null;
+    case "expression": {
+      // Parse the serialized expression tree (DuckDB bound-expression → JSON
+      // emitted by FilterSerializer::SerializeExpression in C++). The tree
+      // may reference constants by `value_ref` — resolve those now so the
+      // evaluator sees plain JS values.
+      const expr = parseExprNode(spec.expr, getValue);
+      if (!expr) return null;
+      return { type: "expression", columnName, columnIndex, expr };
+    }
 
     default:
       throw new Error(`Unknown filter type: ${spec.type}`);
@@ -501,6 +690,69 @@ export function buildJoinKeysLookup(
     }
   }
   return (name: string) => index.get(name) ?? null;
+}
+
+// Parse a serialized expression subtree. Returns null if the shape doesn't
+// look like one we can evaluate (unknown expr_type); the caller skips the
+// whole filter in that case, which is equivalent to not pushing it down.
+function parseExprNode(
+  spec: any,
+  getValue: (ref: number) => any,
+): ExprNode | null {
+  if (!spec || typeof spec !== "object") return null;
+  switch (spec.expr_type) {
+    case "column_ref":
+      return { expr_type: "column_ref", index: Number(spec.index ?? 0) };
+    case "constant":
+      return { expr_type: "constant", value: getValue(Number(spec.value_ref)) };
+    case "function": {
+      const kids: ExprNode[] = [];
+      for (const c of spec.children ?? []) {
+        const k = parseExprNode(c, getValue);
+        if (!k) return null;
+        kids.push(k);
+      }
+      return { expr_type: "function", function_name: String(spec.function_name ?? ""), children: kids };
+    }
+    case "comparison": {
+      const left = parseExprNode(spec.left, getValue);
+      const right = parseExprNode(spec.right, getValue);
+      if (!left || !right) return null;
+      return {
+        expr_type: "comparison",
+        op: opFromString(spec.op),
+        left,
+        right,
+      };
+    }
+    case "conjunction": {
+      const kids: ExprNode[] = [];
+      for (const c of spec.children ?? []) {
+        const k = parseExprNode(c, getValue);
+        if (!k) return null;
+        kids.push(k);
+      }
+      return {
+        expr_type: "conjunction",
+        conjunction_type: spec.conjunction_type === "or" ? "or" : "and",
+        children: kids,
+      };
+    }
+    default:
+      return null;
+  }
+}
+
+function opFromString(s: string): ComparisonOp {
+  switch (s) {
+    case "eq": case "==": return ComparisonOp.EQ;
+    case "ne": case "!=": return ComparisonOp.NE;
+    case "gt": case ">": return ComparisonOp.GT;
+    case "ge": case ">=": return ComparisonOp.GE;
+    case "lt": case "<": return ComparisonOp.LT;
+    case "le": case "<=": return ComparisonOp.LE;
+    default: return ComparisonOp.EQ;
+  }
 }
 
 export function deserializeFilters(
@@ -611,6 +863,19 @@ function reprFilter(f: Filter): string {
     }
     case "struct":
       return `StructFilter(${f.columnName}.${f.childName}: ${reprFilter(f.childFilter)})`;
+    case "expression":
+      return `ExpressionFilter(${f.columnName}: ${reprExpr(f.expr)})`;
+  }
+}
+
+function reprExpr(e: ExprNode): string {
+  switch (e.expr_type) {
+    case "column_ref": return `col#${e.index}`;
+    case "constant": return reprValue(e.value);
+    case "function": return `${e.function_name}(${e.children.map(reprExpr).join(", ")})`;
+    case "comparison": return `(${reprExpr(e.left)} ${opSymbol(e.op)} ${reprExpr(e.right)})`;
+    case "conjunction":
+      return `(${e.children.map(reprExpr).join(e.conjunction_type === "and" ? " AND " : " OR ")})`;
   }
 }
 
