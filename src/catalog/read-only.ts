@@ -38,7 +38,12 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
     return [this._descriptor.name];
   }
 
-  attach(name: string, options?: any): CatalogAttachResult {
+  attach(
+    name: string,
+    options?: any,
+    dataVersionSpec?: string | null,
+    implementationVersion?: string | null,
+  ): CatalogAttachResult {
     if (!this.catalogs().includes(name)) {
       throw new Error(`No worker handles catalog '${name}'`);
     }

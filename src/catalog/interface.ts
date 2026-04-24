@@ -30,6 +30,11 @@ import type { SchemaInfo } from "../generated/vgi-client.js";
 export type { SchemaInfo };
 export { encodeSchemaInfo, decodeSchemaInfo } from "../generated/vgi-client.js";
 
+// CatalogInfo — advertised by workers per catalog (name + versions).
+import type { CatalogInfo } from "../generated/vgi-client.js";
+export type { CatalogInfo };
+export { encodeCatalogInfo, decodeCatalogInfo } from "../generated/vgi-client.js";
+
 // TableInfo is the generated interface (snake_case wire shape).
 import type { TableInfo } from "../generated/vgi-client.js";
 export type { TableInfo };
@@ -63,8 +68,18 @@ export abstract class CatalogInterface {
   abstract catalogs(): string[];
   abstract attach(
     name: string,
-    options?: any
+    options?: any,
+    dataVersionSpec?: string | null,
+    implementationVersion?: string | null,
   ): CatalogAttachResult;
+  /**
+   * List the catalogs this worker exposes with their version metadata. The
+   * `implementation_version` / `data_version_spec` come from the CatalogInfo
+   * returned by the read-only catalogs() signature below — a versioned worker
+   * overrides `catalogs()` / `catalogsInfo()` to advertise real values; the
+   * default derives them from the registered descriptor(s).
+   */
+  catalogsInfo?(): import("../generated/vgi-client.js").CatalogInfo[];
   abstract detach(attachId: AttachId): void;
   abstract version(
     attachId: AttachId,

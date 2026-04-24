@@ -48,7 +48,12 @@ export class InMemoryCatalog extends CatalogInterface {
     return ["memory"];
   }
 
-  attach(name: string, options?: any): CatalogAttachResult {
+  attach(
+    name: string,
+    options?: any,
+    _dataVersionSpec?: string | null,
+    _implementationVersion?: string | null,
+  ): CatalogAttachResult {
     if (!this.catalogs().includes(name)) {
       throw new Error(`Unknown catalog: '${name}'`);
     }

@@ -8,8 +8,10 @@
 
 VGI_DIR      ?= /Users/rusty/Development/vgi
 TEST_TIMEOUT ?= 60
-WORKER       ?= $(CURDIR)/bin/vgi-example-worker
-HTTP_WORKER  := $(CURDIR)/bin/vgi-example-http-worker
+WORKER             ?= $(CURDIR)/bin/vgi-example-worker
+HTTP_WORKER        := $(CURDIR)/bin/vgi-example-http-worker
+VERSIONED_WORKER   := $(CURDIR)/bin/vgi-example-versioned-worker
+VERSIONED_HTTP     := $(CURDIR)/bin/vgi-example-versioned-http-worker
 
 TEST_DIR     := $(VGI_DIR)/test/sql
 RELEASE_BIN  := $(VGI_DIR)/build/release/test/unittest
@@ -61,6 +63,7 @@ test/%:
 		exit 1; \
 	fi; \
 	export VGI_TEST_WORKER="$(WORKER)"; \
+	export VGI_VERSIONED_WORKER="$(VERSIONED_WORKER)"; \
 	is_xfail=false; \
 	for xf in $(XFAIL_TESTS); do \
 		if [ "$$xf" = "$*" ]; then is_xfail=true; break; fi; \
@@ -93,17 +96,31 @@ test-http/%:
 	mkfifo "$$port_fifo"; \
 	$(HTTP_WORKER) > "$$port_fifo" 2>/dev/null & \
 	http_pid=$$!; \
-	cleanup() { kill $$http_pid 2>/dev/null; wait $$http_pid 2>/dev/null; rm -f "$$port_fifo"; }; \
+	vport_fifo=$$(mktemp -u); \
+	mkfifo "$$vport_fifo"; \
+	$(VERSIONED_HTTP) > "$$vport_fifo" 2>/dev/null & \
+	vhttp_pid=$$!; \
+	cleanup() { \
+		kill $$http_pid $$vhttp_pid 2>/dev/null; \
+		wait $$http_pid $$vhttp_pid 2>/dev/null; \
+		rm -f "$$port_fifo" "$$vport_fifo"; \
+	}; \
 	trap cleanup EXIT; \
 	port_line=""; \
 	read -t 10 port_line < "$$port_fifo" || { \
 		echo "ERROR: HTTP worker did not print PORT line within 10s"; \
-		kill $$http_pid 2>/dev/null; rm -f "$$port_fifo"; \
-		exit 1; \
+		cleanup; exit 1; \
 	}; \
-	rm -f "$$port_fifo"; \
+	vport_line=""; \
+	read -t 10 vport_line < "$$vport_fifo" || { \
+		echo "ERROR: versioned HTTP worker did not print PORT line within 10s"; \
+		cleanup; exit 1; \
+	}; \
+	rm -f "$$port_fifo" "$$vport_fifo"; \
 	port=$${port_line#PORT:}; \
+	vport=$${vport_line#PORT:}; \
 	export VGI_TEST_WORKER="http://localhost:$$port/vgi"; \
+	export VGI_VERSIONED_HTTP_WORKER="http://localhost:$$vport/vgi"; \
 	is_xfail=false; \
 	for xf in $(HTTP_XFAIL_TESTS); do \
 		if [ "$$xf" = "$*" ]; then is_xfail=true; break; fi; \
@@ -121,8 +138,8 @@ test-http/%:
 		else \
 			echo "FAIL  $* [http] (release, rc=$$rc) — rerunning with debug binary..."; \
 			timeout $(TEST_TIMEOUT) $(DEBUG_BIN) --test-dir $(TEST_DIR) -s "$$test_file" 2>&1 || true; \
-			kill $$http_pid 2>/dev/null; wait $$http_pid 2>/dev/null; \
+			cleanup; \
 			exit 1; \
 		fi; \
 	fi; \
-	kill $$http_pid 2>/dev/null; wait $$http_pid 2>/dev/null; true
+	cleanup; true

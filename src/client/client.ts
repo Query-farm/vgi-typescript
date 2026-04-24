@@ -37,6 +37,8 @@ import {
   type CatalogAttachResult,
   type AttachId,
   type TransactionId,
+  decodeCatalogInfo,
+  type CatalogInfo,
 } from "../catalog/interface.js";
 import { wrapRequest, unwrapResult } from "./protocol.js";
 import { toUint8Array } from "../util/bytes.js";
@@ -365,27 +367,55 @@ export class VgiClient {
   // Catalog API
   // ==========================================================================
 
-  /** List all available catalog names. */
-  async catalogs(): Promise<string[]> {
+  /**
+   * List all catalogs with their advertised version metadata.
+   *
+   * Each entry has `{name, implementation_version?, data_version_spec?}`.
+   * Versioned workers populate the version fields; read-only workers
+   * leave both null.
+   */
+  async catalogsInfo(): Promise<CatalogInfo[]> {
     const result = await this.rpc.call("catalog_catalogs", {});
     if (!result) return [];
     const inner = unwrapResult(result);
-    const items = inner.items;
-    if (!items) return [];
-    return Array.isArray(items) ? items : [...items];
+    return deserializeInfoList(inner.items, decodeCatalogInfo);
   }
 
-  /** Attach a catalog by name. Returns connection details including the attachId. */
+  /** List all available catalog names (shorthand for `catalogsInfo().map(c => c.name)`). */
+  async catalogs(): Promise<string[]> {
+    const infos = await this.catalogsInfo();
+    return infos.map((i) => i.name);
+  }
+
+  /**
+   * Attach a catalog by name. Returns connection details including the attachId.
+   *
+   * Versioned catalogs (see vgi-example-versioned-worker) validate
+   * `dataVersionSpec` / `implementationVersion` at attach time and echo back
+   * the resolved values on the result — callers can read those from
+   * `result.resolved_data_version` / `result.resolved_implementation_version`.
+   */
   async catalogAttach(
     name: string,
     options?: Uint8Array,
+    opts?: {
+      dataVersionSpec?: string | null;
+      implementationVersion?: string | null;
+    },
   ): Promise<CatalogAttachResult> {
     const schema = new Schema([
       new Field("name", new Utf8(), false),
       new Field("options", new Binary(), true),
+      new Field("data_version_spec", new Utf8(), true),
+      new Field("implementation_version", new Utf8(), true),
     ]);
     const innerBatch = batchFromColumns(
-      { name: [name], options: [options ?? null] },
+      {
+        name: [name],
+        options: [options ?? null],
+        data_version_spec: [opts?.dataVersionSpec ?? null],
+        implementation_version: [opts?.implementationVersion ?? null],
+      },
       schema,
     );
     const result = await this.rpc.call("catalog_attach", wrapRequest(innerBatch));

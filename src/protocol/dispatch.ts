@@ -33,7 +33,7 @@ import { serializeColumnStatistics } from "../util/statistics.js";
 import { toUint8Array } from "../util/bytes.js";
 import type { CatalogInterface } from "../catalog/interface.js";
 import type { MacroType } from "../catalog/interface.js";
-import { encodeSchemaInfo, encodeTableInfo, encodeViewInfo, encodeMacroInfo, encodeFunctionInfo } from "../generated/vgi-client.js";
+import { encodeSchemaInfo, encodeTableInfo, encodeViewInfo, encodeMacroInfo, encodeFunctionInfo, encodeCatalogInfo } from "../generated/vgi-client.js";
 import { NoCatalogError } from "../errors.js";
 import {
   BindResultSchema,
@@ -757,16 +757,18 @@ function registerCatalogMethods(
     result: RESULT_BINARY_SCHEMA,
     handler: () => {
       const cat = getCatalog();
-      // Each catalog name becomes an IPC-serialized CatalogInfo batch
-      // {name, implementation_version?, data_version_spec?}. Matches the
-      // vgi-python Protocol's CatalogsResponse wire shape.
-      const items = cat.catalogs().map((name) => {
-        const infoBatch = batchFromColumns(
-          { name: [name], implementation_version: [null], data_version_spec: [null] },
-          CatalogInfoSchema,
-        );
-        return serializeBatch(infoBatch);
-      });
+      // Each catalog advertised as an IPC-serialized CatalogInfo
+      // {name, implementation_version?, data_version_spec?}. Versioned workers
+      // override catalogsInfo() to supply real values; otherwise both version
+      // fields default to null.
+      const infos = cat.catalogsInfo
+        ? cat.catalogsInfo()
+        : cat.catalogs().map((name) => ({
+            name,
+            implementation_version: null,
+            data_version_spec: null,
+          }));
+      const items = infos.map((info) => encodeCatalogInfo(info));
       return wrapResult({ items }, catalogsResponseSchema);
     },
   });
@@ -778,7 +780,12 @@ function registerCatalogMethods(
     handler: (params) => {
       const innerParams = unwrapRequest(params.request);
       const cat = getCatalog();
-      const result = cat.attach(innerParams.name, innerParams.options);
+      const result = cat.attach(
+        innerParams.name,
+        innerParams.options,
+        innerParams.data_version_spec ?? null,
+        innerParams.implementation_version ?? null,
+      );
       return wrapResult({
         attach_id: result.attach_id,
         supports_transactions: result.supports_transactions,
