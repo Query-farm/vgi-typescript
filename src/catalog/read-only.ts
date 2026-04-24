@@ -64,7 +64,7 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
       attachId,
       supportsTransactions: false,
       supportsTimeTravel: hasTimeTravel,
-      catalogVersionFrozen: false,
+      catalogVersionFrozen: true,
       catalogVersion: this._version,
       attachIdRequired: true,
       defaultSchema: this._descriptor.defaultSchema ?? "main",
