@@ -127,6 +127,8 @@ export type {
   TableInOutFunctionOptions,
   OnCreateConflict,
   CatalogFunctionType as ClientCatalogFunctionType,
+  CatalogAttachOptions,
+  AttachOptionValue,
 } from "./client/index.js";
 
 // Re-export from vgi-rpc for convenience

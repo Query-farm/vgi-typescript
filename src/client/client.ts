@@ -42,6 +42,10 @@ import {
 } from "../catalog/interface.js";
 import { wrapRequest, unwrapResult } from "./protocol.js";
 import { toUint8Array } from "../util/bytes.js";
+import {
+  serializeAttachOptions,
+  type AttachOptionValue,
+} from "../util/attach-options.js";
 import type {
   VgiClientOptions,
   TableFunctionOptions,
@@ -50,6 +54,7 @@ import type {
   OnCreateConflict,
   CatalogFunctionType,
   CatalogMacroType,
+  CatalogAttachOptions,
 } from "./types.js";
 
 /** Error thrown by VgiClient when an RPC call fails or returns unexpected data. */
@@ -388,35 +393,53 @@ export class VgiClient {
   }
 
   /**
-   * Attach a catalog by name. Returns connection details including the attachId.
+   * Attach a catalog by name. Returns connection details including the
+   * attachId.
+   *
+   * `opts.options` is a plain key→value map; column types are inferred from
+   * the value at runtime (see AttachOptionValue for the mapping). Use
+   * `opts.optionsBytes` instead when you need Arrow types the inference
+   * can't express (Decimal, Timestamp, Int32 vs Int64, nested structs).
+   * Providing both throws.
    *
    * Versioned catalogs (see vgi-example-versioned-worker) validate
-   * `dataVersionSpec` / `implementationVersion` at attach time and echo back
-   * the resolved values on the result — callers can read those from
+   * `dataVersionSpec` / `implementationVersion` at attach time and echo
+   * back the resolved values on the result — callers can read those from
    * `result.resolved_data_version` / `result.resolved_implementation_version`.
+   *
+   * @example
+   * ```ts
+   * const result = await client.catalogAttach("my_catalog", {
+   *   options: { region: "us-east-1", maxCachedRows: 1000n, readOnly: true },
+   *   dataVersionSpec: "1.0.0",
+   * });
+   * ```
    */
   async catalogAttach(
     name: string,
-    options?: Uint8Array,
-    opts?: {
-      dataVersionSpec?: string | null;
-      implementationVersion?: string | null;
-    },
+    opts?: CatalogAttachOptions,
   ): Promise<CatalogAttachResult> {
+    if (opts?.options != null && opts?.optionsBytes != null) {
+      throw new VgiClientError(
+        "catalogAttach: cannot specify both `options` and `optionsBytes`",
+      );
+    }
+    let wireOptions: Uint8Array | null;
+    if (opts?.optionsBytes != null) {
+      // Escape hatch: raw pre-serialized bytes. Same zero-byte guard as
+      // before — pyarrow's IPC reader rejects 0-byte input on a non-null
+      // binary field.
+      wireOptions = opts.optionsBytes.byteLength === 0 ? null : opts.optionsBytes;
+    } else {
+      wireOptions = serializeAttachOptions(opts?.options);
+    }
+
     const schema = new Schema([
       new Field("name", new Utf8(), false),
       new Field("options", new Binary(), true),
       new Field("data_version_spec", new Utf8(), true),
       new Field("implementation_version", new Utf8(), true),
     ]);
-    // Zero-byte options is equivalent to "no options" — the server expects
-    // either a null field or a valid IPC-encoded RecordBatch of option
-    // columns, and a zero-byte buffer on a non-null binary field crashes
-    // pyarrow's IPC reader with "Tried reading schema message, was null
-    // or length 0". Coerce defensively so callers who pass
-    // `new Uint8Array(0)` (a natural "empty options" gesture) don't hit
-    // a cryptic server error.
-    const wireOptions = options == null || options.byteLength === 0 ? null : options;
     const innerBatch = batchFromColumns(
       {
         name: [name],

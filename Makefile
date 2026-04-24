@@ -178,7 +178,7 @@ test-client:
 	export VGI_PYTHON_VERSIONED_HTTP_WORKER="http://127.0.0.1:$$(cat $$vers_file)"; \
 	echo "Python HTTP worker:       $$VGI_PYTHON_HTTP_WORKER"; \
 	echo "Python versioned worker:  $$VGI_PYTHON_VERSIONED_HTTP_WORKER"; \
-	bun test src/client/__tests__/; \
+	bun test src/; \
 	rc=$$?; \
 	cleanup; \
 	exit $$rc

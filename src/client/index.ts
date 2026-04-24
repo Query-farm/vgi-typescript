@@ -9,4 +9,6 @@ export type {
   OnCreateConflict,
   CatalogFunctionType,
   CatalogMacroType,
+  CatalogAttachOptions,
+  AttachOptionValue,
 } from "./types.js";

@@ -2,6 +2,29 @@
 
 import type { RecordBatch } from "@query-farm/apache-arrow";
 import type { Arguments } from "../arguments/arguments.js";
+import type { AttachOptionValue } from "../util/attach-options.js";
+
+export type { AttachOptionValue };
+
+/**
+ * Options bag for VgiClient.catalogAttach.
+ *
+ * Pass `options` as a plain key→value map — the client serializes to an
+ * Arrow RecordBatch with per-value type inference (see AttachOptionValue).
+ * For Arrow types that inference can't express (Decimal, Timestamp, exact
+ * int width, nested struct), use `optionsBytes` to supply pre-serialized
+ * bytes. Providing both throws.
+ *
+ * `dataVersionSpec` / `implementationVersion` are sent to versioned
+ * catalogs for attach-time validation; workers that aren't versioned
+ * ignore them.
+ */
+export interface CatalogAttachOptions {
+  options?: Record<string, AttachOptionValue>;
+  optionsBytes?: Uint8Array;
+  dataVersionSpec?: string | null;
+  implementationVersion?: string | null;
+}
 
 /** Conflict resolution strategy for create operations. */
 export type OnCreateConflict = "error" | "ignore" | "replace";

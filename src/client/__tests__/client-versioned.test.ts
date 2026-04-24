@@ -75,7 +75,7 @@ describe.skipIf(skip)("VgiClient — versioned attach", () => {
   });
 
   test("attach with matching data_version_spec echoes resolved value", async () => {
-    const r = await client.catalogAttach("versioned", undefined, {
+    const r = await client.catalogAttach("versioned", {
       dataVersionSpec: "1.1.0",
       implementationVersion: "1.0.0",
     });
@@ -89,7 +89,7 @@ describe.skipIf(skip)("VgiClient — versioned attach", () => {
 
   test("attach with each supported data_version_spec echoes that value", async () => {
     for (const v of ["1.0.0", "1.1.0", "1.2.0"]) {
-      const r = await client.catalogAttach("versioned", undefined, { dataVersionSpec: v });
+      const r = await client.catalogAttach("versioned", { dataVersionSpec: v });
       try {
         expect(r.resolved_data_version).toBe(v);
       } finally {
@@ -107,7 +107,7 @@ describe.skipIf(skip)("VgiClient — versioned attach", () => {
     //    supported ones — users need both to self-correct.
     let caught: unknown;
     try {
-      await client.catalogAttach("versioned", undefined, { dataVersionSpec: "9.9.9" });
+      await client.catalogAttach("versioned", { dataVersionSpec: "9.9.9" });
     } catch (err) {
       caught = err;
     }
@@ -123,7 +123,7 @@ describe.skipIf(skip)("VgiClient — versioned attach", () => {
   test("attach with unsatisfiable implementation_version rejects with actionable message", async () => {
     let caught: unknown;
     try {
-      await client.catalogAttach("versioned", undefined, { implementationVersion: "9.9.9" });
+      await client.catalogAttach("versioned", { implementationVersion: "9.9.9" });
     } catch (err) {
       caught = err;
     }
@@ -143,7 +143,7 @@ describe.skipIf(skip)("VgiClient — versioned attach", () => {
     // silently change the first error users see.
     let caught: unknown;
     try {
-      await client.catalogAttach("versioned", undefined, {
+      await client.catalogAttach("versioned", {
         dataVersionSpec: "8.8.8",
         implementationVersion: "9.9.9",
       });
@@ -161,7 +161,7 @@ describe.skipIf(skip)("VgiClient — versioned attach", () => {
     // fired and is invaluable during integration work.
     let caught: unknown;
     try {
-      await client.catalogAttach("versioned", undefined, { dataVersionSpec: "9.9.9" });
+      await client.catalogAttach("versioned", { dataVersionSpec: "9.9.9" });
     } catch (err) {
       caught = err;
     }
@@ -178,7 +178,7 @@ describe.skipIf(skip)("VgiClient — versioned attach", () => {
     // and accept with default resolved values.
     let caught: unknown;
     try {
-      await client.catalogAttach("versioned", undefined, { dataVersionSpec: "" });
+      await client.catalogAttach("versioned", { dataVersionSpec: "" });
     } catch (err) {
       caught = err;
     }
@@ -192,7 +192,7 @@ describe.skipIf(skip)("VgiClient — versioned attach", () => {
     // rather than silently falling through to the default.
     let caught: unknown;
     try {
-      await client.catalogAttach("versioned", undefined, { dataVersionSpec: "   " });
+      await client.catalogAttach("versioned", { dataVersionSpec: "   " });
     } catch (err) {
       caught = err;
     }
@@ -207,7 +207,7 @@ describe.skipIf(skip)("VgiClient — versioned attach", () => {
     for (const bad of ["1.0.0 ", " 1.0.0", "v1.0.0", "1.0", "1.0.0.0", "1,0,0"]) {
       let caught: unknown;
       try {
-        await client.catalogAttach("versioned", undefined, { dataVersionSpec: bad });
+        await client.catalogAttach("versioned", { dataVersionSpec: bad });
       } catch (err) {
         caught = err;
       }
@@ -220,7 +220,7 @@ describe.skipIf(skip)("VgiClient — versioned attach", () => {
     for (const bad of ["1.0.0 ", " 1.0.0", "v1.0.0", "1.0", "1.0.1", "1.0.0.0"]) {
       let caught: unknown;
       try {
-        await client.catalogAttach("versioned", undefined, { implementationVersion: bad });
+        await client.catalogAttach("versioned", { implementationVersion: bad });
       } catch (err) {
         caught = err;
       }
@@ -264,9 +264,7 @@ describe.skipIf(skip)("VgiClient — versioned attach", () => {
     // See client-catalog.test.ts for the regression rationale — zero-byte
     // options is not a valid IPC batch; the client coerces to null so
     // callers can pass `new Uint8Array(0)` as a natural "no options".
-    const r = await client.catalogAttach("versioned", new Uint8Array(0), {
-      dataVersionSpec: "1.0.0",
-    });
+    const r = await client.catalogAttach("versioned", { optionsBytes: new Uint8Array(0), dataVersionSpec: "1.0.0", });
     try {
       expect(r.resolved_data_version).toBe("1.0.0");
     } finally {

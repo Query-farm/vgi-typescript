@@ -373,7 +373,7 @@ describe.skipIf(skip)("VgiClient — catalogAttach options", () => {
     // length 0". The client now coerces zero-byte options to null so a
     // natural "no options" gesture doesn't produce an opaque server
     // error. This test pins that behavior.
-    const r = await client.catalogAttach("example", new Uint8Array(0));
+    const r = await client.catalogAttach("example", { optionsBytes: new Uint8Array(0) });
     try {
       expect(r.attach_id).toBeInstanceOf(Uint8Array);
       expect(r.attach_id.byteLength).toBeGreaterThan(0);
@@ -384,12 +384,53 @@ describe.skipIf(skip)("VgiClient — catalogAttach options", () => {
 
   test("attach with undefined options is equivalent to zero-byte", async () => {
     // Same result path as above — explicit vs implicit "no options".
-    const r = await client.catalogAttach("example", undefined);
+    const r = await client.catalogAttach("example");
     try {
       expect(r.attach_id.byteLength).toBeGreaterThan(0);
     } finally {
       await client.catalogDetach(r.attach_id);
     }
+  });
+
+  test("attach with a rich plain-object options bag succeeds over the wire", async () => {
+    // The ExampleCatalog ignores options, but if the encoding is malformed
+    // (wrong column types, zero-byte, etc.) the attach would fail before
+    // reaching the handler. So a successful attach proves the
+    // JS-value → RecordBatch → wire pipeline is correct end-to-end.
+    const r = await client.catalogAttach("example", {
+      options: {
+        region: "us-east-1",
+        maxRows: 10_000n,
+        readOnly: true,
+        ratio: 0.25,
+        token: new Uint8Array([1, 2, 3, 4]),
+        maybe: null,
+      },
+    });
+    try {
+      expect(r.attach_id.byteLength).toBeGreaterThan(0);
+    } finally {
+      await client.catalogDetach(r.attach_id);
+    }
+  });
+
+  test("attach with empty options object is equivalent to no options", async () => {
+    // Empty object → null on the wire (zero-column IPC would fail downstream).
+    const r = await client.catalogAttach("example", { options: {} });
+    try {
+      expect(r.attach_id.byteLength).toBeGreaterThan(0);
+    } finally {
+      await client.catalogDetach(r.attach_id);
+    }
+  });
+
+  test("passing both `options` and `optionsBytes` throws a client-side error", async () => {
+    await expect(
+      client.catalogAttach("example", {
+        options: { x: "1" },
+        optionsBytes: new Uint8Array([1, 2, 3]),
+      }),
+    ).rejects.toThrow(/cannot specify both/);
   });
 
   test("attach with malformed options bytes fails cleanly (does not hang)", async () => {
@@ -399,7 +440,7 @@ describe.skipIf(skip)("VgiClient — catalogAttach options", () => {
     // we get a typed result, not a torn stream.
     const junk = new Uint8Array([0xde, 0xad, 0xbe, 0xef, 0x00, 0x01, 0x02, 0x03]);
     try {
-      const r = await client.catalogAttach("example", junk);
+      const r = await client.catalogAttach("example", { optionsBytes: junk });
       // If the server accepts it silently (common when options are ignored),
       // that's fine — clean up and move on.
       await client.catalogDetach(r.attach_id);
