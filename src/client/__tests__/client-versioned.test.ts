@@ -10,6 +10,7 @@
 // Skipped automatically when VGI_PYTHON_VERSIONED_HTTP_WORKER isn't set.
 
 import { describe, test, expect, beforeAll, afterAll } from "bun:test";
+import { RpcError } from "vgi-rpc";
 import {
   pythonVersionedHttpWorkerAvailable,
   startPythonVersionedHttpWorker,
@@ -97,20 +98,151 @@ describe.skipIf(skip)("VgiClient — versioned attach", () => {
     }
   });
 
-  test("attach with unsatisfiable data_version_spec rejects with server message", async () => {
-    await expect(
-      client.catalogAttach("versioned", undefined, { dataVersionSpec: "9.9.9" }),
-    ).rejects.toThrow(/Unsupported data_version_spec/);
+  test("attach with unsatisfiable data_version_spec rejects with actionable message", async () => {
+    // Assert on the full error shape, not just a regex match:
+    //  - surface is RpcError (so callers can programmatically distinguish
+    //    server-side rejection from transport errors);
+    //  - errorType is Python's ValueError, propagated untouched;
+    //  - errorMessage identifies WHICH version was rejected AND lists the
+    //    supported ones — users need both to self-correct.
+    let caught: unknown;
+    try {
+      await client.catalogAttach("versioned", undefined, { dataVersionSpec: "9.9.9" });
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(RpcError);
+    const err = caught as RpcError;
+    expect(err.errorType).toBe("ValueError");
+    expect(err.errorMessage).toContain("Unsupported data_version_spec");
+    expect(err.errorMessage).toContain("'9.9.9'");
+    // Actionable: must mention what the worker DOES support.
+    expect(err.errorMessage).toMatch(/1\.0\.0.*1\.1\.0.*1\.2\.0/);
   });
 
-  test("attach with unsatisfiable implementation_version rejects with server message", async () => {
-    await expect(
-      client.catalogAttach("versioned", undefined, { implementationVersion: "9.9.9" }),
-    ).rejects.toThrow(/Unsupported implementation_version/);
+  test("attach with unsatisfiable implementation_version rejects with actionable message", async () => {
+    let caught: unknown;
+    try {
+      await client.catalogAttach("versioned", undefined, { implementationVersion: "9.9.9" });
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(RpcError);
+    const err = caught as RpcError;
+    expect(err.errorType).toBe("ValueError");
+    expect(err.errorMessage).toContain("Unsupported implementation_version");
+    expect(err.errorMessage).toContain("'9.9.9'");
+    // The worker serves exactly one implementation version — the message
+    // should say which one so users can downgrade their request.
+    expect(err.errorMessage).toContain("'1.0.0'");
   });
 
-  test("attach with unknown catalog name rejects", async () => {
-    await expect(client.catalogAttach("not-a-real-catalog")).rejects.toThrow();
+  test("when BOTH data and implementation are bad, implementation error fires first", async () => {
+    // The Python worker validates implementation_version BEFORE
+    // data_version_spec. Pin that ordering so a future refactor doesn't
+    // silently change the first error users see.
+    let caught: unknown;
+    try {
+      await client.catalogAttach("versioned", undefined, {
+        dataVersionSpec: "8.8.8",
+        implementationVersion: "9.9.9",
+      });
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(RpcError);
+    expect((caught as RpcError).errorMessage).toContain("Unsupported implementation_version");
+    expect((caught as RpcError).errorMessage).not.toContain("data_version_spec");
+  });
+
+  test("version rejection errors carry a Python traceback for debuggability", async () => {
+    // When production users hit a version mismatch we want the Python
+    // traceback to come through — it pinpoints exactly where validation
+    // fired and is invaluable during integration work.
+    let caught: unknown;
+    try {
+      await client.catalogAttach("versioned", undefined, { dataVersionSpec: "9.9.9" });
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(RpcError);
+    const err = caught as RpcError;
+    expect(err.remoteTraceback).toContain("Traceback");
+    expect(err.remoteTraceback).toContain("Unsupported data_version_spec");
+  });
+
+  test("empty-string data_version_spec is rejected (not treated as null)", async () => {
+    // ''-as-spec is a plausible mistake (string concat of an undefined
+    // variable, falsy-but-truthy JS confusion, etc). It must reject
+    // explicitly — we do NOT want the server to silently coerce to null
+    // and accept with default resolved values.
+    let caught: unknown;
+    try {
+      await client.catalogAttach("versioned", undefined, { dataVersionSpec: "" });
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(RpcError);
+    expect((caught as RpcError).errorMessage).toContain("Unsupported data_version_spec");
+    expect((caught as RpcError).errorMessage).toContain("''");
+  });
+
+  test("whitespace-only data_version_spec is rejected", async () => {
+    // Similar guard: a padded version from a config file must fail loudly
+    // rather than silently falling through to the default.
+    let caught: unknown;
+    try {
+      await client.catalogAttach("versioned", undefined, { dataVersionSpec: "   " });
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(RpcError);
+    expect((caught as RpcError).errorMessage).toContain("Unsupported data_version_spec");
+  });
+
+  test("data_version_spec matching is case-sensitive and exact", async () => {
+    // '1.0.0' is supported; '1.0.0 ' (trailing space) and 'v1.0.0' are not.
+    // Pin the exact-match semantics — a forgiving matcher would be
+    // user-friendly but would hide bugs where callers send stray data.
+    for (const bad of ["1.0.0 ", " 1.0.0", "v1.0.0", "1.0", "1.0.0.0", "1,0,0"]) {
+      let caught: unknown;
+      try {
+        await client.catalogAttach("versioned", undefined, { dataVersionSpec: bad });
+      } catch (err) {
+        caught = err;
+      }
+      expect(caught).toBeInstanceOf(RpcError);
+      expect((caught as RpcError).errorMessage).toContain("Unsupported data_version_spec");
+    }
+  });
+
+  test("implementation_version matching is case-sensitive and exact", async () => {
+    for (const bad of ["1.0.0 ", " 1.0.0", "v1.0.0", "1.0", "1.0.1", "1.0.0.0"]) {
+      let caught: unknown;
+      try {
+        await client.catalogAttach("versioned", undefined, { implementationVersion: bad });
+      } catch (err) {
+        caught = err;
+      }
+      expect(caught).toBeInstanceOf(RpcError);
+      expect((caught as RpcError).errorMessage).toContain("Unsupported implementation_version");
+    }
+  });
+
+  test("attach with unknown catalog name rejects with actionable message", async () => {
+    let caught: unknown;
+    try {
+      await client.catalogAttach("not-a-real-catalog");
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(RpcError);
+    const err = caught as RpcError;
+    // The versioned worker's catalog_attach starts with a name check that
+    // raises ValueError with the requested name + the valid one.
+    expect(err.errorType).toBe("ValueError");
+    expect(err.errorMessage).toContain("not-a-real-catalog");
+    expect(err.errorMessage).toContain("versioned");
   });
 
   test("two concurrent attach IDs are distinct", async () => {
