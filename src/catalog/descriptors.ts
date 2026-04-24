@@ -32,6 +32,8 @@ export interface TableDescriptor {
   primaryKey?: string[][];
   foreignKey?: ForeignKeyDef[];
   defaults?: Record<string, DefaultValue>;
+  /** Per-column comment strings, applied as field metadata `comment`. */
+  columnComments?: Record<string, string>;
   supportsTimeTravel?: boolean;
   comment?: string;
   tags?: Record<string, string>;
@@ -76,4 +78,6 @@ export interface CatalogDescriptor {
   schemas: SchemaDescriptor[];
   settings?: SettingDescriptor[];
   secretTypes?: SecretTypeDescriptor[];
+  comment?: string;
+  tags?: Record<string, string>;
 }

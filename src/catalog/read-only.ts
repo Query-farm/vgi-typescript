@@ -70,6 +70,8 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
       defaultSchema: this._descriptor.defaultSchema ?? "main",
       settings,
       secretTypes,
+      comment: this._descriptor.comment ?? null,
+      tags: this._descriptor.tags ?? {},
     };
   }
 
@@ -154,6 +156,11 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
       // Apply defaults as Arrow field metadata
       if (t.defaults) {
         colSchema = applyDefaults(colSchema, t.defaults);
+      }
+      // Apply per-column comments as Arrow field metadata (matches Python's
+      // `comment` metadata key on columns).
+      if (t.columnComments) {
+        colSchema = applyColumnComments(colSchema, t.columnComments);
       }
 
       const columns = serializeSchema(colSchema);
@@ -432,6 +439,23 @@ function applyDefaults(schema: Schema, defaults: Record<string, DefaultValue>): 
     const f = result.fields[idx];
     const existingMeta = f.metadata ? new Map(f.metadata) : new Map<string, string>();
     existingMeta.set("default", defaultToSql(value));
+    const newField = new Field(f.name, f.type, f.nullable, existingMeta);
+    const fields = [...result.fields];
+    fields[idx] = newField;
+    result = new Schema(fields);
+  }
+  return result;
+}
+
+function applyColumnComments(schema: Schema, comments: Record<string, string>): Schema {
+  let result = schema;
+  for (const [colName, comment] of Object.entries(comments)) {
+    if (!comment) continue;
+    const idx = result.fields.findIndex((f) => f.name === colName);
+    if (idx < 0) continue;
+    const f = result.fields[idx];
+    const existingMeta = f.metadata ? new Map(f.metadata) : new Map<string, string>();
+    existingMeta.set("comment", comment);
     const newField = new Field(f.name, f.type, f.nullable, existingMeta);
     const fields = [...result.fields];
     fields[idx] = newField;

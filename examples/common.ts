@@ -40,6 +40,8 @@ const clampDefaults = serializeBatch(
 export const catalog: CatalogDescriptor = {
   name: "example",
   defaultSchema: "main",
+  comment: "Example VGI catalog for testing",
+  tags: { source: "vgi-example-worker", version: "1" },
   secretTypes: [
     {
       name: "vgi_example",
@@ -133,7 +135,39 @@ export const catalog: CatalogDescriptor = {
           name: "numbers",
           function: sequenceFunction,
           arguments: new Arguments([100]),
-          comment: "First 100 integers",
+          comment: "First 100 integers (demonstrates explicit columns)",
+        },
+        {
+          name: "colors",
+          columns: new Schema([
+            new Field("id", new Int64(), true),
+            new Field("color", new Utf8(), true),
+            new Field("hex_code", new Utf8(), true),
+          ]),
+          comment: "Colors table with ENUM-derived statistics",
+        },
+        {
+          name: "funny_numbers",
+          columns: new Schema([
+            new Field("n", new Int64(), true),
+          ]),
+          comment: "123456 integers; stats served by the sequence function, not the table",
+        },
+        {
+          name: "volatile_numbers",
+          columns: new Schema([
+            new Field("value", new Int64(), true),
+          ]),
+          comment: "Numbers with volatile stats (TTL=0, always re-fetched)",
+        },
+        {
+          name: "generated_sequence",
+          columns: new Schema([
+            new Field("n", new Int64(), true),
+            new Field("doubled", new Int64(), true),
+            new Field("label", new Utf8(), true),
+          ]),
+          comment: "Table with generated columns backed by sequence(10)",
         },
         // Row ID position tests (int64 row_id)
         {
@@ -216,6 +250,11 @@ export const catalog: CatalogDescriptor = {
           notNull: ["id"],
           primaryKey: [["id"]],
           defaults: { quantity: 0, name: "unknown", price: 9.99 },
+          columnComments: {
+            id: "Unique product identifier",
+            name: "Product display name",
+            price: "Unit price in USD",
+          },
           comment: "Product table with column defaults",
         },
         {
