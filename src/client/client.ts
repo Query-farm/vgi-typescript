@@ -33,7 +33,7 @@ import {
   decodeFunctionInfo,
   type MacroInfo,
   decodeMacroInfo,
-  MacroType,
+  type MacroType,
   type CatalogAttachResult,
   type AttachId,
   type TransactionId,

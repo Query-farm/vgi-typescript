@@ -20,7 +20,7 @@ export { Worker, type WorkerConfig } from "./worker.js";
 export type { VgiFunction, FunctionMeta, StreamHandlers, FunctionExample, HandlerState } from "./functions/types.js";
 
 // Catalog
-export { CatalogInterface, type CatalogAttachResult, type SchemaInfo, encodeSchemaInfo, decodeSchemaInfo, type TableInfo, encodeTableInfo, decodeTableInfo, type ViewInfo, encodeViewInfo, decodeViewInfo, type FunctionInfo, encodeFunctionInfo, decodeFunctionInfo, type FunctionInfoOptions, type MacroInfo, encodeMacroInfo, decodeMacroInfo, MacroType, type AttachId } from "./catalog/interface.js";
+export { CatalogInterface, type CatalogAttachResult, type SchemaInfo, encodeSchemaInfo, decodeSchemaInfo, type TableInfo, encodeTableInfo, decodeTableInfo, type ViewInfo, encodeViewInfo, decodeViewInfo, type FunctionInfo, encodeFunctionInfo, decodeFunctionInfo, type FunctionInfoOptions, type MacroInfo, encodeMacroInfo, decodeMacroInfo, type MacroType, type AttachId } from "./catalog/interface.js";
 export type { CatalogDescriptor, SchemaDescriptor, TableDescriptor, ViewDescriptor, MacroDescriptor, SettingDescriptor, SecretTypeDescriptor, ForeignKeyDef, DefaultValue } from "./catalog/descriptors.js";
 export { ReadOnlyCatalogInterface } from "./catalog/read-only.js";
 

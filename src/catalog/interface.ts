@@ -6,10 +6,9 @@ import { CatalogReadOnlyError } from "../errors.js";
 export type AttachId = Uint8Array;
 export type TransactionId = Uint8Array;
 
-export enum MacroType {
-  SCALAR = "scalar",
-  TABLE = "table",
-}
+// Wire-encoded string union (matches Python's CatalogMacroType enum names).
+import type { MacroType } from "../generated/vgi-client.js";
+export type { MacroType };
 
 // CatalogAttachResult is the generated snake_case wire shape.
 // The `supports_column_statistics` field is a catalog-level opt-in for the

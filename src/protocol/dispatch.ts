@@ -32,7 +32,7 @@ import { batchToScalarDict, serializeBatch, deserializeBatch, serializeSchema, e
 import { serializeColumnStatistics } from "../util/statistics.js";
 import { toUint8Array } from "../util/bytes.js";
 import type { CatalogInterface } from "../catalog/interface.js";
-import { MacroType } from "../catalog/interface.js";
+import type { MacroType } from "../catalog/interface.js";
 import { encodeSchemaInfo, encodeTableInfo, encodeViewInfo, encodeMacroInfo, encodeFunctionInfo } from "../generated/vgi-client.js";
 import { NoCatalogError } from "../errors.js";
 import {

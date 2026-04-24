@@ -6,12 +6,11 @@ import {
   type AttachId,
   type TransactionId,
   type CatalogAttachResult,
-  SchemaInfo,
-  TableInfo,
-  ViewInfo,
-  FunctionInfo,
-  MacroInfo,
-  MacroType,
+  type SchemaInfo,
+  type TableInfo,
+  type ViewInfo,
+  type FunctionInfo,
+  type MacroInfo,
 } from "./interface.js";
 import type { CatalogDescriptor, SchemaDescriptor, TableDescriptor, ViewDescriptor, MacroDescriptor, SettingDescriptor, SecretTypeDescriptor, ForeignKeyDef, DefaultValue } from "./descriptors.js";
 import { serializeColumnStatistics } from "../util/statistics.js";
