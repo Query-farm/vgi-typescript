@@ -216,7 +216,7 @@ function inferScalarType(val: any): DataType {
   return new Utf8(); // fallback
 }
 
-function deserializeArguments(bytes: Uint8Array): Arguments {
+export function deserializeArguments(bytes: Uint8Array): Arguments {
   if (!bytes || bytes.length === 0) return new Arguments();
 
   // Ensure we have a clean copy (not a view into a larger buffer)

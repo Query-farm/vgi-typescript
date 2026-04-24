@@ -58,6 +58,9 @@ export function resolveMetadata(func: VgiFunction): ResolvedMetadata {
     case "table_in_out":
       functionType = CatalogFunctionType.TABLE;
       break;
+    case "aggregate" as any:
+      functionType = CatalogFunctionType.AGGREGATE;
+      break;
     default:
       functionType = CatalogFunctionType.TABLE;
   }

@@ -3,6 +3,14 @@
 // Function factories (primary API)
 export { defineScalarFunction, type ScalarFunctionConfig, type ScalarBindParameters, type ScalarParameterDef } from "./functions/scalar.js";
 export { defineTableFunction, type TableFunctionConfig, type TableBindParams, type TableProcessParams } from "./functions/table.js";
+export {
+  defineAggregate,
+  GROUP_COLUMN_NAME,
+  type AggregateFunctionConfig,
+  type AggregateBindParams,
+  type AggregateUpdateParams,
+  type AggregateFinalizeParams,
+} from "./functions/aggregate.js";
 export { defineTableInOutFunction, type TableInOutConfig, type TableInOutBindParams, type TableInOutProcessParams } from "./functions/table-in-out.js";
 
 // Worker

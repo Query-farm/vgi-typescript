@@ -17,6 +17,7 @@ import {
   serializeGlobalInitResponse,
   deserializeCardinalityRequest,
   serializeTableCardinality,
+  deserializeArguments,
 } from "./serialize.js";
 import type {
   BindRequest,
@@ -51,7 +52,20 @@ import {
   CatalogViewGetResultSchema,
   CatalogMacroGetResultSchema,
   ScanFunctionResultSchema,
+  AggregateBindResultSchema,
+  AggregateFinalizeResultSchema,
 } from "../generated/vgi-protocol-schemas.js";
+import {
+  getExecutionState,
+  setExecutionState,
+  deleteExecutionState,
+  GROUP_COLUMN_NAME,
+  type AggregateFunctionConfig,
+  type AggregateBindParams,
+} from "../functions/aggregate.js";
+import { Arguments } from "../arguments/arguments.js";
+import { deserializeSchema } from "../util/arrow.js";
+import { RecordBatchReader } from "@query-farm/apache-arrow";
 
 function overloadContext(req: { functionName: string; arguments: any; inputSchema: any; functionType: any }): OverloadContext {
   return {
@@ -356,11 +370,275 @@ export function buildVgiProtocol(config: ProtocolConfig): Protocol {
   });
 
   // --------------------------------------------------------------------------
+  // Aggregate function methods
+  // --------------------------------------------------------------------------
+  registerAggregateMethods(protocol, registry);
+
+  // --------------------------------------------------------------------------
   // Catalog methods
   // --------------------------------------------------------------------------
   registerCatalogMethods(protocol, catalogInterface, config.catalogName);
 
   return protocol;
+}
+
+// ============================================================================
+// Aggregate RPC registration
+// ============================================================================
+
+function registerAggregateMethods(protocol: Protocol, registry: FunctionRegistry): void {
+  function resolveAggregate(name: string): AggregateFunctionConfig<any, any> {
+    const func = registry.get(name, { arguments: new Arguments(), inputSchema: null, isScalar: false }) as any;
+    if (!func || func.kind !== "aggregate") {
+      throw new Error(`Function '${name}' is not an aggregate function`);
+    }
+    return func.aggregateConfig as AggregateFunctionConfig<any, any>;
+  }
+
+  const bindInnerSchema = AggregateBindResultSchema;
+  const finalizeInnerSchema = AggregateFinalizeResultSchema;
+
+  // ------------------------------------------------------------------------
+  // aggregate_bind — allocate execution_id, return output schema
+  // ------------------------------------------------------------------------
+  protocol.unary("aggregate_bind", {
+    params: REQUEST_PARAMS_SCHEMA,
+    result: RESULT_BINARY_SCHEMA,
+    handler: (params) => {
+      const innerParams = unwrapRequest(params.request);
+      const functionName: string = innerParams.function_name;
+      const cfg = resolveAggregate(functionName);
+      const argBytes = toUint8Array(innerParams.arguments);
+      const args = deserializeArguments(argBytes);
+      const inputSchema = innerParams.input_schema
+        ? deserializeSchema(toUint8Array(innerParams.input_schema))
+        : null;
+      const bindParams: AggregateBindParams<any> = {
+        args: extractArgMap(cfg, args),
+        arguments: args,
+        inputSchema,
+        settings: {},
+        secrets: {},
+      };
+      const executionId = new Uint8Array(16);
+      crypto.getRandomValues(executionId);
+      setExecutionState(executionId, {
+        states: new Map(),
+        bindArgs: args,
+        bindParams,
+      });
+      // Output schema is a single "result" column typed per the aggregate's
+      // declared outputType. The column name matches vgi-python's convention.
+      const outSchema = new Schema([new Field("result", cfg.outputType, true)]);
+      return wrapResult(
+        { output_schema: serializeSchema(outSchema), execution_id: executionId },
+        bindInnerSchema,
+      );
+    },
+  });
+
+  // ------------------------------------------------------------------------
+  // aggregate_update — fold the incoming batch into per-group state
+  // ------------------------------------------------------------------------
+  protocol.unary("aggregate_update", {
+    params: REQUEST_PARAMS_SCHEMA,
+    result: RESULT_BINARY_SCHEMA,
+    handler: (params) => {
+      const innerParams = unwrapRequest(params.request);
+      const functionName: string = innerParams.function_name;
+      const executionId = toUint8Array(innerParams.execution_id);
+      const cfg = resolveAggregate(functionName);
+      const exec = getExecutionState(executionId);
+      if (!exec) {
+        throw new Error(`aggregate_update: unknown execution_id for '${functionName}' (bind missing or state dropped)`);
+      }
+      const batch = readSingleBatch(toUint8Array(innerParams.input_batch));
+      if (!batch || batch.numRows === 0) return wrapResult({}, new Schema([]));
+
+      const gidIdx = batch.schema.fields.findIndex((f) => f.name === GROUP_COLUMN_NAME);
+      if (gidIdx < 0) {
+        throw new Error(`aggregate_update: input batch missing ${GROUP_COLUMN_NAME} column`);
+      }
+      const gidCol = batch.getChildAt(gidIdx)!;
+      const groupIds: bigint[] = [];
+      for (let i = 0; i < batch.numRows; i++) {
+        const v = gidCol.get(i);
+        groupIds.push(typeof v === "bigint" ? v : BigInt(v));
+      }
+
+      // Build column-arg arrays — every non-__vgi_group_id column, in
+      // schema order — and pass to user's update(). We deliberately do NOT
+      // pre-allocate state for every group_id seen — the user decides when
+      // to call ensureState() so that groups with only-NULL input (skipped
+      // rows) never get an entry, which lets finalize() return SQL NULL.
+      const columns: any[] = [];
+      for (let i = 0; i < batch.schema.fields.length; i++) {
+        if (i === gidIdx) continue;
+        columns.push(batch.getChildAt(i));
+      }
+      const ensureState = (gid: bigint) => {
+        let s = exec.states.get(gid);
+        if (s === undefined) {
+          s = cfg.initialState(exec.bindParams);
+          exec.states.set(gid, s);
+        }
+        return s;
+      };
+      cfg.update({
+        states: exec.states,
+        groupIds,
+        columns,
+        args: exec.bindParams.args,
+        ensureState,
+      });
+      return wrapResult({}, new Schema([]));
+    },
+  });
+
+  // ------------------------------------------------------------------------
+  // aggregate_combine — merge (source_group_id, target_group_id) pairs
+  // ------------------------------------------------------------------------
+  protocol.unary("aggregate_combine", {
+    params: REQUEST_PARAMS_SCHEMA,
+    result: RESULT_BINARY_SCHEMA,
+    handler: (params) => {
+      const innerParams = unwrapRequest(params.request);
+      const functionName: string = innerParams.function_name;
+      const executionId = toUint8Array(innerParams.execution_id);
+      const cfg = resolveAggregate(functionName);
+      const exec = getExecutionState(executionId);
+      if (!exec) {
+        throw new Error(`aggregate_combine: unknown execution_id for '${functionName}'`);
+      }
+      const batch = readSingleBatch(toUint8Array(innerParams.merge_batch));
+      if (!batch || batch.numRows === 0) return wrapResult({}, new Schema([]));
+
+      const srcCol = batch.getChild("source_group_id")!;
+      const tgtCol = batch.getChild("target_group_id")!;
+      for (let i = 0; i < batch.numRows; i++) {
+        const src = BigInt(srcCol.get(i) as any);
+        const tgt = BigInt(tgtCol.get(i) as any);
+        const srcHas = exec.states.has(src);
+        const tgtHas = exec.states.has(tgt);
+        // If neither side ever saw an update there's nothing to merge — leave
+        // both groups out of states so finalize() returns SQL NULL.
+        if (!srcHas && !tgtHas) continue;
+        const srcState = srcHas ? exec.states.get(src)! : cfg.initialState(exec.bindParams);
+        const tgtState = tgtHas ? exec.states.get(tgt)! : cfg.initialState(exec.bindParams);
+        exec.states.set(tgt, cfg.combine(srcState, tgtState, exec.bindParams));
+      }
+      return wrapResult({}, new Schema([]));
+    },
+  });
+
+  // ------------------------------------------------------------------------
+  // aggregate_finalize — emit one result row per requested group_id
+  // ------------------------------------------------------------------------
+  protocol.unary("aggregate_finalize", {
+    params: REQUEST_PARAMS_SCHEMA,
+    result: RESULT_BINARY_SCHEMA,
+    handler: (params) => {
+      const innerParams = unwrapRequest(params.request);
+      const functionName: string = innerParams.function_name;
+      const executionId = toUint8Array(innerParams.execution_id);
+      const cfg = resolveAggregate(functionName);
+      const exec = getExecutionState(executionId);
+      if (!exec) {
+        throw new Error(`aggregate_finalize: unknown execution_id for '${functionName}'`);
+      }
+      const outputSchema = deserializeSchema(toUint8Array(innerParams.output_schema));
+      const gidBatch = readSingleBatch(toUint8Array(innerParams.group_ids_batch));
+      const groupIds: bigint[] = [];
+      if (gidBatch) {
+        const col = gidBatch.getChild("group_id")!;
+        for (let i = 0; i < gidBatch.numRows; i++) {
+          const v = col.get(i);
+          groupIds.push(typeof v === "bigint" ? v : BigInt(v));
+        }
+      }
+      // Groups never updated pass state = null so finalize() can emit SQL NULL
+      // (matches Python semantics for SUM/AVG/MIN/MAX over zero rows).
+      const states = new Map<bigint, any | null>();
+      for (const gid of groupIds) {
+        states.set(gid, exec.states.has(gid) ? exec.states.get(gid) : null);
+      }
+      const resultBatch = cfg.finalize({
+        groupIds, states, outputSchema, args: exec.bindParams.args,
+      });
+      return wrapResult(
+        { result_batch: serializeBatchWithSchema(resultBatch) },
+        finalizeInnerSchema,
+      );
+    },
+  });
+
+  // ------------------------------------------------------------------------
+  // aggregate_destructor — drop state for finished groups (best-effort)
+  //
+  // DuckDB sends a batch of group_ids to discard; we remove each from the
+  // in-memory state map. We DO NOT tear down the entire execution on an
+  // empty batch — DuckDB may still call finalize afterwards in some plans
+  // (matches Python's conservative behavior; the execution entry is cleaned
+  // up when the worker process exits).
+  // ------------------------------------------------------------------------
+  protocol.unary("aggregate_destructor", {
+    params: REQUEST_PARAMS_SCHEMA,
+    result: RESULT_BINARY_SCHEMA,
+    handler: (params) => {
+      const innerParams = unwrapRequest(params.request);
+      const executionId = toUint8Array(innerParams.execution_id);
+      const exec = getExecutionState(executionId);
+      if (!exec) return wrapResult({}, new Schema([]));
+      const gidBatch = readSingleBatch(toUint8Array(innerParams.group_ids_batch));
+      if (!gidBatch || gidBatch.numRows === 0) return wrapResult({}, new Schema([]));
+      const col = gidBatch.getChild("group_id")!;
+      for (let i = 0; i < gidBatch.numRows; i++) {
+        const v = col.get(i);
+        exec.states.delete(typeof v === "bigint" ? v : BigInt(v));
+      }
+      return wrapResult({}, new Schema([]));
+    },
+  });
+}
+
+function extractArgMap(
+  cfg: AggregateFunctionConfig<any, any>,
+  args: Arguments,
+): Record<string, any> {
+  const out: Record<string, any> = {};
+  const positionalNames: string[] = [];
+  if (cfg.args) {
+    for (const name of Object.keys(cfg.args)) {
+      if (cfg.argDefaults?.[name] === undefined) positionalNames.push(name);
+    }
+  }
+  // Positional arguments by declaration order.
+  for (let i = 0; i < positionalNames.length; i++) {
+    try {
+      const v = args.get(i);
+      out[positionalNames[i]] = typeof v === "bigint" ? Number(v) : v;
+    } catch {
+      // args.get throws when the argument isn't set — leave undefined so
+      // defaults flow through.
+    }
+  }
+  return out;
+}
+
+function readSingleBatch(bytes: Uint8Array): RecordBatch | null {
+  if (!bytes || bytes.length === 0) return null;
+  const reader = RecordBatchReader.from(bytes);
+  for (const b of reader) return b;
+  return null;
+}
+
+function serializeBatchWithSchema(batch: RecordBatch): Uint8Array {
+  // RecordBatchStreamWriter.writeAll handles schema + batch + EOS in one pass;
+  // the C++ aggregate_finalize reader expects a full IPC stream (same wrapper
+  // used for update/combine/finalize inputs elsewhere).
+  const { RecordBatchStreamWriter } = require("@query-farm/apache-arrow");
+  const writer = RecordBatchStreamWriter.writeAll([batch]);
+  return writer.toUint8Array(true);
 }
 
 // ============================================================================

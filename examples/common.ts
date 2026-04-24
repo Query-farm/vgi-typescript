@@ -17,6 +17,7 @@ import {
   resolveVersionedConstraintsVersion, getVersionedConstraintsSchema,
 } from "./table.js";
 import { tableInOutFunctions } from "./table_in_out.js";
+import { aggregateFunctions } from "./aggregate.js";
 
 // Find functions for table-backed catalog entries
 const sequenceFunction = tableFunctions.find((f) => f.meta.name === "sequence");
@@ -82,6 +83,7 @@ export const allFunctions = [
   ...scalarFunctions,
   ...tableFunctions,
   ...tableInOutFunctions,
+  ...aggregateFunctions,
 ];
 
 // Serialize parameter default values for vgi_clamp: lo=0, hi=100
