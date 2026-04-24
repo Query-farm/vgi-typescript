@@ -2,11 +2,12 @@
 # Build and test targets for vgi-typescript.
 # Tests are independent targets — use `make -j8 test` for parallel execution.
 
-.PHONY: build build\:types build\:js install clean test test-http test-all
+.PHONY: build build\:types build\:js install clean test test-http test-all test-client
 
 # --- Configuration (all overridable) ---
 
 VGI_DIR      ?= /Users/rusty/Development/vgi
+VGI_PYTHON_DIR ?= /Users/rusty/Development/vgi-python
 TEST_TIMEOUT ?= 60
 WORKER             ?= $(CURDIR)/bin/vgi-example-worker
 HTTP_WORKER        := $(CURDIR)/bin/vgi-example-http-worker
@@ -143,3 +144,28 @@ test-http/%:
 		fi; \
 	fi; \
 	cleanup; true
+
+# VgiClient end-to-end tests against vgi-python's vgi-example-http worker.
+# Spawn the Python worker, read its port from stdout, export
+# VGI_PYTHON_HTTP_WORKER, run bun:test, always clean up. Requires
+# `uv` on PATH and vgi-python at $VGI_PYTHON_DIR.
+test-client:
+	@port_fifo=$$(mktemp -u); \
+	mkfifo "$$port_fifo"; \
+	( cd "$(VGI_PYTHON_DIR)" && uv run vgi-example-http --port 0 ) > "$$port_fifo" 2>/dev/null & \
+	py_pid=$$!; \
+	cleanup() { kill $$py_pid 2>/dev/null; wait $$py_pid 2>/dev/null; rm -f "$$port_fifo"; }; \
+	trap cleanup EXIT; \
+	port_line=""; \
+	read -t 30 port_line < "$$port_fifo" || { \
+		echo "ERROR: vgi-example-http did not print PORT line within 30s"; \
+		cleanup; exit 1; \
+	}; \
+	rm -f "$$port_fifo"; \
+	port=$${port_line#PORT:}; \
+	export VGI_PYTHON_HTTP_WORKER="http://127.0.0.1:$$port"; \
+	echo "Python HTTP worker: $$VGI_PYTHON_HTTP_WORKER"; \
+	bun test src/client/__tests__/; \
+	rc=$$?; \
+	cleanup; \
+	exit $$rc
