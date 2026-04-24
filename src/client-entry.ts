@@ -53,10 +53,18 @@ export type {
 
 // Catalog info types
 export {
-  SchemaInfo,
-  TableInfo,
-  ViewInfo,
-  FunctionInfo,
+  type SchemaInfo,
+  encodeSchemaInfo,
+  decodeSchemaInfo,
+  type TableInfo,
+  encodeTableInfo,
+  decodeTableInfo,
+  type ViewInfo,
+  encodeViewInfo,
+  decodeViewInfo,
+  type FunctionInfo,
+  encodeFunctionInfo,
+  decodeFunctionInfo,
   type CatalogAttachResult,
   type AttachId,
   type TransactionId,

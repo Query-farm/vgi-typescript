@@ -23,11 +23,16 @@ import {
   iterRows,
 } from "../util/arrow.js";
 import {
-  SchemaInfo,
-  TableInfo,
-  ViewInfo,
-  FunctionInfo,
-  MacroInfo,
+  type SchemaInfo,
+  decodeSchemaInfo,
+  type TableInfo,
+  decodeTableInfo,
+  type ViewInfo,
+  decodeViewInfo,
+  type FunctionInfo,
+  decodeFunctionInfo,
+  type MacroInfo,
+  decodeMacroInfo,
   MacroType,
   type CatalogAttachResult,
   type AttachId,
@@ -485,7 +490,7 @@ export class VgiClient {
     });
     if (!result) return [];
     const inner = unwrapResult(result);
-    return deserializeInfoList(inner.items, SchemaInfo.deserialize);
+    return deserializeInfoList(inner.items, decodeSchemaInfo);
   }
 
   /** Get a schema by name, or null if not found. */
@@ -501,7 +506,7 @@ export class VgiClient {
     });
     if (!result) return null;
     const inner = unwrapResult(result);
-    const items = deserializeInfoList(inner.items, SchemaInfo.deserialize);
+    const items = deserializeInfoList(inner.items, decodeSchemaInfo);
     return items.length > 0 ? items[0] : null;
   }
 
@@ -552,7 +557,7 @@ export class VgiClient {
     });
     if (!result) return [];
     const inner = unwrapResult(result);
-    return deserializeInfoList(inner.items, TableInfo.deserialize);
+    return deserializeInfoList(inner.items, decodeTableInfo);
   }
 
   /** List views in a schema. */
@@ -568,7 +573,7 @@ export class VgiClient {
     });
     if (!result) return [];
     const inner = unwrapResult(result);
-    return deserializeInfoList(inner.items, ViewInfo.deserialize);
+    return deserializeInfoList(inner.items, decodeViewInfo);
   }
 
   /** List functions in a schema, filtered by type. */
@@ -586,7 +591,7 @@ export class VgiClient {
     });
     if (!result) return [];
     const inner = unwrapResult(result);
-    return deserializeInfoList(inner.items, FunctionInfo.deserialize);
+    return deserializeInfoList(inner.items, decodeFunctionInfo);
   }
 
   /** Get a table by name, or null if not found. */
@@ -604,7 +609,7 @@ export class VgiClient {
     });
     if (!result) return null;
     const inner = unwrapResult(result);
-    const items = deserializeInfoList(inner.items, TableInfo.deserialize);
+    const items = deserializeInfoList(inner.items, decodeTableInfo);
     return items.length > 0 ? items[0] : null;
   }
 
@@ -886,7 +891,7 @@ export class VgiClient {
     });
     if (!result) return null;
     const inner = unwrapResult(result);
-    const items = deserializeInfoList(inner.items, ViewInfo.deserialize);
+    const items = deserializeInfoList(inner.items, decodeViewInfo);
     return items.length > 0 ? items[0] : null;
   }
 
@@ -983,7 +988,7 @@ export class VgiClient {
     });
     if (!result) return null;
     const inner = unwrapResult(result);
-    const items = deserializeInfoList(inner.items, MacroInfo.deserialize);
+    const items = deserializeInfoList(inner.items, decodeMacroInfo);
     return items.length > 0 ? items[0] : null;
   }
 
@@ -1002,7 +1007,7 @@ export class VgiClient {
     });
     if (!result) return [];
     const inner = unwrapResult(result);
-    return deserializeInfoList(inner.items, MacroInfo.deserialize);
+    return deserializeInfoList(inner.items, decodeMacroInfo);
   }
 
   /** Create a new macro. */

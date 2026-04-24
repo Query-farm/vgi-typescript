@@ -90,9 +90,12 @@ export class InMemoryCatalog extends CatalogInterface {
 
   schemas(attachId: AttachId, transactionId?: TransactionId): SchemaInfo[] {
     const att = this._getAttachment(attachId);
-    return [...att.schemas.values()].map(
-      (s) => new SchemaInfo(attachId, s.name, s.comment, s.tags)
-    );
+    return [...att.schemas.values()].map((s) => ({
+      attach_id: attachId,
+      name: s.name,
+      comment: s.comment ?? null,
+      tags: s.tags ?? {},
+    }));
   }
 
   override schemaGet(
@@ -103,7 +106,12 @@ export class InMemoryCatalog extends CatalogInterface {
     const att = this._getAttachment(attachId);
     const s = att.schemas.get(name);
     if (!s) return null;
-    return new SchemaInfo(attachId, s.name, s.comment, s.tags);
+    return {
+      attach_id: attachId,
+      name: s.name,
+      comment: s.comment ?? null,
+      tags: s.tags ?? {},
+    };
   }
 
   override schemaCreate(
@@ -151,19 +159,22 @@ export class InMemoryCatalog extends CatalogInterface {
     const att = this._getAttachment(attachId);
     const schema = att.schemas.get(name);
     if (!schema) return [];
-    return [...schema.tables.values()].map(
-      (t) =>
-        new TableInfo(
-          t.name,
-          t.schemaName,
-          t.columns,
-          t.notNullConstraints,
-          t.uniqueConstraints,
-          t.checkConstraints,
-          t.comment,
-          t.tags
-        )
-    );
+    return [...schema.tables.values()].map((t) => ({
+      comment: t.comment ?? null,
+      tags: t.tags ?? {},
+      name: t.name,
+      schema_name: t.schemaName,
+      columns: t.columns,
+      not_null_constraints: t.notNullConstraints,
+      unique_constraints: t.uniqueConstraints,
+      check_constraints: t.checkConstraints,
+      primary_key_constraints: [],
+      foreign_key_constraints: [],
+      supports_insert: false,
+      supports_update: false,
+      supports_delete: false,
+      supports_column_statistics: false,
+    }));
   }
 
   override schemaContentsViews(
@@ -175,7 +186,13 @@ export class InMemoryCatalog extends CatalogInterface {
     const schema = att.schemas.get(name);
     if (!schema) return [];
     return [...schema.views.values()].map(
-      (v) => new ViewInfo(v.name, v.schemaName, v.definition, v.comment, v.tags)
+      (v) => ({
+      comment: v.comment ?? null,
+      tags: v.tags ?? {},
+      name: v.name,
+      schema_name: v.schemaName,
+      definition: v.definition,
+    })
     );
   }
 
@@ -190,16 +207,22 @@ export class InMemoryCatalog extends CatalogInterface {
     if (!schema) return null;
     const t = schema.tables.get(name);
     if (!t) return null;
-    return new TableInfo(
-      t.name,
-      t.schemaName,
-      t.columns,
-      t.notNullConstraints,
-      t.uniqueConstraints,
-      t.checkConstraints,
-      t.comment,
-      t.tags
-    );
+    return {
+      comment: t.comment ?? null,
+      tags: t.tags ?? {},
+      name: t.name,
+      schema_name: t.schemaName,
+      columns: t.columns,
+      not_null_constraints: t.notNullConstraints,
+      unique_constraints: t.uniqueConstraints,
+      check_constraints: t.checkConstraints,
+      primary_key_constraints: [],
+      foreign_key_constraints: [],
+      supports_insert: false,
+      supports_update: false,
+      supports_delete: false,
+      supports_column_statistics: false,
+    };
   }
 
   override tableCreate(
@@ -307,7 +330,13 @@ export class InMemoryCatalog extends CatalogInterface {
     if (!schema) return null;
     const v = schema.views.get(name);
     if (!v) return null;
-    return new ViewInfo(v.name, v.schemaName, v.definition, v.comment, v.tags);
+    return ({
+      comment: v.comment ?? null,
+      tags: v.tags ?? {},
+      name: v.name,
+      schema_name: v.schemaName,
+      definition: v.definition,
+    });
   }
 
   override viewCreate(

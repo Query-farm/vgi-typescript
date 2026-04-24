@@ -503,11 +503,22 @@ export function createExampleCatalog(base: ReadOnlyCatalogInterface): ReadOnlyCa
     if (schemaName.toLowerCase() === "data" && name.toLowerCase() === "versioned_data" && atUnit) {
       const version = resolveVersion(atUnit, atValue);
       const cols = getVersionedSchema(version);
-      return new TableInfo(
-        name, schemaName, serializeSchema(cols),
-        [], [], [], [], [],
-        "Versioned data table demonstrating time travel with schema evolution", {},
-      );
+      return {
+        comment: "Versioned data table demonstrating time travel with schema evolution",
+        tags: {},
+        name,
+        schema_name: schemaName,
+        columns: serializeSchema(cols),
+        not_null_constraints: [],
+        unique_constraints: [],
+        check_constraints: [],
+        primary_key_constraints: [],
+        foreign_key_constraints: [],
+        supports_insert: false,
+        supports_update: false,
+        supports_delete: false,
+        supports_column_statistics: false,
+      };
     }
     if (schemaName.toLowerCase() === "data" && name.toLowerCase() === "versioned_constraints" && atUnit) {
       const version = resolveVersionedConstraintsVersion(atUnit, atValue);
@@ -527,11 +538,22 @@ export function createExampleCatalog(base: ReadOnlyCatalogInterface): ReadOnlyCa
       if (version >= 3) {
         fk.push(buildFkBytes(["department_id"], ["id"], "departments", schemaName));
       }
-      return new TableInfo(
-        name, schemaName, serializeSchema(cols),
-        notNull, unique, [], pk, fk,
-        "Table with constraints that evolve across versions", {},
-      );
+      return {
+        comment: "Table with constraints that evolve across versions",
+        tags: {},
+        name,
+        schema_name: schemaName,
+        columns: serializeSchema(cols),
+        not_null_constraints: notNull,
+        unique_constraints: unique,
+        check_constraints: [],
+        primary_key_constraints: pk,
+        foreign_key_constraints: fk,
+        supports_insert: false,
+        supports_update: false,
+        supports_delete: false,
+        supports_column_statistics: false,
+      };
     }
     return origTableGet(attachId, schemaName, name, atUnit, atValue, transactionId);
   };

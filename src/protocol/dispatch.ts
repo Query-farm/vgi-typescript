@@ -33,6 +33,7 @@ import { serializeColumnStatistics } from "../util/statistics.js";
 import { toUint8Array } from "../util/bytes.js";
 import type { CatalogInterface } from "../catalog/interface.js";
 import { MacroType } from "../catalog/interface.js";
+import { encodeSchemaInfo, encodeTableInfo, encodeViewInfo, encodeMacroInfo, encodeFunctionInfo } from "../generated/vgi-client.js";
 import { NoCatalogError } from "../errors.js";
 import {
   BindResultSchema,
@@ -902,7 +903,7 @@ function registerCatalogMethods(
         params.transaction_id ? toUint8Array(params.transaction_id) : undefined
       );
       return wrapResult({
-        items: schemas.map((s) => s.serialize()),
+        items: schemas.map((s) => encodeSchemaInfo(s)),
       }, CatalogSchemasResultSchema);
     },
   });
@@ -919,7 +920,7 @@ function registerCatalogMethods(
         params.transaction_id ? toUint8Array(params.transaction_id) : undefined
       );
       return wrapResult({
-        items: info ? [info.serialize()] : [],
+        items: info ? [encodeSchemaInfo(info)] : [],
       }, CatalogSchemaGetResultSchema);
     },
   });
@@ -982,7 +983,7 @@ function registerCatalogMethods(
         params.transaction_id ? toUint8Array(params.transaction_id) : undefined
       );
       return wrapResult({
-        items: tables.map((t) => t.serialize()),
+        items: tables.map((t) => encodeTableInfo(t)),
       }, CatalogSchemaContentsTablesResultSchema);
     },
   });
@@ -999,7 +1000,7 @@ function registerCatalogMethods(
         params.transaction_id ? toUint8Array(params.transaction_id) : undefined
       );
       return wrapResult({
-        items: views.map((v) => v.serialize()),
+        items: views.map((v) => encodeViewInfo(v)),
       }, CatalogSchemaContentsViewsResultSchema);
     },
   });
@@ -1022,7 +1023,7 @@ function registerCatalogMethods(
         params.transaction_id ? toUint8Array(params.transaction_id) : undefined
       );
       return wrapResult({
-        items: funcs.map((f) => f.serialize()),
+        items: funcs.map((f) => encodeFunctionInfo(f)),
       }, CatalogSchemaContentsFunctionsResultSchema);
     },
   });
@@ -1049,7 +1050,7 @@ function registerCatalogMethods(
         params.transaction_id ? toUint8Array(params.transaction_id) : undefined
       );
       return wrapResult({
-        items: info ? [info.serialize()] : [],
+        items: info ? [encodeTableInfo(info)] : [],
       }, CatalogTableGetResultSchema);
     },
   });
@@ -1429,7 +1430,7 @@ function registerCatalogMethods(
         params.transaction_id ? toUint8Array(params.transaction_id) : undefined
       );
       return wrapResult({
-        items: info ? [info.serialize()] : [],
+        items: info ? [encodeViewInfo(info)] : [],
       }, CatalogViewGetResultSchema);
     },
   });
@@ -1525,7 +1526,7 @@ function registerCatalogMethods(
         params.transaction_id ? toUint8Array(params.transaction_id) : undefined
       );
       return wrapResult({
-        items: info ? [info.serialize()] : [],
+        items: info ? [encodeMacroInfo(info)] : [],
       }, CatalogMacroGetResultSchema);
     },
   });
@@ -1593,7 +1594,7 @@ function registerCatalogMethods(
         params.transaction_id ? toUint8Array(params.transaction_id) : undefined
       );
       return wrapResult({
-        items: macros.map((m) => m.serialize()),
+        items: macros.map((m) => encodeMacroInfo(m)),
       }, CatalogSchemaContentsMacrosResultSchema);
     },
   });

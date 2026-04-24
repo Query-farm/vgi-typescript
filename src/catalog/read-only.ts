@@ -91,15 +91,12 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
   }
 
   schemas(attachId: AttachId, transactionId?: TransactionId): SchemaInfo[] {
-    return this._descriptor.schemas.map(
-      (s) =>
-        new SchemaInfo(
-          attachId,
-          s.name,
-          s.comment ?? null,
-          s.tags ?? {}
-        )
-    );
+    return this._descriptor.schemas.map((s) => ({
+      attach_id: attachId,
+      name: s.name,
+      comment: s.comment ?? null,
+      tags: s.tags ?? {},
+    }));
   }
 
   override schemaGet(
@@ -109,12 +106,12 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
   ): SchemaInfo | null {
     const desc = this._descriptor.schemas.find((s) => s.name === name);
     if (!desc) return null;
-    return new SchemaInfo(
-      attachId,
-      desc.name,
-      desc.comment ?? null,
-      desc.tags ?? {}
-    );
+    return {
+      attach_id: attachId,
+      name: desc.name,
+      comment: desc.comment ?? null,
+      tags: desc.tags ?? {},
+    };
   }
 
   override schemaContentsTables(
@@ -179,19 +176,22 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
       const pkIndices = resolveIndexGroups(colSchema, t.primaryKey);
       const fkBytes = serializeForeignKeys(t.foreignKey, name);
 
-      return new TableInfo(
-        t.name,
-        name,
+      return {
+        comment: t.comment ?? null,
+        tags: t.tags ?? {},
+        name: t.name,
+        schema_name: name,
         columns,
-        notNullIndices,
-        uniqueIndices,
-        t.check ?? [],
-        pkIndices,
-        fkBytes,
-        t.comment ?? null,
-        t.tags ?? {},
-        t.statistics != null && Object.keys(t.statistics).length > 0,
-      );
+        not_null_constraints: notNullIndices,
+        unique_constraints: uniqueIndices,
+        check_constraints: t.check ?? [],
+        primary_key_constraints: pkIndices,
+        foreign_key_constraints: fkBytes,
+        supports_insert: false,
+        supports_update: false,
+        supports_delete: false,
+        supports_column_statistics: t.statistics != null && Object.keys(t.statistics).length > 0,
+      };
     });
   }
 
@@ -221,16 +221,13 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
     const schema = this._descriptor.schemas.find((s) => s.name === name);
     if (!schema || !schema.views) return [];
 
-    return schema.views.map(
-      (v) =>
-        new ViewInfo(
-          v.name,
-          name,
-          v.definition,
-          v.comment ?? null,
-          v.tags ?? {}
-        )
-    );
+    return schema.views.map((v) => ({
+      comment: v.comment ?? null,
+      tags: v.tags ?? {},
+      name: v.name,
+      schema_name: name,
+      definition: v.definition,
+    }));
   }
 
   override schemaContentsFunctions(
@@ -267,28 +264,38 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
           (secretType: string) => ({ secret_type: secretType, scope: null, secret_name: null })
         );
 
-        return new FunctionInfo({
+        return {
+          comment: null,
+          tags: {},
           name: f.meta.name,
-          schemaName: name,
-          functionType: meta.functionType.toUpperCase(),
-          functionArguments: argBytes,
-          outputSchema: outputSchemaBytes,
-          stability: meta.stability,
-          nullHandling: meta.nullHandling,
+          schema_name: name,
+          function_type: meta.functionType.toUpperCase() as "SCALAR" | "TABLE" | "AGGREGATE",
+          arguments: argBytes,
+          output_schema: outputSchemaBytes,
+          stability: meta.stability as any,
+          null_handling: meta.nullHandling as any,
           description: meta.description,
-          examples: meta.examples.map((e) => ({ sql: e.sql, description: e.description })),
+          examples: meta.examples.map((e) => ({
+            sql: e.sql,
+            description: e.description,
+            expected_output: null,
+          })),
           categories: meta.categories,
-          projectionPushdown: meta.projectionPushdown,
-          filterPushdown: meta.filterPushdown,
-          samplingPushdown: meta.samplingPushdown,
-          supportedExpressionFilters: meta.supportedExpressionFilters,
-          orderPreservation: meta.preservesOrder,
-          maxWorkers: meta.maxWorkers,
-          orderDependent: meta.orderDependent,
-          distinctDependent: meta.distinctDependent,
-          requiredSettings: meta.requiredSettings,
-          requiredSecrets,
-        });
+          projection_pushdown: meta.projectionPushdown,
+          filter_pushdown: meta.filterPushdown,
+          sampling_pushdown: meta.samplingPushdown,
+          supported_expression_filters: meta.supportedExpressionFilters,
+          order_preservation: meta.preservesOrder as any,
+          max_workers: meta.maxWorkers,
+          order_dependent: meta.orderDependent as any,
+          distinct_dependent: meta.distinctDependent as any,
+          required_settings: meta.requiredSettings,
+          required_secrets: requiredSecrets.map((s) => ({
+            secret_type: s.secret_type,
+            scope: s.scope,
+            secret_name: s.secret_name,
+          })),
+        };
       });
   }
 
@@ -308,19 +315,16 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
         if (t === "table_macro" && m.macroType !== "table") return false;
         return true;
       })
-      .map(
-        (m) =>
-          new MacroInfo(
-            m.name,
-            name,
-            m.macroType === "scalar" ? MacroType.SCALAR : MacroType.TABLE,
-            m.parameters,
-            m.parameterDefaultValues ?? null,
-            m.definition,
-            m.comment ?? null,
-            m.tags ?? {}
-          )
-      );
+      .map((m) => ({
+        comment: m.comment ?? null,
+        tags: m.tags ?? {},
+        name: m.name,
+        schema_name: name,
+        macro_type: (m.macroType === "scalar" ? "SCALAR" : "TABLE") as "SCALAR" | "TABLE",
+        parameters: m.parameters,
+        parameter_default_values: m.parameterDefaultValues ?? null,
+        definition: m.definition,
+      }));
   }
 
   override macroGet(
