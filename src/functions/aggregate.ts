@@ -66,6 +66,13 @@ export interface AggregateFunctionConfig<TArgs = Record<string, any>, TState = a
    */
   args?: Record<string, DataType>;
   /**
+   * Names of args that accept a variable number of column arguments. DuckDB
+   * treats these as varargs of the declared Arrow type; at call time the
+   * function may receive 1..N columns of that type. update() sees all of
+   * them as consecutive entries in `columns`.
+   */
+  varargs?: string[];
+  /**
    * Arrow type of the aggregate's output (one value per group). DuckDB uses
    * this to build the result column type at bind time.
    */
@@ -125,6 +132,7 @@ export function defineAggregate<TArgs = Record<string, any>, TState = any>(
 ): VgiFunction & { aggregateConfig: AggregateFunctionConfig<TArgs, TState> } {
   const specs: ArgumentSpec[] = [];
   let posIdx = 0;
+  const varargsSet = new Set(config.varargs ?? []);
   if (config.args) {
     for (const [name, type] of Object.entries(config.args)) {
       const hasDefault = config.argDefaults?.[name] !== undefined;
@@ -133,7 +141,7 @@ export function defineAggregate<TArgs = Record<string, any>, TState = any>(
         position: hasDefault ? name : posIdx++,
         arrowType: type,
         isAnyType: false,
-        isVarargs: false,
+        isVarargs: varargsSet.has(name),
       });
     }
   }

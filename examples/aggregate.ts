@@ -1,7 +1,7 @@
 // Example aggregate function implementations.
 // Ports vgi_count, vgi_sum, vgi_avg from vgi-python/vgi/examples/aggregate.py.
 
-import { Schema, Field, Int64, Float64, RecordBatch } from "@query-farm/apache-arrow";
+import { Schema, Field, Int64, Float64, Utf8, Decimal, DataType, RecordBatch } from "@query-farm/apache-arrow";
 import { defineAggregate } from "../src/functions/aggregate.js";
 import { batchFromColumns } from "../src/util/arrow.js";
 import type { VgiFunction } from "../src/index.js";
@@ -115,4 +115,166 @@ const vgi_avg = defineAggregate<{ value: number }, AvgState>({
   categories: ["aggregate"],
 });
 
-export const aggregateFunctions: VgiFunction[] = [vgi_count, vgi_sum, vgi_avg];
+// ============================================================================
+// vgi_sum_all — varargs aggregate. Sums every value across any number of
+// numeric columns. Single `columns` varargs param means the call site may
+// pass 1..N columns and update() receives each as a separate entry in the
+// columns array.
+// ============================================================================
+
+interface SumAllState { total: number; }
+
+const vgi_sum_all = defineAggregate<{ columns: number }, SumAllState>({
+  name: "vgi_sum_all",
+  description: "Sum all numeric columns",
+  args: { columns: new Float64() },
+  varargs: ["columns"],
+  outputType: new Float64(),
+  nullHandling: "DEFAULT",
+  initialState: () => ({ total: 0 }),
+  update: ({ groupIds, columns, ensureState }) => {
+    const n = groupIds.length;
+    // Precompute per-column decoders. DECIMAL columns arrive as raw
+    // integers; scale them back to float. Integer columns are converted
+    // via Number(). Matches Python's implicit DECIMAL → float on
+    // pa.Array.to_pylist().
+    const decoders = columns.map((col: any) => makeNumericDecoder(col?.type));
+    for (let i = 0; i < n; i++) {
+      let rowTotal = 0;
+      let anyNonNull = false;
+      for (let k = 0; k < columns.length; k++) {
+        const col = columns[k];
+        if (col == null || !col.isValid(i)) continue;
+        const v = col.get(i);
+        if (v == null) continue;
+        anyNonNull = true;
+        rowTotal += decoders[k](v);
+      }
+      if (anyNonNull) {
+        ensureState(groupIds[i]).total += rowTotal;
+      }
+    }
+  },
+  combine: (src, tgt) => ({ total: src.total + tgt.total }),
+  finalize: ({ groupIds, states, outputSchema }) => {
+    const results: (number | null)[] = groupIds.map((gid) => {
+      const s = states.get(gid);
+      return s != null ? s.total : null;
+    });
+    return batchFromColumns({ result: results }, outputSchema);
+  },
+  categories: ["aggregate"],
+});
+
+// Build a numeric decoder matching the column's Arrow type. Handles the
+// common cases vgi_sum_all / vgi_weighted_sum / vgi_percentile need:
+// - Int/BigInt: Number() coerce.
+// - Decimal(p,s): Arrow stores the unscaled integer; scale back by 10^-s
+//   to recover the logical float (pyarrow's to_pylist does this implicitly,
+//   which is why the Python versions of these aggregates don't need to).
+// - Float: passthrough.
+function makeNumericDecoder(type: DataType | undefined): (v: any) => number {
+  if (type && DataType.isDecimal(type)) {
+    const scale = (type as Decimal).scale;
+    const divisor = Math.pow(10, scale);
+    return (v: any) => {
+      if (typeof v === "bigint") return Number(v) / divisor;
+      if (v instanceof Uint8Array) {
+        // 128-bit decimal stored as 16 bytes — assemble as BigInt
+        let n = 0n;
+        for (let i = v.length - 1; i >= 0; i--) n = (n << 8n) | BigInt(v[i]);
+        // Sign-extend: if top bit of MSB is set, it's negative
+        if (v.length > 0 && (v[v.length - 1] & 0x80)) {
+          n -= 1n << BigInt(v.length * 8);
+        }
+        return Number(n) / divisor;
+      }
+      return Number(v) / divisor;
+    };
+  }
+  return (v: any) => (typeof v === "bigint" ? Number(v) : Number(v));
+}
+
+// ============================================================================
+// vgi_listagg — order-dependent string concatenation with comma separator.
+// Accumulates strings as they arrive, joined by ",". Null inputs are skipped
+// (NullHandling.DEFAULT). combine() appends source.values after target.values
+// to preserve left-to-right ordering within a thread.
+// ============================================================================
+
+interface ListAggState { values: string; }
+
+const vgi_listagg = defineAggregate<{ value: string }, ListAggState>({
+  name: "vgi_listagg",
+  description: "Concatenate strings with comma separator",
+  args: { value: new Utf8() },
+  outputType: new Utf8(),
+  nullHandling: "DEFAULT",
+  initialState: () => ({ values: "" }),
+  update: ({ groupIds, columns, ensureState }) => {
+    const valueCol = columns[0];
+    const n = groupIds.length;
+    for (let i = 0; i < n; i++) {
+      if (valueCol == null || !valueCol.isValid(i)) continue;
+      const v = valueCol.get(i);
+      if (v == null) continue;
+      const s = ensureState(groupIds[i]);
+      s.values = s.values ? s.values + "," + String(v) : String(v);
+    }
+  },
+  combine: (src, tgt) => {
+    if (src.values && tgt.values) return { values: tgt.values + "," + src.values };
+    return { values: tgt.values || src.values };
+  },
+  finalize: ({ groupIds, states, outputSchema }) => {
+    const results: (string | null)[] = groupIds.map((gid) => {
+      const s = states.get(gid);
+      return s != null ? s.values : null;
+    });
+    return batchFromColumns({ result: results }, outputSchema);
+  },
+  categories: ["aggregate"],
+});
+
+// ============================================================================
+// vgi_weighted_sum — multi-arg aggregate. Sum of value*weight per group.
+// ============================================================================
+
+interface WeightedSumState { total: number; }
+
+const vgi_weighted_sum = defineAggregate<{ value: number; weight: number }, WeightedSumState>({
+  name: "vgi_weighted_sum",
+  description: "Weighted sum of values",
+  args: { value: new Float64(), weight: new Float64() },
+  outputType: new Float64(),
+  nullHandling: "DEFAULT",
+  initialState: () => ({ total: 0 }),
+  update: ({ groupIds, columns, ensureState }) => {
+    const valueCol = columns[0];
+    const weightCol = columns[1];
+    const decV = makeNumericDecoder(valueCol?.type);
+    const decW = makeNumericDecoder(weightCol?.type);
+    const n = groupIds.length;
+    for (let i = 0; i < n; i++) {
+      if (valueCol == null || weightCol == null) continue;
+      if (!valueCol.isValid(i) || !weightCol.isValid(i)) continue;
+      const v = valueCol.get(i);
+      const w = weightCol.get(i);
+      if (v == null || w == null) continue;
+      ensureState(groupIds[i]).total += decV(v) * decW(w);
+    }
+  },
+  combine: (src, tgt) => ({ total: src.total + tgt.total }),
+  finalize: ({ groupIds, states, outputSchema }) => {
+    const results: (number | null)[] = groupIds.map((gid) => {
+      const s = states.get(gid);
+      return s != null ? s.total : null;
+    });
+    return batchFromColumns({ result: results }, outputSchema);
+  },
+  categories: ["aggregate"],
+});
+
+export const aggregateFunctions: VgiFunction[] = [
+  vgi_count, vgi_sum, vgi_avg, vgi_sum_all, vgi_listagg, vgi_weighted_sum,
+];

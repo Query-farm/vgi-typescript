@@ -508,7 +508,18 @@ function registerAggregateMethods(protocol: Protocol, registry: FunctionRegistry
       const cfg = resolveAggregate(functionName);
       const exec = getExecutionState(executionId);
       if (!exec) {
-        throw new Error(`aggregate_combine: unknown execution_id for '${functionName}'`);
+        // Unknown execution_id: combine was routed to a different worker
+        // process than the one that ran bind/update. Happens under parallel
+        // aggregate when the worker pool spreads RPCs across processes —
+        // our state store is process-local (Python mitigates this with
+        // pluggable FunctionStorage). Surface a specific error rather than
+        // silently dropping state; callers can route around by pinning the
+        // pool or setting threads=1 on the query.
+        throw new Error(
+          `aggregate_combine: state for execution_id not found in this worker — ` +
+          `parallel aggregation across pooled workers is not yet supported ` +
+          `(function '${functionName}'). Consider SET threads=1 for aggregate queries.`,
+        );
       }
       const batch = readSingleBatch(toUint8Array(innerParams.merge_batch));
       if (!batch || batch.numRows === 0) return wrapResult({}, new Schema([]));
