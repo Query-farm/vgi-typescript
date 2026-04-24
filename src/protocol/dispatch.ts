@@ -28,6 +28,7 @@ import { TableInOutPhase } from "../types.js";
 import { resolveMetadata } from "../metadata/resolve.js";
 import { metadatasToArrow, METADATA_SCHEMA } from "../metadata/serialize.js";
 import { batchToScalarDict, serializeBatch, deserializeBatch, serializeSchema, emptyBatch, batchFromColumns } from "../util/arrow.js";
+import { serializeColumnStatistics } from "../util/statistics.js";
 import { toUint8Array } from "../util/bytes.js";
 import type { CatalogInterface } from "../catalog/interface.js";
 import { MacroType } from "../catalog/interface.js";
@@ -330,6 +331,27 @@ export function buildVgiProtocol(config: ProtocolConfig): Protocol {
         cardResult = { estimate: null, max: null };
       }
       return wrapResult(cardResult, cardinalityInnerSchema);
+    },
+  });
+
+  // --------------------------------------------------------------------------
+  // table_function_statistics (unary)
+  // --------------------------------------------------------------------------
+  // Returns bytes-or-null result: serialized ColumnStatistics RecordBatch when
+  // the function declared a statistics() hook and it produced a non-empty
+  // list, else null. DuckDB uses the bounds for plan-time filter elimination
+  // (folds impossible filters to EMPTY_RESULT).
+  protocol.unary("table_function_statistics", {
+    params: REQUEST_PARAMS_SCHEMA,
+    result: RESULT_BINARY_NULLABLE_SCHEMA,
+    handler: (params) => {
+      const innerParams = unwrapRequest(params.request);
+      const request = deserializeCardinalityRequest(innerParams);
+      const func = registry.get(request.bindCall.functionName, overloadContext(request.bindCall));
+      if (!func.statistics) return { result: null };
+      const stats = func.statistics(request);
+      if (!stats || stats.length === 0) return { result: null };
+      return { result: serializeColumnStatistics(stats) };
     },
   });
 

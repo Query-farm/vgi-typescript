@@ -26,6 +26,7 @@ import {
   FilteringOutputCollector,
   type PushdownFilters,
 } from "../util/filter-pushdown.js";
+import type { ColumnStatistics } from "../util/statistics.js";
 import { FunctionStability } from "../types.js";
 import { BoundStorage, storage as globalStorage } from "../storage/function-storage.js";
 
@@ -113,6 +114,13 @@ export interface TableFunctionConfig<
   ) => void | Promise<void>;
   /** Cardinality hints */
   cardinality?: (params: TableBindParams<TArgs>) => TableCardinality;
+  /**
+   * Per-column statistics for the function's output. Returned to DuckDB via
+   * the `table_function_statistics` RPC; the optimizer uses min/max to
+   * eliminate impossible filters at plan time (folding scans to
+   * EMPTY_RESULT). Return `null` or an empty array when bounds are unknown.
+   */
+  statistics?: (params: TableBindParams<TArgs>) => ColumnStatistics[] | null;
   // Metadata
   projectionPushdown?: boolean;
   filterPushdown?: boolean;
@@ -330,6 +338,21 @@ export function defineTableFunction<
           const settings = batchToScalarDict(request.bindCall.settings);
           const secrets = batchToSecretDict(request.bindCall.secrets);
           return config.cardinality!({
+            args,
+            bindCall: request.bindCall,
+            settings,
+            secrets,
+            resolvedSecretsProvided: request.bindCall.resolvedSecretsProvided ?? false,
+          });
+        }
+      : undefined,
+
+    statistics: config.statistics
+      ? (request: TableFunctionCardinalityRequest) => {
+          const args = extractArgs(request.bindCall);
+          const settings = batchToScalarDict(request.bindCall.settings);
+          const secrets = batchToSecretDict(request.bindCall.secrets);
+          return config.statistics!({
             args,
             bindCall: request.bindCall,
             settings,

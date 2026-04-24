@@ -151,6 +151,8 @@ export const catalog: CatalogDescriptor = {
           columns: new Schema([
             new Field("n", new Int64(), true),
           ]),
+          function: sequenceFunction,
+          arguments: new Arguments([123456]),
           comment: "123456 integers; stats served by the sequence function, not the table",
         },
         {

@@ -67,6 +67,25 @@ const sequence = defineTableFunction<SequenceArgs, CountdownState>({
     estimate: params.args.count,
     max: params.args.count,
   }),
+  statistics: (params: TableBindParams<SequenceArgs>) => {
+    const count = params.args.count;
+    const increment = params.args.increment ?? 1;
+    if (!(count > 0)) return [];
+    const maxValue = BigInt((count - 1) * increment);
+    return [
+      {
+        columnName: "n",
+        arrowType: new Int64(),
+        min: 0n,
+        max: maxValue,
+        hasNull: false,
+        hasNotNull: true,
+        distinctCount: BigInt(count),
+        containsUnicode: null,
+        maxStringLength: null,
+      },
+    ];
+  },
   initialState: (params: TableProcessParams<SequenceArgs>) => ({
     remaining: params.args.count,
     currentIndex: 0,
@@ -239,6 +258,24 @@ const double_sequence = defineTableFunction<DoubleSequenceArgs, CountdownState>(
     estimate: params.args.count,
     max: params.args.count,
   }),
+  statistics: (params: TableBindParams<DoubleSequenceArgs>) => {
+    const count = params.args.count;
+    const increment = params.args.increment ?? 1;
+    if (!(count > 0)) return [];
+    return [
+      {
+        columnName: "n",
+        arrowType: new Float64(),
+        min: 0.0,
+        max: (count - 1) * increment,
+        hasNull: false,
+        hasNotNull: true,
+        distinctCount: BigInt(count),
+        containsUnicode: null,
+        maxStringLength: null,
+      },
+    ];
+  },
   initialState: (params: TableProcessParams<DoubleSequenceArgs>) => ({
     remaining: params.args.count,
     currentIndex: 0,

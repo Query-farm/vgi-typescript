@@ -94,4 +94,11 @@ export interface VgiFunction {
     accumulatedState?: any,
   ): StreamHandlers;
   cardinality?(request: TableFunctionCardinalityRequest): TableCardinality;
+  /**
+   * Per-column statistics for this table function's output given the user's
+   * bind-time arguments. Returns null/[] when stats are unknown. Wired to the
+   * `table_function_statistics` RPC; DuckDB uses the bounds for plan-time
+   * filter elimination.
+   */
+  statistics?(request: TableFunctionCardinalityRequest): import("../util/statistics.js").ColumnStatistics[] | null;
 }
