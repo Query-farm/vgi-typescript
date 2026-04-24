@@ -60,6 +60,72 @@ export type { MacroInfo };
 export { encodeMacroInfo, decodeMacroInfo } from "../generated/vgi-client.js";
 
 // ============================================================================
+// ScanFunctionResult — typed result for catalog_table_scan_function_get.
+// Mirrors vgi-python's ScanFunctionResult (catalog_interface.py:380).
+// ============================================================================
+
+import { deserializeBatch } from "../util/arrow.js";
+import { toUint8Array } from "../util/bytes.js";
+
+/**
+ * Result from `tableScanFunctionGet` — tells the VGI DuckDB extension which
+ * DuckDB function to call to obtain the data for a table.
+ */
+export interface ScanFunctionResult {
+  /** The DuckDB function to call (e.g. "read_parquet"). */
+  functionName: string;
+  /** Positional arguments, decoded from the inner Arrow batch. */
+  positionalArguments: unknown[];
+  /** Named arguments, decoded from the inner Arrow batch. */
+  namedArguments: Record<string, unknown>;
+  /** DuckDB extensions to load before calling the function. */
+  requiredExtensions: string[];
+}
+
+/**
+ * Decode a ScanFunctionResult from a wire-shape inner result dict.
+ *
+ * The wire shape (per ScanFunctionResultSchema) is
+ * `{ function_name: utf8, arguments: binary, required_extensions: list<utf8> }`,
+ * where `arguments` is a serialized single-row batch with one column per
+ * argument: `arg_<index>` for positional args, the bare name for named args.
+ */
+export function decodeScanFunctionResult(inner: Record<string, unknown>): ScanFunctionResult {
+  const argsBytes = inner.arguments;
+  const positionalArguments: unknown[] = [];
+  const namedArguments: Record<string, unknown> = {};
+
+  if (argsBytes != null) {
+    const batch = deserializeBatch(toUint8Array(argsBytes));
+    for (const field of batch.schema.fields) {
+      const col = batch.getChild(field.name);
+      const value = col ? col.get(0) : null;
+      if (field.name.startsWith("arg_")) {
+        const idx = parseInt(field.name.slice(4), 10);
+        while (positionalArguments.length <= idx) positionalArguments.push(null);
+        positionalArguments[idx] = value;
+      } else {
+        namedArguments[field.name] = value;
+      }
+    }
+  }
+
+  const exts = inner.required_extensions;
+  const requiredExtensions: string[] = exts == null
+    ? []
+    : (Array.isArray(exts) ? exts : [...(exts as Iterable<unknown>)])
+        .filter((v) => v != null)
+        .map(String);
+
+  return {
+    functionName: String(inner.function_name ?? ""),
+    positionalArguments,
+    namedArguments,
+    requiredExtensions,
+  };
+}
+
+// ============================================================================
 // CatalogInterface abstract class
 // ============================================================================
 

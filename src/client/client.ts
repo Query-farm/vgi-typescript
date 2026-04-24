@@ -2,7 +2,7 @@
 // Works with any RpcClient (subprocess or HTTP transport).
 
 import { Schema, Field, RecordBatch, Utf8, Binary, List } from "@query-farm/apache-arrow";
-import type { RpcClient, StreamSession } from "vgi-rpc";
+import { RpcError, type RpcClient, type StreamSession } from "vgi-rpc";
 import {
   serializeBindRequest,
   deserializeBindResponse,
@@ -39,6 +39,8 @@ import {
   type TransactionId,
   decodeCatalogInfo,
   type CatalogInfo,
+  type ScanFunctionResult,
+  decodeScanFunctionResult,
 } from "../catalog/interface.js";
 import { wrapRequest, unwrapResult } from "./protocol.js";
 import { toUint8Array } from "../util/bytes.js";
@@ -52,14 +54,73 @@ import type {
   CatalogFunctionType,
   CatalogMacroType,
   CatalogAttachOptions,
+  OrderByPushdown,
+  TablesamplePushdown,
+  AttachOptionValue,
 } from "./types.js";
 
 /** Error thrown by VgiClient when an RPC call fails or returns unexpected data. */
 export class VgiClientError extends Error {
-  constructor(message: string) {
-    super(message);
+  /** Remote traceback from the worker, when an RpcError carried one. */
+  readonly remoteTraceback?: string;
+  /** Underlying error type from the worker (e.g. "ValueError"), when known. */
+  readonly errorType?: string;
+
+  constructor(
+    message: string,
+    options?: { remoteTraceback?: string; errorType?: string; cause?: unknown },
+  ) {
+    super(message, options?.cause != null ? { cause: options.cause } : undefined);
     this.name = "VgiClientError";
+    if (options?.remoteTraceback) this.remoteTraceback = options.remoteTraceback;
+    if (options?.errorType) this.errorType = options.errorType;
   }
+
+  /**
+   * Build a VgiClientError from an underlying RpcError, preserving the
+   * remote error type, message, and traceback so the worker-raised exception
+   * shows up at the top of the stack rather than buried under VGI framing.
+   * Mirrors Python's ClientError.from_rpc_error.
+   */
+  static fromRpcError(e: RpcError): VgiClientError {
+    const head = `${e.errorType}: ${e.errorMessage}`;
+    const message = e.remoteTraceback
+      ? `${head}\n\nRemote traceback:\n${e.remoteTraceback}`
+      : head;
+    return new VgiClientError(message, {
+      remoteTraceback: e.remoteTraceback || undefined,
+      errorType: e.errorType,
+      cause: e,
+    });
+  }
+}
+
+/**
+ * Wrap an RpcClient so any RpcError thrown by call/stream is rethrown as a
+ * VgiClientError carrying the worker's remote traceback. Other errors
+ * propagate unchanged.
+ */
+function wrapRpcWithErrorEnrichment(rpc: RpcClient): RpcClient {
+  return {
+    async call(method, params) {
+      try {
+        return await rpc.call(method, params);
+      } catch (e) {
+        if (e instanceof RpcError) throw VgiClientError.fromRpcError(e);
+        throw e;
+      }
+    },
+    async stream(method, params) {
+      try {
+        return await rpc.stream(method, params);
+      } catch (e) {
+        if (e instanceof RpcError) throw VgiClientError.fromRpcError(e);
+        throw e;
+      }
+    },
+    describe: () => rpc.describe(),
+    close: () => rpc.close(),
+  };
 }
 
 /**
@@ -96,7 +157,7 @@ export class VgiClient {
    * attached catalogs.
    */
   constructor(rpc: RpcClient, options?: VgiClientOptions) {
-    this.rpc = rpc;
+    this.rpc = wrapRpcWithErrorEnrichment(rpc);
     this.defaultAttachId = options?.attachId ?? null;
   }
 
@@ -113,6 +174,7 @@ export class VgiClient {
     secrets: RecordBatch | null,
     transactionId: Uint8Array | null,
     attachId: Uint8Array | null = null,
+    onBind?: ((response: BindResponse) => void) | null,
   ): Promise<{ request: BindRequest; response: BindResponse }> {
     const request: BindRequest = {
       function_name: functionName,
@@ -131,6 +193,7 @@ export class VgiClient {
     if (!rpcResult) throw new VgiClientError("bind returned null");
     const inner = unwrapResult(rpcResult);
     const response = deserializeBindResponse(inner);
+    if (onBind) onBind(response);
     return { request, response };
   }
 
@@ -142,22 +205,27 @@ export class VgiClient {
       pushdownFilters?: RecordBatch | null;
       phase?: TableInOutPhase | null;
       executionId?: Uint8Array | null;
+      orderBy?: OrderByPushdown | null;
+      tablesample?: TablesamplePushdown | null;
+      joinKeys?: RecordBatch[] | null;
     },
   ): Promise<{ session: StreamSession; initResponse: GlobalInitResponse }> {
+    const ob = opts?.orderBy ?? null;
+    const ts = opts?.tablesample ?? null;
     const initRequest: InitRequest = {
       bind_call: bindRequest,
       output_schema: bindResponse.output_schema,
       bind_opaque_data: bindResponse.opaque_data,
       projection_ids: opts?.projectionIds ?? null,
       pushdown_filters: opts?.pushdownFilters ?? null,
-      join_keys: [],
+      join_keys: opts?.joinKeys ?? [],
       phase: opts?.phase ?? null,
-      order_by_column_name: null,
-      order_by_direction: null,
-      order_by_null_order: null,
-      order_by_limit: null,
-      tablesample_percentage: null,
-      tablesample_seed: null,
+      order_by_column_name: ob?.columnName ?? null,
+      order_by_direction: ob?.direction ?? null,
+      order_by_null_order: ob?.nullOrder ?? null,
+      order_by_limit: ob?.limit == null ? null : BigInt(ob.limit),
+      tablesample_percentage: ts?.percentage ?? null,
+      tablesample_seed: ts?.seed == null ? null : BigInt(ts.seed),
       execution_id: opts?.executionId ?? null,
       init_opaque_data: null,
     };
@@ -191,11 +259,15 @@ export class VgiClient {
       null,
       opts.transactionId ?? null,
       opts.attachId ?? null,
+      opts.onBind ?? null,
     );
 
     const { session } = await this._doInit(bindReq, bindResp, {
       projectionIds: opts.projectionIds,
       pushdownFilters: opts.pushdownFilters,
+      orderBy: opts.orderBy,
+      tablesample: opts.tablesample,
+      joinKeys: opts.joinKeys,
     });
 
     const outputSchema = bindResp.output_schema;
@@ -221,7 +293,12 @@ export class VgiClient {
     // Peek first batch to get input schema
     const inputIter = toAsyncIterator(opts.input);
     const first = await inputIter.next();
-    if (first.done) return;
+    if (first.done) {
+      throw new VgiClientError(
+        `scalarFunction(${opts.functionName}): input iterator yielded no batches; ` +
+          `at least one batch is required to determine the input schema`,
+      );
+    }
 
     const firstBatch: RecordBatch = first.value;
     const inputSchema = firstBatch.schema;
@@ -237,6 +314,7 @@ export class VgiClient {
       opts.secrets ?? null,
       opts.transactionId ?? null,
       opts.attachId ?? null,
+      opts.onBind ?? null,
     );
 
     const { session } = await this._doInit(bindReq, bindResp);
@@ -264,7 +342,12 @@ export class VgiClient {
     // here so we can pack rows back into batches without a re-bind.
     const inputIter = toAsyncIterator(opts.input);
     const first = await inputIter.next();
-    if (first.done) return;
+    if (first.done) {
+      throw new VgiClientError(
+        `scalarFunction(${opts.functionName}): input iterator yielded no batches; ` +
+          `at least one batch is required to determine the input schema`,
+      );
+    }
 
     const firstBatch: RecordBatch = first.value;
     const inputSchema = firstBatch.schema;
@@ -280,6 +363,7 @@ export class VgiClient {
       opts.secrets ?? null,
       opts.transactionId ?? null,
       opts.attachId ?? null,
+      opts.onBind ?? null,
     );
 
     const { session } = await this._doInit(bindReq, bindResp);
@@ -307,7 +391,12 @@ export class VgiClient {
   ): AsyncGenerator<Record<string, any>[]> {
     const inputIter = toAsyncIterator(opts.input);
     const first = await inputIter.next();
-    if (first.done) return;
+    if (first.done) {
+      throw new VgiClientError(
+        `tableInOutFunction(${opts.functionName}): input iterator yielded no batches; ` +
+          `at least one batch is required to determine the input schema`,
+      );
+    }
 
     const firstBatch: RecordBatch = first.value;
     const inputSchema = firstBatch.schema;
@@ -323,6 +412,7 @@ export class VgiClient {
       null,
       opts.transactionId ?? null,
       opts.attachId ?? null,
+      opts.onBind ?? null,
     );
 
     // Phase 1: INPUT. We keep the init response around for its `execution_id`,
@@ -334,6 +424,9 @@ export class VgiClient {
         projectionIds: opts.projectionIds,
         pushdownFilters: opts.pushdownFilters,
         phase: TableInOutPhase.INPUT,
+        orderBy: opts.orderBy,
+        tablesample: opts.tablesample,
+        joinKeys: opts.joinKeys,
       },
     );
 
@@ -358,6 +451,9 @@ export class VgiClient {
         pushdownFilters: opts.pushdownFilters,
         phase: TableInOutPhase.FINALIZE,
         executionId: initResponse.execution_id,
+        orderBy: opts.orderBy,
+        tablesample: opts.tablesample,
+        joinKeys: opts.joinKeys,
       },
     );
 
@@ -376,7 +472,12 @@ export class VgiClient {
   ): AsyncGenerator<RecordBatch> {
     const inputIter = toAsyncIterator(opts.input);
     const first = await inputIter.next();
-    if (first.done) return;
+    if (first.done) {
+      throw new VgiClientError(
+        `tableInOutFunction(${opts.functionName}): input iterator yielded no batches; ` +
+          `at least one batch is required to determine the input schema`,
+      );
+    }
 
     const firstBatch: RecordBatch = first.value;
     const inputSchema = firstBatch.schema;
@@ -392,6 +493,7 @@ export class VgiClient {
       null,
       opts.transactionId ?? null,
       opts.attachId ?? null,
+      opts.onBind ?? null,
     );
 
     const { session: inputSession, initResponse } = await this._doInit(
@@ -401,6 +503,9 @@ export class VgiClient {
         projectionIds: opts.projectionIds,
         pushdownFilters: opts.pushdownFilters,
         phase: TableInOutPhase.INPUT,
+        orderBy: opts.orderBy,
+        tablesample: opts.tablesample,
+        joinKeys: opts.joinKeys,
       },
     );
 
@@ -425,6 +530,9 @@ export class VgiClient {
         pushdownFilters: opts.pushdownFilters,
         phase: TableInOutPhase.FINALIZE,
         executionId: initResponse.execution_id,
+        orderBy: opts.orderBy,
+        tablesample: opts.tablesample,
+        joinKeys: opts.joinKeys,
       },
     );
 
@@ -455,10 +563,14 @@ export class VgiClient {
       null,
       opts.transactionId ?? null,
       opts.attachId ?? null,
+      opts.onBind ?? null,
     );
     const { session } = await this._doInit(bindReq, bindResp, {
       projectionIds: opts.projectionIds,
       pushdownFilters: opts.pushdownFilters,
+      orderBy: opts.orderBy,
+      tablesample: opts.tablesample,
+      joinKeys: opts.joinKeys,
     });
     try {
       for await (const rows of session) {
@@ -580,16 +692,43 @@ export class VgiClient {
     await this.rpc.call("catalog_detach", { attach_id: attachId });
   }
 
-  /** Create a new catalog. */
+  /**
+   * Create a new catalog.
+   *
+   * `options` is a plain key→value map; column types are inferred from the
+   * value at runtime (see AttachOptionValue). Use `optionsBytes` instead
+   * when you need Arrow types the inference can't express. Providing both
+   * throws.
+   */
   async catalogCreate(
     name: string,
     onConflict: OnCreateConflict,
-    options?: Uint8Array,
+    options?:
+      | Uint8Array
+      | { options?: Record<string, AttachOptionValue>; optionsBytes?: Uint8Array },
   ): Promise<void> {
+    let wireOptions: Uint8Array | null;
+    if (options == null) {
+      wireOptions = null;
+    } else if (options instanceof Uint8Array) {
+      // Backwards-compatible escape hatch: caller pre-serialized the options batch.
+      wireOptions = options.byteLength === 0 ? null : options;
+    } else {
+      if (options.options != null && options.optionsBytes != null) {
+        throw new VgiClientError(
+          "catalogCreate: cannot specify both `options` and `optionsBytes`",
+        );
+      }
+      if (options.optionsBytes != null) {
+        wireOptions = options.optionsBytes.byteLength === 0 ? null : options.optionsBytes;
+      } else {
+        wireOptions = serializeAttachOptions(options.options);
+      }
+    }
     await this.rpc.call("catalog_create", {
       name,
       on_conflict: onConflict,
-      options: options ?? null,
+      options: wireOptions,
     });
   }
 
@@ -682,16 +821,23 @@ export class VgiClient {
   async schemaCreate(
     attachId: AttachId,
     name: string,
-    comment?: string | null,
-    tags?: Uint8Array | null,
-    transactionId?: TransactionId,
+    opts?: {
+      onConflict?: OnCreateConflict;
+      comment?: string | null;
+      tags?: Record<string, string> | null;
+      transactionId?: TransactionId;
+    },
   ): Promise<void> {
+    const tagsMap = opts?.tags
+      ? new Map(Object.entries(opts.tags))
+      : null;
     await this.rpc.call("catalog_schema_create", {
       attach_id: attachId,
       name,
-      comment: comment ?? null,
-      tags: tags ?? null,
-      transaction_id: transactionId ?? null,
+      on_conflict: opts?.onConflict ?? "error",
+      comment: opts?.comment ?? null,
+      tags: tagsMap,
+      transaction_id: opts?.transactionId ?? null,
     });
   }
 
@@ -706,8 +852,8 @@ export class VgiClient {
     await this.rpc.call("catalog_schema_drop", {
       attach_id: attachId,
       name,
-      ignore_not_found: ignoreNotFound ?? null,
-      cascade: cascade ?? null,
+      ignore_not_found: ignoreNotFound ?? false,
+      cascade: cascade ?? false,
       transaction_id: transactionId ?? null,
     });
   }
@@ -812,18 +958,24 @@ export class VgiClient {
     schemaName: string,
     name: string,
     ignoreNotFound?: boolean,
+    cascade?: boolean,
     transactionId?: TransactionId,
   ): Promise<void> {
     await this.rpc.call("catalog_table_drop", {
       attach_id: attachId,
       schema_name: schemaName,
       name,
-      ignore_not_found: ignoreNotFound ?? null,
+      ignore_not_found: ignoreNotFound ?? false,
+      cascade: cascade ?? false,
       transaction_id: transactionId ?? null,
     });
   }
 
-  /** Get the scan function for a table (used for time-travel and table scans). */
+  /**
+   * Get the scan function for a table — tells DuckDB which function to call
+   * to read the table data (e.g. `read_parquet` with a path argument). Used
+   * by the VGI extension during query planning.
+   */
   async tableScanFunctionGet(
     attachId: AttachId,
     schemaName: string,
@@ -831,7 +983,7 @@ export class VgiClient {
     atUnit?: string | null,
     atValue?: string | null,
     transactionId?: TransactionId,
-  ): Promise<Record<string, any>> {
+  ): Promise<ScanFunctionResult> {
     const result = await this.rpc.call("catalog_table_scan_function_get", {
       attach_id: attachId,
       schema_name: schemaName,
@@ -841,7 +993,7 @@ export class VgiClient {
       transaction_id: transactionId ?? null,
     });
     if (!result) throw new VgiClientError("table_scan_function_get returned null");
-    return unwrapResult(result);
+    return decodeScanFunctionResult(unwrapResult(result));
   }
 
   /** Set or clear the comment on a table. */
@@ -985,13 +1137,19 @@ export class VgiClient {
     });
   }
 
-  /** Change the type of a column. */
+  /**
+   * Change the type of a column.
+   *
+   * `columnDefinition` is a serialized Arrow Schema with a single field whose
+   * name identifies the target column and whose type is the new column type.
+   * `expression` is an optional SQL expression used to convert existing values.
+   */
   async tableColumnTypeChange(
     attachId: AttachId,
     schemaName: string,
     name: string,
-    columnName: string,
-    newType: string,
+    columnDefinition: Uint8Array,
+    expression?: string | null,
     ignoreNotFound?: boolean,
     transactionId?: TransactionId,
   ): Promise<void> {
@@ -999,9 +1157,9 @@ export class VgiClient {
       attach_id: attachId,
       schema_name: schemaName,
       name,
-      column_name: columnName,
-      new_type: newType,
-      ignore_not_found: ignoreNotFound ?? null,
+      column_definition: columnDefinition,
+      expression: expression ?? null,
+      ignore_not_found: ignoreNotFound ?? false,
       transaction_id: transactionId ?? null,
     });
   }
@@ -1088,13 +1246,15 @@ export class VgiClient {
     schemaName: string,
     name: string,
     ignoreNotFound?: boolean,
+    cascade?: boolean,
     transactionId?: TransactionId,
   ): Promise<void> {
     await this.rpc.call("catalog_view_drop", {
       attach_id: attachId,
       schema_name: schemaName,
       name,
-      ignore_not_found: ignoreNotFound ?? null,
+      ignore_not_found: ignoreNotFound ?? false,
+      cascade: cascade ?? false,
       transaction_id: transactionId ?? null,
     });
   }
@@ -1230,7 +1390,7 @@ export class VgiClient {
       attach_id: attachId,
       schema_name: schemaName,
       name,
-      ignore_not_found: ignoreNotFound ?? null,
+      ignore_not_found: ignoreNotFound ?? false,
       transaction_id: transactionId ?? null,
     });
   }

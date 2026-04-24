@@ -3,8 +3,31 @@
 import type { RecordBatch } from "@query-farm/apache-arrow";
 import type { Arguments } from "../arguments/arguments.js";
 import type { AttachOptionValue } from "../util/attach-options.js";
+import type { BindResponse } from "../protocol/types.js";
+import { OrderByDirection, OrderByNullOrder } from "../protocol/types.js";
 
 export type { AttachOptionValue };
+export { OrderByDirection, OrderByNullOrder };
+
+/** ORDER BY pushdown hint passed at init time. */
+export interface OrderByPushdown {
+  columnName: string;
+  direction: OrderByDirection;
+  nullOrder: OrderByNullOrder;
+  /** Optional LIMIT to combine with ORDER BY. */
+  limit?: bigint | number | null;
+}
+
+/** TABLESAMPLE pushdown hint passed at init time. */
+export interface TablesamplePushdown {
+  /** Sample percentage in [0, 100]. */
+  percentage: number;
+  /** Optional sampling seed. */
+  seed?: bigint | number | null;
+}
+
+/** Callback invoked after a successful bind, before init. */
+export type BindResultCallback = (response: BindResponse) => void;
 
 /**
  * Options bag for VgiClient.catalogAttach.
@@ -57,6 +80,14 @@ export interface TableFunctionOptions {
   transactionId?: Uint8Array;
   /** Attach ID to bind this call to a specific catalog attach. Overrides the client-level attachId. */
   attachId?: Uint8Array;
+  /** ORDER BY pushdown hint from DuckDB's RowGroupPruner. */
+  orderBy?: OrderByPushdown;
+  /** TABLESAMPLE pushdown hint from DuckDB's SamplingPushdown optimizer. */
+  tablesample?: TablesamplePushdown;
+  /** Join-key value batches, one per join-keys column. */
+  joinKeys?: RecordBatch[];
+  /** Invoked after bind, before init. Receives the bind response. */
+  onBind?: BindResultCallback;
 }
 
 /** Options for calling a scalar function. */
@@ -75,6 +106,8 @@ export interface ScalarFunctionOptions {
   transactionId?: Uint8Array;
   /** Attach ID to bind this call to a specific catalog attach. Overrides the client-level attachId. */
   attachId?: Uint8Array;
+  /** Invoked after bind, before init. Receives the bind response. */
+  onBind?: BindResultCallback;
 }
 
 /** Options for calling a table-in-out function. */
@@ -95,4 +128,12 @@ export interface TableInOutFunctionOptions {
   transactionId?: Uint8Array;
   /** Attach ID to bind this call to a specific catalog attach. Overrides the client-level attachId. */
   attachId?: Uint8Array;
+  /** ORDER BY pushdown hint from DuckDB's RowGroupPruner. */
+  orderBy?: OrderByPushdown;
+  /** TABLESAMPLE pushdown hint from DuckDB's SamplingPushdown optimizer. */
+  tablesample?: TablesamplePushdown;
+  /** Join-key value batches, one per join-keys column. */
+  joinKeys?: RecordBatch[];
+  /** Invoked after bind, before init. Receives the bind response. */
+  onBind?: BindResultCallback;
 }
