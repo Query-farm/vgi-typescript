@@ -145,26 +145,39 @@ test-http/%:
 	fi; \
 	cleanup; true
 
-# VgiClient end-to-end tests against vgi-python's vgi-example-http worker.
-# Spawn the Python worker, read its port from stdout, export
-# VGI_PYTHON_HTTP_WORKER, run bun:test, always clean up. Requires
-# `uv` on PATH and vgi-python at $VGI_PYTHON_DIR.
+# VgiClient end-to-end tests against vgi-python's HTTP workers.
+# Spawns the normal + versioned HTTP workers, each with --port-file
+# pointing at a temp file the worker writes atomically when listening.
+# The Makefile polls those files (no FIFOs, no stdout parsing) and
+# exports VGI_PYTHON_HTTP_WORKER + VGI_PYTHON_VERSIONED_HTTP_WORKER
+# before running bun:test. Always cleans up on exit. Requires `uv` on
+# PATH and vgi-python at $VGI_PYTHON_DIR.
 test-client:
-	@port_fifo=$$(mktemp -u); \
-	mkfifo "$$port_fifo"; \
-	( cd "$(VGI_PYTHON_DIR)" && uv run vgi-example-http --port 0 ) > "$$port_fifo" 2>/dev/null & \
+	@tmpdir=$$(mktemp -d); \
+	normal_file="$$tmpdir/normal.port"; \
+	vers_file="$$tmpdir/versioned.port"; \
+	( cd "$(VGI_PYTHON_DIR)" && uv run vgi-example-http --port 0 --port-file "$$normal_file" ) >/dev/null 2>&1 & \
 	py_pid=$$!; \
-	cleanup() { kill $$py_pid 2>/dev/null; wait $$py_pid 2>/dev/null; rm -f "$$port_fifo"; }; \
-	trap cleanup EXIT; \
-	port_line=""; \
-	read -t 30 port_line < "$$port_fifo" || { \
-		echo "ERROR: vgi-example-http did not print PORT line within 30s"; \
-		cleanup; exit 1; \
+	( cd "$(VGI_PYTHON_DIR)" && uv run vgi-example-versioned-worker --http --port 0 --port-file "$$vers_file" ) >/dev/null 2>&1 & \
+	vers_pid=$$!; \
+	cleanup() { \
+		kill $$py_pid $$vers_pid 2>/dev/null; \
+		wait $$py_pid $$vers_pid 2>/dev/null; \
+		rm -rf "$$tmpdir"; \
 	}; \
-	rm -f "$$port_fifo"; \
-	port=$${port_line#PORT:}; \
-	export VGI_PYTHON_HTTP_WORKER="http://127.0.0.1:$$port"; \
-	echo "Python HTTP worker: $$VGI_PYTHON_HTTP_WORKER"; \
+	trap cleanup EXIT; \
+	for i in $$(seq 1 300); do \
+		[ -s "$$normal_file" ] && [ -s "$$vers_file" ] && break; \
+		sleep 0.1; \
+	done; \
+	if [ ! -s "$$normal_file" ] || [ ! -s "$$vers_file" ]; then \
+		echo "ERROR: Python workers did not publish ports within 30s"; \
+		cleanup; exit 1; \
+	fi; \
+	export VGI_PYTHON_HTTP_WORKER="http://127.0.0.1:$$(cat $$normal_file)"; \
+	export VGI_PYTHON_VERSIONED_HTTP_WORKER="http://127.0.0.1:$$(cat $$vers_file)"; \
+	echo "Python HTTP worker:       $$VGI_PYTHON_HTTP_WORKER"; \
+	echo "Python versioned worker:  $$VGI_PYTHON_VERSIONED_HTTP_WORKER"; \
 	bun test src/client/__tests__/; \
 	rc=$$?; \
 	cleanup; \

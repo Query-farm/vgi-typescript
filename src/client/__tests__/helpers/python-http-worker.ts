@@ -19,6 +19,10 @@ export function pythonHttpWorkerAvailable(): boolean {
   return Boolean(process.env.VGI_PYTHON_HTTP_WORKER);
 }
 
+export function pythonVersionedHttpWorkerAvailable(): boolean {
+  return Boolean(process.env.VGI_PYTHON_VERSIONED_HTTP_WORKER);
+}
+
 export interface PythonHttpWorkerHandle {
   /** Ready-to-use VgiClient over HTTP. */
   client: VgiClient;
@@ -33,11 +37,22 @@ export interface PythonHttpWorkerHandle {
  * $VGI_PYTHON_HTTP_WORKER. Throws if the env var isn't set.
  */
 export async function startPythonHttpWorker(): Promise<PythonHttpWorkerHandle> {
-  const url = process.env.VGI_PYTHON_HTTP_WORKER;
+  return connectTo(process.env.VGI_PYTHON_HTTP_WORKER, "VGI_PYTHON_HTTP_WORKER");
+}
+
+/**
+ * Connect to the already-running Python *versioned* HTTP worker whose URL
+ * lives in $VGI_PYTHON_VERSIONED_HTTP_WORKER. Throws if not set.
+ */
+export async function startPythonVersionedHttpWorker(): Promise<PythonHttpWorkerHandle> {
+  return connectTo(process.env.VGI_PYTHON_VERSIONED_HTTP_WORKER, "VGI_PYTHON_VERSIONED_HTTP_WORKER");
+}
+
+async function connectTo(url: string | undefined, envName: string): Promise<PythonHttpWorkerHandle> {
   if (!url) {
     throw new Error(
-      "VGI_PYTHON_HTTP_WORKER is not set. Launch tests via `make test-client` " +
-      "which spawns vgi-example-http and exports the URL.",
+      `${envName} is not set. Launch tests via \`make test-client\` ` +
+      `which spawns the Python worker(s) and exports the URL(s).`,
     );
   }
   const rpc = httpConnect(url);
