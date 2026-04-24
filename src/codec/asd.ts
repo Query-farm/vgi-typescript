@@ -119,7 +119,7 @@ function buildList(value: any[], field: Field): any {
   const items = Array.isArray(value) ? value : [...value];
 
   if (items.length === 0) {
-    const emptyChild = makeData({ type: childField.type, length: 0, nullCount: 0 });
+    const emptyChild = buildEmptyData(childField.type);
     return makeData({
       type,
       length: 1,
@@ -191,6 +191,42 @@ function buildChildArrayData(items: any[], childField: Field): any {
 
   // Binary / Utf8 / Bool / primitive numbers
   return vectorFromArray(items, ct).data[0];
+}
+
+/**
+ * Build a zero-row Data node for any type — including containers that
+ * require their own children (List/Map/Struct). arrow-js's IPC writer walks
+ * `data.children[0]` on nested lists, so a plain makeData with length=0 and
+ * no children breaks on List<List<T>> / Struct children.
+ */
+function buildEmptyData(type: DataType): any {
+  if (DataType.isList(type)) {
+    const inner = (type as any).children[0] as Field;
+    const innerChild = buildEmptyData(inner.type);
+    return makeData({
+      type,
+      length: 0,
+      child: innerChild,
+      valueOffsets: new Int32Array([0]),
+      nullCount: 0,
+    } as any);
+  }
+  if (DataType.isMap(type)) {
+    const entriesField = (type as any).children[0] as Field;
+    const entriesData = buildEmptyData(entriesField.type);
+    return makeData({
+      type,
+      length: 0,
+      child: entriesData,
+      valueOffsets: new Int32Array([0]),
+      nullCount: 0,
+    } as any);
+  }
+  if (DataType.isStruct(type)) {
+    const children = (type as any).children.map((cf: Field) => buildEmptyData(cf.type));
+    return makeData({ type, length: 0, children, nullCount: 0 });
+  }
+  return makeData({ type, length: 0, nullCount: 0 });
 }
 
 function buildMap(value: Record<string, any>, field: Field): any {

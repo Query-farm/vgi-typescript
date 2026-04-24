@@ -308,15 +308,15 @@ export function deserializeArguments(bytes: Uint8Array): Arguments {
 
 export function serializeBindRequest(req: BindRequest): RecordBatch {
   const row: Record<string, any> = {
-    function_name: req.functionName,
+    function_name: req.function_name,
     arguments: serializeArguments(req.arguments),
-    function_type: req.functionType,
-    input_schema: req.inputSchema ? serializeSchema(req.inputSchema) : null,
+    function_type: req.function_type,
+    input_schema: req.input_schema ? serializeSchema(req.input_schema) : null,
     settings: req.settings ? serializeBatch(req.settings) : null,
     secrets: req.secrets ? serializeBatch(req.secrets) : null,
-    attach_id: req.attachId ?? null,
-    transaction_id: req.transactionId ?? null,
-    resolved_secrets_provided: req.resolvedSecretsProvided ?? false,
+    attach_id: req.attach_id ?? null,
+    transaction_id: req.transaction_id ?? null,
+    resolved_secrets_provided: req.resolved_secrets_provided ?? false,
   };
   return buildSingleRowBatch(BIND_REQUEST_SCHEMA, row);
 }
@@ -344,10 +344,10 @@ export function deserializeBindRequest(
   }
 
   return {
-    functionName: params.function_name,
+    function_name: params.function_name,
     arguments: args,
-    functionType,
-    inputSchema: params.input_schema
+    function_type: functionType,
+    input_schema: params.input_schema
       ? deserializeSchema(toUint8Array(params.input_schema))
       : null,
     settings: params.settings
@@ -356,11 +356,11 @@ export function deserializeBindRequest(
     secrets: params.secrets
       ? deserializeBatch(toUint8Array(params.secrets))
       : null,
-    attachId: params.attach_id ? toUint8Array(params.attach_id) : null,
-    transactionId: params.transaction_id
+    attach_id: params.attach_id ? toUint8Array(params.attach_id) : null,
+    transaction_id: params.transaction_id
       ? toUint8Array(params.transaction_id)
       : null,
-    resolvedSecretsProvided: params.resolved_secrets_provided ?? false,
+    resolved_secrets_provided: params.resolved_secrets_provided ?? false,
   };
 }
 
@@ -372,11 +372,11 @@ export function serializeBindResponse(
   resp: BindResponse
 ): Record<string, any> {
   return {
-    output_schema: serializeSchema(resp.outputSchema),
-    opaque_data: resp.opaqueData ?? null,
-    lookup_secret_types: resp.lookupSecretTypes ?? [],
-    lookup_scopes: resp.lookupScopes ?? [],
-    lookup_names: resp.lookupNames ?? [],
+    output_schema: serializeSchema(resp.output_schema),
+    opaque_data: resp.opaque_data ?? null,
+    lookup_secret_types: resp.lookup_secret_types ?? [],
+    lookup_scopes: resp.lookup_scopes ?? [],
+    lookup_names: resp.lookup_names ?? [],
   };
 }
 
@@ -389,11 +389,11 @@ export function deserializeBindResponse(
     return arr.filter((v: any) => v != null).map(String);
   };
   return {
-    outputSchema: deserializeSchema(toUint8Array(params.output_schema)),
-    opaqueData: params.opaque_data ? toUint8Array(params.opaque_data) : null,
-    lookupSecretTypes: toStrArray(params.lookup_secret_types),
-    lookupScopes: toStrArray(params.lookup_scopes),
-    lookupNames: toStrArray(params.lookup_names),
+    output_schema: deserializeSchema(toUint8Array(params.output_schema)),
+    opaque_data: params.opaque_data ? toUint8Array(params.opaque_data) : null,
+    lookup_secret_types: toStrArray(params.lookup_secret_types),
+    lookup_scopes: toStrArray(params.lookup_scopes),
+    lookup_names: toStrArray(params.lookup_names),
   };
 }
 
@@ -402,27 +402,27 @@ export function deserializeBindResponse(
 // ============================================================================
 
 export function serializeInitRequest(req: InitRequest): RecordBatch {
-  const bindCallBatch = serializeBindRequest(req.bindCall);
+  const bindCallBatch = serializeBindRequest(req.bind_call);
   const bindCallBytes = serializeBatch(bindCallBatch);
 
   const row: Record<string, any> = {
     bind_call: bindCallBytes,
-    output_schema: serializeSchema(req.outputSchema),
-    bind_opaque_data: req.bindOpaqueData ?? null,
-    projection_ids: req.projectionIds?.map((n) => BigInt(n)) ?? null,
-    pushdown_filters: req.pushdownFilters
-      ? serializeBatch(req.pushdownFilters)
+    output_schema: serializeSchema(req.output_schema),
+    bind_opaque_data: req.bind_opaque_data ?? null,
+    projection_ids: req.projection_ids?.map((n) => BigInt(n)) ?? null,
+    pushdown_filters: req.pushdown_filters
+      ? serializeBatch(req.pushdown_filters)
       : null,
-    join_keys: (req.joinKeys ?? []).map((b) => serializeBatch(b)),
+    join_keys: (req.join_keys ?? []).map((b) => serializeBatch(b)),
     phase: req.phase ?? null,
-    execution_id: req.executionId ?? null,
-    init_opaque_data: req.initOpaqueData ?? null,
-    order_by_column_name: req.orderByColumnName ?? null,
-    order_by_direction: req.orderByDirection ?? null,
-    order_by_null_order: req.orderByNullOrder ?? null,
-    order_by_limit: req.orderByLimit ?? null,
-    tablesample_percentage: req.tablesamplePercentage ?? null,
-    tablesample_seed: req.tablesampleSeed ?? null,
+    execution_id: req.execution_id ?? null,
+    init_opaque_data: req.init_opaque_data ?? null,
+    order_by_column_name: req.order_by_column_name ?? null,
+    order_by_direction: req.order_by_direction ?? null,
+    order_by_null_order: req.order_by_null_order ?? null,
+    order_by_limit: req.order_by_limit ?? null,
+    tablesample_percentage: req.tablesample_percentage ?? null,
+    tablesample_seed: req.tablesample_seed ?? null,
   };
   return buildSingleRowBatch(INIT_REQUEST_SCHEMA, row);
 }
@@ -483,29 +483,29 @@ export function deserializeInitRequest(
   }
 
   return {
-    bindCall,
-    outputSchema: deserializeSchema(toUint8Array(params.output_schema)),
-    bindOpaqueData: params.bind_opaque_data
+    bind_call: bindCall,
+    output_schema: deserializeSchema(toUint8Array(params.output_schema)),
+    bind_opaque_data: params.bind_opaque_data
       ? toUint8Array(params.bind_opaque_data)
       : null,
-    projectionIds,
-    pushdownFilters: params.pushdown_filters
+    projection_ids: projectionIds,
+    pushdown_filters: params.pushdown_filters
       ? deserializeBatch(toUint8Array(params.pushdown_filters))
       : null,
-    joinKeys,
+    join_keys: joinKeys,
     phase,
-    executionId: params.execution_id
+    execution_id: params.execution_id
       ? toUint8Array(params.execution_id)
       : null,
-    initOpaqueData: params.init_opaque_data
+    init_opaque_data: params.init_opaque_data
       ? toUint8Array(params.init_opaque_data)
       : null,
-    orderByColumnName: parseEnum(params.order_by_column_name) ?? null,
-    orderByDirection: parseDirection(params.order_by_direction),
-    orderByNullOrder: parseNullOrder(params.order_by_null_order),
-    orderByLimit: parseBigInt(params.order_by_limit),
-    tablesamplePercentage: parseNumber(params.tablesample_percentage),
-    tablesampleSeed: parseBigInt(params.tablesample_seed),
+    order_by_column_name: parseEnum(params.order_by_column_name) ?? null,
+    order_by_direction: parseDirection(params.order_by_direction),
+    order_by_null_order: parseNullOrder(params.order_by_null_order),
+    order_by_limit: parseBigInt(params.order_by_limit),
+    tablesample_percentage: parseNumber(params.tablesample_percentage),
+    tablesample_seed: parseBigInt(params.tablesample_seed),
   };
 }
 
@@ -553,9 +553,9 @@ export function serializeGlobalInitResponse(
   resp: GlobalInitResponse
 ): Record<string, any> {
   return {
-    execution_id: resp.executionId,
-    opaque_data: resp.opaqueData ?? null,
-    max_workers: resp.maxWorkers,
+    execution_id: resp.execution_id,
+    opaque_data: resp.opaque_data ?? null,
+    max_workers: resp.max_workers,
   };
 }
 
@@ -563,11 +563,11 @@ export function deserializeGlobalInitResponse(
   params: Record<string, any>
 ): GlobalInitResponse {
   return {
-    executionId: toUint8Array(params.execution_id),
-    opaqueData: params.opaque_data
+    execution_id: toUint8Array(params.execution_id),
+    opaque_data: params.opaque_data
       ? toUint8Array(params.opaque_data)
       : null,
-    maxWorkers: Number(params.max_workers),
+    max_workers: Number(params.max_workers),
   };
 }
 
@@ -588,8 +588,8 @@ export function deserializeCardinalityRequest(
   const bindCall = deserializeBindRequest(bindParams);
 
   return {
-    bindCall,
-    bindOpaqueData: params.bind_opaque_data
+    bind_call: bindCall,
+    bind_opaque_data: params.bind_opaque_data
       ? toUint8Array(params.bind_opaque_data)
       : null,
   };

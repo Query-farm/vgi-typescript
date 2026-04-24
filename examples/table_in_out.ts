@@ -56,9 +56,9 @@ const buffer_input = defineTableInOutFunction({
   description: "Collects all input batches and emits during finalization",
   maxWorkers: 1,
   onInit: (params) => ({
-    maxWorkers: 1,
-    executionId: params.executionId,
-    opaqueData: null,
+    max_workers: 1,
+    execution_id: params.executionId,
+    opaque_data: null,
   }),
   process: (
     params: TableInOutProcessParams,

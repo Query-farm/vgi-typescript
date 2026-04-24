@@ -133,18 +133,18 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
         const dummyArgs = t.arguments ?? new Arguments();
         try {
           const bindRequest = {
-            functionName: func.meta.name,
+            function_name: func.meta.name,
             arguments: dummyArgs,
-            functionType: "table" as any,
-            inputSchema: null,
+            function_type: "table" as any,
+            input_schema: null,
             settings: null,
             secrets: null,
-            attachId: attachId,
-            transactionId: null,
-            resolvedSecretsProvided: false,
+            attach_id: attachId,
+            transaction_id: null,
+            resolved_secrets_provided: false,
           };
           const response = func.bind(bindRequest);
-          colSchema = response.outputSchema;
+          colSchema = response.output_schema;
         } catch {
           colSchema = new Schema([]);
         }
@@ -287,9 +287,11 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
           sampling_pushdown: meta.samplingPushdown,
           supported_expression_filters: meta.supportedExpressionFilters,
           order_preservation: meta.preservesOrder as any,
-          max_workers: meta.maxWorkers,
+          max_workers: meta.maxWorkers ?? DEFAULT_MAX_WORKERS,
           order_dependent: meta.orderDependent as any,
           distinct_dependent: meta.distinctDependent as any,
+          supports_window: false,
+          has_finalize: false,
           required_settings: meta.requiredSettings,
           required_secrets: requiredSecrets.map((s) => ({
             secret_type: s.secret_type,

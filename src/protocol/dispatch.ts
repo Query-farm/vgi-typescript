@@ -69,11 +69,11 @@ import { Arguments } from "../arguments/arguments.js";
 import { deserializeSchema } from "../util/arrow.js";
 import { RecordBatchReader, DataType, Decimal } from "@query-farm/apache-arrow";
 
-function overloadContext(req: { functionName: string; arguments: any; inputSchema: any; functionType: any }): OverloadContext {
+function overloadContext(req: { function_name: string; arguments: any; input_schema: any; function_type: any }): OverloadContext {
   return {
     arguments: req.arguments,
-    inputSchema: req.inputSchema,
-    isScalar: String(req.functionType).toLowerCase() === "scalar",
+    inputSchema: req.input_schema,
+    isScalar: String(req.function_type).toLowerCase() === "scalar",
   };
 }
 
@@ -141,9 +141,9 @@ function wrapResult(
  * Used by both init and exchange handlers to avoid duplicating the try/catch.
  */
 function recoverFinalizeState(request: InitRequest, config: ProtocolConfig): any {
-  if (request.phase === TableInOutPhase.FINALIZE && request.initOpaqueData && config.recoverExchangeState) {
+  if (request.phase === TableInOutPhase.FINALIZE && request.init_opaque_data && config.recoverExchangeState) {
     try {
-      const recovered = config.recoverExchangeState(request.initOpaqueData);
+      const recovered = config.recoverExchangeState(request.init_opaque_data);
       return recovered?.userState;
     } catch (e: any) {
       throw new Error(`Failed to recover FINALIZE state from init_opaque_data: ${e.message}`);
@@ -186,7 +186,7 @@ export function buildVgiProtocol(config: ProtocolConfig): Protocol {
     handler: (params) => {
       const innerParams = unwrapRequest(params.request);
       const request = deserializeBindRequest(innerParams);
-      const func = registry.get(request.functionName, overloadContext(request));
+      const func = registry.get(request.function_name, overloadContext(request));
       const response = func.bind(request);
       const serialized = serializeBindResponse(response);
       return wrapResult(serialized, bindResponseInnerSchema);
@@ -205,7 +205,7 @@ export function buildVgiProtocol(config: ProtocolConfig): Protocol {
       const requestIpcBytes = toUint8Array(params.request);
       const innerParams = unwrapRequest(params.request);
       const request = deserializeInitRequest(innerParams);
-      const func = registry.get(request.bindCall.functionName, overloadContext(request.bindCall));
+      const func = registry.get(request.bind_call.function_name, overloadContext(request.bind_call));
 
       const initResponse = func.globalInit(request);
 
@@ -234,11 +234,11 @@ export function buildVgiProtocol(config: ProtocolConfig): Protocol {
       // The Arrow state serializer picks fields by name; live objects
       // (_handlers, _handlerState, _initResponse, __outputSchema) are ignored.
       const state: any = {
-        functionName: request.bindCall.functionName,
+        functionName: request.bind_call.function_name,
         initRequestIpc: requestIpcBytes,
-        executionId: initResponse.executionId,
-        maxWorkers: Number(initResponse.maxWorkers),
-        opaqueData: initResponse.opaqueData ?? null,
+        executionId: initResponse.execution_id,
+        maxWorkers: Number(initResponse.max_workers),
+        opaqueData: initResponse.opaque_data ?? null,
         isProducer,
         userState,
         __isProducer: isProducer,
@@ -274,13 +274,13 @@ export function buildVgiProtocol(config: ProtocolConfig): Protocol {
         const initRequestBatch = deserializeBatch(state.initRequestIpc);
         const initRequestDict = batchToScalarDict(initRequestBatch);
         const request = deserializeInitRequest(initRequestDict);
-        const func = registry.get(state.functionName, overloadContext(request.bindCall));
+        const func = registry.get(state.functionName, overloadContext(request.bind_call));
         const executionId = state.executionId;
         const opaqueData = state.opaqueData ?? null;
         const initResponse: GlobalInitResponse = {
-          executionId,
-          maxWorkers: Number(state.maxWorkers ?? 1),
-          opaqueData,
+          execution_id: executionId,
+          max_workers: Number(state.maxWorkers ?? 1),
+          opaque_data: opaqueData,
         };
 
         // Recover accumulated state for FINALIZE phase from initOpaqueData
@@ -339,7 +339,7 @@ export function buildVgiProtocol(config: ProtocolConfig): Protocol {
     handler: (params) => {
       const innerParams = unwrapRequest(params.request);
       const request = deserializeCardinalityRequest(innerParams);
-      const func = registry.get(request.bindCall.functionName, overloadContext(request.bindCall));
+      const func = registry.get(request.bind_call.function_name, overloadContext(request.bind_call));
       let cardResult: Record<string, any>;
       if (func.cardinality) {
         cardResult = serializeTableCardinality(func.cardinality(request));
@@ -363,7 +363,7 @@ export function buildVgiProtocol(config: ProtocolConfig): Protocol {
     handler: (params) => {
       const innerParams = unwrapRequest(params.request);
       const request = deserializeCardinalityRequest(innerParams);
-      const func = registry.get(request.bindCall.functionName, overloadContext(request.bindCall));
+      const func = registry.get(request.bind_call.function_name, overloadContext(request.bind_call));
       if (!func.statistics) return { result: null };
       const stats = func.statistics(request);
       if (!stats || stats.length === 0) return { result: null };

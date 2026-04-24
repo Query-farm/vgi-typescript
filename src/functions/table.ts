@@ -210,14 +210,14 @@ export function defineTableFunction<
       const secrets = batchToSecretDict(request.secrets);
       const result = config.onBind({
         args, bindCall: request, settings, secrets,
-        resolvedSecretsProvided: request.resolvedSecretsProvided ?? false,
+        resolvedSecretsProvided: request.resolved_secrets_provided ?? false,
       });
       return {
-        outputSchema: result.outputSchema,
-        opaqueData: result.opaqueData ?? null,
-        lookupSecretTypes: result.lookupSecretTypes,
-        lookupScopes: result.lookupScopes,
-        lookupNames: result.lookupNames,
+        output_schema: result.outputSchema,
+        opaque_data: result.opaqueData ?? null,
+        lookup_secret_types: result.lookupSecretTypes,
+        lookup_scopes: result.lookupScopes,
+        lookup_names: result.lookupNames,
       };
     },
 
@@ -225,31 +225,31 @@ export function defineTableFunction<
       const executionId = new Uint8Array(16);
       crypto.getRandomValues(executionId);
 
-      if (request.executionId) {
+      if (request.execution_id) {
         // Secondary init - reuse execution ID
         return {
-          maxWorkers: config.maxWorkers ?? 1,
-          executionId: request.executionId,
-          opaqueData: null,
+          max_workers: config.maxWorkers ?? 1,
+          execution_id: request.execution_id,
+          opaque_data: null,
         };
       }
 
       if (config.onInit) {
-        const args = extractArgs(request.bindCall);
+        const args = extractArgs(request.bind_call);
         const boundStorage = new BoundStorage(globalStorage, executionId);
         return config.onInit({
           args,
           initCall: request,
-          outputSchema: request.outputSchema,
+          outputSchema: request.output_schema,
           executionId,
           storage: boundStorage,
         });
       }
 
       return {
-        maxWorkers: config.maxWorkers ?? 1,
-        executionId,
-        opaqueData: null,
+        max_workers: config.maxWorkers ?? 1,
+        execution_id: executionId,
+        opaque_data: null,
       };
     },
 
@@ -257,27 +257,27 @@ export function defineTableFunction<
       request: InitRequest,
       response: GlobalInitResponse
     ): StreamHandlers {
-      const args = extractArgs(request.bindCall);
-      const settings = batchToScalarDict(request.bindCall.settings);
-      const secrets = batchToSecretDict(request.bindCall.secrets);
+      const args = extractArgs(request.bind_call);
+      const settings = batchToScalarDict(request.bind_call.settings);
+      const secrets = batchToSecretDict(request.bind_call.secrets);
 
       // Apply projection pushdown only if the function supports it
-      const projIds = request.projectionIds && meta.projectionPushdown
-        ? request.projectionIds
+      const projIds = request.projection_ids && meta.projectionPushdown
+        ? request.projection_ids
         : null;
       const outputSchema = projIds
-        ? projectSchema(projIds, request.outputSchema)
-        : request.outputSchema;
+        ? projectSchema(projIds, request.output_schema)
+        : request.output_schema;
 
       // Deserialize pushdown filters. Pass a join-keys column lookup so that
       // filters DuckDB promoted to join_keys (IN/OR lists, etc.) are
       // materialized as InFilters rather than silently dropped.
-      const joinKeysLookup = buildJoinKeysLookup(request.joinKeys);
-      const pushdownFilters = request.pushdownFilters
-        ? deserializeFilters(request.pushdownFilters, joinKeysLookup)
+      const joinKeysLookup = buildJoinKeysLookup(request.join_keys);
+      const pushdownFilters = request.pushdown_filters
+        ? deserializeFilters(request.pushdown_filters, joinKeysLookup)
         : undefined;
 
-      const boundStorage = new BoundStorage(globalStorage, response.executionId);
+      const boundStorage = new BoundStorage(globalStorage, response.execution_id);
 
       const processParams: TableProcessParams<TArgs> = {
         args,
@@ -336,30 +336,30 @@ export function defineTableFunction<
 
     cardinality: config.cardinality
       ? (request: TableFunctionCardinalityRequest) => {
-          const args = extractArgs(request.bindCall);
-          const settings = batchToScalarDict(request.bindCall.settings);
-          const secrets = batchToSecretDict(request.bindCall.secrets);
+          const args = extractArgs(request.bind_call);
+          const settings = batchToScalarDict(request.bind_call.settings);
+          const secrets = batchToSecretDict(request.bind_call.secrets);
           return config.cardinality!({
             args,
-            bindCall: request.bindCall,
+            bindCall: request.bind_call,
             settings,
             secrets,
-            resolvedSecretsProvided: request.bindCall.resolvedSecretsProvided ?? false,
+            resolvedSecretsProvided: request.bind_call.resolved_secrets_provided ?? false,
           });
         }
       : undefined,
 
     statistics: config.statistics
       ? (request: TableFunctionCardinalityRequest) => {
-          const args = extractArgs(request.bindCall);
-          const settings = batchToScalarDict(request.bindCall.settings);
-          const secrets = batchToSecretDict(request.bindCall.secrets);
+          const args = extractArgs(request.bind_call);
+          const settings = batchToScalarDict(request.bind_call.settings);
+          const secrets = batchToSecretDict(request.bind_call.secrets);
           return config.statistics!({
             args,
-            bindCall: request.bindCall,
+            bindCall: request.bind_call,
             settings,
             secrets,
-            resolvedSecretsProvided: request.bindCall.resolvedSecretsProvided ?? false,
+            resolvedSecretsProvided: request.bind_call.resolved_secrets_provided ?? false,
           });
         }
       : undefined,

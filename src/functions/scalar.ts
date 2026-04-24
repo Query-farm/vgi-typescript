@@ -197,7 +197,7 @@ export function defineScalarFunction(config: ScalarFunctionConfig): VgiFunction 
       if (config.outputType) {
         outputType = config.outputType({
           constArgs,
-          argumentsSchema: request.inputSchema ?? new Schema([]),
+          argumentsSchema: request.input_schema ?? new Schema([]),
           settings,
           secrets,
         });
@@ -213,16 +213,16 @@ export function defineScalarFunction(config: ScalarFunctionConfig): VgiFunction 
         new Field("result", outputType, true),
       ]);
 
-      return { outputSchema, opaqueData: null };
+      return { output_schema: outputSchema, opaque_data: null };
     },
 
     globalInit(request: InitRequest): GlobalInitResponse {
       const executionId = new Uint8Array(16);
       crypto.getRandomValues(executionId);
       return {
-        maxWorkers: config.maxWorkers ?? DEFAULT_MAX_WORKERS,
-        executionId,
-        opaqueData: null,
+        max_workers: config.maxWorkers ?? DEFAULT_MAX_WORKERS,
+        execution_id: executionId,
+        opaque_data: null,
       };
     },
 
@@ -230,21 +230,21 @@ export function defineScalarFunction(config: ScalarFunctionConfig): VgiFunction 
       request: InitRequest,
       response: GlobalInitResponse
     ): StreamHandlers {
-      const outputSchema = request.outputSchema;
-      const settings = batchToScalarDict(request.bindCall.settings);
-      const secrets = batchToSecretDict(request.bindCall.secrets);
+      const outputSchema = request.output_schema;
+      const settings = batchToScalarDict(request.bind_call.settings);
+      const secrets = batchToSecretDict(request.bind_call.secrets);
 
       // Extract const args (DuckDB only sends const values, indexed sequentially)
       const constArgs: Record<string, any> = {};
       let constIdx = 0;
       for (const spec of specs) {
         if (spec.isConst) {
-          constArgs[spec.name] = request.bindCall.arguments.get(constIdx, undefined);
+          constArgs[spec.name] = request.bind_call.arguments.get(constIdx, undefined);
           constIdx++;
         }
       }
 
-      const inputSchema = request.bindCall.inputSchema;
+      const inputSchema = request.bind_call.input_schema;
 
       return {
         outputSchema,

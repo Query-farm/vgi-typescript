@@ -449,9 +449,9 @@ const partitioned_sequence = defineTableFunction<PartitionedSequenceArgs, Partit
     }
     params.storage.queuePush(workItems);
     return {
-      maxWorkers: DEFAULT_MAX_WORKERS,
-      executionId: params.executionId,
-      opaqueData: null,
+      max_workers: DEFAULT_MAX_WORKERS,
+      execution_id: params.executionId,
+      opaque_data: null,
     };
   },
   initialState: () => ({

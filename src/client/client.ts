@@ -101,15 +101,15 @@ export class VgiClient {
     transactionId: Uint8Array | null,
   ): Promise<{ request: BindRequest; response: BindResponse }> {
     const request: BindRequest = {
-      functionName,
+      function_name: functionName,
       arguments: args,
-      functionType,
-      inputSchema,
+      function_type: functionType,
+      input_schema: inputSchema,
       settings: settings ?? null,
       secrets: secrets ?? null,
-      attachId: this.attachId,
-      transactionId: transactionId ?? null,
-      resolvedSecretsProvided: false,
+      attach_id: this.attachId,
+      transaction_id: transactionId ?? null,
+      resolved_secrets_provided: false,
     };
 
     const requestBatch = serializeBindRequest(request);
@@ -131,21 +131,21 @@ export class VgiClient {
     },
   ): Promise<{ session: StreamSession; initResponse: GlobalInitResponse }> {
     const initRequest: InitRequest = {
-      bindCall: bindRequest,
-      outputSchema: bindResponse.outputSchema,
-      bindOpaqueData: bindResponse.opaqueData,
-      projectionIds: opts?.projectionIds ?? null,
-      pushdownFilters: opts?.pushdownFilters ?? null,
-      joinKeys: [],
+      bind_call: bindRequest,
+      output_schema: bindResponse.output_schema,
+      bind_opaque_data: bindResponse.opaque_data,
+      projection_ids: opts?.projectionIds ?? null,
+      pushdown_filters: opts?.pushdownFilters ?? null,
+      join_keys: [],
       phase: opts?.phase ?? null,
-      orderByColumnName: null,
-      orderByDirection: null,
-      orderByNullOrder: null,
-      orderByLimit: null,
-      tablesamplePercentage: null,
-      tablesampleSeed: null,
-      executionId: opts?.executionId ?? null,
-      initOpaqueData: null,
+      order_by_column_name: null,
+      order_by_direction: null,
+      order_by_null_order: null,
+      order_by_limit: null,
+      tablesample_percentage: null,
+      tablesample_seed: null,
+      execution_id: opts?.executionId ?? null,
+      init_opaque_data: null,
     };
 
     const initBatch = serializeInitRequest(initRequest);
@@ -183,7 +183,7 @@ export class VgiClient {
       pushdownFilters: opts.pushdownFilters,
     });
 
-    const outputSchema = bindResp.outputSchema;
+    const outputSchema = bindResp.output_schema;
     try {
       for await (const rows of session) {
         if (rows.length > 0) {
@@ -225,7 +225,7 @@ export class VgiClient {
 
     const { session } = await this._doInit(bindReq, bindResp);
 
-    const outputSchema = bindResp.outputSchema;
+    const outputSchema = bindResp.output_schema;
     try {
       // Exchange first batch
       const firstRows = [...iterRows(firstBatch)];
@@ -286,7 +286,7 @@ export class VgiClient {
       },
     );
 
-    const outputSchema = bindResp.outputSchema;
+    const outputSchema = bindResp.output_schema;
     try {
       // Exchange first batch
       const firstRows = [...iterRows(firstBatch)];
@@ -315,7 +315,7 @@ export class VgiClient {
         projectionIds: opts.projectionIds,
         pushdownFilters: opts.pushdownFilters,
         phase: TableInOutPhase.FINALIZE,
-        executionId: initResponse.executionId,
+        executionId: initResponse.execution_id,
       },
     );
 

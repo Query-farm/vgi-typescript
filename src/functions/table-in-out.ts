@@ -192,14 +192,14 @@ export function defineTableInOutFunction<
           secrets,
         });
         return {
-          outputSchema: result.outputSchema,
-          opaqueData: result.opaqueData ?? null,
+          output_schema: result.outputSchema,
+          opaque_data: result.opaqueData ?? null,
         };
       }
       // Default: pass through input schema
       return {
-        outputSchema: request.inputSchema ?? new Schema([]),
-        opaqueData: null,
+        output_schema: request.input_schema ?? new Schema([]),
+        opaque_data: null,
       };
     },
 
@@ -207,28 +207,28 @@ export function defineTableInOutFunction<
       const executionId = new Uint8Array(16);
       crypto.getRandomValues(executionId);
 
-      if (request.executionId) {
+      if (request.execution_id) {
         return {
-          maxWorkers: DEFAULT_MAX_WORKERS,
-          executionId: request.executionId,
-          opaqueData: null,
+          max_workers: DEFAULT_MAX_WORKERS,
+          execution_id: request.execution_id,
+          opaque_data: null,
         };
       }
 
       if (config.onInit) {
-        const args = extractArgs(request.bindCall);
+        const args = extractArgs(request.bind_call);
         return config.onInit({
           args,
           initCall: request,
-          outputSchema: request.outputSchema,
+          outputSchema: request.output_schema,
           executionId,
         });
       }
 
       return {
-        maxWorkers: config.maxWorkers ?? 1,
-        executionId,
-        opaqueData: null,
+        max_workers: config.maxWorkers ?? 1,
+        execution_id: executionId,
+        opaque_data: null,
       };
     },
 
@@ -237,30 +237,30 @@ export function defineTableInOutFunction<
       response: GlobalInitResponse,
       accumulatedState?: any,
     ): StreamHandlers {
-      const args = extractArgs(request.bindCall);
-      const settings = batchToScalarDict(request.bindCall.settings);
-      const secrets = batchToSecretDict(request.bindCall.secrets);
+      const args = extractArgs(request.bind_call);
+      const settings = batchToScalarDict(request.bind_call.settings);
+      const secrets = batchToSecretDict(request.bind_call.secrets);
 
       // Apply projection pushdown only if the function supports it
-      const projIds = request.projectionIds && meta.projectionPushdown
-        ? request.projectionIds
+      const projIds = request.projection_ids && meta.projectionPushdown
+        ? request.projection_ids
         : null;
       const outputSchema = projIds
-        ? projectSchema(projIds, request.outputSchema)
-        : request.outputSchema;
+        ? projectSchema(projIds, request.output_schema)
+        : request.output_schema;
 
       // Deserialize pushdown filters. Pass a join-keys column lookup so that
       // filters DuckDB promoted to join_keys (IN/OR lists, etc.) are
       // materialized as InFilters rather than silently dropped.
-      const joinKeysLookup = buildJoinKeysLookup(request.joinKeys);
-      const pushdownFilters = request.pushdownFilters
-        ? deserializeFilters(request.pushdownFilters, joinKeysLookup)
+      const joinKeysLookup = buildJoinKeysLookup(request.join_keys);
+      const pushdownFilters = request.pushdown_filters
+        ? deserializeFilters(request.pushdown_filters, joinKeysLookup)
         : undefined;
 
       // Create BoundStorage for cross-phase/cross-worker data sharing
       const boundStorage = new BoundStorage(
         defaultStorage,
-        response.executionId ?? new Uint8Array(16),
+        response.execution_id ?? new Uint8Array(16),
       );
 
       const processParams: TableInOutProcessParams<TArgs> = {
@@ -336,7 +336,7 @@ export function defineTableInOutFunction<
 
       return {
         outputSchema,
-        inputSchema: request.bindCall.inputSchema ?? undefined,
+        inputSchema: request.bind_call.input_schema ?? undefined,
         exchangeInit: () => ({ state, processParams }),
         exchangeFn: async (
           eState: {
