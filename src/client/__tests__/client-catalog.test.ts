@@ -248,3 +248,165 @@ describe.skipIf(skip)("VgiClient — tableScanFunctionGet", () => {
     expect(typeof result).toBe("object");
   });
 });
+
+// ============================================================================
+// Content fidelity: comments + tags should round-trip byte-exact from the
+// Python catalog definitions. These tests explicitly target the Map<Utf8,Utf8>
+// and nullable-Utf8 wire paths that a naive implementation is most likely to
+// mangle.
+// ============================================================================
+
+describe.skipIf(skip)("VgiClient — content fidelity: comments and tags", () => {
+  test("CatalogAttachResult tags round-trip all entries with exact values", async () => {
+    // Attach fresh so we see the full tag map (our top-level fixture attached
+    // early and discarded tags via the happy-path variant).
+    const r = await client.catalogAttach("example");
+    try {
+      // Python side sets tags={"source": "vgi-example-worker", "version": "1"}.
+      // Exact-match on both keys + values. Multi-entry Map was the place a
+      // prior hand-written Map encoder silently produced {"0": "source,vgi-..."} —
+      // this is the regression guard.
+      expect(r.tags).toEqual({
+        source: "vgi-example-worker",
+        version: "1",
+      });
+      // Catalog-level comment must round-trip byte-exact.
+      expect(r.comment).toBe("Example VGI catalog for testing");
+    } finally {
+      await client.catalogDetach(r.attach_id);
+    }
+  });
+
+  test("schemaGet('main').comment round-trips exactly", async () => {
+    const main = await client.schemaGet(attachId, "main");
+    expect(main).not.toBeNull();
+    expect(main!.comment).toBe("Example functions for testing VGI");
+  });
+
+  test("schemaGet('data').comment round-trips exactly", async () => {
+    const data = await client.schemaGet(attachId, "data");
+    expect(data).not.toBeNull();
+    expect(data!.comment).toBe("Example tables backed by functions");
+  });
+
+  test("tableGet.comment round-trips exactly for a known table", async () => {
+    const t = await client.tableGet(attachId, "data", "numbers");
+    expect(t).not.toBeNull();
+    expect(t!.comment).toBe("First 100 integers (demonstrates explicit columns)");
+  });
+
+  test("tableGet.tags is an empty plain object for tables without tags", async () => {
+    // Most example tables don't set tags. The generic ASD Map decoder must
+    // produce {} — not null, not Map, not some iterator shell.
+    const t = await client.tableGet(attachId, "data", "numbers");
+    expect(t).not.toBeNull();
+    expect(t!.tags).toEqual({});
+    expect(Object.prototype.toString.call(t!.tags)).toBe("[object Object]");
+  });
+
+  test("viewGet retrieves a view with its comment round-tripped", async () => {
+    const v = await client.viewGet(attachId, "main", "first_ten");
+    expect(v).not.toBeNull();
+    expect(v!.name).toBe("first_ten");
+    expect(v!.definition).toBe("SELECT * FROM sequence(10)");
+    expect(v!.comment).toBe("First 10 integers");
+  });
+
+  test("schemaContentsViews('main') returns all views with exact comments", async () => {
+    const views = await client.schemaContentsViews(attachId, "main");
+    const byName = Object.fromEntries(views.map((v) => [v.name, v]));
+    expect(byName["first_ten"]?.comment).toBe("First 10 integers");
+    expect(byName["even_numbers"]?.comment).toBe("Even numbers from 0 to 98");
+    expect(byName["first_ten"]?.definition).toBe("SELECT * FROM sequence(10)");
+  });
+
+  test("FunctionInfo.description round-trips for a known scalar", async () => {
+    const scalars = await client.schemaContentsFunctions(attachId, "main", "SCALAR_FUNCTION");
+    const d = scalars.find((f) => f.name === "double");
+    expect(d).toBeDefined();
+    expect(d!.description).toBe("Doubles numeric values");
+  });
+
+  test("FunctionInfo.description round-trips for a known table function", async () => {
+    const fns = await client.schemaContentsFunctions(attachId, "main", "TABLE_FUNCTION");
+    const seq = fns.find((f) => f.name === "sequence");
+    expect(seq).toBeDefined();
+    // Exact description depends on SequenceFunction; assert non-empty at
+    // minimum (too-specific strings break under upstream copy tweaks).
+    expect(typeof seq!.description).toBe("string");
+    expect(seq!.description!.length).toBeGreaterThan(0);
+  });
+
+  test("MacroInfo.comment round-trips exactly", async () => {
+    const m = await client.macroGet(attachId, "main", "vgi_multiply");
+    expect(m).not.toBeNull();
+    expect(m!.comment).toBe("Multiply two values");
+  });
+
+  test("MacroInfo.comment round-trips for the table-macro variant", async () => {
+    const m = await client.macroGet(attachId, "main", "vgi_range_table");
+    expect(m).not.toBeNull();
+    expect(m!.comment).toBe("Table macro returning range of values");
+  });
+
+  test("SchemaInfo.tags is {} for schemas that don't set tags", async () => {
+    const schemas = await client.schemas(attachId);
+    for (const s of schemas) {
+      // Python side defaults to empty dict.
+      expect(s.tags).toEqual({});
+    }
+  });
+});
+
+// ============================================================================
+// attach options: send a non-null options RecordBatch on the wire and
+// verify (a) the worker accepts it, (b) malformed bytes don't crash the
+// server. These exercise the `options?: Uint8Array` leg of catalogAttach
+// that no prior test has touched.
+// ============================================================================
+
+describe.skipIf(skip)("VgiClient — catalogAttach options", () => {
+  test("attach with zero-byte options is coerced to null (no server crash)", async () => {
+    // REGRESSION: passing `new Uint8Array(0)` used to reach the Python
+    // server as 0 bytes on a non-null binary field, which pyarrow's IPC
+    // reader rejects with "Tried reading schema message, was null or
+    // length 0". The client now coerces zero-byte options to null so a
+    // natural "no options" gesture doesn't produce an opaque server
+    // error. This test pins that behavior.
+    const r = await client.catalogAttach("example", new Uint8Array(0));
+    try {
+      expect(r.attach_id).toBeInstanceOf(Uint8Array);
+      expect(r.attach_id.byteLength).toBeGreaterThan(0);
+    } finally {
+      await client.catalogDetach(r.attach_id);
+    }
+  });
+
+  test("attach with undefined options is equivalent to zero-byte", async () => {
+    // Same result path as above — explicit vs implicit "no options".
+    const r = await client.catalogAttach("example", undefined);
+    try {
+      expect(r.attach_id.byteLength).toBeGreaterThan(0);
+    } finally {
+      await client.catalogDetach(r.attach_id);
+    }
+  });
+
+  test("attach with malformed options bytes fails cleanly (does not hang)", async () => {
+    // Random bytes that aren't valid Arrow IPC. The server should either
+    // (a) error in deserialization or (b) the catalog handler ignores it.
+    // Either is acceptable — the important invariant is we don't hang and
+    // we get a typed result, not a torn stream.
+    const junk = new Uint8Array([0xde, 0xad, 0xbe, 0xef, 0x00, 0x01, 0x02, 0x03]);
+    try {
+      const r = await client.catalogAttach("example", junk);
+      // If the server accepts it silently (common when options are ignored),
+      // that's fine — clean up and move on.
+      await client.catalogDetach(r.attach_id);
+    } catch (err) {
+      // If it fails, it must fail with a structured error, not a hang or
+      // unhandled rejection. Just checking the promise rejected is enough.
+      expect(err).toBeDefined();
+    }
+  });
+});

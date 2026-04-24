@@ -409,10 +409,18 @@ export class VgiClient {
       new Field("data_version_spec", new Utf8(), true),
       new Field("implementation_version", new Utf8(), true),
     ]);
+    // Zero-byte options is equivalent to "no options" — the server expects
+    // either a null field or a valid IPC-encoded RecordBatch of option
+    // columns, and a zero-byte buffer on a non-null binary field crashes
+    // pyarrow's IPC reader with "Tried reading schema message, was null
+    // or length 0". Coerce defensively so callers who pass
+    // `new Uint8Array(0)` (a natural "empty options" gesture) don't hit
+    // a cryptic server error.
+    const wireOptions = options == null || options.byteLength === 0 ? null : options;
     const innerBatch = batchFromColumns(
       {
         name: [name],
-        options: [options ?? null],
+        options: [wireOptions],
         data_version_spec: [opts?.dataVersionSpec ?? null],
         implementation_version: [opts?.implementationVersion ?? null],
       },
