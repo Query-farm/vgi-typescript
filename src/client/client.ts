@@ -42,10 +42,7 @@ import {
 } from "../catalog/interface.js";
 import { wrapRequest, unwrapResult } from "./protocol.js";
 import { toUint8Array } from "../util/bytes.js";
-import {
-  serializeAttachOptions,
-  type AttachOptionValue,
-} from "../util/attach-options.js";
+import { serializeAttachOptions } from "../util/attach-options.js";
 import type {
   VgiClientOptions,
   TableFunctionOptions,
@@ -87,11 +84,20 @@ export class VgiClientError extends Error {
  */
 export class VgiClient {
   private readonly rpc: RpcClient;
-  private readonly attachId: Uint8Array | null;
+  private readonly defaultAttachId: Uint8Array | null;
 
+  /**
+   * Construct a VgiClient wrapping an `RpcClient` transport.
+   *
+   * `options.attachId` sets a client-wide default attach ID used by every
+   * function call that doesn't supply its own. Per-call `attachId` on
+   * `TableFunctionOptions`/`ScalarFunctionOptions`/`TableInOutFunctionOptions`
+   * takes precedence — useful when a single client talks to multiple
+   * attached catalogs.
+   */
   constructor(rpc: RpcClient, options?: VgiClientOptions) {
     this.rpc = rpc;
-    this.attachId = options?.attachId ?? null;
+    this.defaultAttachId = options?.attachId ?? null;
   }
 
   // ==========================================================================
@@ -106,6 +112,7 @@ export class VgiClient {
     settings: RecordBatch | null,
     secrets: RecordBatch | null,
     transactionId: Uint8Array | null,
+    attachId: Uint8Array | null = null,
   ): Promise<{ request: BindRequest; response: BindResponse }> {
     const request: BindRequest = {
       function_name: functionName,
@@ -114,7 +121,7 @@ export class VgiClient {
       input_schema: inputSchema,
       settings: settings ?? null,
       secrets: secrets ?? null,
-      attach_id: this.attachId,
+      attach_id: attachId ?? this.defaultAttachId,
       transaction_id: transactionId ?? null,
       resolved_secrets_provided: false,
     };
@@ -183,6 +190,7 @@ export class VgiClient {
       opts.settings ?? null,
       null,
       opts.transactionId ?? null,
+      opts.attachId ?? null,
     );
 
     const { session } = await this._doInit(bindReq, bindResp, {
@@ -203,13 +211,13 @@ export class VgiClient {
   }
 
   // ==========================================================================
-  // Scalar function — RecordBatch API
+  // Scalar function
   // ==========================================================================
 
-  /** Call a scalar function, yielding output as RecordBatch instances. */
-  async *scalarFunction(
+  /** Call a scalar function, yielding output as row objects. */
+  async *scalarFunctionRows(
     opts: ScalarFunctionOptions,
-  ): AsyncGenerator<RecordBatch> {
+  ): AsyncGenerator<Record<string, any>[]> {
     // Peek first batch to get input schema
     const inputIter = toAsyncIterator(opts.input);
     const first = await inputIter.next();
@@ -228,41 +236,32 @@ export class VgiClient {
       opts.settings ?? null,
       opts.secrets ?? null,
       opts.transactionId ?? null,
+      opts.attachId ?? null,
     );
 
     const { session } = await this._doInit(bindReq, bindResp);
 
-    const outputSchema = bindResp.output_schema;
     try {
       // Exchange first batch
-      const firstRows = [...iterRows(firstBatch)];
-      const outRows = await session.exchange(firstRows);
-      if (outRows.length > 0) {
-        yield batchFromRows(outRows, outputSchema);
-      }
+      const outRows = await session.exchange([...iterRows(firstBatch)]);
+      if (outRows.length > 0) yield outRows;
 
       // Exchange remaining batches
       for await (const batch of { [Symbol.asyncIterator]: () => inputIter }) {
-        const rows = [...iterRows(batch)];
-        const result = await session.exchange(rows);
-        if (result.length > 0) {
-          yield batchFromRows(result, outputSchema);
-        }
+        const result = await session.exchange([...iterRows(batch)]);
+        if (result.length > 0) yield result;
       }
     } finally {
       session.close();
     }
   }
 
-  // ==========================================================================
-  // Table-in-out function — RecordBatch API
-  // ==========================================================================
-
-  /** Call a table-in-out function, yielding output as RecordBatch instances. */
-  async *tableInOutFunction(
-    opts: TableInOutFunctionOptions,
+  /** Call a scalar function, yielding output as RecordBatch instances. */
+  async *scalarFunction(
+    opts: ScalarFunctionOptions,
   ): AsyncGenerator<RecordBatch> {
-    // Peek first batch to get input schema
+    // Same path as scalarFunctionRows, but with the output schema captured
+    // here so we can pack rows back into batches without a re-bind.
     const inputIter = toAsyncIterator(opts.input);
     const first = await inputIter.next();
     if (first.done) return;
@@ -274,15 +273,60 @@ export class VgiClient {
 
     const { request: bindReq, response: bindResp } = await this._doBind(
       opts.functionName,
-      FunctionType.TABLE,  // table-in-out uses TABLE function type at the bind level
+      FunctionType.SCALAR,
+      args,
+      inputSchema,
+      opts.settings ?? null,
+      opts.secrets ?? null,
+      opts.transactionId ?? null,
+      opts.attachId ?? null,
+    );
+
+    const { session } = await this._doInit(bindReq, bindResp);
+    const outputSchema = bindResp.output_schema;
+    try {
+      const outRows = await session.exchange([...iterRows(firstBatch)]);
+      if (outRows.length > 0) yield batchFromRows(outRows, outputSchema);
+
+      for await (const batch of { [Symbol.asyncIterator]: () => inputIter }) {
+        const result = await session.exchange([...iterRows(batch)]);
+        if (result.length > 0) yield batchFromRows(result, outputSchema);
+      }
+    } finally {
+      session.close();
+    }
+  }
+
+  // ==========================================================================
+  // Table-in-out function
+  // ==========================================================================
+
+  /** Call a table-in-out function, yielding output as row objects. */
+  async *tableInOutFunctionRows(
+    opts: TableInOutFunctionOptions,
+  ): AsyncGenerator<Record<string, any>[]> {
+    const inputIter = toAsyncIterator(opts.input);
+    const first = await inputIter.next();
+    if (first.done) return;
+
+    const firstBatch: RecordBatch = first.value;
+    const inputSchema = firstBatch.schema;
+
+    const args = opts.arguments ?? new Arguments();
+
+    const { request: bindReq, response: bindResp } = await this._doBind(
+      opts.functionName,
+      FunctionType.TABLE, // table-in-out uses TABLE function type at the bind level
       args,
       inputSchema,
       opts.settings ?? null,
       null,
       opts.transactionId ?? null,
+      opts.attachId ?? null,
     );
 
-    // Phase 1: INPUT
+    // Phase 1: INPUT. We keep the init response around for its `execution_id`,
+    // which we must echo back to pair the FINALIZE phase with this call.
     const { session: inputSession, initResponse } = await this._doInit(
       bindReq,
       bindResp,
@@ -293,22 +337,13 @@ export class VgiClient {
       },
     );
 
-    const outputSchema = bindResp.output_schema;
     try {
-      // Exchange first batch
-      const firstRows = [...iterRows(firstBatch)];
-      const outRows = await inputSession.exchange(firstRows);
-      if (outRows.length > 0) {
-        yield batchFromRows(outRows, outputSchema);
-      }
+      const outRows = await inputSession.exchange([...iterRows(firstBatch)]);
+      if (outRows.length > 0) yield outRows;
 
-      // Exchange remaining batches
       for await (const batch of { [Symbol.asyncIterator]: () => inputIter }) {
-        const rows = [...iterRows(batch)];
-        const result = await inputSession.exchange(rows);
-        if (result.length > 0) {
-          yield batchFromRows(result, outputSchema);
-        }
+        const result = await inputSession.exchange([...iterRows(batch)]);
+        if (result.length > 0) yield result;
       }
     } finally {
       inputSession.close();
@@ -328,9 +363,74 @@ export class VgiClient {
 
     try {
       for await (const rows of finalizeSession) {
-        if (rows.length > 0) {
-          yield batchFromRows(rows, outputSchema);
-        }
+        if (rows.length > 0) yield rows;
+      }
+    } finally {
+      finalizeSession.close();
+    }
+  }
+
+  /** Call a table-in-out function, yielding output as RecordBatch instances. */
+  async *tableInOutFunction(
+    opts: TableInOutFunctionOptions,
+  ): AsyncGenerator<RecordBatch> {
+    const inputIter = toAsyncIterator(opts.input);
+    const first = await inputIter.next();
+    if (first.done) return;
+
+    const firstBatch: RecordBatch = first.value;
+    const inputSchema = firstBatch.schema;
+
+    const args = opts.arguments ?? new Arguments();
+
+    const { request: bindReq, response: bindResp } = await this._doBind(
+      opts.functionName,
+      FunctionType.TABLE,
+      args,
+      inputSchema,
+      opts.settings ?? null,
+      null,
+      opts.transactionId ?? null,
+      opts.attachId ?? null,
+    );
+
+    const { session: inputSession, initResponse } = await this._doInit(
+      bindReq,
+      bindResp,
+      {
+        projectionIds: opts.projectionIds,
+        pushdownFilters: opts.pushdownFilters,
+        phase: TableInOutPhase.INPUT,
+      },
+    );
+
+    const outputSchema = bindResp.output_schema;
+    try {
+      const outRows = await inputSession.exchange([...iterRows(firstBatch)]);
+      if (outRows.length > 0) yield batchFromRows(outRows, outputSchema);
+
+      for await (const batch of { [Symbol.asyncIterator]: () => inputIter }) {
+        const result = await inputSession.exchange([...iterRows(batch)]);
+        if (result.length > 0) yield batchFromRows(result, outputSchema);
+      }
+    } finally {
+      inputSession.close();
+    }
+
+    const { session: finalizeSession } = await this._doInit(
+      bindReq,
+      bindResp,
+      {
+        projectionIds: opts.projectionIds,
+        pushdownFilters: opts.pushdownFilters,
+        phase: TableInOutPhase.FINALIZE,
+        executionId: initResponse.execution_id,
+      },
+    );
+
+    try {
+      for await (const rows of finalizeSession) {
+        if (rows.length > 0) yield batchFromRows(rows, outputSchema);
       }
     } finally {
       finalizeSession.close();
@@ -338,33 +438,34 @@ export class VgiClient {
   }
 
   // ==========================================================================
-  // Row convenience APIs
+  // Row convenience for table function
   // ==========================================================================
 
   /** Call a table function, yielding output as row objects. */
   async *tableFunctionRows(
     opts: TableFunctionOptions,
   ): AsyncGenerator<Record<string, any>[]> {
-    for await (const batch of this.tableFunction(opts)) {
-      yield [...iterRows(batch)];
-    }
-  }
-
-  /** Call a scalar function, yielding output as row objects. */
-  async *scalarFunctionRows(
-    opts: ScalarFunctionOptions,
-  ): AsyncGenerator<Record<string, any>[]> {
-    for await (const batch of this.scalarFunction(opts)) {
-      yield [...iterRows(batch)];
-    }
-  }
-
-  /** Call a table-in-out function, yielding output as row objects. */
-  async *tableInOutFunctionRows(
-    opts: TableInOutFunctionOptions,
-  ): AsyncGenerator<Record<string, any>[]> {
-    for await (const batch of this.tableInOutFunction(opts)) {
-      yield [...iterRows(batch)];
+    const args = opts.arguments ?? new Arguments();
+    const { request: bindReq, response: bindResp } = await this._doBind(
+      opts.functionName,
+      FunctionType.TABLE,
+      args,
+      null,
+      opts.settings ?? null,
+      null,
+      opts.transactionId ?? null,
+      opts.attachId ?? null,
+    );
+    const { session } = await this._doInit(bindReq, bindResp, {
+      projectionIds: opts.projectionIds,
+      pushdownFilters: opts.pushdownFilters,
+    });
+    try {
+      for await (const rows of session) {
+        if (rows.length > 0) yield rows;
+      }
+    } finally {
+      session.close();
     }
   }
 
@@ -1148,28 +1249,32 @@ export class VgiClient {
  * Deserialize a List<Binary> of serialized info batches into typed info objects.
  */
 function deserializeInfoList<T>(
-  items: any,
+  items: unknown,
   deserializeFn: (bytes: Uint8Array) => T,
 ): T[] {
   if (!items) return [];
-  const arr: any[] = Array.isArray(items) ? items : [...items];
+  const arr: unknown[] = Array.isArray(items)
+    ? items
+    : [...(items as Iterable<unknown>)];
   return arr
-    .filter((b: any) => b != null)
-    .map((b: any) => deserializeFn(toUint8Array(b)));
+    .filter((b) => b != null)
+    .map((b) => deserializeFn(toUint8Array(b)));
 }
 
 /**
  * Deserialize Arrow Map entries into a plain Record<string, string>.
  */
-function deserializeTags(mapVal: any): Record<string, string> {
+function deserializeTags(mapVal: unknown): Record<string, string> {
   const tags: Record<string, string> = {};
   if (!mapVal) return tags;
-  const entries = typeof mapVal[Symbol.iterator] === "function" ? mapVal : [];
-  for (const entry of entries) {
+  const iterable = mapVal as { [Symbol.iterator]?: () => Iterator<unknown> };
+  if (typeof iterable[Symbol.iterator] !== "function") return tags;
+  for (const entry of iterable as Iterable<unknown>) {
     if (Array.isArray(entry)) {
       tags[String(entry[0])] = String(entry[1]);
     } else if (entry && typeof entry === "object") {
-      tags[String(entry.key ?? entry[0] ?? "")] = String(entry.value ?? entry[1] ?? "");
+      const e = entry as Record<string, unknown> & { [0]?: unknown; [1]?: unknown };
+      tags[String(e.key ?? e[0] ?? "")] = String(e.value ?? e[1] ?? "");
     }
   }
   return tags;

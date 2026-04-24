@@ -55,6 +55,8 @@ export interface TableFunctionOptions {
   settings?: RecordBatch;
   /** Transaction ID for transactional catalogs. */
   transactionId?: Uint8Array;
+  /** Attach ID to bind this call to a specific catalog attach. Overrides the client-level attachId. */
+  attachId?: Uint8Array;
 }
 
 /** Options for calling a scalar function. */
@@ -71,6 +73,8 @@ export interface ScalarFunctionOptions {
   secrets?: RecordBatch;
   /** Transaction ID for transactional catalogs. */
   transactionId?: Uint8Array;
+  /** Attach ID to bind this call to a specific catalog attach. Overrides the client-level attachId. */
+  attachId?: Uint8Array;
 }
 
 /** Options for calling a table-in-out function. */
@@ -89,4 +93,6 @@ export interface TableInOutFunctionOptions {
   settings?: RecordBatch;
   /** Transaction ID for transactional catalogs. */
   transactionId?: Uint8Array;
+  /** Attach ID to bind this call to a specific catalog attach. Overrides the client-level attachId. */
+  attachId?: Uint8Array;
 }
