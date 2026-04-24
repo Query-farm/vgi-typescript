@@ -23,6 +23,10 @@ export function pythonVersionedHttpWorkerAvailable(): boolean {
   return Boolean(process.env.VGI_PYTHON_VERSIONED_HTTP_WORKER);
 }
 
+export function pythonAttachOptionsHttpWorkerAvailable(): boolean {
+  return Boolean(process.env.VGI_PYTHON_ATTACH_OPTIONS_HTTP_WORKER);
+}
+
 export interface PythonHttpWorkerHandle {
   /** Ready-to-use VgiClient over HTTP. */
   client: VgiClient;
@@ -46,6 +50,17 @@ export async function startPythonHttpWorker(): Promise<PythonHttpWorkerHandle> {
  */
 export async function startPythonVersionedHttpWorker(): Promise<PythonHttpWorkerHandle> {
   return connectTo(process.env.VGI_PYTHON_VERSIONED_HTTP_WORKER, "VGI_PYTHON_VERSIONED_HTTP_WORKER");
+}
+
+/**
+ * Connect to the already-running Python *attach-options* HTTP worker whose
+ * URL lives in $VGI_PYTHON_ATTACH_OPTIONS_HTTP_WORKER.
+ */
+export async function startPythonAttachOptionsHttpWorker(): Promise<PythonHttpWorkerHandle> {
+  return connectTo(
+    process.env.VGI_PYTHON_ATTACH_OPTIONS_HTTP_WORKER,
+    "VGI_PYTHON_ATTACH_OPTIONS_HTTP_WORKER",
+  );
 }
 
 async function connectTo(url: string | undefined, envName: string): Promise<PythonHttpWorkerHandle> {

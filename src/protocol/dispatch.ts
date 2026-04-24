@@ -693,6 +693,26 @@ function readSingleBatch(bytes: Uint8Array): RecordBatch | null {
   return null;
 }
 
+/**
+ * Decode the `options` field of a catalog_attach request into a plain
+ * {name: value} dict. The wire field is either null (no options) or an
+ * IPC-serialized RecordBatch of typed columns — one column per option,
+ * one row with the value. Returns `{}` for null / empty input.
+ */
+function decodeOptionsBatch(bytes: any): Record<string, unknown> {
+  if (bytes == null) return {};
+  const buf = toUint8Array(bytes);
+  if (buf.byteLength === 0) return {};
+  const batch = deserializeBatch(buf);
+  if (batch.numRows === 0) return {};
+  const out: Record<string, unknown> = {};
+  for (const field of batch.schema.fields) {
+    const col = batch.getChild(field.name);
+    out[field.name] = col ? col.get(0) : null;
+  }
+  return out;
+}
+
 function serializeBatchWithSchema(batch: RecordBatch): Uint8Array {
   // RecordBatchStreamWriter.writeAll handles schema + batch + EOS in one pass;
   // the C++ aggregate_finalize reader expects a full IPC stream (same wrapper
@@ -780,9 +800,14 @@ function registerCatalogMethods(
     handler: (params) => {
       const innerParams = unwrapRequest(params.request);
       const cat = getCatalog();
+      // The extension sends user-supplied ATTACH options as an IPC-serialized
+      // RecordBatch of typed columns — one column per option. Deserialize
+      // once here so workers see an ergonomic {name: value} dict instead of
+      // raw bytes. Nullable / absent → {}.
+      const optionsDict = decodeOptionsBatch(innerParams.options);
       const result = cat.attach(
         innerParams.name,
-        innerParams.options,
+        optionsDict,
         innerParams.data_version_spec ?? null,
         innerParams.implementation_version ?? null,
       );

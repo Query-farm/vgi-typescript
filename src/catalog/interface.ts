@@ -66,9 +66,16 @@ export { encodeMacroInfo, decodeMacroInfo } from "../generated/vgi-client.js";
 export abstract class CatalogInterface {
   // Required overrides
   abstract catalogs(): string[];
+  /**
+   * Attach this catalog. The framework already validates ATTACH options
+   * (name + type) against the specs the worker advertises in
+   * `catalogsInfo().attach_option_specs`, so `options` arrives as a
+   * validated, decoded `{name: value}` dict with typed column values.
+   * Use `{}` if no options were supplied.
+   */
   abstract attach(
     name: string,
-    options?: any,
+    options?: Record<string, unknown>,
     dataVersionSpec?: string | null,
     implementationVersion?: string | null,
   ): CatalogAttachResult;

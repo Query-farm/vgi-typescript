@@ -123,6 +123,34 @@ function buildColumnData(values: any[], field: Field): any {
     return buildBigIntData(values, type);
   }
 
+  // Time/Date/Timestamp/Duration: arrow-js vectorFromArray chokes on nulls
+  // (setTimeMicrosecond et al. do ToBigInt without checking validity).
+  // Build manually when any value is null.
+  if ((DataType.isTime(type) || DataType.isDate(type) ||
+       DataType.isTimestamp(type) || DataType.isDuration(type)) &&
+      values.some((v: any) => v === null || v === undefined)) {
+    const bitWidth = (type as any).bitWidth ?? 64;
+    if (bitWidth === 64) {
+      return buildBigIntData(values, type);
+    }
+    // 32-bit Time/Date: build as Int32 with null bitmap
+    const length = values.length;
+    const buf = new Int32Array(length);
+    const nullBitmap = new Uint8Array(Math.ceil(length / 8));
+    let nullCount = 0;
+    for (let i = 0; i < length; i++) {
+      const v = values[i];
+      if (v === null || v === undefined) { nullCount++; continue; }
+      nullBitmap[i >> 3] |= 1 << (i & 7);
+      buf[i] = typeof v === "bigint" ? Number(v) : Number(v);
+    }
+    return makeData({
+      type, length,
+      nullBitmap: nullCount > 0 ? nullBitmap : undefined,
+      data: buf, nullCount,
+    } as any);
+  }
+
   // Default: use vectorFromArray
   return vectorFromArray(values, type).data[0];
 }

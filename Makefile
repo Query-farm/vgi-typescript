@@ -9,10 +9,12 @@
 VGI_DIR      ?= /Users/rusty/Development/vgi
 VGI_PYTHON_DIR ?= /Users/rusty/Development/vgi-python
 TEST_TIMEOUT ?= 60
-WORKER             ?= $(CURDIR)/bin/vgi-example-worker
-HTTP_WORKER        := $(CURDIR)/bin/vgi-example-http-worker
-VERSIONED_WORKER   := $(CURDIR)/bin/vgi-example-versioned-worker
-VERSIONED_HTTP     := $(CURDIR)/bin/vgi-example-versioned-http-worker
+WORKER                ?= $(CURDIR)/bin/vgi-example-worker
+HTTP_WORKER           := $(CURDIR)/bin/vgi-example-http-worker
+VERSIONED_WORKER      := $(CURDIR)/bin/vgi-example-versioned-worker
+VERSIONED_HTTP        := $(CURDIR)/bin/vgi-example-versioned-http-worker
+ATTACH_OPTIONS_WORKER := $(CURDIR)/bin/vgi-example-attach-options-worker
+ATTACH_OPTIONS_HTTP   := $(CURDIR)/bin/vgi-example-attach-options-http-worker
 
 TEST_DIR     := $(VGI_DIR)/test/sql
 RELEASE_BIN  := $(VGI_DIR)/build/release/test/unittest
@@ -65,6 +67,7 @@ test/%:
 	fi; \
 	export VGI_TEST_WORKER="$(WORKER)"; \
 	export VGI_VERSIONED_WORKER="$(VERSIONED_WORKER)"; \
+	export VGI_ATTACH_OPTIONS_WORKER="$(ATTACH_OPTIONS_WORKER)"; \
 	is_xfail=false; \
 	for xf in $(XFAIL_TESTS); do \
 		if [ "$$xf" = "$*" ]; then is_xfail=true; break; fi; \
@@ -101,10 +104,14 @@ test-http/%:
 	mkfifo "$$vport_fifo"; \
 	$(VERSIONED_HTTP) > "$$vport_fifo" 2>/dev/null & \
 	vhttp_pid=$$!; \
+	aport_fifo=$$(mktemp -u); \
+	mkfifo "$$aport_fifo"; \
+	$(ATTACH_OPTIONS_HTTP) > "$$aport_fifo" 2>/dev/null & \
+	ahttp_pid=$$!; \
 	cleanup() { \
-		kill $$http_pid $$vhttp_pid 2>/dev/null; \
-		wait $$http_pid $$vhttp_pid 2>/dev/null; \
-		rm -f "$$port_fifo" "$$vport_fifo"; \
+		kill $$http_pid $$vhttp_pid $$ahttp_pid 2>/dev/null; \
+		wait $$http_pid $$vhttp_pid $$ahttp_pid 2>/dev/null; \
+		rm -f "$$port_fifo" "$$vport_fifo" "$$aport_fifo"; \
 	}; \
 	trap cleanup EXIT; \
 	port_line=""; \
@@ -117,11 +124,18 @@ test-http/%:
 		echo "ERROR: versioned HTTP worker did not print PORT line within 10s"; \
 		cleanup; exit 1; \
 	}; \
-	rm -f "$$port_fifo" "$$vport_fifo"; \
+	aport_line=""; \
+	read -t 10 aport_line < "$$aport_fifo" || { \
+		echo "ERROR: attach-options HTTP worker did not print PORT line within 10s"; \
+		cleanup; exit 1; \
+	}; \
+	rm -f "$$port_fifo" "$$vport_fifo" "$$aport_fifo"; \
 	port=$${port_line#PORT:}; \
 	vport=$${vport_line#PORT:}; \
+	aport=$${aport_line#PORT:}; \
 	export VGI_TEST_WORKER="http://localhost:$$port/vgi"; \
 	export VGI_VERSIONED_HTTP_WORKER="http://localhost:$$vport/vgi"; \
+	export VGI_ATTACH_OPTIONS_WORKER="http://localhost:$$aport/vgi"; \
 	is_xfail=false; \
 	for xf in $(HTTP_XFAIL_TESTS); do \
 		if [ "$$xf" = "$*" ]; then is_xfail=true; break; fi; \
@@ -156,28 +170,33 @@ test-client:
 	@tmpdir=$$(mktemp -d); \
 	normal_file="$$tmpdir/normal.port"; \
 	vers_file="$$tmpdir/versioned.port"; \
+	ao_file="$$tmpdir/attach-options.port"; \
 	( cd "$(VGI_PYTHON_DIR)" && uv run vgi-example-http --port 0 --port-file "$$normal_file" ) >/dev/null 2>&1 & \
 	py_pid=$$!; \
 	( cd "$(VGI_PYTHON_DIR)" && uv run vgi-example-versioned-worker --http --port 0 --port-file "$$vers_file" ) >/dev/null 2>&1 & \
 	vers_pid=$$!; \
+	( cd "$(VGI_PYTHON_DIR)" && uv run vgi-example-attach-options-worker --http --port 0 --port-file "$$ao_file" ) >/dev/null 2>&1 & \
+	ao_pid=$$!; \
 	cleanup() { \
-		kill $$py_pid $$vers_pid 2>/dev/null; \
-		wait $$py_pid $$vers_pid 2>/dev/null; \
+		kill $$py_pid $$vers_pid $$ao_pid 2>/dev/null; \
+		wait $$py_pid $$vers_pid $$ao_pid 2>/dev/null; \
 		rm -rf "$$tmpdir"; \
 	}; \
 	trap cleanup EXIT; \
 	for i in $$(seq 1 300); do \
-		[ -s "$$normal_file" ] && [ -s "$$vers_file" ] && break; \
+		[ -s "$$normal_file" ] && [ -s "$$vers_file" ] && [ -s "$$ao_file" ] && break; \
 		sleep 0.1; \
 	done; \
-	if [ ! -s "$$normal_file" ] || [ ! -s "$$vers_file" ]; then \
+	if [ ! -s "$$normal_file" ] || [ ! -s "$$vers_file" ] || [ ! -s "$$ao_file" ]; then \
 		echo "ERROR: Python workers did not publish ports within 30s"; \
 		cleanup; exit 1; \
 	fi; \
 	export VGI_PYTHON_HTTP_WORKER="http://127.0.0.1:$$(cat $$normal_file)"; \
 	export VGI_PYTHON_VERSIONED_HTTP_WORKER="http://127.0.0.1:$$(cat $$vers_file)"; \
-	echo "Python HTTP worker:       $$VGI_PYTHON_HTTP_WORKER"; \
-	echo "Python versioned worker:  $$VGI_PYTHON_VERSIONED_HTTP_WORKER"; \
+	export VGI_PYTHON_ATTACH_OPTIONS_HTTP_WORKER="http://127.0.0.1:$$(cat $$ao_file)"; \
+	echo "Python HTTP worker:             $$VGI_PYTHON_HTTP_WORKER"; \
+	echo "Python versioned worker:        $$VGI_PYTHON_VERSIONED_HTTP_WORKER"; \
+	echo "Python attach-options worker:   $$VGI_PYTHON_ATTACH_OPTIONS_HTTP_WORKER"; \
 	bun test src/; \
 	rc=$$?; \
 	cleanup; \

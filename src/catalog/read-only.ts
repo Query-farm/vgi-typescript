@@ -40,7 +40,7 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
 
   attach(
     name: string,
-    options?: any,
+    options?: Record<string, unknown>,
     dataVersionSpec?: string | null,
     implementationVersion?: string | null,
   ): CatalogAttachResult {
