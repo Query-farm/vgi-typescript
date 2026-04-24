@@ -66,7 +66,7 @@ import {
 } from "../functions/aggregate.js";
 import { Arguments } from "../arguments/arguments.js";
 import { deserializeSchema } from "../util/arrow.js";
-import { RecordBatchReader } from "@query-farm/apache-arrow";
+import { RecordBatchReader, DataType, Decimal } from "@query-farm/apache-arrow";
 
 function overloadContext(req: { functionName: string; arguments: any; inputSchema: any; functionType: any }): OverloadContext {
   return {
@@ -641,20 +641,45 @@ function extractArgMap(
   args: Arguments,
 ): Record<string, any> {
   const out: Record<string, any> = {};
-  const positionalNames: string[] = [];
+  // The wire-side Arguments contains only const params — DuckDB erases const
+  // args from the expression tree at bind time and serializes their values
+  // into the aggregate_bind request's `arguments` field. So we index the
+  // Arguments by the declaration order of const params only.
+  const constSet = new Set(cfg.constParams ?? []);
+  const constNames: string[] = [];
   if (cfg.args) {
     for (const name of Object.keys(cfg.args)) {
-      if (cfg.argDefaults?.[name] === undefined) positionalNames.push(name);
+      if (constSet.has(name)) constNames.push(name);
     }
   }
-  // Positional arguments by declaration order.
-  for (let i = 0; i < positionalNames.length; i++) {
+  for (let i = 0; i < constNames.length; i++) {
     try {
-      const v = args.get(i);
-      out[positionalNames[i]] = typeof v === "bigint" ? Number(v) : v;
+      let v = args.get(i);
+      // Decode DECIMAL scalars (DuckDB serializes 0.5-style literals as
+      // DECIMAL(2,1), which Arrow stores as the unscaled integer — a raw
+      // BigInt here). Scale back to float using the declared scale.
+      const field = args.argumentsSchema?.fields.find(f => f.name === `positional_${i}`);
+      if (field && DataType.isDecimal(field.type)) {
+        const scale = (field.type as Decimal).scale;
+        if (typeof v === "bigint") v = Number(v) / Math.pow(10, scale);
+        else if (typeof v === "number") v = v / Math.pow(10, scale);
+      } else if (typeof v === "bigint") {
+        v = Number(v);
+      }
+      out[constNames[i]] = v;
     } catch {
-      // args.get throws when the argument isn't set — leave undefined so
-      // defaults flow through.
+      // args.get throws when the arg isn't set — fall back to the declared
+      // default so aggregates called without an explicit const value still
+      // see it in update/finalize.
+      const def = cfg.argDefaults?.[constNames[i]];
+      if (def !== undefined) out[constNames[i]] = def;
+    }
+  }
+  // Non-const args aren't in the wire Arguments, but users may still want
+  // defaults surfaced for `params.args` — apply them here.
+  if (cfg.argDefaults) {
+    for (const [name, def] of Object.entries(cfg.argDefaults)) {
+      if (!(name in out) && !constSet.has(name)) out[name] = def;
     }
   }
   return out;

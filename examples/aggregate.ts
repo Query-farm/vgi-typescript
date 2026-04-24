@@ -324,6 +324,53 @@ const vgi_generic_sum = defineAggregate<{ value: any }, GenericSumState>({
   categories: ["aggregate"],
 });
 
+// ============================================================================
+// vgi_percentile(value, percentile) — approximate percentile. Demonstrates
+// const-parameter folding: `percentile` is constant-folded by DuckDB at bind
+// time and arrives through bindParams.args rather than as a per-row column.
+// Internally we keep all values as a sorted array, then index at finalize.
+// ============================================================================
+
+interface PercentileState { values: number[]; }
+
+const vgi_percentile = defineAggregate<{ value: number; percentile: number }, PercentileState>({
+  name: "vgi_percentile",
+  description: "Approximate percentile (demonstrates ConstParam)",
+  args: { value: new Float64(), percentile: new Float64() },
+  constParams: ["percentile"],
+  argDefaults: { percentile: 0.5 },
+  outputType: new Float64(),
+  nullHandling: "DEFAULT",
+  initialState: () => ({ values: [] }),
+  update: ({ groupIds, columns, ensureState }) => {
+    // Only one column reaches update — `value`. `percentile` is const-folded
+    // away by DuckDB at bind (stored in bindParams.args for finalize).
+    const valueCol = columns[0];
+    const dec = makeNumericDecoder(valueCol?.type);
+    const n = groupIds.length;
+    for (let i = 0; i < n; i++) {
+      if (valueCol == null || !valueCol.isValid(i)) continue;
+      const v = valueCol.get(i);
+      if (v == null) continue;
+      ensureState(groupIds[i]).values.push(dec(v));
+    }
+  },
+  combine: (src, tgt) => ({ values: tgt.values.concat(src.values) }),
+  finalize: ({ groupIds, states, outputSchema, args }) => {
+    const pct = args.percentile ?? 0.5;
+    const results: (number | null)[] = groupIds.map((gid) => {
+      const s = states.get(gid);
+      if (s == null || s.values.length === 0) return null;
+      const sorted = [...s.values].sort((a, b) => a - b);
+      const idx = Math.min(Math.floor(pct * sorted.length), sorted.length - 1);
+      return sorted[idx];
+    });
+    return batchFromColumns({ result: results }, outputSchema);
+  },
+  categories: ["aggregate"],
+});
+
 export const aggregateFunctions: VgiFunction[] = [
   vgi_count, vgi_sum, vgi_avg, vgi_sum_all, vgi_listagg, vgi_weighted_sum, vgi_generic_sum,
+  vgi_percentile,
 ];

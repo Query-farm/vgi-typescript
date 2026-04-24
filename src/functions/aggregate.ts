@@ -76,6 +76,14 @@ export interface AggregateFunctionConfig<TArgs = Record<string, any>, TState = a
    */
   varargs?: string[];
   /**
+   * Names of args whose value is constant (known at bind time) and must be
+   * folded away by DuckDB before reaching update(). The value arrives in
+   * `bindParams.args[name]`; it is NOT passed as an input column in the
+   * update batch. Use for aggregates parameterized by a literal (e.g.
+   * percentile=0.5 in vgi_percentile).
+   */
+  constParams?: string[];
+  /**
    * Arrow type of the aggregate's output (one value per group). DuckDB uses
    * this to build the result column type at bind time. May be overridden
    * at bind time by `onBind` (returning a different Arrow type) for
@@ -282,16 +290,23 @@ export function defineAggregate<TArgs = Record<string, any>, TState = any>(
   const specs: ArgumentSpec[] = [];
   let posIdx = 0;
   const varargsSet = new Set(config.varargs ?? []);
+  const constSet = new Set(config.constParams ?? []);
   if (config.args) {
     for (const [name, type] of Object.entries(config.args)) {
       const hasDefault = config.argDefaults?.[name] !== undefined;
+      const isConst = constSet.has(name);
       const isAnyType = type instanceof Null;
+      // Const params are always positional at the SQL call-site — a default
+      // value just means "the user may omit it and we'll use the default",
+      // not "rename to a named kwarg". Non-const args with defaults become
+      // named (matches table-function behavior).
       specs.push({
         name,
-        position: hasDefault ? name : posIdx++,
+        position: isConst || !hasDefault ? posIdx++ : name,
         arrowType: isAnyType ? new Null() : type,
         isAnyType,
         isVarargs: varargsSet.has(name),
+        isConst,
       });
     }
   }
