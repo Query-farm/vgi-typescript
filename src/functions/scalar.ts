@@ -50,6 +50,8 @@ export interface ScalarBindParameters {
   settings: Record<string, any>;
   /** Secrets from DuckDB */
   secrets: Record<string, Record<string, any>>;
+  /** Original bind request — exposes attach_id, transaction_id, function_type, etc. */
+  bindCall: BindRequest;
 }
 
 // ============================================================================
@@ -200,6 +202,7 @@ export function defineScalarFunction(config: ScalarFunctionConfig): VgiFunction 
           argumentsSchema: request.input_schema ?? new Schema([]),
           settings,
           secrets,
+          bindCall: request,
         });
       } else if (config.returns) {
         outputType = config.returns;
