@@ -249,7 +249,9 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
       .filter((f) => {
         // Filter by type (DuckDB sends uppercase: SCALAR_FUNCTION, TABLE_FUNCTION,
         // AGGREGATE_FUNCTION). Unknown filter values pass everything through.
-        const t = type.toUpperCase();
+        // Defensive String() coerces null/undefined/non-string params from the
+        // RPC layer (some DuckDB code paths send the field unset).
+        const t = String(type ?? "").toUpperCase();
         if (t === "SCALAR_FUNCTION") return f.kind === "scalar";
         if (t === "TABLE_FUNCTION") return f.kind === "table" || f.kind === "table_in_out";
         if (t === "AGGREGATE_FUNCTION") return (f.kind as string) === "aggregate";
@@ -318,7 +320,8 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
 
     return schema.macros
       .filter((m) => {
-        const t = type.toLowerCase();
+        // Defensive String() — see schemaContentsFunctions for rationale.
+        const t = String(type ?? "").toLowerCase();
         if (t === "scalar_macro" && m.macroType !== "scalar") return false;
         if (t === "table_macro" && m.macroType !== "table") return false;
         return true;

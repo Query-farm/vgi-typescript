@@ -18,7 +18,6 @@ ATTACH_OPTIONS_HTTP   := $(CURDIR)/bin/vgi-example-attach-options-http-worker
 
 TEST_DIR     := $(VGI_DIR)/test/sql
 RELEASE_BIN  := $(VGI_DIR)/build/release/test/unittest
-DEBUG_BIN    := $(VGI_DIR)/build/debug/test/unittest
 
 # --- Build targets ---
 
@@ -58,7 +57,8 @@ test-http: $(HTTP_TEST_TARGETS)
 
 test-all: test test-http
 
-# Pattern rule: each test target runs release first, debug on failure
+# Pattern rule: each test target runs the release binary. On failure, reruns
+# with -s so the verbose output appears inline.
 test/%:
 	@test_file="$(TEST_DIR)/$*.test"; \
 	if [ ! -f "$$test_file" ]; then \
@@ -83,8 +83,8 @@ test/%:
 		if $$is_xfail; then \
 			echo "XFAIL $* (expected failure)"; \
 		else \
-			echo "FAIL  $* (release, rc=$$rc) — rerunning with debug binary..."; \
-			timeout $(TEST_TIMEOUT) $(DEBUG_BIN) --test-dir $(TEST_DIR) -s "$$test_file" 2>&1 || true; \
+			echo "FAIL  $* (release, rc=$$rc) — rerunning with -s for verbose output..."; \
+			timeout $(TEST_TIMEOUT) $(RELEASE_BIN) --test-dir $(TEST_DIR) -s "$$test_file" 2>&1 || true; \
 			exit 1; \
 		fi; \
 	fi
@@ -151,8 +151,8 @@ test-http/%:
 		if $$is_xfail; then \
 			echo "XFAIL $* [http] (expected failure)"; \
 		else \
-			echo "FAIL  $* [http] (release, rc=$$rc) — rerunning with debug binary..."; \
-			timeout $(TEST_TIMEOUT) $(DEBUG_BIN) --test-dir $(TEST_DIR) -s "$$test_file" 2>&1 || true; \
+			echo "FAIL  $* [http] (release, rc=$$rc) — rerunning with -s for verbose output..."; \
+			timeout $(TEST_TIMEOUT) $(RELEASE_BIN) --test-dir $(TEST_DIR) -s "$$test_file" 2>&1 || true; \
 			cleanup; \
 			exit 1; \
 		fi; \
