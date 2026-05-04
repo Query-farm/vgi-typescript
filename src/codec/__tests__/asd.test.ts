@@ -73,6 +73,7 @@ describe("ASD codec", () => {
       supports_insert: true,
       supports_update: false,
       supports_delete: true,
+      supports_returning: false,
       supports_column_statistics: false,
     };
     const bytes = encodeASD(TableInfoSchema, v);

@@ -196,6 +196,7 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
         supports_insert: false,
         supports_update: false,
         supports_delete: false,
+        supports_returning: false,
         supports_column_statistics: t.statistics != null && Object.keys(t.statistics).length > 0,
       };
     });
@@ -247,10 +248,9 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
 
     return schema.functions
       .filter((f) => {
-        // Filter by type (DuckDB sends uppercase: SCALAR_FUNCTION, TABLE_FUNCTION,
-        // AGGREGATE_FUNCTION). Unknown filter values pass everything through.
-        // Defensive String() coerces null/undefined/non-string params from the
-        // RPC layer (some DuckDB code paths send the field unset).
+        // Filter by SchemaObjectType (lowercase on the wire: scalar_function,
+        // table_function, aggregate_function). Unknown filter values pass
+        // everything through. Defensive String() coerces null/undefined.
         const t = String(type ?? "").toUpperCase();
         if (t === "SCALAR_FUNCTION") return f.kind === "scalar";
         if (t === "TABLE_FUNCTION") return f.kind === "table" || f.kind === "table_in_out";
@@ -298,6 +298,7 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
           order_dependent: meta.orderDependent as any,
           distinct_dependent: meta.distinctDependent as any,
           supports_window: false,
+          streaming_partitioned: false,
           has_finalize: false,
           required_settings: meta.requiredSettings,
           required_secrets: requiredSecrets.map((s) => ({

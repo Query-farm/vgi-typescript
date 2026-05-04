@@ -16,6 +16,7 @@ import {
   CatalogSchemaContentsFunctionsResultSchema,
 } from "../../../generated/vgi-protocol-schemas.js";
 import { toUint8Array } from "../../../util/bytes.js";
+import { decodeDictValue } from "../../../util/arrow/index.js";
 import {
   REQUEST_PARAMS_SCHEMA,
   RESULT_BINARY_SCHEMA,
@@ -314,7 +315,7 @@ export function registerCatalogAdminMethods(protocol: Protocol, getCatalog: GetC
       const funcs = cat.schemaContentsFunctions(
         toUint8Array(params.attach_id),
         params.name,
-        params.type,
+        decodeDictValue(params.type),
         params.transaction_id ? toUint8Array(params.transaction_id) : undefined
       );
       return wrapResult({

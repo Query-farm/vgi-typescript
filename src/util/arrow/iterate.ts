@@ -1,6 +1,6 @@
 // Read data out of Arrow batches as plain JS values.
 
-import { RecordBatch } from "@query-farm/apache-arrow";
+import { RecordBatch, DataType } from "@query-farm/apache-arrow";
 
 /**
  * Iterate rows of a RecordBatch as plain objects.
@@ -12,7 +12,7 @@ export function* iterRows(
     const row: Record<string, any> = {};
     for (const field of batch.schema.fields) {
       const col = batch.getChild(field.name);
-      row[field.name] = col ? col.get(i) : null;
+      row[field.name] = col ? readCellValue(col, i, field.type) : null;
     }
     yield row;
   }
@@ -29,10 +29,51 @@ export function batchToScalarDict(
   for (const field of batch.schema.fields) {
     const col = batch.getChild(field.name);
     if (col) {
-      result[field.name] = col.get(0);
+      result[field.name] = readCellValue(col, 0, field.type);
     }
   }
   return result;
+}
+
+/**
+ * Read a cell value, decoding Dictionary-encoded columns to their underlying
+ * value. Without this, IPC batches that arrived with a dictionary batch (as
+ * DuckDB sends for enum-shaped fields like SchemaObjectType) come back as raw
+ * Data objects rather than the decoded string. Plain Vector.get() on the
+ * fork's apache-arrow doesn't auto-decode in this path.
+ */
+function readCellValue(col: any, index: number, type: DataType): any {
+  if (DataType.isDictionary(type)) {
+    const data = col.data?.[0];
+    if (data && data.dictionary && data.values) {
+      const idx = Number(data.values[index]);
+      const dictVec = data.dictionary;
+      return typeof dictVec.get === "function" ? dictVec.get(idx) : null;
+    }
+  }
+  return col.get(index);
+}
+
+/**
+ * If `value` looks like a Dictionary-encoded Arrow scalar (Vector.get on a
+ * dict column on the apache-arrow fork returns the underlying Data, not the
+ * decoded string), pull out the decoded value at row `index`. Returns
+ * `value` unchanged when it isn't dict-shaped.
+ *
+ * Used at handler call sites where the incoming `params` came from the RPC
+ * layer's row extractor (which doesn't auto-decode dictionaries) and the
+ * handler needs the plain string.
+ */
+export function decodeDictValue(value: any, index = 0): any {
+  if (
+    value && typeof value === "object" &&
+    "dictionary" in value && "values" in value &&
+    typeof (value as any).dictionary?.get === "function"
+  ) {
+    const idx = Number((value as any).values[index]);
+    return (value as any).dictionary.get(idx);
+  }
+  return value;
 }
 
 /**
