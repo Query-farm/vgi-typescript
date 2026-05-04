@@ -99,7 +99,7 @@ export const catalog: CatalogDescriptor = {
   name: "example",
   defaultSchema: "main",
   comment: "Example VGI catalog for testing",
-  tags: { source: "vgi-example-worker", version: "1" },
+  tags: { source: "vgi-fixture-worker", version: "1" },
   secretTypes: [
     {
       name: "vgi_example",

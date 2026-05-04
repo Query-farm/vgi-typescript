@@ -44,6 +44,7 @@ export function batchToScalarDict(
  */
 function readCellValue(col: any, index: number, type: DataType): any {
   if (DataType.isDictionary(type)) {
+    if (typeof col.isValid === "function" && !col.isValid(index)) return null;
     const data = col.data?.[0];
     if (data && data.dictionary && data.values) {
       const idx = Number(data.values[index]);
@@ -70,7 +71,17 @@ export function decodeDictValue(value: any, index = 0): any {
     "dictionary" in value && "values" in value &&
     typeof (value as any).dictionary?.get === "function"
   ) {
-    const idx = Number((value as any).values[index]);
+    // Respect the null bitmap — for nullable Dictionary columns DuckDB emits
+    // a "null" value as bitmap-bit=0 + index=0 (or whatever uninitialized
+    // memory holds). Without this check we'd return dictionary[0], turning
+    // "no ORDER BY pushdown" into a spurious "ASC NULLS_FIRST".
+    const data = value as any;
+    const nullBitmap = data.nullBitmap;
+    if (nullBitmap && nullBitmap.length > 0) {
+      const byte = nullBitmap[index >> 3];
+      if (((byte >> (index & 7)) & 1) === 0) return null;
+    }
+    const idx = Number(data.values[index]);
     return (value as any).dictionary.get(idx);
   }
   return value;

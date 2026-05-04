@@ -166,9 +166,9 @@ export function deserializeInitRequest(
     init_opaque_data: params.init_opaque_data
       ? toUint8Array(params.init_opaque_data)
       : null,
-    order_by_column_name: parseEnum(params.order_by_column_name) ?? null,
-    order_by_direction: parseDirection(params.order_by_direction),
-    order_by_null_order: parseNullOrder(params.order_by_null_order),
+    order_by_column_name: parseEnum(decodeDictValue(params.order_by_column_name)) ?? null,
+    order_by_direction: parseDirection(decodeDictValue(params.order_by_direction)),
+    order_by_null_order: parseNullOrder(decodeDictValue(params.order_by_null_order)),
     order_by_limit: parseBigInt(params.order_by_limit),
     tablesample_percentage: parseNumber(params.tablesample_percentage),
     tablesample_seed: parseBigInt(params.tablesample_seed),

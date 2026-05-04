@@ -2025,10 +2025,10 @@ const order_echo = defineTableFunction<OrderEchoArgs, OrderEchoState>({
     return {
       remaining: params.args.count,
       currentIndex: 0,
-      orderColumn: init.orderByColumnName ?? "(none)",
-      orderDirection: init.orderByDirection ? String(init.orderByDirection) : "(none)",
-      orderNullOrder: init.orderByNullOrder ? String(init.orderByNullOrder) : "(none)",
-      orderLimit: init.orderByLimit ?? -1n,
+      orderColumn: init.order_by_column_name ?? "(none)",
+      orderDirection: init.order_by_direction ? String(init.order_by_direction) : "(none)",
+      orderNullOrder: init.order_by_null_order ? String(init.order_by_null_order) : "(none)",
+      orderLimit: init.order_by_limit ?? -1n,
     };
   },
   process: (
@@ -2126,8 +2126,8 @@ const sample_echo = defineTableFunction<SampleEchoArgs, SampleEchoState>({
     return {
       remaining: params.args.count,
       currentIndex: 0,
-      samplePercentage: init.tablesamplePercentage ?? -1.0,
-      sampleSeed: init.tablesampleSeed ?? -1n,
+      samplePercentage: init.tablesample_percentage ?? -1.0,
+      sampleSeed: init.tablesample_seed ?? -1n,
     };
   },
   process: (
