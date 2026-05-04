@@ -35,7 +35,7 @@ import type {
 } from "./types.js";
 import type { ArgumentSpec } from "../arguments/argument-spec.js";
 import { argumentSpecsToSchema } from "../arguments/argument-spec.js";
-import { batchToScalarDict, batchToSecretDict, projectBatch, safeNumber } from "../util/arrow.js";
+import { batchToScalarDict, batchToSecretDict, projectBatch, safeNumber } from "../util/arrow/index.js";
 
 // ============================================================================
 // Scalar Bind Parameters

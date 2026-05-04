@@ -17,7 +17,7 @@ import { serializeColumnStatistics } from "../util/statistics.js";
 import type { VgiFunction } from "../functions/types.js";
 import type { FunctionRegistry } from "../functions/registry.js";
 import { argumentSpecsToSchema } from "../arguments/argument-spec.js";
-import { serializeSchema, serializeBatch, emptyBatch, batchFromColumns } from "../util/arrow.js";
+import { serializeSchema, serializeBatch, emptyBatch, batchFromColumns } from "../util/arrow/index.js";
 import { resolveMetadata } from "../metadata/resolve.js";
 import { FunctionStability, NullHandling, OrderPreservation, DEFAULT_MAX_WORKERS } from "../types.js";
 import { Arguments } from "../arguments/arguments.js";

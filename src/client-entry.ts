@@ -100,7 +100,7 @@ export {
   deserializeSchema,
   serializeBatch,
   deserializeBatch,
-} from "./util/arrow.js";
+} from "./util/arrow/index.js";
 
 // Byte utilities
 export { toUint8Array } from "./util/bytes.js";

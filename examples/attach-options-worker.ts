@@ -54,7 +54,7 @@ import {
   type AttachOptionSpec,
   serializeAttachOptionSpecs,
 } from "../src/catalog/attach-option.js";
-import { batchFromColumns, deserializeBatch, serializeBatch } from "../src/util/arrow.js";
+import { batchFromColumns, deserializeBatch, serializeBatch } from "../src/util/arrow/index.js";
 
 // ============================================================================
 // Declared attach-time options (one per supported Arrow type family)

@@ -21,7 +21,7 @@ import {
   batchFromRows,
   batchFromColumns,
   iterRows,
-} from "../util/arrow.js";
+} from "../util/arrow/index.js";
 import {
   type SchemaInfo,
   decodeSchemaInfo,

@@ -28,7 +28,7 @@ import type {
 import { TableInOutPhase } from "../types.js";
 import { resolveMetadata } from "../metadata/resolve.js";
 import { metadatasToArrow, METADATA_SCHEMA } from "../metadata/serialize.js";
-import { batchToScalarDict, serializeBatch, deserializeBatch, serializeSchema, emptyBatch, batchFromColumns } from "../util/arrow.js";
+import { batchToScalarDict, serializeBatch, deserializeBatch, serializeSchema, emptyBatch, batchFromColumns } from "../util/arrow/index.js";
 import { serializeColumnStatistics } from "../util/statistics.js";
 import { toUint8Array } from "../util/bytes.js";
 import type { CatalogInterface } from "../catalog/interface.js";
@@ -66,7 +66,7 @@ import {
   type AggregateBindParams,
 } from "../functions/aggregate.js";
 import { Arguments } from "../arguments/arguments.js";
-import { deserializeSchema } from "../util/arrow.js";
+import { deserializeSchema } from "../util/arrow/index.js";
 import { RecordBatchReader, DataType, Decimal } from "@query-farm/apache-arrow";
 
 function overloadContext(req: { function_name: string; arguments: any; input_schema: any; function_type: any }): OverloadContext {

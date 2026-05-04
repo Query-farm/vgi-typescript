@@ -18,7 +18,7 @@ import type {
   FunctionExample,
 } from "./types.js";
 import type { ArgumentSpec } from "../arguments/argument-spec.js";
-import { batchToScalarDict, batchToSecretDict, projectSchema, emptyBatch } from "../util/arrow.js";
+import { batchToScalarDict, batchToSecretDict, projectSchema, emptyBatch } from "../util/arrow/index.js";
 import {
   buildJoinKeysLookup,
   deserializeFilters,

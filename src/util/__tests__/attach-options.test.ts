@@ -20,7 +20,7 @@ import {
   inferAttachOptionArrowType,
   serializeAttachOptions,
 } from "../attach-options.js";
-import { deserializeBatch } from "../arrow.js";
+import { deserializeBatch } from "../arrow/index.js";
 
 describe("inferAttachOptionArrowType", () => {
   test("string → Utf8", () => {

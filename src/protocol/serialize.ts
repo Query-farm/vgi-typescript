@@ -39,7 +39,7 @@ import {
   deserializeBatch,
   emptyBatch,
   batchFromColumns,
-} from "../util/arrow.js";
+} from "../util/arrow/index.js";
 import { toUint8Array as toUint8ArrayBase } from "../util/bytes.js";
 
 // ============================================================================

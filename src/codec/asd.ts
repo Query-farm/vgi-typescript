@@ -27,7 +27,7 @@ import {
   Struct,
   vectorFromArray,
 } from "@query-farm/apache-arrow";
-import { deserializeBatch } from "../util/arrow.js";
+import { deserializeBatch } from "../util/arrow/index.js";
 
 /**
  * Encode a typed object as a single-row Arrow IPC stream using `schema`.

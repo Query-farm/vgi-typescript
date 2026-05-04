@@ -3,7 +3,7 @@
 
 import { Schema, Field, Int64, Float64, Utf8, Decimal, DataType, Null, List, Struct, RecordBatch } from "@query-farm/apache-arrow";
 import { defineAggregate } from "../src/functions/aggregate.js";
-import { batchFromColumns } from "../src/util/arrow.js";
+import { batchFromColumns } from "../src/util/arrow/index.js";
 import type { VgiFunction } from "../src/index.js";
 
 // ============================================================================

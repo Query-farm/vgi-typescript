@@ -64,7 +64,7 @@ export { encodeMacroInfo, decodeMacroInfo } from "../generated/vgi-client.js";
 // Mirrors vgi-python's ScanFunctionResult (catalog_interface.py:380).
 // ============================================================================
 
-import { deserializeBatch } from "../util/arrow.js";
+import { deserializeBatch } from "../util/arrow/index.js";
 import { toUint8Array } from "../util/bytes.js";
 
 /**

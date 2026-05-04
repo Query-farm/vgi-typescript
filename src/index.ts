@@ -107,7 +107,7 @@ export {
   deserializeSchema,
   serializeBatch,
   deserializeBatch,
-} from "./util/arrow.js";
+} from "./util/arrow/index.js";
 
 // Storage
 export {

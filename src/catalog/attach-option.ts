@@ -33,7 +33,7 @@ import {
   Binary,
   Utf8,
 } from "@query-farm/apache-arrow";
-import { batchFromColumns, serializeBatch, serializeSchema } from "../util/arrow.js";
+import { batchFromColumns, serializeBatch, serializeSchema } from "../util/arrow/index.js";
 
 /**
  * Declarative spec for a single attach-time option.

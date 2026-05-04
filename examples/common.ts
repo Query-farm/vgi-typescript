@@ -9,7 +9,7 @@ import {
   ReadOnlyCatalogInterface, TableInfo,
   type AttachId, type TransactionId,
 } from "../src/index.js";
-import { serializeSchema } from "../src/util/arrow.js";
+import { serializeSchema } from "../src/util/arrow/index.js";
 import { argumentSpecsToSchema } from "../src/arguments/argument-spec.js";
 import { scalarFunctions } from "./scalar.js";
 import {

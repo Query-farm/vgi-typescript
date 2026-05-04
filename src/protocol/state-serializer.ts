@@ -7,7 +7,7 @@ import {
   makeData, RecordBatch,
 } from "@query-farm/apache-arrow";
 import type { StateSerializer } from "vgi-rpc";
-import { serializeBatch, deserializeBatch, batchFromColumns } from "../util/arrow.js";
+import { serializeBatch, deserializeBatch, batchFromColumns } from "../util/arrow/index.js";
 import { toUint8Array } from "../util/bytes.js";
 
 /** Schema for the exchange state carried in HTTP state tokens. */

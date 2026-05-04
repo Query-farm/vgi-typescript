@@ -3,7 +3,7 @@
 // filter set and applies it to batches.
 
 import { RecordBatch, Schema } from "@query-farm/apache-arrow";
-import { batchFromColumns, emptyBatch } from "../util/arrow.js";
+import { batchFromColumns, emptyBatch } from "../util/arrow/index.js";
 import {
   ComparisonOp,
   type AndFilter,

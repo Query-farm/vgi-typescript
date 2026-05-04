@@ -4,7 +4,7 @@
 
 import { RecordBatch, Schema } from "@query-farm/apache-arrow";
 import type { OutputCollector } from "vgi-rpc";
-import { batchFromColumns } from "../util/arrow.js";
+import { batchFromColumns } from "../util/arrow/index.js";
 import { ComparisonOp, type ExprNode, type Filter } from "./types.js";
 import { PushdownFilters } from "./evaluate.js";
 

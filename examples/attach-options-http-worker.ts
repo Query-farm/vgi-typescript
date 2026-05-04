@@ -46,7 +46,7 @@ import {
   type AttachOptionSpec,
   serializeAttachOptionSpecs,
 } from "../src/catalog/attach-option.js";
-import { batchFromColumns, deserializeBatch, serializeBatch } from "../src/util/arrow.js";
+import { batchFromColumns, deserializeBatch, serializeBatch } from "../src/util/arrow/index.js";
 
 // (same specs as attach-options-worker.ts — kept inline so both workers
 // can be run independently without a shared fixture file)

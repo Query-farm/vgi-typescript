@@ -2,7 +2,7 @@
 // Holds positional and named scalar values from DuckDB.
 
 import type { Schema } from "@query-farm/apache-arrow";
-import { safeNumber } from "../util/arrow.js";
+import { safeNumber } from "../util/arrow/index.js";
 
 export class Arguments {
   readonly positional: (any | null)[];
