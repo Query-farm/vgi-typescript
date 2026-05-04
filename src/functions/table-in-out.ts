@@ -26,7 +26,7 @@ import {
   type PushdownFilters,
 } from "../filter-pushdown/index.js";
 import { FunctionStability } from "../types.js";
-import { BoundStorage, storage as defaultStorage } from "../storage/function-storage.js";
+import { BoundStorage, storage as defaultStorage } from "./storage.js";
 import { serializeUserState, deserializeUserState } from "../protocol/state-serializer.js";
 
 // ============================================================================

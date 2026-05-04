@@ -116,10 +116,10 @@ export {
   BoundStorage,
   UnknownInvocationError,
   storage as functionStorage,
-} from "./storage/function-storage.js";
+} from "./functions/storage.js";
 
 // Client
-export { VgiClient, VgiClientError } from "./client/index.js";
+export { VgiClient, VgiClientError } from "./client/client.js";
 export type {
   VgiClientOptions,
   TableFunctionOptions,
@@ -129,7 +129,7 @@ export type {
   CatalogFunctionType as ClientCatalogFunctionType,
   CatalogAttachOptions,
   AttachOptionValue,
-} from "./client/index.js";
+} from "./client/types.js";
 
 // Re-export from vgi-rpc for convenience
 export { str, bytes, int, int32, float, float32, bool, toSchema, OutputCollector, AuthContext } from "vgi-rpc";

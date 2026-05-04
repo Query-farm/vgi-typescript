@@ -28,7 +28,7 @@ import {
 } from "../filter-pushdown/index.js";
 import type { ColumnStatistics } from "../util/statistics.js";
 import { FunctionStability } from "../types.js";
-import { BoundStorage, storage as globalStorage } from "../storage/function-storage.js";
+import { BoundStorage, storage as globalStorage } from "./storage.js";
 
 // Base64-decode a string into raw bytes. Used to unpack the dynamic filter
 // update DuckDB attaches to each tick batch's custom metadata.
