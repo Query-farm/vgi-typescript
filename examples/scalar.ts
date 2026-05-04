@@ -30,6 +30,7 @@ import {
   NullHandling,
   type ScalarBindParameters,
   type ScalarParameterDef,
+  ArgumentValidationError,
 } from "../src/index.js";
 import type { VgiFunction } from "../src/index.js";
 
@@ -333,6 +334,9 @@ const sum_values = defineScalarFunction({
     { name: "values", type: new Null(), varargs: true },
   ],
   outputType: (params: ScalarBindParameters) => {
+    if (!params.argumentsSchema || params.argumentsSchema.fields.length === 0) {
+      throw new ArgumentValidationError("sum_values requires at least 1 value");
+    }
     const firstType = params.argumentsSchema.fields[0].type;
     return promoteForAddition(firstType);
   },
