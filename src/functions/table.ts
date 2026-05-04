@@ -25,7 +25,7 @@ import {
   deserializeFilters,
   FilteringOutputCollector,
   type PushdownFilters,
-} from "../util/filter-pushdown.js";
+} from "../filter-pushdown/index.js";
 import type { ColumnStatistics } from "../util/statistics.js";
 import { FunctionStability } from "../types.js";
 import { BoundStorage, storage as globalStorage } from "../storage/function-storage.js";

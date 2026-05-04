@@ -83,7 +83,7 @@ export {
   type StructFilter,
   formatPushedFilters,
   reprPushedFilters,
-} from "./util/filter-pushdown.js";
+} from "./filter-pushdown/index.js";
 
 // State serializer
 export { arrowStateSerializer, EXCHANGE_STATE_SCHEMA, serializeUserState, deserializeUserState } from "./protocol/state-serializer.js";

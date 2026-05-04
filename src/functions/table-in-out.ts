@@ -24,7 +24,7 @@ import {
   deserializeFilters,
   FilteringOutputCollector,
   type PushdownFilters,
-} from "../util/filter-pushdown.js";
+} from "../filter-pushdown/index.js";
 import { FunctionStability } from "../types.js";
 import { BoundStorage, storage as defaultStorage } from "../storage/function-storage.js";
 import { serializeUserState, deserializeUserState } from "../protocol/state-serializer.js";
