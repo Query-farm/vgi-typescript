@@ -2,7 +2,7 @@
 
 import type { RecordBatch } from "@query-farm/apache-arrow";
 import type { Arguments } from "../arguments/arguments.js";
-import type { AttachOptionValue } from "../util/attach-options.js";
+import type { AttachOptionValue } from "../catalog/attach-options.js";
 import type { BindResponse } from "../protocol/types.js";
 import { OrderByDirection, OrderByNullOrder } from "../protocol/types.js";
 

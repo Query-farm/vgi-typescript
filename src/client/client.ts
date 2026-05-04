@@ -22,10 +22,6 @@ import {
   batchFromColumns,
   iterRows,
 } from "../util/arrow/index.js";
-import { VgiClientError, wrapRpcWithErrorEnrichment } from "./errors.js";
-import { deserializeInfoList, deserializeTags, toAsyncIterator } from "./helpers.js";
-
-export { VgiClientError };
 import {
   type SchemaInfo,
   decodeSchemaInfo,
@@ -48,7 +44,11 @@ import {
 } from "../catalog/interface.js";
 import { wrapRequest, unwrapResult } from "./protocol.js";
 import { toUint8Array } from "../util/bytes.js";
-import { serializeAttachOptions } from "../util/attach-options.js";
+import { serializeAttachOptions } from "../catalog/attach-options.js";
+import { VgiClientError, wrapRpcWithErrorEnrichment } from "./errors.js";
+import { deserializeInfoList, deserializeTags, toAsyncIterator } from "./helpers.js";
+
+export { VgiClientError };
 import type {
   VgiClientOptions,
   TableFunctionOptions,

@@ -27,7 +27,7 @@ const rowIdSequenceFunction = tableFunctions.find((f) => f.meta.name === "rowid_
 // statisticsFromDuckDB helper spins up an in-process DuckDB, builds the demo
 // dataset, and extracts typed ColumnStatistics so DuckDB's optimizer can do
 // plan-time filter elimination on these tables.
-import { statisticsFromDuckDB } from "../src/util/duckdb-stats.js";
+import { statisticsFromDuckDB } from "./duckdb-stats.js";
 import { Binary } from "@query-farm/apache-arrow";
 
 const NUMBERS_STATS = await statisticsFromDuckDB(

@@ -18,7 +18,7 @@ import {
   Schema,
   Utf8,
 } from "@query-farm/apache-arrow";
-import { batchFromColumns, serializeBatch } from "./arrow/index.js";
+import { batchFromColumns, serializeBatch } from "../util/arrow/index.js";
 
 /**
  * Values supported in a CatalogAttach options map. The client infers an
