@@ -2,7 +2,7 @@
 // Works with any RpcClient (subprocess or HTTP transport).
 
 import { Schema, Field, RecordBatch, Utf8, Binary, List } from "@query-farm/apache-arrow";
-import { RpcError, type RpcClient, type StreamSession } from "vgi-rpc";
+import { type RpcClient, type StreamSession } from "vgi-rpc";
 import {
   serializeBindRequest,
   deserializeBindResponse,
@@ -22,6 +22,10 @@ import {
   batchFromColumns,
   iterRows,
 } from "../util/arrow/index.js";
+import { VgiClientError, wrapRpcWithErrorEnrichment } from "./errors.js";
+import { deserializeInfoList, deserializeTags, toAsyncIterator } from "./helpers.js";
+
+export { VgiClientError };
 import {
   type SchemaInfo,
   decodeSchemaInfo,
@@ -58,70 +62,6 @@ import type {
   TablesamplePushdown,
   AttachOptionValue,
 } from "./types.js";
-
-/** Error thrown by VgiClient when an RPC call fails or returns unexpected data. */
-export class VgiClientError extends Error {
-  /** Remote traceback from the worker, when an RpcError carried one. */
-  readonly remoteTraceback?: string;
-  /** Underlying error type from the worker (e.g. "ValueError"), when known. */
-  readonly errorType?: string;
-
-  constructor(
-    message: string,
-    options?: { remoteTraceback?: string; errorType?: string; cause?: unknown },
-  ) {
-    super(message, options?.cause != null ? { cause: options.cause } : undefined);
-    this.name = "VgiClientError";
-    if (options?.remoteTraceback) this.remoteTraceback = options.remoteTraceback;
-    if (options?.errorType) this.errorType = options.errorType;
-  }
-
-  /**
-   * Build a VgiClientError from an underlying RpcError, preserving the
-   * remote error type, message, and traceback so the worker-raised exception
-   * shows up at the top of the stack rather than buried under VGI framing.
-   * Mirrors Python's ClientError.from_rpc_error.
-   */
-  static fromRpcError(e: RpcError): VgiClientError {
-    const head = `${e.errorType}: ${e.errorMessage}`;
-    const message = e.remoteTraceback
-      ? `${head}\n\nRemote traceback:\n${e.remoteTraceback}`
-      : head;
-    return new VgiClientError(message, {
-      remoteTraceback: e.remoteTraceback || undefined,
-      errorType: e.errorType,
-      cause: e,
-    });
-  }
-}
-
-/**
- * Wrap an RpcClient so any RpcError thrown by call/stream is rethrown as a
- * VgiClientError carrying the worker's remote traceback. Other errors
- * propagate unchanged.
- */
-function wrapRpcWithErrorEnrichment(rpc: RpcClient): RpcClient {
-  return {
-    async call(method, params) {
-      try {
-        return await rpc.call(method, params);
-      } catch (e) {
-        if (e instanceof RpcError) throw VgiClientError.fromRpcError(e);
-        throw e;
-      }
-    },
-    async stream(method, params) {
-      try {
-        return await rpc.stream(method, params);
-      } catch (e) {
-        if (e instanceof RpcError) throw VgiClientError.fromRpcError(e);
-        throw e;
-      }
-    },
-    describe: () => rpc.describe(),
-    close: () => rpc.close(),
-  };
-}
 
 /**
  * High-level client for calling VGI worker functions and catalog API.
@@ -1401,58 +1341,3 @@ export class VgiClient {
   }
 }
 
-// ==========================================================================
-// Internal helpers
-// ==========================================================================
-
-/**
- * Deserialize a List<Binary> of serialized info batches into typed info objects.
- */
-function deserializeInfoList<T>(
-  items: unknown,
-  deserializeFn: (bytes: Uint8Array) => T,
-): T[] {
-  if (!items) return [];
-  const arr: unknown[] = Array.isArray(items)
-    ? items
-    : [...(items as Iterable<unknown>)];
-  return arr
-    .filter((b) => b != null)
-    .map((b) => deserializeFn(toUint8Array(b)));
-}
-
-/**
- * Deserialize Arrow Map entries into a plain Record<string, string>.
- */
-function deserializeTags(mapVal: unknown): Record<string, string> {
-  const tags: Record<string, string> = {};
-  if (!mapVal) return tags;
-  const iterable = mapVal as { [Symbol.iterator]?: () => Iterator<unknown> };
-  if (typeof iterable[Symbol.iterator] !== "function") return tags;
-  for (const entry of iterable as Iterable<unknown>) {
-    if (Array.isArray(entry)) {
-      tags[String(entry[0])] = String(entry[1]);
-    } else if (entry && typeof entry === "object") {
-      const e = entry as Record<string, unknown> & { [0]?: unknown; [1]?: unknown };
-      tags[String(e.key ?? e[0] ?? "")] = String(e.value ?? e[1] ?? "");
-    }
-  }
-  return tags;
-}
-
-/**
- * Convert sync/async iterable to async iterator.
- */
-function toAsyncIterator<T>(
-  input: Iterable<T> | AsyncIterable<T>,
-): AsyncIterator<T> {
-  if (Symbol.asyncIterator in (input as any)) {
-    return (input as AsyncIterable<T>)[Symbol.asyncIterator]();
-  }
-  const syncIter = (input as Iterable<T>)[Symbol.iterator]();
-  return {
-    async next() {
-      return syncIter.next();
-    },
-  };
-}
