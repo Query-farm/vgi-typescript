@@ -36,6 +36,7 @@ import {
 } from "../../util/arrow/index.js";
 import { toUint8Array, buildSingleRowBatch } from "./shared.js";
 import { serializeBindRequest, deserializeBindRequest } from "./bind.js";
+import { decodeDictValue } from "../../util/arrow/index.js";
 
 const INIT_REQUEST_SCHEMA = new Schema([
   new Field("bind_call", new Binary(), false),
@@ -114,10 +115,13 @@ export function deserializeInitRequest(
     }
   }
 
-  // Parse phase
+  // Parse phase. DuckDB sends this as a Dictionary on the wire; vgi-rpc's
+  // row extractor doesn't auto-decode dictionaries, so values come in as raw
+  // Arrow Data objects. decodeDictValue resolves them to the underlying string.
   let phase: TableInOutPhase | null = null;
-  if (params.phase != null) {
-    const phaseStr = String(params.phase);
+  const phaseRaw = decodeDictValue(params.phase);
+  if (phaseRaw != null) {
+    const phaseStr = String(phaseRaw);
     if (phaseStr === "INPUT") {
       phase = TableInOutPhase.INPUT;
     } else if (phaseStr === "FINALIZE") {

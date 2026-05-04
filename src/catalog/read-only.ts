@@ -299,7 +299,10 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
           distinct_dependent: meta.distinctDependent as any,
           supports_window: false,
           streaming_partitioned: false,
-          has_finalize: false,
+          // table_in_out has a dedicated FINALIZE phase the C++ extension
+          // dispatches as a second init() call. Other kinds finalize implicitly
+          // when the producer/exchange stream ends.
+          has_finalize: f.kind === "table_in_out",
           required_settings: meta.requiredSettings,
           required_secrets: requiredSecrets.map((s) => ({
             secret_type: s.secret_type,

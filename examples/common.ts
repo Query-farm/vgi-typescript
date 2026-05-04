@@ -517,6 +517,7 @@ export function createExampleCatalog(base: ReadOnlyCatalogInterface): ReadOnlyCa
         supports_insert: false,
         supports_update: false,
         supports_delete: false,
+        supports_returning: false,
         supports_column_statistics: false,
       };
     }
@@ -552,6 +553,7 @@ export function createExampleCatalog(base: ReadOnlyCatalogInterface): ReadOnlyCa
         supports_insert: false,
         supports_update: false,
         supports_delete: false,
+        supports_returning: false,
         supports_column_statistics: false,
       };
     }
