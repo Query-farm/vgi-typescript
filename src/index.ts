@@ -23,6 +23,8 @@ export type { VgiFunction, FunctionMeta, StreamHandlers, FunctionExample, Handle
 export { CatalogInterface, type CatalogAttachResult, type SchemaInfo, encodeSchemaInfo, decodeSchemaInfo, type TableInfo, encodeTableInfo, decodeTableInfo, type ViewInfo, encodeViewInfo, decodeViewInfo, type CatalogInfo, encodeCatalogInfo, decodeCatalogInfo, type FunctionInfo, encodeFunctionInfo, decodeFunctionInfo, type FunctionInfoOptions, type MacroInfo, encodeMacroInfo, decodeMacroInfo, type MacroType, type AttachId, type TransactionId } from "./catalog/interface.js";
 export type { CatalogDescriptor, SchemaDescriptor, TableDescriptor, ViewDescriptor, MacroDescriptor, SettingDescriptor, SecretTypeDescriptor, ForeignKeyDef, DefaultValue } from "./catalog/descriptors.js";
 export { ReadOnlyCatalogInterface } from "./catalog/read-only.js";
+export { CompositeCatalogInterface } from "./catalog/composite.js";
+export { FunctionRegistry } from "./functions/registry.js";
 
 // Core types
 export {

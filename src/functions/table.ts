@@ -47,6 +47,55 @@ function deserializeFilterBatch(bytes: Uint8Array): RecordBatch | null {
   return null;
 }
 
+// Wrap an OutputCollector so each emitted RecordBatch is projected-by-name
+// to the bound outputSchema before forwarding. Lenient: workers can emit
+// over-wide batches (full declared schema) and the framework drops the
+// columns DuckDB didn't ask for. Field name mismatches yield null columns
+// rather than wrong-position reads. Field types must already match.
+function makeProjectingCollector(inner: OutputCollector, targetSchema: Schema): OutputCollector {
+  const targetNames = new Set(targetSchema.fields.map((f) => f.name));
+  // Single-pass guard: don't project when a batch already matches.
+  function alreadyMatches(batch: RecordBatch): boolean {
+    if (batch.schema.fields.length !== targetSchema.fields.length) return false;
+    for (let i = 0; i < targetSchema.fields.length; i++) {
+      if (batch.schema.fields[i].name !== targetSchema.fields[i].name) return false;
+    }
+    return true;
+  }
+  function project(batch: RecordBatch): RecordBatch {
+    if (alreadyMatches(batch)) return batch;
+    const { batchFromColumns } = require("../util/arrow/index.js");
+    const cols: Record<string, any[]> = {};
+    for (const f of targetSchema.fields) {
+      const src = batch.getChild(f.name);
+      if (src) {
+        const arr: any[] = [];
+        for (let i = 0; i < batch.numRows; i++) arr.push(src.get(i));
+        cols[f.name] = arr;
+      } else {
+        cols[f.name] = new Array(batch.numRows).fill(null);
+      }
+    }
+    return batchFromColumns(cols, targetSchema);
+  }
+  return new Proxy(inner, {
+    get(target, prop, receiver) {
+      if (prop === "emit") {
+        return function (this: OutputCollector, batchOrColumns: RecordBatch | Record<string, any[]>, metadata?: Map<string, string>) {
+          if (batchOrColumns instanceof RecordBatch) {
+            return (target as any).emit(project(batchOrColumns), metadata);
+          }
+          // Object form: vgi-rpc itself converts to a batch via outputSchema,
+          // and the user passed columns by name — already aligned.
+          return (target as any).emit(batchOrColumns, metadata);
+        };
+      }
+      const v = Reflect.get(target, prop, receiver);
+      return typeof v === "function" ? v.bind(target) : v;
+    },
+  });
+}
+
 // ============================================================================
 // Table function parameter bundles
 // ============================================================================
@@ -326,9 +375,17 @@ export function defineTableFunction<
           out: OutputCollector
         ) => {
           const current = pState.processParams.pushdownFilters;
-          const wrappedOut = (config.autoApplyFilters && current)
-            ? new FilteringOutputCollector(out, current) as unknown as OutputCollector
-            : out;
+          // Auto-project: workers may emit a batch with the function's full
+          // declared schema even when DuckDB only requested a subset. Wrap
+          // the OutputCollector so each emit() projects-by-name to the
+          // bound outputSchema. Lenient: absent fields become null columns.
+          let wrappedOut: OutputCollector =
+            outputSchema && projIds
+              ? makeProjectingCollector(out, outputSchema)
+              : out;
+          if (config.autoApplyFilters && current) {
+            wrappedOut = new FilteringOutputCollector(wrappedOut, current) as unknown as OutputCollector;
+          }
           await config.process(pState.processParams, pState.state, wrappedOut);
         },
       };
