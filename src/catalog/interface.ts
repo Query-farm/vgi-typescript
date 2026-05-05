@@ -59,6 +59,13 @@ import type { MacroInfo } from "../generated/vgi-client.js";
 export type { MacroInfo };
 export { encodeMacroInfo, decodeMacroInfo } from "../generated/vgi-client.js";
 
+// IndexInfo wire shape — declarative indexes a worker advertises and DuckDB
+// surfaces under duckdb_indexes(). Constraint type maps to is_unique /
+// is_primary on the DuckDB side.
+import type { IndexInfo, IndexConstraintType } from "../generated/vgi-client.js";
+export type { IndexInfo, IndexConstraintType };
+export { encodeIndexInfo, decodeIndexInfo } from "../generated/vgi-client.js";
+
 // ============================================================================
 // ScanFunctionResult — typed result for catalog_table_scan_function_get.
 // Mirrors vgi-python's ScanFunctionResult (catalog_interface.py:380).
@@ -465,6 +472,21 @@ export abstract class CatalogInterface {
     transactionId?: TransactionId
   ): MacroInfo[] {
     return [];
+  }
+  schemaContentsIndexes(
+    attachId: AttachId,
+    name: string,
+    transactionId?: TransactionId
+  ): IndexInfo[] {
+    return [];
+  }
+  indexGet(
+    attachId: AttachId,
+    schemaName: string,
+    name: string,
+    transactionId?: TransactionId
+  ): IndexInfo | null {
+    return null;
   }
   transactionBegin(attachId: AttachId): Uint8Array | null {
     return null;

@@ -12,6 +12,7 @@ import type {
   CatalogAttachResult,
   CatalogInfo,
   FunctionInfo,
+  IndexInfo,
   MacroInfo,
   MacroType,
   SchemaInfo,
@@ -125,6 +126,14 @@ export class CompositeCatalogInterface extends CatalogInterface {
 
   override schemaContentsMacros(attachId: AttachId, name: string, type: string, transactionId?: TransactionId): MacroInfo[] {
     return this._route(attachId).schemaContentsMacros(attachId, name, type, transactionId);
+  }
+
+  override schemaContentsIndexes(attachId: AttachId, name: string, transactionId?: TransactionId): IndexInfo[] {
+    return this._route(attachId).schemaContentsIndexes(attachId, name, transactionId);
+  }
+
+  override indexGet(attachId: AttachId, schemaName: string, name: string, transactionId?: TransactionId): IndexInfo | null {
+    return this._route(attachId).indexGet(attachId, schemaName, name, transactionId);
   }
 
   override tableGet(attachId: AttachId, schemaName: string, name: string, atUnit?: string, atValue?: string, transactionId?: TransactionId): TableInfo | null {

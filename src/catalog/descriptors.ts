@@ -79,12 +79,25 @@ export interface MacroDescriptor {
   tags?: Record<string, string>;
 }
 
+export interface IndexDescriptor {
+  name: string;
+  tableName: string;
+  expressions: string[];
+  /** UNIQUE / PRIMARY / NONE; defaults to NONE. */
+  constraintType?: "NONE" | "UNIQUE" | "PRIMARY";
+  indexType?: string;
+  options?: Record<string, string>;
+  comment?: string;
+  tags?: Record<string, string>;
+}
+
 export interface SchemaDescriptor {
   name: string;
   tables?: TableDescriptor[];
   views?: ViewDescriptor[];
   macros?: MacroDescriptor[];
   functions?: VgiFunction[];
+  indexes?: IndexDescriptor[];
   comment?: string;
   tags?: Record<string, string>;
 }

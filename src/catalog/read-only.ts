@@ -11,6 +11,8 @@ import {
   type ViewInfo,
   type FunctionInfo,
   type MacroInfo,
+  type IndexInfo,
+  type IndexConstraintType,
 } from "./interface.js";
 import type { CatalogDescriptor, SchemaDescriptor, TableDescriptor, ViewDescriptor, MacroDescriptor, SettingDescriptor, SecretTypeDescriptor, ForeignKeyDef, DefaultValue } from "./descriptors.js";
 import { serializeColumnStatistics } from "../util/statistics.js";
@@ -340,6 +342,36 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
         parameter_default_values: m.parameterDefaultValues ?? new Uint8Array(0),
         definition: m.definition,
       }));
+  }
+
+  override schemaContentsIndexes(
+    attachId: AttachId,
+    name: string,
+    transactionId?: TransactionId
+  ): IndexInfo[] {
+    const schema = this._descriptor.schemas.find((s) => s.name === name);
+    if (!schema || !schema.indexes) return [];
+    return schema.indexes.map((idx) => ({
+      comment: idx.comment ?? null,
+      tags: idx.tags ?? {},
+      name: idx.name,
+      schema_name: name,
+      table_name: idx.tableName,
+      index_type: idx.indexType ?? "ART",
+      constraint_type: (idx.constraintType ?? "NONE") as IndexConstraintType,
+      expressions: idx.expressions,
+      options: idx.options ?? {},
+    }));
+  }
+
+  override indexGet(
+    attachId: AttachId,
+    schemaName: string,
+    name: string,
+    transactionId?: TransactionId
+  ): IndexInfo | null {
+    const all = this.schemaContentsIndexes(attachId, schemaName, transactionId);
+    return all.find((i) => i.name === name) ?? null;
   }
 
   override macroGet(

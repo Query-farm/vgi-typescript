@@ -456,6 +456,21 @@ export const catalog: CatalogDescriptor = {
           comment: "Numbers less than 10",
         },
       ],
+      indexes: [
+        {
+          name: "idx_numbers_value",
+          tableName: "numbers",
+          expressions: ["value"],
+          comment: "Index on numbers.value",
+        },
+        {
+          name: "idx_numbers_value_unique",
+          tableName: "numbers",
+          expressions: ["value"],
+          constraintType: "UNIQUE",
+          comment: "Unique index on numbers.value",
+        },
+      ],
     },
   ],
 };

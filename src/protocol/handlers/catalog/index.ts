@@ -7,6 +7,7 @@ import { registerCatalogAdminMethods } from "./admin.js";
 import { registerCatalogTableMethods } from "./table.js";
 import { registerCatalogViewMethods } from "./view.js";
 import { registerCatalogMacroMethods } from "./macro.js";
+import { registerCatalogIndexMethods } from "./index_methods.js";
 
 export function registerCatalogMethods(
   protocol: Protocol,
@@ -18,4 +19,5 @@ export function registerCatalogMethods(
   registerCatalogTableMethods(protocol, getCatalog);
   registerCatalogViewMethods(protocol, getCatalog);
   registerCatalogMacroMethods(protocol, getCatalog);
+  registerCatalogIndexMethods(protocol, getCatalog);
 }
