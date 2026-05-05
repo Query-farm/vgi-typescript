@@ -64,7 +64,37 @@ const sequence = defineTableFunction<SequenceArgs, CountdownState>({
   projectionPushdown: true,
   filterPushdown: true,
   autoApplyFilters: true,
-  onBind: () => ({ outputSchema: SEQUENCE_SCHEMA }),
+  onBind: (params: TableBindParams<SequenceArgs>) => {
+    // Reject NULL positional/named args explicitly so callers don't see an
+    // opaque TypeError downstream. Inspect the raw Arguments map: an
+    // explicitly-NULL named arg lives in `named` with a null value, whereas
+    // an omitted arg isn't present at all.
+    const rawArgs = params.bindCall.arguments;
+    if (rawArgs.positional.length > 0 && rawArgs.positional[0] === null) {
+      throw new ArgumentValidationError("sequence: count cannot be NULL");
+    }
+    if (rawArgs.named.has("batch_size") && rawArgs.named.get("batch_size") === null) {
+      throw new ArgumentValidationError("sequence: batch_size cannot be NULL");
+    }
+    if (rawArgs.named.has("increment") && rawArgs.named.get("increment") === null) {
+      throw new ArgumentValidationError("sequence: increment cannot be NULL");
+    }
+    if (params.args.count == null) {
+      throw new ArgumentValidationError("sequence: count cannot be NULL");
+    }
+    // Validate ge=1 constraints on tunables: batch_size=0 would loop
+    // forever in process() and increment=0 would yield duplicate values
+    // forever.
+    const batchSize = Number(params.args.batch_size ?? 1000);
+    const increment = Number(params.args.increment ?? 1);
+    if (!(batchSize >= 1)) {
+      throw new ArgumentValidationError(`sequence: batch_size must be >= 1, got ${batchSize}`);
+    }
+    if (!(increment >= 1)) {
+      throw new ArgumentValidationError(`sequence: increment must be >= 1, got ${increment}`);
+    }
+    return { outputSchema: SEQUENCE_SCHEMA };
+  },
   cardinality: (params: TableBindParams<SequenceArgs>) => ({
     estimate: params.args.count,
     max: params.args.count,
@@ -1241,13 +1271,9 @@ const filter_echo = defineTableFunction<FilterEchoArgs, FilterEchoState>({
 
 const filter_echo_partitioned = defineTableFunction<FilterEchoArgs, FilterEchoState>({
   name: "filter_echo_partitioned",
-  description: "filter_echo variant exposed across multiple parallel workers",
+  description: "Multi-worker partitioned sequence that echoes pushed-down filters",
   args: {
     count: new Int64(),
-    batch_size: new Int64(),
-  },
-  argDefaults: {
-    batch_size: 2048,
   },
   projectionPushdown: true,
   filterPushdown: true,
@@ -1276,7 +1302,7 @@ const filter_echo_partitioned = defineTableFunction<FilterEchoArgs, FilterEchoSt
       out.finish();
       return;
     }
-    const size = Math.min(state.remaining, params.args.batch_size);
+    const size = Math.min(state.remaining, 2048);
     const nValues: bigint[] = [];
     const sValues: string[] = [];
     const filterValues: string[] = [];
@@ -1295,6 +1321,35 @@ const filter_echo_partitioned = defineTableFunction<FilterEchoArgs, FilterEchoSt
     state.remaining -= size;
   },
   categories: ["generator", "diagnostic", "parallel"],
+});
+
+// ============================================================================
+// 15d. profiling_demo — registration stub. Real impl exposes a
+//      dynamic_to_string() callback that returns per-worker counters under
+//      EXPLAIN ANALYZE; that hook isn't yet wired through the framework.
+// ============================================================================
+
+const PROFILING_DEMO_SCHEMA = new Schema([
+  new Field("a", new Int64(), true),
+  new Field("b", new Int64(), true),
+]);
+
+const profiling_demo = defineTableFunction<{ count: number; batch_size: number }, { remaining: number; idx: number }>({
+  name: "profiling_demo",
+  description: "EXPLAIN ANALYZE profiling probe (dynamic_to_string stub)",
+  args: { count: new Int64(), batch_size: new Int64() },
+  argDefaults: { batch_size: 2048 },
+  onBind: () => ({ outputSchema: PROFILING_DEMO_SCHEMA }),
+  initialState: (params) => ({ remaining: Number(params.args.count), idx: 0 }),
+  process: (params, state, out) => {
+    if (state.remaining <= 0) { out.finish(); return; }
+    const size = Math.min(state.remaining, Number(params.args.batch_size));
+    const a: bigint[] = [], b: bigint[] = [];
+    for (let i = 0; i < size; i++) { a.push(BigInt(state.idx + i)); b.push(BigInt(state.idx + i) * 2n); }
+    state.idx += size; state.remaining -= size;
+    out.emit(batchFromColumns({ a, b }, params.outputSchema));
+  },
+  categories: ["test", "profiling"],
 });
 
 // ============================================================================
@@ -2523,6 +2578,7 @@ export const tableFunctions: VgiFunction[] = [
   filter_echo,
   filter_echo_partitioned,
   slow_cancellable,
+  profiling_demo,
   make_series_count,
   make_series_csv,
   make_series_range,
