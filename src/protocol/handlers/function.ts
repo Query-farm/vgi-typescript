@@ -18,7 +18,7 @@ import type { GlobalInitResponse } from "../types.js";
 import { batchToScalarDict, deserializeBatch } from "../../util/arrow/index.js";
 import { toUint8Array } from "../../util/bytes.js";
 import { serializeColumnStatistics } from "../../util/statistics.js";
-import { BindResultSchema, TableFunctionCardinalityResultSchema } from "../../generated/vgi-protocol-schemas.js";
+import { BindResultSchema, TableFunctionCardinalityResultSchema, TableFunctionDynamicToStringResultSchema } from "../../generated/vgi-protocol-schemas.js";
 import {
   REQUEST_PARAMS_SCHEMA,
   RESULT_BINARY_SCHEMA,
@@ -244,6 +244,42 @@ export function registerFunctionMethods(protocol: Protocol, config: FunctionHand
       const stats = func.statistics(request);
       if (!stats || stats.length === 0) return { result: null };
       return { result: serializeColumnStatistics(stats) };
+    },
+  });
+
+  // --------------------------------------------------------------------------
+  // table_function_dynamic_to_string (unary)
+  // --------------------------------------------------------------------------
+  // DuckDB calls this once per parallel scan thread at FinishSource. The
+  // result is a List<Utf8>/List<Utf8> pair carrying ordered key→value
+  // diagnostics that surface under EXPLAIN ANALYZE alongside the
+  // intrinsics (Function, Rows Read, Threads). When the function doesn't
+  // declare dynamicToString, return empty maps so the C++ side falls back
+  // to intrinsics only.
+  protocol.unary("table_function_dynamic_to_string", {
+    params: REQUEST_PARAMS_SCHEMA,
+    result: RESULT_BINARY_SCHEMA,
+    handler: (params) => {
+      const innerParams = unwrapRequest(params.request);
+      const bindCallBytes = toUint8Array(innerParams.bind_call);
+      const bindCallBatch = deserializeBatch(bindCallBytes);
+      const bindParams: Record<string, any> = {};
+      for (const field of bindCallBatch.schema.fields) {
+        const col = bindCallBatch.getChild(field.name);
+        bindParams[field.name] = col ? col.get(0) : null;
+      }
+      const bindCall = deserializeBindRequest(bindParams);
+      const globalExecutionId = toUint8Array(innerParams.global_execution_id);
+      const bindOpaqueData = innerParams.bind_opaque_data
+        ? toUint8Array(innerParams.bind_opaque_data)
+        : null;
+      const func = registry.get(bindCall.function_name, overloadContext(bindCall));
+      const map = func.dynamicToString
+        ? func.dynamicToString({ bindCall, bindOpaqueData, globalExecutionId })
+        : {};
+      const keys = Object.keys(map);
+      const values = keys.map((k) => map[k] ?? "");
+      return wrapResult({ keys, values }, TableFunctionDynamicToStringResultSchema);
     },
   });
 }

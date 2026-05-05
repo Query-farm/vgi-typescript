@@ -1334,20 +1334,68 @@ const PROFILING_DEMO_SCHEMA = new Schema([
   new Field("b", new Int64(), true),
 ]);
 
-const profiling_demo = defineTableFunction<{ count: number; batch_size: number }, { remaining: number; idx: number }>({
+interface ProfilingState { remaining: number; idx: number; rowsProduced: bigint; batchesEmitted: bigint; startNs: bigint }
+
+const profiling_demo = defineTableFunction<{ count: number; batch_size: number }, ProfilingState>({
   name: "profiling_demo",
-  description: "EXPLAIN ANALYZE profiling probe (dynamic_to_string stub)",
+  description: "EXPLAIN ANALYZE profiling probe (dynamic_to_string)",
   args: { count: new Int64(), batch_size: new Int64() },
   argDefaults: { batch_size: 2048 },
   onBind: () => ({ outputSchema: PROFILING_DEMO_SCHEMA }),
-  initialState: (params) => ({ remaining: Number(params.args.count), idx: 0 }),
+  initialState: (params) => ({
+    remaining: Number(params.args.count),
+    idx: 0,
+    rowsProduced: 0n,
+    batchesEmitted: 0n,
+    startNs: BigInt(Date.now()) * 1_000_000n,
+  }),
   process: (params, state, out) => {
     if (state.remaining <= 0) { out.finish(); return; }
     const size = Math.min(state.remaining, Number(params.args.batch_size));
     const a: bigint[] = [], b: bigint[] = [];
     for (let i = 0; i < size; i++) { a.push(BigInt(state.idx + i)); b.push(BigInt(state.idx + i) * 2n); }
-    state.idx += size; state.remaining -= size;
+    state.idx += size;
+    state.remaining -= size;
+    state.rowsProduced += BigInt(size);
+    state.batchesEmitted += 1n;
     out.emit(batchFromColumns({ a, b }, params.outputSchema));
+
+    // Persist a snapshot per tick so dynamic_to_string can read the latest
+    // values across worker pool boundaries — matches Python's pattern in
+    // ProfilingDemoFunction.
+    if (params.storage) {
+      const elapsedMs = (BigInt(Date.now()) * 1_000_000n - state.startNs) / 1_000_000n;
+      const enc = new TextEncoder();
+      const bytes = enc.encode(JSON.stringify({
+        rows_produced: state.rowsProduced.toString(),
+        batches_emitted: state.batchesEmitted.toString(),
+        elapsed_ms: elapsedMs.toString(),
+      }));
+      params.storage.put(bytes);
+    }
+  },
+  dynamicToString: (_params, _executionId, storage) => {
+    // Sum across every persisted snapshot (one per process tick / worker).
+    // Last snapshot wins per-key in vgi-python; we sum rows/batches and take
+    // the max elapsed.
+    let rows = 0n, batches = 0n, elapsed = 0n;
+    const dec = new TextDecoder();
+    for (const bytes of storage.collect()) {
+      try {
+        const snap = JSON.parse(dec.decode(bytes));
+        const r = BigInt(snap.rows_produced ?? "0");
+        const b = BigInt(snap.batches_emitted ?? "0");
+        const e = BigInt(snap.elapsed_ms ?? "0");
+        if (r > rows) rows = r;
+        if (b > batches) batches = b;
+        if (e > elapsed) elapsed = e;
+      } catch { /* ignore corrupt snapshots */ }
+    }
+    return {
+      rows_produced: rows.toString(),
+      batches_emitted: batches.toString(),
+      elapsed_ms: elapsed.toString(),
+    };
   },
   categories: ["test", "profiling"],
 });

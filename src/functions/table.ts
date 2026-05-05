@@ -170,6 +170,17 @@ export interface TableFunctionConfig<
    * EMPTY_RESULT). Return `null` or an empty array when bounds are unknown.
    */
   statistics?: (params: TableBindParams<TArgs>) => ColumnStatistics[] | null;
+  /**
+   * Per-execution diagnostics surfaced under EXPLAIN ANALYZE. DuckDB calls
+   * this once per parallel scan thread at pipeline FinishSource via the
+   * `table_function_dynamic_to_string` RPC. Return ordered key→value
+   * strings; the C++ extension merges these with the intrinsic keys
+   * (Function, Rows Read, Threads). The framework provides a BoundStorage
+   * keyed by the global execution_id so process() can persist counters
+   * that this callback then reads back — see profiling_demo for the
+   * canonical pattern.
+   */
+  dynamicToString?: (params: TableBindParams<TArgs>, executionId: Uint8Array, storage: BoundStorage) => Record<string, string>;
   // Metadata
   projectionPushdown?: boolean;
   filterPushdown?: boolean;
@@ -418,6 +429,26 @@ export function defineTableFunction<
             secrets,
             resolvedSecretsProvided: request.bind_call.resolved_secrets_provided ?? false,
           });
+        }
+      : undefined,
+
+    dynamicToString: config.dynamicToString
+      ? (request) => {
+          const args = extractArgs(request.bindCall);
+          const settings = batchToScalarDict(request.bindCall.settings);
+          const secrets = batchToSecretDict(request.bindCall.secrets);
+          const storage = new BoundStorage(globalStorage, request.globalExecutionId);
+          return config.dynamicToString!(
+            {
+              args,
+              bindCall: request.bindCall,
+              settings,
+              secrets,
+              resolvedSecretsProvided: request.bindCall.resolved_secrets_provided ?? false,
+            },
+            request.globalExecutionId,
+            storage,
+          );
         }
       : undefined,
   };

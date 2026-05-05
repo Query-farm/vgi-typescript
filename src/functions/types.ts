@@ -102,4 +102,18 @@ export interface VgiFunction {
    * filter elimination.
    */
   statistics?(request: TableFunctionCardinalityRequest): import("../util/statistics.js").ColumnStatistics[] | null;
+  /**
+   * Per-execution diagnostics for EXPLAIN ANALYZE. DuckDB calls this at
+   * pipeline FinishSource via the `table_function_dynamic_to_string` RPC.
+   * Returns ordered key→value strings; the C++ extension merges these with
+   * the intrinsic keys (Function, Rows Read, Threads).
+   */
+  dynamicToString?(request: DynamicToStringRequest): Record<string, string>;
+}
+
+/** Request bundle for the `table_function_dynamic_to_string` RPC. */
+export interface DynamicToStringRequest {
+  bindCall: BindRequest;
+  bindOpaqueData: Uint8Array | null;
+  globalExecutionId: Uint8Array;
 }
