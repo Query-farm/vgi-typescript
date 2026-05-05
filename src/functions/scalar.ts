@@ -35,7 +35,7 @@ import type {
 } from "./types.js";
 import type { ArgumentSpec } from "../arguments/argument-spec.js";
 import { argumentSpecsToSchema } from "../arguments/argument-spec.js";
-import { batchToScalarDict, batchToSecretDict, projectBatch, safeNumber } from "../util/arrow/index.js";
+import { batchToScalarDict, batchToSecretDict, batchFromColumns, projectBatch, safeNumber } from "../util/arrow/index.js";
 
 // ============================================================================
 // Scalar Bind Parameters
@@ -261,21 +261,13 @@ export function defineScalarFunction(config: ScalarFunctionConfig): VgiFunction 
           if (result instanceof RecordBatch) {
             outputBatch = result;
           } else if (Array.isArray(result)) {
-            // Array of values -> single column
-            // Coerce numbers to BigInt for Int64 output types
-            const outputType = outputSchema.fields[0].type;
-            const values = (DataType.isInt(outputType) && (outputType as any).bitWidth === 64)
-              ? result.map((v: any) => v == null ? null : typeof v === "bigint" ? v : BigInt(v))
-              : result;
-            const arr = vectorFromArray(values, outputType);
-            const structType = new Struct(outputSchema.fields);
-            const data = makeData({
-              type: structType,
-              length: result.length,
-              children: [arr.data[0]],
-              nullCount: 0,
-            });
-            outputBatch = new RecordBatch(outputSchema, data);
+            // Array of values -> single column. Route through batchFromColumns
+            // so complex types (Decimal, BigInt-backed Timestamp/Duration,
+            // List, Map, Struct) are built via our buildColumnData rather
+            // than the raw vectorFromArray path, which requires already-
+            // byte-formed buffers for Decimal.
+            const fieldName = outputSchema.fields[0].name;
+            outputBatch = batchFromColumns({ [fieldName]: result }, outputSchema);
           } else {
             // Assume it's a Vector/typed array
             const structType = new Struct(outputSchema.fields);

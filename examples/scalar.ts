@@ -247,14 +247,62 @@ const double_fn = defineScalarFunction({
   params: { value: new Null() },
   outputType: (params: ScalarBindParameters) => {
     const field = params.argumentsSchema.fields[0];
-    return promoteForAddition(field.type);
+    const t = field.type;
+    // Reject temporal types up front — pc.multiply has no kernel for them.
+    // Match Python's _is_multipliable_type message so callers see the same
+    // diagnostic regardless of language.
+    if (
+      DataType.isDate(t) || DataType.isTime(t) || DataType.isTimestamp(t) ||
+      DataType.isDuration(t) || DataType.isInterval(t)
+    ) {
+      throw new ArgumentValidationError(
+        `double: _is_multipliable_type rejected ${t}`
+      );
+    }
+    return promoteForAddition(t);
   },
-  compute: (batch: RecordBatch) => {
+  compute: (batch: RecordBatch, _consts: any, ctx: any) => {
+    const inputType = batch.schema.fields[0]?.type;
+    // Decimal128 max value at the declared precision. We multiply by 2 below;
+    // detect overflow up front so the user sees "does not fit in precision N"
+    // instead of a silent wrap-around in the unscaled int.
+    const decimalPrecision = inputType && DataType.isDecimal(inputType)
+      ? Number((inputType as any).precision ?? 38)
+      : null;
+    const decimalCap = decimalPrecision != null
+      ? 10n ** BigInt(decimalPrecision) - 1n
+      : null;
     const values = getColumnValues(batch, 0);
     return values.map((v: any) => {
       if (v === null || v === undefined) return null;
-      if (typeof v === "bigint") return v * 2n;
-      return v * 2;
+      // For huge Decimal values (out of JS Number range), arithmetic via
+      // valueOf() throws "not safe to convert". Try a BigInt path first
+      // for any value typed-array-shaped, then fall back to number.
+      if (typeof v === "bigint" || (v && typeof v === "object" && "subarray" in v)) {
+        let big: bigint;
+        if (typeof v === "bigint") {
+          big = v;
+        } else {
+          // DecimalBigNum is little-endian Uint32Array of 4 (Decimal128) or
+          // 8 (Decimal256) words. Reassemble as BigInt.
+          big = 0n;
+          const u32 = v as Uint32Array;
+          for (let j = u32.length - 1; j >= 0; j--) big = (big << 32n) | BigInt(u32[j] >>> 0);
+        }
+        const out = big * 2n;
+        if (decimalCap != null && (out > decimalCap || out < -decimalCap)) {
+          throw new Error(`double: result does not fit in precision ${decimalPrecision}`);
+        }
+        return out;
+      }
+      const out = v * 2;
+      if (decimalCap != null) {
+        const big = BigInt(Math.trunc(out));
+        if (big > decimalCap || big < -decimalCap) {
+          throw new Error(`double: result does not fit in precision ${decimalPrecision}`);
+        }
+      }
+      return out;
     });
   },
   examples: [

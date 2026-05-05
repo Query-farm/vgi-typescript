@@ -188,17 +188,17 @@ function buildDecimalData(values: any[], type: DataType): any {
  * Result is little-endian two's complement of value * 10^scale.
  */
 function numberToDecimalBytes(val: any, scale: number, byteWidth: number): Uint8Array {
+  // Both BigInt and Number values are taken to be the unscaled int already.
+  // This matches what Arrow's Decimal column .get() / .valueOf() exposes
+  // (the unscaled integer), so a user who reads a value, does arithmetic
+  // on it, and writes it back gets the right representation. The `scale`
+  // parameter is unused but retained for callers that may want it later.
+  void scale;
   let bigVal: bigint;
   if (typeof val === "bigint") {
-    bigVal = val * (10n ** BigInt(scale));
+    bigVal = val;
   } else {
-    // Use string conversion to avoid floating-point errors
-    const numStr = Number(val).toFixed(scale);
-    const parts = numStr.split(".");
-    const intPart = parts[0];
-    const fracPart = parts[1] ?? "";
-    const combined = intPart + fracPart.padEnd(scale, "0").slice(0, scale);
-    bigVal = BigInt(combined);
+    bigVal = BigInt(Math.trunc(Number(val)));
   }
 
   const bytes = new Uint8Array(byteWidth);
