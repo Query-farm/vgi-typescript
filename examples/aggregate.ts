@@ -4,6 +4,7 @@
 import { Schema, Field, Int64, Float64, Utf8, Decimal, DataType, Null, List, Struct, RecordBatch } from "@query-farm/apache-arrow";
 import { defineAggregate } from "../src/functions/aggregate.js";
 import { batchFromColumns } from "../src/util/arrow/index.js";
+import { ArgumentValidationError } from "../src/index.js";
 import type { VgiFunction } from "../src/index.js";
 
 // ============================================================================
@@ -131,6 +132,16 @@ const vgi_sum_all = defineAggregate<{ columns: number }, SumAllState>({
   varargs: ["columns"],
   outputType: new Float64(),
   nullHandling: "DEFAULT",
+  onBind: (params) => {
+    // Varargs guard: DuckDB drops the column entirely from the wire when
+    // called with zero values, so input_schema is empty. Reject up-front.
+    if (!params.inputSchema || params.inputSchema.fields.length === 0) {
+      throw new ArgumentValidationError(
+        "vgi_sum_all requires at least 1 value for varargs argument: 'columns'"
+      );
+    }
+    return new Float64();
+  },
   initialState: () => ({ total: 0 }),
   update: ({ groupIds, columns, ensureState }) => {
     const n = groupIds.length;
@@ -341,6 +352,21 @@ const vgi_percentile = defineAggregate<{ value: number; percentile: number }, Pe
   argDefaults: { percentile: 0.5 },
   outputType: new Float64(),
   nullHandling: "DEFAULT",
+  onBind: (params) => {
+    // Validate the const-folded percentile up front so callers get a clear
+    // error before any rows are aggregated.
+    const pct = (params.args as any).percentile;
+    if (pct === null || pct === undefined) {
+      throw new ArgumentValidationError("vgi_percentile: percentile must not be NULL");
+    }
+    if (typeof pct !== "number" || !Number.isFinite(pct)) {
+      throw new ArgumentValidationError("vgi_percentile: percentile must be a finite number");
+    }
+    if (pct < 0 || pct > 1) {
+      throw new ArgumentValidationError("vgi_percentile: percentile must be in [0, 1]");
+    }
+    return new Float64();
+  },
   initialState: () => ({ values: [] }),
   update: ({ groupIds, columns, ensureState }) => {
     // Only one column reaches update — `value`. `percentile` is const-folded

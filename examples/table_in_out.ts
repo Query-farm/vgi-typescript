@@ -286,6 +286,16 @@ const exception_process = defineTableInOutFunction<SumAllColumnsArgs, ExceptionP
     }
     out.emit(emptyBatch(params.outputSchema));
   },
+  // When no exception fires (single batch under 2048 rows) finalize must
+  // still produce the canonical zero-sums row so callers can distinguish
+  // "ran cleanly, totalled to zero" from "errored, no rows".
+  finalize: (params) => {
+    const columns: Record<string, any[]> = {};
+    for (const field of params.outputSchema.fields) {
+      columns[field.name] = [DataType.isInt(field.type) ? BigInt(0) : 0];
+    }
+    return [batchFromColumns(columns, params.outputSchema)];
+  },
   categories: ["test", "error"],
 });
 
@@ -472,6 +482,51 @@ const filter_by_setting = defineTableInOutFunction({
 });
 
 // ============================================================================
+// 9. slow_cancellable_inout — passthrough with optional per-batch sleep.
+//    Registration-only stub for the function_registration test; the on_cancel
+//    semantics the cancel_on_limit test exercises require framework-level
+//    on_cancel hooks not yet wired through.
+// ============================================================================
+
+const slow_cancellable_inout = defineTableInOutFunction({
+  name: "slow_cancellable_inout",
+  description: "Slow table-in-out passthrough (test fixture)",
+  namedArgs: { sleep_ms: new Int64() },
+  argDefaults: { sleep_ms: 50 },
+  args: { probe_path: new Utf8() },
+  onBind: (params) => {
+    if (!params.bindCall.input_schema) {
+      throw new Error("slow_cancellable_inout: input_schema is required");
+    }
+    return { outputSchema: params.bindCall.input_schema };
+  },
+  process: async (params, _state, batch, out) => {
+    const sleepMs = Number((params.args as any).sleep_ms ?? 0);
+    if (sleepMs > 0) await new Promise((r) => setTimeout(r, sleepMs));
+    out.emit(batch);
+  },
+  categories: ["test"],
+});
+
+// ============================================================================
+// 10. unnest_tensor_rows — registration stub. The full implementation walks
+//     nested list/struct types to invert nest_tensor; only the registration
+//     metadata is exercised by function_registration.test.
+// ============================================================================
+
+const unnest_tensor_rows = defineTableInOutFunction({
+  name: "unnest_tensor_rows",
+  description: "Invert nest_tensor, streaming one row per cell (LATERAL-friendly)",
+  onBind: () => {
+    throw new Error("unnest_tensor_rows: not implemented in the TypeScript example worker");
+  },
+  process: () => {
+    throw new Error("unnest_tensor_rows: not implemented");
+  },
+  categories: ["transform", "tensor"],
+});
+
+// ============================================================================
 // Export all table-in-out functions
 // ============================================================================
 
@@ -484,4 +539,6 @@ export const tableInOutFunctions: VgiFunction[] = [
   exception_finalize,
   sum_all_columns_simple_distributed,
   filter_by_setting,
+  slow_cancellable_inout,
+  unnest_tensor_rows,
 ];

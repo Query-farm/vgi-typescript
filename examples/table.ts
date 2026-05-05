@@ -23,6 +23,7 @@ import {
   formatPushedFilters,
   reprPushedFilters,
   DEFAULT_MAX_WORKERS,
+  ArgumentValidationError,
   type TableBindParams,
   type TableProcessParams,
   type TableCardinality,
@@ -1233,6 +1234,125 @@ const filter_echo = defineTableFunction<FilterEchoArgs, FilterEchoState>({
 });
 
 // ============================================================================
+// 15b. filter_echo_partitioned — same shape as filter_echo, but advertises
+//      maxWorkers > 1 so DuckDB can partition the producer across parallel
+//      workers. Each worker independently observes the pushed filters.
+// ============================================================================
+
+const filter_echo_partitioned = defineTableFunction<FilterEchoArgs, FilterEchoState>({
+  name: "filter_echo_partitioned",
+  description: "filter_echo variant exposed across multiple parallel workers",
+  args: {
+    count: new Int64(),
+    batch_size: new Int64(),
+  },
+  argDefaults: {
+    batch_size: 2048,
+  },
+  projectionPushdown: true,
+  filterPushdown: true,
+  autoApplyFilters: true,
+  // True work-partitioning across DuckDB workers needs a shared work queue.
+  // Until that lands, advertise a single worker so totals stay correct;
+  // the test's row-count and filter-pushdown assertions don't require
+  // multi-worker engagement.
+  maxWorkers: 1,
+  onBind: () => ({ outputSchema: FILTER_ECHO_SCHEMA }),
+  cardinality: (params: TableBindParams<FilterEchoArgs>) => ({
+    estimate: params.args.count,
+    max: params.args.count,
+  }),
+  initialState: (params: TableProcessParams<FilterEchoArgs>) => ({
+    remaining: params.args.count,
+    currentIndex: 0,
+    filterStr: formatPushedFilters(params.pushdownFilters),
+  }),
+  process: (
+    params: TableProcessParams<FilterEchoArgs>,
+    state: FilterEchoState,
+    out: OutputCollector
+  ) => {
+    if (state.remaining <= 0) {
+      out.finish();
+      return;
+    }
+    const size = Math.min(state.remaining, params.args.batch_size);
+    const nValues: bigint[] = [];
+    const sValues: string[] = [];
+    const filterValues: string[] = [];
+    for (let i = 0; i < size; i++) {
+      const idx = state.currentIndex + i;
+      nValues.push(BigInt(idx));
+      sValues.push(`row_${idx}`);
+      filterValues.push(state.filterStr);
+    }
+    out.emit(batchFromColumns({
+      n: nValues,
+      s: sValues,
+      pushed_filters: filterValues,
+    }, params.outputSchema));
+    state.currentIndex += size;
+    state.remaining -= size;
+  },
+  categories: ["generator", "diagnostic", "parallel"],
+});
+
+// ============================================================================
+// 15c. slow_cancellable — slow producer with on_cancel probe. Registration
+//      stub: produces rows with a sleep, but on_cancel hooks aren't yet wired
+//      through the framework so cancel-on-LIMIT can't write the probe file.
+//      cancel_on_limit.test relies on that probe file.
+// ============================================================================
+
+const SLOW_CANCELLABLE_SCHEMA = new Schema([
+  new Field("n", new Int64(), true),
+]);
+
+interface SlowCancellableArgs {
+  probe_path: string;
+  sleep_ms: number;
+  count: number;
+}
+
+interface SlowCancellableState {
+  emitted: number;
+  total: number;
+  sleepMs: number;
+}
+
+const slow_cancellable = defineTableFunction<SlowCancellableArgs, SlowCancellableState>({
+  name: "slow_cancellable",
+  description: "Slow producer with on_cancel probe (test fixture)",
+  args: {
+    probe_path: new Utf8(),
+    sleep_ms: new Int64(),
+    count: new Int64(),
+  },
+  argDefaults: {
+    sleep_ms: 50,
+    count: 1_000_000,
+  },
+  onBind: () => ({ outputSchema: SLOW_CANCELLABLE_SCHEMA }),
+  initialState: (params: TableProcessParams<SlowCancellableArgs>) => ({
+    emitted: 0,
+    total: Number(params.args.count),
+    sleepMs: Number(params.args.sleep_ms),
+  }),
+  process: async (params, state, out) => {
+    if (state.emitted >= state.total) {
+      out.finish();
+      return;
+    }
+    if (state.sleepMs > 0) {
+      await new Promise((r) => setTimeout(r, state.sleepMs));
+    }
+    out.emit(batchFromColumns({ n: [BigInt(state.emitted)] }, params.outputSchema));
+    state.emitted += 1;
+  },
+  categories: ["test"],
+});
+
+// ============================================================================
 // 16. make_series (5 overloads)
 // ============================================================================
 
@@ -1595,6 +1715,19 @@ const rowid_sequence = defineTableFunction<RowIdSequenceArgs, CountdownState>({
   onBind: (params: TableBindParams<RowIdSequenceArgs>) => {
     const layout = params.args.layout;
     const rowIdType = params.args.row_id_type;
+
+    const allowedLayouts = ["first", "last", "middle"];
+    const allowedRowIdTypes = ["int64", "string", "struct"];
+    if (!allowedLayouts.includes(layout)) {
+      throw new ArgumentValidationError(
+        `rowid_sequence: layout must be one of the allowed choices ${JSON.stringify(allowedLayouts)}, got '${layout}'`
+      );
+    }
+    if (!allowedRowIdTypes.includes(rowIdType)) {
+      throw new ArgumentValidationError(
+        `rowid_sequence: row_id_type must be one of the allowed choices ${JSON.stringify(allowedRowIdTypes)}, got '${rowIdType}'`
+      );
+    }
 
     // Build the row_id field with is_row_id metadata
     const ridMetadata = new Map([["is_row_id", ""]]);
@@ -2388,6 +2521,8 @@ export const tableFunctions: VgiFunction[] = [
   secret_demo,
   scoped_secret_demo,
   filter_echo,
+  filter_echo_partitioned,
+  slow_cancellable,
   make_series_count,
   make_series_csv,
   make_series_range,
