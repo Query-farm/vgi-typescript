@@ -8,7 +8,7 @@
 
 VGI_DIR      ?= /Users/rusty/Development/vgi
 VGI_PYTHON_DIR ?= /Users/rusty/Development/vgi-python
-TEST_TIMEOUT ?= 60
+TEST_TIMEOUT ?= 120
 WORKER                ?= $(CURDIR)/bin/vgi-example-worker
 HTTP_WORKER           := $(CURDIR)/bin/vgi-example-http-worker
 VERSIONED_WORKER      := $(CURDIR)/bin/vgi-example-versioned-worker

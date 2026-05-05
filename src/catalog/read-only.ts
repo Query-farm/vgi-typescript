@@ -301,10 +301,11 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
           distinct_dependent: meta.distinctDependent as any,
           supports_window: false,
           streaming_partitioned: false,
-          // table_in_out has a dedicated FINALIZE phase the C++ extension
-          // dispatches as a second init() call. Other kinds finalize implicitly
-          // when the producer/exchange stream ends.
-          has_finalize: f.kind === "table_in_out",
+          // Only table_in_out functions that wired up a finalize callback get
+          // the FINALIZE init() phase. Advertising has_finalize=true on a
+          // function without it makes DuckDB call FinalExecute and crash
+          // with 'FinalExecute not supported for project_input'.
+          has_finalize: f.kind === "table_in_out" && f.meta.hasFinalize === true,
           required_settings: meta.requiredSettings,
           required_secrets: requiredSecrets.map((s) => ({
             secret_type: s.secret_type,

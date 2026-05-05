@@ -52,6 +52,12 @@ export interface FunctionMeta {
   requiredSecrets?: string[];
   orderDependent?: OrderDependence;
   distinctDependent?: DistinctDependence;
+  /**
+   * For table_in_out functions: whether the user defined a finalize callback.
+   * DuckDB issues a separate FINALIZE init() phase only when this is true;
+   * otherwise calling FinalExecute is unsupported and crashes the C++ side.
+   */
+  hasFinalize?: boolean;
 }
 
 export interface StreamHandlers {

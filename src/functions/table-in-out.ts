@@ -156,6 +156,7 @@ export function defineTableInOutFunction<
     maxWorkers: config.maxWorkers,
     requiredSettings: config.requiredSettings,
     requiredSecrets: config.requiredSecrets,
+    hasFinalize: !!config.finalize,
   };
 
   function extractArgs(request: BindRequest): TArgs {
