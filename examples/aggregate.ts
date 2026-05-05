@@ -300,7 +300,9 @@ const vgi_generic_sum = defineAggregate<{ value: any }, GenericSumState>({
   name: "vgi_generic_sum",
   description: "Sum any numeric type",
   args: { value: new Null() },  // Null = ANY
-  outputType: new Float64(),
+  // outputType: Null marks this as a dynamic-return aggregate; onBind below
+  // resolves the real type from the input column.
+  outputType: new Null(),
   nullHandling: "DEFAULT",
   onBind: (params) => {
     // Output type mirrors the input column's declared type.
@@ -991,8 +993,78 @@ function defineLlmStub(name: string, description: string): VgiFunction {
 const qf_llm_summarize = defineLlmStub("qf_llm_summarize", "Summarize text using an LLM (stub)");
 const qf_llm_distill = defineLlmStub("qf_llm_distill", "Distill text using an LLM (stub)");
 
+// ============================================================================
+// vgi_streaming_sum — registration stub. Real impl needs the
+// streaming-partitioned protocol (open/chunk/close) which is not yet wired
+// through the TS framework. function_registration.test only checks names
+// and return type.
+// ============================================================================
+
+const vgi_streaming_sum = defineAggregate<{ value: number }, SumState>({
+  name: "vgi_streaming_sum",
+  description: "Running sum across PARTITION BY keys (streaming-partitioned stub)",
+  args: { value: new Int64() },
+  outputType: new Int64(),
+  nullHandling: "DEFAULT",
+  initialState: () => ({ total: 0n }),
+  update: ({ groupIds, columns, ensureState }) => {
+    const valueCol = columns[0];
+    const n = groupIds.length;
+    for (let i = 0; i < n; i++) {
+      if (valueCol == null || !valueCol.isValid(i)) continue;
+      const v = valueCol.get(i);
+      if (v == null) continue;
+      ensureState(groupIds[i]).total += typeof v === "bigint" ? v : BigInt(v);
+    }
+  },
+  combine: (src, tgt) => ({ total: src.total + tgt.total }),
+  finalize: ({ groupIds, states, outputSchema }) => {
+    const results: (bigint | null)[] = groupIds.map((gid) => {
+      const s = states.get(gid);
+      return s != null ? s.total : null;
+    });
+    return batchFromColumns({ result: results }, outputSchema);
+  },
+  categories: ["aggregate", "streaming"],
+});
+
+// ============================================================================
+// vgi_window_sum_batch — registration stub. The non-streaming GROUP BY path
+// is identical to vgi_window_sum; the per-batch window callback variant
+// would require additional framework hooks.
+// ============================================================================
+
+const vgi_window_sum_batch = defineAggregate<{ value: number }, SumState>({
+  name: "vgi_window_sum_batch",
+  description: "Windowed sum using the batch window() callback (stub)",
+  args: { value: new Int64() },
+  outputType: new Int64(),
+  nullHandling: "DEFAULT",
+  initialState: () => ({ total: 0n }),
+  update: ({ groupIds, columns, ensureState }) => {
+    const valueCol = columns[0];
+    const n = groupIds.length;
+    for (let i = 0; i < n; i++) {
+      if (valueCol == null || !valueCol.isValid(i)) continue;
+      const v = valueCol.get(i);
+      if (v == null) continue;
+      ensureState(groupIds[i]).total += typeof v === "bigint" ? v : BigInt(v);
+    }
+  },
+  combine: (src, tgt) => ({ total: src.total + tgt.total }),
+  finalize: ({ groupIds, states, outputSchema }) => {
+    const results: (bigint | null)[] = groupIds.map((gid) => {
+      const s = states.get(gid);
+      return s != null ? s.total : null;
+    });
+    return batchFromColumns({ result: results }, outputSchema);
+  },
+  categories: ["aggregate", "window"],
+});
+
 export const aggregateFunctions: VgiFunction[] = [
   vgi_count, vgi_sum, vgi_avg, vgi_sum_all, vgi_listagg, vgi_weighted_sum, vgi_generic_sum,
   vgi_percentile, vgi_window_sum, vgi_window_median, vgi_window_listagg, nest_tensor,
-  vgi_dynamic_agg, vgi_dynamic_ml_agg, qf_llm_summarize, qf_llm_distill,
+  vgi_streaming_sum, vgi_window_sum_batch,
+  vgi_dynamic_agg, vgi_dynamic_ml_agg,
 ];

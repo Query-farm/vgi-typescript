@@ -323,11 +323,14 @@ export function defineAggregate<TArgs = Record<string, any>, TState = any>(
   // never invoked for aggregates — the dispatch layer routes aggregate_* RPCs
   // through the separate aggregate_* handler. Provide stubs that throw so
   // misrouted calls surface loudly rather than silently hanging.
-  // Catalog output schema: single "result" column. When onBind is set the
-  // output type is dynamic per-call, so we advertise ANY via Null type with
-  // the vgi:any metadata marker (matches scalar function convention) — the
-  // actual type is resolved at bind time and returned in the bind response.
-  const defaultOutputSchema = config.onBind
+  // Catalog output schema: single "result" column. Advertise config.outputType
+  // when it's a real type (anything other than Null) — onBind may still override
+  // at bind time, but for the catalog listing we prefer the static declaration
+  // so duckdb_functions() shows a meaningful return type. Aggregates whose
+  // return type genuinely depends on input set outputType: new Null() to
+  // advertise ANY explicitly.
+  const isAnyType = DataType.isNull(config.outputType);
+  const defaultOutputSchema = isAnyType
     ? new Schema([new Field("result", new Null(), true, new Map([["vgi:any", "true"]]))])
     : new Schema([new Field("result", config.outputType, true)]);
 

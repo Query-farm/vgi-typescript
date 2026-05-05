@@ -26,7 +26,7 @@ export class FunctionNotFoundError extends VgiError {
 
 export class CatalogReadOnlyError extends VgiError {
   constructor(operation: string) {
-    super(`Catalog is read-only: ${operation} is not supported`);
+    super(`catalog is read-only: ${operation} is not supported`);
     this.name = "CatalogReadOnlyError";
   }
 }
