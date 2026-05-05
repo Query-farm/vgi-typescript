@@ -1269,7 +1269,28 @@ const filter_echo = defineTableFunction<FilterEchoArgs, FilterEchoState>({
 //      workers. Each worker independently observes the pushed filters.
 // ============================================================================
 
-const filter_echo_partitioned = defineTableFunction<FilterEchoArgs, FilterEchoState>({
+// Multi-worker via a shared work queue: onInit pushes (start,end) chunks once,
+// each worker's process pops one chunk per tick. The framework spawns
+// maxWorkers worker processes; each gets a distinct PID, so
+// COUNT(DISTINCT worker_pid) > 1 confirms multi-worker engagement.
+const FILTER_ECHO_PARTITIONED_SCHEMA = new Schema([
+  new Field("n", new Int64(), true),
+  new Field("worker_pid", new Int64(), true),
+  new Field("pushed_filters", new Utf8(), true),
+]);
+
+interface FilterEchoPartitionedState {
+  filterStr: string;
+  // Per-tick chunk being consumed.
+  chunkStart: number | null;
+  chunkEnd: number;
+  chunkIdx: number;
+}
+
+const FEPCHUNK = 1000;
+const FEPBATCH = 1000;
+
+const filter_echo_partitioned = defineTableFunction<FilterEchoArgs, FilterEchoPartitionedState>({
   name: "filter_echo_partitioned",
   description: "Multi-worker partitioned sequence that echoes pushed-down filters",
   args: {
@@ -1278,47 +1299,63 @@ const filter_echo_partitioned = defineTableFunction<FilterEchoArgs, FilterEchoSt
   projectionPushdown: true,
   filterPushdown: true,
   autoApplyFilters: true,
-  // True work-partitioning across DuckDB workers needs a shared work queue.
-  // Until that lands, advertise a single worker so totals stay correct;
-  // the test's row-count and filter-pushdown assertions don't require
-  // multi-worker engagement.
-  maxWorkers: 1,
-  onBind: () => ({ outputSchema: FILTER_ECHO_SCHEMA }),
+  maxWorkers: 4,
+  onBind: () => ({ outputSchema: FILTER_ECHO_PARTITIONED_SCHEMA }),
   cardinality: (params: TableBindParams<FilterEchoArgs>) => ({
     estimate: params.args.count,
     max: params.args.count,
   }),
+  // Populate the shared work queue once. Subsequent process() ticks across
+  // every worker process pop chunks from this queue.
+  onInit: (params) => {
+    const count = Number(params.args.count);
+    const chunks: Uint8Array[] = [];
+    for (let start = 0; start < count; start += FEPCHUNK) {
+      const end = Math.min(start + FEPCHUNK, count);
+      const buf = new ArrayBuffer(16);
+      const view = new DataView(buf);
+      view.setBigUint64(0, BigInt(start), false);
+      view.setBigUint64(8, BigInt(end), false);
+      chunks.push(new Uint8Array(buf));
+    }
+    params.storage.queuePush(chunks);
+    return {
+      execution_id: params.executionId,
+      max_workers: 4,
+      opaque_data: null,
+    };
+  },
   initialState: (params: TableProcessParams<FilterEchoArgs>) => ({
-    remaining: params.args.count,
-    currentIndex: 0,
     filterStr: formatPushedFilters(params.pushdownFilters),
+    chunkStart: null,
+    chunkEnd: 0,
+    chunkIdx: 0,
   }),
   process: (
     params: TableProcessParams<FilterEchoArgs>,
-    state: FilterEchoState,
+    state: FilterEchoPartitionedState,
     out: OutputCollector
   ) => {
-    if (state.remaining <= 0) {
-      out.finish();
-      return;
+    if (state.chunkStart === null || state.chunkIdx >= state.chunkEnd) {
+      const work = params.storage?.queuePop();
+      if (!work) { out.finish(); return; }
+      const view = new DataView(work.buffer, work.byteOffset, work.byteLength);
+      state.chunkStart = Number(view.getBigUint64(0, false));
+      state.chunkEnd = Number(view.getBigUint64(8, false));
+      state.chunkIdx = state.chunkStart;
     }
-    const size = Math.min(state.remaining, 2048);
-    const nValues: bigint[] = [];
-    const sValues: string[] = [];
-    const filterValues: string[] = [];
-    for (let i = 0; i < size; i++) {
-      const idx = state.currentIndex + i;
-      nValues.push(BigInt(idx));
-      sValues.push(`row_${idx}`);
-      filterValues.push(state.filterStr);
+    const end = Math.min(state.chunkIdx + FEPBATCH, state.chunkEnd);
+    const size = end - state.chunkIdx;
+    const ns: bigint[] = [], pids: bigint[] = [], filters: string[] = [];
+    const pid = BigInt(process.pid);
+    for (let k = state.chunkIdx; k < end; k++) {
+      ns.push(BigInt(k));
+      pids.push(pid);
+      filters.push(state.filterStr);
     }
-    out.emit(batchFromColumns({
-      n: nValues,
-      s: sValues,
-      pushed_filters: filterValues,
-    }, params.outputSchema));
-    state.currentIndex += size;
-    state.remaining -= size;
+    out.emit(batchFromColumns({ n: ns, worker_pid: pids, pushed_filters: filters }, params.outputSchema));
+    state.chunkIdx = end;
+    void size;
   },
   categories: ["generator", "diagnostic", "parallel"],
 });
