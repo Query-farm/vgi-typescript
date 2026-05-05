@@ -10,6 +10,7 @@ import {
   Utf8,
   DataType,
   RecordBatch,
+  Struct,
 } from "@query-farm/apache-arrow";
 import {
   defineTableInOutFunction,
@@ -509,19 +510,114 @@ const slow_cancellable_inout = defineTableInOutFunction({
 });
 
 // ============================================================================
-// 10. unnest_tensor_rows — registration stub. The full implementation walks
-//     nested list/struct types to invert nest_tensor; only the registration
-//     metadata is exercised by function_registration.test.
+// 10. unnest_tensor_rows — invert nest_tensor as a table-in-out. One input
+//     column shaped {tensor: nested-list, axes: struct of axis lists} →
+//     one output row per cell with (value, axes).
 // ============================================================================
+
+function unwrapList(v: any): any[] {
+  if (v == null) return [];
+  if (Array.isArray(v)) return v;
+  if (typeof v[Symbol.iterator] === "function") return Array.from(v);
+  return [];
+}
+
+function unwrapStructFields(v: any, fieldNames: string[]): Record<string, any> {
+  if (!v) return {};
+  const out: Record<string, any> = {};
+  for (const n of fieldNames) {
+    if (typeof v.get === "function") {
+      out[n] = v.get(n);
+    } else if (typeof v === "object") {
+      out[n] = (v as any)[n];
+    }
+  }
+  return out;
+}
 
 const unnest_tensor_rows = defineTableInOutFunction({
   name: "unnest_tensor_rows",
   description: "Invert nest_tensor, streaming one row per cell (LATERAL-friendly)",
-  onBind: () => {
-    throw new Error("unnest_tensor_rows: not implemented in the TypeScript example worker");
+  onBind: (params) => {
+    const inputSchema = params.bindCall.input_schema;
+    if (!inputSchema || inputSchema.fields.length !== 1) {
+      throw new Error("unnest_tensor_rows: input must have exactly one column (the nest_tensor struct)");
+    }
+    const structType = inputSchema.fields[0].type;
+    if (!DataType.isStruct(structType)) {
+      throw new Error(`unnest_tensor_rows: input column must be a struct, got ${structType}`);
+    }
+    const structFields = (structType as any).children as Field[];
+    const tensorField = structFields.find((f) => f.name === "tensor");
+    const axesField = structFields.find((f) => f.name === "axes");
+    if (!tensorField || !axesField) {
+      throw new Error("unnest_tensor_rows: struct must have 'tensor' and 'axes' fields");
+    }
+    const axesType = axesField.type;
+    if (!DataType.isStruct(axesType)) {
+      throw new Error("unnest_tensor_rows: 'axes' field must be a struct");
+    }
+
+    // Unwrap the nest depth of List(List(... value_type)).
+    let valueType: DataType = tensorField.type;
+    while (DataType.isList(valueType)) {
+      valueType = (valueType as any).children[0].type;
+    }
+    // Output axes struct: each axis is the bare coord type (not List).
+    const axisOutFields = ((axesType as any).children as Field[]).map(
+      (f) => new Field(f.name, (f.type as any).children?.[0]?.type ?? f.type, true)
+    );
+    const outputSchema = new Schema([
+      new Field("value", valueType, true),
+      new Field("axes", new Struct(axisOutFields), true),
+    ]);
+    return { outputSchema };
   },
-  process: () => {
-    throw new Error("unnest_tensor_rows: not implemented");
+  process: (params, _state, batch, out) => {
+    const col = batch.getChildAt(0);
+    if (!col) { out.emit(emptyBatch(params.outputSchema)); return; }
+    const axesField = (params.outputSchema.fields[1].type as any).children as Field[];
+    const axisNames = axesField.map((f: Field) => f.name);
+
+    const valueRows: any[] = [];
+    const axisRows: Record<string, any>[] = [];
+
+    for (let i = 0; i < batch.numRows; i++) {
+      if (!col.isValid(i)) continue;
+      const row = col.get(i);
+      if (!row) continue;
+      const tensor = typeof row.get === "function" ? row.get("tensor") : row.tensor;
+      const axesStruct = typeof row.get === "function" ? row.get("axes") : row.axes;
+      const axesByName: Record<string, any[]> = {};
+      const fields = unwrapStructFields(axesStruct, axisNames);
+      for (const n of axisNames) axesByName[n] = unwrapList(fields[n]);
+
+      // Walk the nested tensor list at each axis. Every level corresponds to
+      // axisNames[level]; the leaf is the value.
+      const walk = (node: any, level: number, indices: number[]) => {
+        if (level === axisNames.length) {
+          valueRows.push(node);
+          const ax: Record<string, any> = {};
+          for (let l = 0; l < axisNames.length; l++) {
+            const coords = axesByName[axisNames[l]];
+            ax[axisNames[l]] = coords[indices[l]] ?? null;
+          }
+          axisRows.push(ax);
+          return;
+        }
+        const items = unwrapList(node);
+        for (let k = 0; k < items.length; k++) {
+          walk(items[k], level + 1, [...indices, k]);
+        }
+      };
+      walk(tensor, 0, []);
+    }
+
+    if (valueRows.length === 0) {
+      out.emit(emptyBatch(params.outputSchema));
+      return;
+    }
+    out.emit(batchFromColumns({ value: valueRows, axes: axisRows }, params.outputSchema));
   },
   categories: ["transform", "tensor"],
 });
