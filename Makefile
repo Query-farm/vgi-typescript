@@ -57,6 +57,19 @@ TEST_LOG := /tmp/vgi-typescript-test.log
 #   zero_count_bypass                  — broken upstream, fails against Python worker too;
 #                                        the test's LIKE pattern matches set_kind=table
 #                                        AND set_kind=table_function ambiguously
+#
+# HTTP-only exclusions (subprocess runs them fine):
+#   filter_echo_partitioned            — asserts COUNT(DISTINCT worker_pid) > 1; an
+#                                        HTTP worker is one OS process, so worker_pid
+#                                        collapses to a single value (test's own
+#                                        docstring spells this out). Python HTTP
+#                                        auto-skips this via sqllogictest's default
+#                                        ignore_error_messages={"HTTP", ...}; TS gets
+#                                        farther so we exclude explicitly.
+#   partitioned_sequence               — same root cause: asserts >=2 distinct conn=
+#                                        in batch_received logs under threads=4. The
+#                                        C++ HTTP transport's parallel-scan connection
+#                                        accounting is what's tested, not the worker.
 TEST_PATTERNS := "test/sql/*" \
 	"~test/sql/integration/writable/*" \
 	"~test/sql/integration/schema_reconcile.test" \
@@ -67,7 +80,9 @@ HTTP_TEST_PATTERNS := "test/sql/integration/*" \
 	"~test/sql/integration/writable/*" \
 	"~test/sql/integration/schema_reconcile.test" \
 	"~test/sql/integration/table/constant_columns_types.test" \
-	"~test/sql/integration/catalog/zero_count_bypass.test"
+	"~test/sql/integration/catalog/zero_count_bypass.test" \
+	"~test/sql/integration/table/filter_echo_partitioned.test" \
+	"~test/sql/integration/table/partitioned_sequence.test"
 
 # Single-shot subprocess transport run. Pass `KEEP_LOG=1` to suppress the
 # rm-on-exit so you can grep through the per-test verbose output.
