@@ -83,11 +83,16 @@ function buildFieldData(value: any, field: Field): any {
   // Null
   if (value == null) {
     if (!field.nullable) {
-      // Some fields (tags, items) default to empty container rather than null.
-      // Fall through with an appropriate empty if the type is a container.
+      // List/Map default to empty container rather than null when omitted.
       if (DataType.isList(type)) return buildList([], field);
       if (DataType.isMap(type)) return buildMap({}, field);
-      throw new Error(`encodeASD: non-nullable field '${field.name}' got null/undefined`);
+      // Other non-nullable scalars: emit a real Arrow null anyway. The
+      // Python ArrowSerializableDataclass codec does this — pyarrow's
+      // builder lets you write null into a "non-null" field via the
+      // validity bitmap, and the C++ extension treats the bitmap as
+      // authoritative (e.g. cardinality_estimate=null means "unknown,
+      // call the RPC", whereas cardinality_estimate=0 means "definitely
+      // empty"). Matching that behavior keeps the wire format compatible.
     }
     return vectorFromArray([null], type).data[0];
   }

@@ -58,6 +58,13 @@ export interface TableDescriptor {
    */
   statisticsCacheMaxAgeSeconds?: number | null;
   supportsTimeTravel?: boolean;
+  /**
+   * Inline cardinality estimate/max surfaced through TableInfo. When set,
+   * the C++ extension uses these directly and skips the per-bind
+   * table_function_cardinality RPC. Only meaningful for function-backed
+   * tables; static-column tables don't have a function to call.
+   */
+  inlinedCardinality?: { estimate: bigint; max: bigint };
   comment?: string;
   tags?: Record<string, string>;
 }

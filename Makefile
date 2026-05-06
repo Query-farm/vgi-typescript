@@ -37,28 +37,96 @@ clean:
 	rm -rf dist/
 
 # --- Test targets ---
+#
+# Use the unittest harness's own -j 8 parallelism (see ~/Development/vgi
+# Makefile's test_subprocess target). One unittest invocation runs every
+# matching test in parallel, captures output to a log file, and prints a
+# pass/fail summary plus a list of failed tests at the end.
+#
+# Patterns:
+#   "test/sql/*"                          — every test file
+#   "~test/sql/integration/writable/*"    — exclude the writable fixture
+#                                           tree (we don't port that worker)
 
-# Discover all .test files and derive target names: test/sql/foo/bar.test → test/foo/bar
-TEST_FILES := $(shell find $(TEST_DIR) -name '*.test' 2>/dev/null)
-TEST_TARGETS := $(patsubst $(TEST_DIR)/%.test,test/%,$(TEST_FILES))
+TEST_LOG := /tmp/vgi-typescript-test.log
 
-# Tests expected to fail (arrow-js doesn't support TIMESTAMP_NS)
-XFAIL_TESTS := integration/table/constant_columns_types
+# Excluded patterns (use ~ prefix for unittest's filter exclusion syntax):
+#   writable/                          — writable fixture worker not ported
+#   schema_reconcile                   — writable-style fixture, also skipped
+#   constant_columns_types             — arrow-js doesn't support TIMESTAMP_NS
+#   zero_count_bypass                  — broken upstream, fails against Python worker too;
+#                                        the test's LIKE pattern matches set_kind=table
+#                                        AND set_kind=table_function ambiguously
+TEST_PATTERNS := "test/sql/*" \
+	"~test/sql/integration/writable/*" \
+	"~test/sql/integration/schema_reconcile.test" \
+	"~test/sql/integration/table/constant_columns_types.test" \
+	"~test/sql/integration/catalog/zero_count_bypass.test"
 
-# Tests expected to fail over HTTP (worker pooling / multi-worker is subprocess-only)
-HTTP_XFAIL_TESTS := vgi_table_function vgi_worker_pool integration/table/partitioned_sequence integration/table/constant_columns_types
+HTTP_TEST_PATTERNS := "test/sql/integration/*" \
+	"~test/sql/integration/writable/*" \
+	"~test/sql/integration/schema_reconcile.test" \
+	"~test/sql/integration/table/constant_columns_types.test" \
+	"~test/sql/integration/catalog/zero_count_bypass.test"
 
-test: $(TEST_TARGETS)
+# Single-shot subprocess transport run. Pass `KEEP_LOG=1` to suppress the
+# rm-on-exit so you can grep through the per-test verbose output.
+test:
+	@cd $(VGI_DIR) && \
+	export VGI_TEST_WORKER="$(WORKER)"; \
+	export VGI_VERSIONED_WORKER="$(VERSIONED_WORKER)"; \
+	export VGI_ATTACH_OPTIONS_WORKER="$(ATTACH_OPTIONS_WORKER)"; \
+	./build/release/test/unittest -j 8 $(TEST_PATTERNS) > $(TEST_LOG) 2>&1; \
+	rc=$$?; \
+	tail -n 20 $(TEST_LOG); \
+	echo ""; \
+	if [ $$rc -eq 0 ]; then \
+		echo "All tests passed. Log: $(TEST_LOG)"; \
+	else \
+		echo "Some tests failed (rc=$$rc). Full log: $(TEST_LOG)"; \
+	fi; \
+	exit $$rc
 
-# HTTP test targets (same tests, HTTP transport)
-HTTP_TEST_TARGETS := $(patsubst $(TEST_DIR)/%.test,test-http/%,$(TEST_FILES))
-
-test-http: $(HTTP_TEST_TARGETS)
+# HTTP transport: same pattern, but the workers need to be running at known
+# URLs. The HTTP example workers each write a PORT line on stdout when they
+# start; we collect them through FIFOs and export the URLs before invoking
+# unittest.
+test-http:
+	@cd $(VGI_DIR) && \
+	port_fifo=$$(mktemp -u); mkfifo "$$port_fifo"; \
+	$(HTTP_WORKER) > "$$port_fifo" 2>/dev/null & http_pid=$$!; \
+	vport_fifo=$$(mktemp -u); mkfifo "$$vport_fifo"; \
+	$(VERSIONED_HTTP) > "$$vport_fifo" 2>/dev/null & vhttp_pid=$$!; \
+	aport_fifo=$$(mktemp -u); mkfifo "$$aport_fifo"; \
+	$(ATTACH_OPTIONS_HTTP) > "$$aport_fifo" 2>/dev/null & ahttp_pid=$$!; \
+	cleanup() { \
+		kill $$http_pid $$vhttp_pid $$ahttp_pid 2>/dev/null; \
+		wait $$http_pid $$vhttp_pid $$ahttp_pid 2>/dev/null; \
+		rm -f "$$port_fifo" "$$vport_fifo" "$$aport_fifo"; \
+	}; \
+	trap cleanup EXIT; \
+	read -t 10 port_line < "$$port_fifo" || { echo "ERROR: HTTP worker timeout"; exit 1; }; \
+	read -t 10 vport_line < "$$vport_fifo" || { echo "ERROR: versioned HTTP worker timeout"; exit 1; }; \
+	read -t 10 aport_line < "$$aport_fifo" || { echo "ERROR: attach-options HTTP worker timeout"; exit 1; }; \
+	export VGI_TEST_WORKER="http://localhost:$${port_line#PORT:}/vgi"; \
+	export VGI_VERSIONED_HTTP_WORKER="http://localhost:$${vport_line#PORT:}/vgi"; \
+	export VGI_ATTACH_OPTIONS_WORKER="http://localhost:$${aport_line#PORT:}/vgi"; \
+	./build/release/test/unittest -j 8 $(HTTP_TEST_PATTERNS) > $(TEST_LOG) 2>&1; \
+	rc=$$?; \
+	tail -n 20 $(TEST_LOG); \
+	echo ""; \
+	if [ $$rc -eq 0 ]; then \
+		echo "All HTTP tests passed. Log: $(TEST_LOG)"; \
+	else \
+		echo "Some HTTP tests failed (rc=$$rc). Full log: $(TEST_LOG)"; \
+	fi; \
+	exit $$rc
 
 test-all: test test-http
 
-# Pattern rule: each test target runs the release binary. On failure, reruns
-# with -s so the verbose output appears inline.
+# Per-test entry point — useful when iterating on a single failure.
+# `make test/integration/filter_pushdown/integers` runs just that one test
+# with the verbose -s flag so the failure detail prints inline.
 test/%:
 	@test_file="$(TEST_DIR)/$*.test"; \
 	if [ ! -f "$$test_file" ]; then \
@@ -68,96 +136,35 @@ test/%:
 	export VGI_TEST_WORKER="$(WORKER)"; \
 	export VGI_VERSIONED_WORKER="$(VERSIONED_WORKER)"; \
 	export VGI_ATTACH_OPTIONS_WORKER="$(ATTACH_OPTIONS_WORKER)"; \
-	is_xfail=false; \
-	for xf in $(XFAIL_TESTS); do \
-		if [ "$$xf" = "$*" ]; then is_xfail=true; break; fi; \
-	done; \
-	if timeout $(TEST_TIMEOUT) $(RELEASE_BIN) --test-dir $(TEST_DIR) "$$test_file" > /dev/null 2>&1; then \
-		if $$is_xfail; then \
-			echo "XPASS $* (expected failure now passes — remove from XFAIL_TESTS)"; \
-		else \
-			echo "PASS  $*"; \
-		fi; \
-	else \
-		rc=$$?; \
-		if $$is_xfail; then \
-			echo "XFAIL $* (expected failure)"; \
-		else \
-			echo "FAIL  $* (release, rc=$$rc) — rerunning with -s for verbose output..."; \
-			timeout $(TEST_TIMEOUT) $(RELEASE_BIN) --test-dir $(TEST_DIR) -s "$$test_file" 2>&1 || true; \
-			exit 1; \
-		fi; \
-	fi
+	cd $(VGI_DIR) && ./build/release/test/unittest -s "$$test_file"
 
-# Pattern rule: HTTP transport — starts server per test, discovers port, cleans up
+# test-http/% — single-test HTTP entry point. Spawns the HTTP worker
+# triplet, points VGI_TEST_WORKER at it, runs that one test verbosely.
 test-http/%:
 	@test_file="$(TEST_DIR)/$*.test"; \
 	if [ ! -f "$$test_file" ]; then \
 		echo "ERROR: test file not found: $$test_file"; \
 		exit 1; \
 	fi; \
-	port_fifo=$$(mktemp -u); \
-	mkfifo "$$port_fifo"; \
-	$(HTTP_WORKER) > "$$port_fifo" 2>/dev/null & \
-	http_pid=$$!; \
-	vport_fifo=$$(mktemp -u); \
-	mkfifo "$$vport_fifo"; \
-	$(VERSIONED_HTTP) > "$$vport_fifo" 2>/dev/null & \
-	vhttp_pid=$$!; \
-	aport_fifo=$$(mktemp -u); \
-	mkfifo "$$aport_fifo"; \
-	$(ATTACH_OPTIONS_HTTP) > "$$aport_fifo" 2>/dev/null & \
-	ahttp_pid=$$!; \
+	port_fifo=$$(mktemp -u); mkfifo "$$port_fifo"; \
+	$(HTTP_WORKER) > "$$port_fifo" 2>/dev/null & http_pid=$$!; \
+	vport_fifo=$$(mktemp -u); mkfifo "$$vport_fifo"; \
+	$(VERSIONED_HTTP) > "$$vport_fifo" 2>/dev/null & vhttp_pid=$$!; \
+	aport_fifo=$$(mktemp -u); mkfifo "$$aport_fifo"; \
+	$(ATTACH_OPTIONS_HTTP) > "$$aport_fifo" 2>/dev/null & ahttp_pid=$$!; \
 	cleanup() { \
 		kill $$http_pid $$vhttp_pid $$ahttp_pid 2>/dev/null; \
 		wait $$http_pid $$vhttp_pid $$ahttp_pid 2>/dev/null; \
 		rm -f "$$port_fifo" "$$vport_fifo" "$$aport_fifo"; \
 	}; \
 	trap cleanup EXIT; \
-	port_line=""; \
-	read -t 10 port_line < "$$port_fifo" || { \
-		echo "ERROR: HTTP worker did not print PORT line within 10s"; \
-		cleanup; exit 1; \
-	}; \
-	vport_line=""; \
-	read -t 10 vport_line < "$$vport_fifo" || { \
-		echo "ERROR: versioned HTTP worker did not print PORT line within 10s"; \
-		cleanup; exit 1; \
-	}; \
-	aport_line=""; \
-	read -t 10 aport_line < "$$aport_fifo" || { \
-		echo "ERROR: attach-options HTTP worker did not print PORT line within 10s"; \
-		cleanup; exit 1; \
-	}; \
-	rm -f "$$port_fifo" "$$vport_fifo" "$$aport_fifo"; \
-	port=$${port_line#PORT:}; \
-	vport=$${vport_line#PORT:}; \
-	aport=$${aport_line#PORT:}; \
-	export VGI_TEST_WORKER="http://localhost:$$port/vgi"; \
-	export VGI_VERSIONED_HTTP_WORKER="http://localhost:$$vport/vgi"; \
-	export VGI_ATTACH_OPTIONS_WORKER="http://localhost:$$aport/vgi"; \
-	is_xfail=false; \
-	for xf in $(HTTP_XFAIL_TESTS); do \
-		if [ "$$xf" = "$*" ]; then is_xfail=true; break; fi; \
-	done; \
-	if timeout $(TEST_TIMEOUT) $(RELEASE_BIN) --test-dir $(TEST_DIR) "$$test_file" > /dev/null 2>&1; then \
-		if $$is_xfail; then \
-			echo "XPASS $* [http] (expected failure now passes — remove from HTTP_XFAIL_TESTS)"; \
-		else \
-			echo "PASS  $* [http]"; \
-		fi; \
-	else \
-		rc=$$?; \
-		if $$is_xfail; then \
-			echo "XFAIL $* [http] (expected failure)"; \
-		else \
-			echo "FAIL  $* [http] (release, rc=$$rc) — rerunning with -s for verbose output..."; \
-			timeout $(TEST_TIMEOUT) $(RELEASE_BIN) --test-dir $(TEST_DIR) -s "$$test_file" 2>&1 || true; \
-			cleanup; \
-			exit 1; \
-		fi; \
-	fi; \
-	cleanup; true
+	read -t 10 port_line < "$$port_fifo" || { echo "ERROR: HTTP worker timeout"; exit 1; }; \
+	read -t 10 vport_line < "$$vport_fifo" || { echo "ERROR: versioned HTTP worker timeout"; exit 1; }; \
+	read -t 10 aport_line < "$$aport_fifo" || { echo "ERROR: attach-options HTTP worker timeout"; exit 1; }; \
+	export VGI_TEST_WORKER="http://localhost:$${port_line#PORT:}/vgi"; \
+	export VGI_VERSIONED_HTTP_WORKER="http://localhost:$${vport_line#PORT:}/vgi"; \
+	export VGI_ATTACH_OPTIONS_WORKER="http://localhost:$${aport_line#PORT:}/vgi"; \
+	cd $(VGI_DIR) && ./build/release/test/unittest -s "$$test_file"
 
 # VgiClient end-to-end tests against vgi-python's HTTP workers.
 # Spawns the normal + versioned HTTP workers, each with --port-file

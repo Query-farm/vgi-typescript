@@ -22,6 +22,7 @@ import { aggregateFunctions } from "./aggregate.js";
 // Find functions for table-backed catalog entries
 const sequenceFunction = tableFunctions.find((f) => f.meta.name === "sequence");
 const rowIdSequenceFunction = tableFunctions.find((f) => f.meta.name === "rowid_sequence");
+const tenThousandFunction = tableFunctions.find((f) => f.meta.name === "ten_thousand");
 
 // Precompute stats for tables whose data is known at worker startup. The
 // statisticsFromDuckDB helper spins up an in-process DuckDB, builds the demo
@@ -179,6 +180,25 @@ export const catalog: CatalogDescriptor = {
           function: sequenceFunction,
           arguments: new Arguments([1_000_000]),
           comment: "A large sequence of integers from 0 to 1,000,000",
+        },
+        // Function-backed table over the no-arg ten_thousand function. Used
+        // by integration/table/inlined_scan_function.test to verify the C++
+        // extension reads the inlined scan_function from TableInfo and
+        // skips catalog_table_scan_function_get.
+        {
+          name: "ten_thousand_table",
+          function: tenThousandFunction,
+          comment: "Function-backed table over the no-arg ten_thousand function",
+        },
+        // Function-backed table with inlined cardinality. Used by
+        // integration/table/inlined_cardinality.test to verify the C++
+        // extension uses Table.cardinality_estimate / cardinality_max from
+        // TableInfo and skips the per-bind table_function_cardinality RPC.
+        {
+          name: "cardinality_inlined_table",
+          function: tenThousandFunction,
+          inlinedCardinality: { estimate: 10000n, max: 10000n },
+          comment: "Function-backed table with inlined cardinality (10000 rows)",
         },
         {
           name: "versioned_data",
@@ -534,6 +554,12 @@ export function createExampleCatalog(base: ReadOnlyCatalogInterface): ReadOnlyCa
         supports_delete: false,
         supports_returning: false,
         supports_column_statistics: false,
+        scan_function: new Uint8Array(0),
+        insert_function: new Uint8Array(0),
+        update_function: new Uint8Array(0),
+        delete_function: new Uint8Array(0),
+        cardinality_estimate: 0,
+        cardinality_max: 0,
       };
     }
     if (schemaName.toLowerCase() === "data" && name.toLowerCase() === "versioned_constraints" && atUnit) {
@@ -570,6 +596,12 @@ export function createExampleCatalog(base: ReadOnlyCatalogInterface): ReadOnlyCa
         supports_delete: false,
         supports_returning: false,
         supports_column_statistics: false,
+        scan_function: new Uint8Array(0),
+        insert_function: new Uint8Array(0),
+        update_function: new Uint8Array(0),
+        delete_function: new Uint8Array(0),
+        cardinality_estimate: 0,
+        cardinality_max: 0,
       };
     }
     return origTableGet(attachId, schemaName, name, atUnit, atValue, transactionId);

@@ -104,7 +104,30 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
       name: s.name,
       comment: s.comment ?? null,
       tags: s.tags ?? {},
+      estimated_object_count: this._estimatedObjectCount(s),
     }));
+  }
+
+  // Compute per-kind object counts so the C++ extension's eager-load gate
+  // can skip bulk RPCs for empty kinds. Zero is load-bearing — absence
+  // would read as "unknown=1" and suppress the bypass. Function counts are
+  // partitioned by kind to match python's behavior.
+  private _estimatedObjectCount(s: SchemaDescriptor): Record<string, number> {
+    let scalar = 0, aggregate = 0, table = 0;
+    for (const f of s.functions ?? []) {
+      if (f.kind === "scalar") scalar++;
+      else if ((f.kind as string) === "aggregate") aggregate++;
+      else table++; // "table" and "table_in_out"
+    }
+    return {
+      table: s.tables?.length ?? 0,
+      view: s.views?.length ?? 0,
+      scalar_function: scalar,
+      aggregate_function: aggregate,
+      table_function: table,
+      macro: s.macros?.length ?? 0,
+      index: s.indexes?.length ?? 0,
+    };
   }
 
   override schemaGet(
@@ -119,6 +142,7 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
       name: desc.name,
       comment: desc.comment ?? null,
       tags: desc.tags ?? {},
+      estimated_object_count: this._estimatedObjectCount(desc),
     };
   }
 
@@ -200,6 +224,23 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
         supports_delete: false,
         supports_returning: false,
         supports_column_statistics: t.statistics != null && Object.keys(t.statistics).length > 0,
+        // Inline scan_function only for purely function-backed tables.
+        // When explicit `columns` are also declared, the table is on the
+        // legacy catalog_table_scan_function_get path; inlining would
+        // shadow the per-call dispatch and prevent workers from varying
+        // the scan function (e.g. version-resolved time-travel).
+        scan_function: t.function && !t.columns
+          ? inlineScanFunction(t.function, t.arguments)
+          : null,
+        insert_function: null,
+        update_function: null,
+        delete_function: null,
+        cardinality_estimate: t.inlinedCardinality
+          ? Number(t.inlinedCardinality.estimate)
+          : null,
+        cardinality_max: t.inlinedCardinality
+          ? Number(t.inlinedCardinality.max)
+          : null,
       };
     });
   }
@@ -690,4 +731,35 @@ function inferScalarType(val: any): DataType {
   if (typeof val === "bigint") return new Int64();
   if (val instanceof Uint8Array || val instanceof ArrayBuffer) return new Binary();
   return new Utf8();
+}
+
+// Build the inlined `scan_function` payload for a function-backed table.
+// Mirrors python's _inline_function_result: a serialized one-row batch of
+// ScanFunctionResultSchema (function_name, arguments, required_extensions).
+// The C++ extension uses these bytes verbatim and skips the
+// catalog_table_scan_function_get RPC.
+function inlineScanFunction(
+  func: VgiFunction,
+  args: Arguments | undefined,
+): Uint8Array {
+  const argSchema = argumentSpecsToSchema(func.argumentSpecs);
+  const argBytes = serializeArgsBatch(args ?? new Arguments(), argSchema);
+  const scanSchema = new Schema([
+    new Field("function_name", new Utf8(), false),
+    new Field("arguments", new Binary(), false),
+    new Field(
+      "required_extensions",
+      new List(new Field("item", new Utf8(), true)),
+      false,
+    ),
+  ]);
+  const batch = batchFromColumns(
+    {
+      function_name: [func.meta.name],
+      arguments: [argBytes],
+      required_extensions: [[] as string[]],
+    },
+    scanSchema,
+  );
+  return serializeBatch(batch);
 }

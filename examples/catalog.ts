@@ -182,6 +182,12 @@ export class InMemoryCatalog extends CatalogInterface {
       supports_delete: false,
       supports_returning: false,
       supports_column_statistics: false,
+      scan_function: new Uint8Array(0),
+      insert_function: new Uint8Array(0),
+      update_function: new Uint8Array(0),
+      delete_function: new Uint8Array(0),
+      cardinality_estimate: 0,
+      cardinality_max: 0,
     }));
   }
 
@@ -231,6 +237,12 @@ export class InMemoryCatalog extends CatalogInterface {
       supports_delete: false,
       supports_returning: false,
       supports_column_statistics: false,
+      scan_function: new Uint8Array(0),
+      insert_function: new Uint8Array(0),
+      update_function: new Uint8Array(0),
+      delete_function: new Uint8Array(0),
+      cardinality_estimate: 0,
+      cardinality_max: 0,
     };
   }
 
