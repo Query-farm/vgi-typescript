@@ -6,10 +6,53 @@
 // Azure SQL, etc.) can use fetch/network drivers without sync hacks.
 // FunctionStorageSqlite wraps bun:sqlite's sync calls in resolved promises.
 
-import { Database } from "bun:sqlite";
-import { homedir, platform } from "node:os";
-import { join } from "node:path";
-import { mkdirSync } from "node:fs";
+// FunctionStorageSqlite is the only thing in this module that needs Bun + node:*
+// modules. Workers (Cloudflare workerd / browsers) should use
+// FunctionStorageCfDo (HTTP-backed) instead — they never reach this class.
+// We resolve all node:* and bun:* dependencies through indirect string
+// variables that esbuild can't trace statically, so workerd bundles cleanly
+// without nodejs_compat polyfills for paths we never run.
+type Database = any;
+const _BUN_SQLITE_MOD = "bun:sqlite";
+const _NODE_OS_MOD = "node:os";
+const _NODE_PATH_MOD = "node:path";
+const _NODE_FS_MOD = "node:fs";
+let _Database: any = null;
+function _req(): any {
+  const req: any = (globalThis as any).require ?? null;
+  if (!req) {
+    throw new Error(
+      "FunctionStorageSqlite requires Node.js or Bun (bun:sqlite + node:os/path/fs). " +
+        "Use FunctionStorageCfDo on non-Bun runtimes.",
+    );
+  }
+  return req;
+}
+function _loadDatabase(): any {
+  if (_Database) return _Database;
+  try {
+    _Database = _req()(_BUN_SQLITE_MOD).Database;
+    return _Database;
+  } catch (e: any) {
+    throw new Error(
+      `FunctionStorageSqlite: failed to load bun:sqlite — ${e?.message ?? e}`,
+    );
+  }
+}
+function _loadNodeIo(): {
+  homedir: () => string;
+  platform: () => string;
+  join: (...parts: string[]) => string;
+  mkdirSync: (path: string, opts?: any) => void;
+} {
+  const r = _req();
+  return {
+    homedir: r(_NODE_OS_MOD).homedir,
+    platform: r(_NODE_OS_MOD).platform,
+    join: r(_NODE_PATH_MOD).join,
+    mkdirSync: r(_NODE_FS_MOD).mkdirSync,
+  };
+}
 
 // ============================================================================
 // Errors
@@ -61,6 +104,7 @@ function getDefaultDbPath(): string {
   // per-op WAL fsync cost. Mirrors vgi-python's same env var.
   const override = process.env.VGI_WORKER_SQLITE_PATH;
   if (override) return override;
+  const { homedir, platform, join, mkdirSync } = _loadNodeIo();
   const home = homedir();
   const stateDir =
     platform() === "darwin"
@@ -80,7 +124,8 @@ export class FunctionStorageSqlite implements FunctionStorage {
     // Bun is single-threaded, so one connection is the analogue of
     // Python's per-thread persistent connection. WAL still coordinates
     // writes across processes via file locking.
-    this._db = new Database(this.dbPath);
+    const Db = _loadDatabase();
+    this._db = new Db(this.dbPath);
     this._db.exec("PRAGMA journal_mode=WAL");
     this._db.exec("PRAGMA synchronous=NORMAL");
     this._db.exec("PRAGMA busy_timeout=30000");

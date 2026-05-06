@@ -23,9 +23,9 @@ export function registerCatalogViewMethods(protocol: Protocol, getCatalog: GetCa
   protocol.unary("catalog_view_get", {
     params: attachIdSchemaNameTxnParams,
     result: RESULT_BINARY_SCHEMA,
-    handler: (params) => {
+    handler: async (params) => {
       const cat = getCatalog();
-      const info = cat.viewGet(
+      const info = await cat.viewGet(
         toUint8Array(params.attach_id),
         params.schema_name,
         params.name,
@@ -48,9 +48,9 @@ export function registerCatalogViewMethods(protocol: Protocol, getCatalog: GetCa
       new Field("transaction_id", new Binary(), true),
     ]),
     result: emptyResultSchema,
-    handler: (params) => {
+    handler: async (params) => {
       const cat = getCatalog();
-      cat.viewCreate(
+      await cat.viewCreate(
         toUint8Array(params.attach_id),
         params.schema_name,
         params.name,
@@ -66,9 +66,9 @@ export function registerCatalogViewMethods(protocol: Protocol, getCatalog: GetCa
   protocol.unary("catalog_view_drop", {
     params: schemaNameIgnoreNotFoundTxnParams,
     result: emptyResultSchema,
-    handler: (params) => {
+    handler: async (params) => {
       const cat = getCatalog();
-      cat.viewDrop(
+      await cat.viewDrop(
         toUint8Array(params.attach_id),
         params.schema_name,
         params.name,
@@ -83,9 +83,9 @@ export function registerCatalogViewMethods(protocol: Protocol, getCatalog: GetCa
   protocol.unary("catalog_view_rename", {
     params: schemaNameRenameParams,
     result: emptyResultSchema,
-    handler: (params) => {
+    handler: async (params) => {
       const cat = getCatalog();
-      cat.viewRename(
+      await cat.viewRename(
         toUint8Array(params.attach_id),
         params.schema_name,
         params.name,
@@ -101,9 +101,9 @@ export function registerCatalogViewMethods(protocol: Protocol, getCatalog: GetCa
   protocol.unary("catalog_view_comment_set", {
     params: schemaNameCommentParams,
     result: emptyResultSchema,
-    handler: (params) => {
+    handler: async (params) => {
       const cat = getCatalog();
-      cat.viewCommentSet(
+      await cat.viewCommentSet(
         toUint8Array(params.attach_id),
         params.schema_name,
         params.name,

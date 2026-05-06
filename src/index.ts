@@ -90,6 +90,19 @@ export {
 // State serializer
 export { arrowStateSerializer, EXCHANGE_STATE_SCHEMA, serializeUserState, deserializeUserState } from "./protocol/state-serializer.js";
 
+// Protocol assembly (for embedding the worker dispatcher in a custom HTTP server).
+export { buildVgiProtocol, type ProtocolConfig } from "./protocol/dispatch.js";
+
+// Wire schemas — needed by workers that synthesize TableInfo.bind_result /
+// TableInfo.scan_function bytes to short-circuit per-scan RPCs.
+export { BindResultSchema, ScanFunctionResultSchema } from "./generated/vgi-protocol-schemas.js";
+
+// Attach-option specs (for catalogs that advertise typed ATTACH options).
+export { type AttachOptionSpec, serializeAttachOptionSpec, serializeAttachOptionSpecs } from "./catalog/attach-option.js";
+
+// Column statistics (for inlining on TableInfo.column_statistics).
+export { type ColumnStatistics, serializeColumnStatistics } from "./util/statistics.js";
+
 // Byte utilities
 export { toUint8Array } from "./util/bytes.js";
 

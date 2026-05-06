@@ -67,11 +67,10 @@ export interface TableInOutConfig<
   namedArgs?: Record<string, DataType>;
   /** Argument defaults */
   argDefaults?: Record<string, any>;
-  /** Bind: default passes through input schema */
-  onBind?: (params: TableInOutBindParams<TArgs>) => {
-    outputSchema: Schema;
-    opaqueData?: Uint8Array;
-  };
+  /** Bind: default passes through input schema. May be async. */
+  onBind?: (params: TableInOutBindParams<TArgs>) =>
+    | { outputSchema: Schema; opaqueData?: Uint8Array }
+    | Promise<{ outputSchema: Schema; opaqueData?: Uint8Array }>;
   onInit?: (params: {
     args: TArgs;
     initCall: InitRequest;
@@ -181,12 +180,12 @@ export function defineTableInOutFunction<
     meta,
     argumentSpecs: specs,
 
-    bind(request: BindRequest): BindResponse {
+    async bind(request: BindRequest): Promise<BindResponse> {
       if (config.onBind) {
         const args = extractArgs(request);
         const settings = batchToScalarDict(request.settings);
         const secrets = batchToSecretDict(request.secrets);
-        const result = config.onBind({
+        const result = await config.onBind({
           args,
           bindCall: request,
           settings,

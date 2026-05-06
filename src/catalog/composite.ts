@@ -60,11 +60,11 @@ export class CompositeCatalogInterface extends CatalogInterface {
     return all;
   }
 
-  catalogsInfo(): CatalogInfo[] {
+  async catalogsInfo(): Promise<CatalogInfo[]> {
     const all: CatalogInfo[] = [];
     for (const b of this._backends) {
       if (b.catalogsInfo) {
-        all.push(...b.catalogsInfo());
+        all.push(...(await b.catalogsInfo()));
       } else {
         for (const name of b.catalogs()) {
           all.push({ name, implementation_version: null, data_version_spec: null });
@@ -74,16 +74,16 @@ export class CompositeCatalogInterface extends CatalogInterface {
     return all;
   }
 
-  attach(
+  async attach(
     name: string,
     options?: Record<string, unknown>,
     dataVersionSpec?: string | null,
     implementationVersion?: string | null,
-  ): CatalogAttachResult {
+  ): Promise<CatalogAttachResult> {
     for (let i = 0; i < this._backends.length; i++) {
       const b = this._backends[i];
       if (b.catalogs().includes(name)) {
-        const result = b.attach(name, options, dataVersionSpec, implementationVersion);
+        const result = await b.attach(name, options, dataVersionSpec, implementationVersion);
         // Stamp the route-byte so other workers in the pool can decode the
         // backend without needing in-memory state. Mutate in place so the
         // wire returns the rewritten id.
@@ -96,75 +96,75 @@ export class CompositeCatalogInterface extends CatalogInterface {
     throw new Error(`No worker handles catalog '${name}'`);
   }
 
-  detach(attachId: AttachId): void {
-    this._route(attachId).detach(attachId);
+  async detach(attachId: AttachId): Promise<void> {
+    await this._route(attachId).detach(attachId);
   }
 
-  version(attachId: AttachId, transactionId?: TransactionId): number {
-    return this._route(attachId).version(attachId, transactionId);
+  async version(attachId: AttachId, transactionId?: TransactionId): Promise<number> {
+    return await this._route(attachId).version(attachId, transactionId);
   }
 
-  schemas(attachId: AttachId, transactionId?: TransactionId): SchemaInfo[] {
-    return this._route(attachId).schemas(attachId, transactionId);
+  async schemas(attachId: AttachId, transactionId?: TransactionId): Promise<SchemaInfo[]> {
+    return await this._route(attachId).schemas(attachId, transactionId);
   }
 
-  override schemaGet(attachId: AttachId, name: string, transactionId?: TransactionId): SchemaInfo | null {
-    return this._route(attachId).schemaGet(attachId, name, transactionId);
+  override async schemaGet(attachId: AttachId, name: string, transactionId?: TransactionId): Promise<SchemaInfo | null> {
+    return await this._route(attachId).schemaGet(attachId, name, transactionId);
   }
 
-  override schemaContentsTables(attachId: AttachId, name: string, transactionId?: TransactionId): TableInfo[] {
-    return this._route(attachId).schemaContentsTables(attachId, name, transactionId);
+  override async schemaContentsTables(attachId: AttachId, name: string, transactionId?: TransactionId): Promise<TableInfo[]> {
+    return await this._route(attachId).schemaContentsTables(attachId, name, transactionId);
   }
 
-  override schemaContentsViews(attachId: AttachId, name: string, transactionId?: TransactionId): ViewInfo[] {
-    return this._route(attachId).schemaContentsViews(attachId, name, transactionId);
+  override async schemaContentsViews(attachId: AttachId, name: string, transactionId?: TransactionId): Promise<ViewInfo[]> {
+    return await this._route(attachId).schemaContentsViews(attachId, name, transactionId);
   }
 
-  override schemaContentsFunctions(attachId: AttachId, name: string, type: string, transactionId?: TransactionId): FunctionInfo[] {
-    return this._route(attachId).schemaContentsFunctions(attachId, name, type, transactionId);
+  override async schemaContentsFunctions(attachId: AttachId, name: string, type: string, transactionId?: TransactionId): Promise<FunctionInfo[]> {
+    return await this._route(attachId).schemaContentsFunctions(attachId, name, type, transactionId);
   }
 
-  override schemaContentsMacros(attachId: AttachId, name: string, type: string, transactionId?: TransactionId): MacroInfo[] {
-    return this._route(attachId).schemaContentsMacros(attachId, name, type, transactionId);
+  override async schemaContentsMacros(attachId: AttachId, name: string, type: string, transactionId?: TransactionId): Promise<MacroInfo[]> {
+    return await this._route(attachId).schemaContentsMacros(attachId, name, type, transactionId);
   }
 
-  override schemaContentsIndexes(attachId: AttachId, name: string, transactionId?: TransactionId): IndexInfo[] {
-    return this._route(attachId).schemaContentsIndexes(attachId, name, transactionId);
+  override async schemaContentsIndexes(attachId: AttachId, name: string, transactionId?: TransactionId): Promise<IndexInfo[]> {
+    return await this._route(attachId).schemaContentsIndexes(attachId, name, transactionId);
   }
 
-  override indexGet(attachId: AttachId, schemaName: string, name: string, transactionId?: TransactionId): IndexInfo | null {
-    return this._route(attachId).indexGet(attachId, schemaName, name, transactionId);
+  override async indexGet(attachId: AttachId, schemaName: string, name: string, transactionId?: TransactionId): Promise<IndexInfo | null> {
+    return await this._route(attachId).indexGet(attachId, schemaName, name, transactionId);
   }
 
-  override tableGet(attachId: AttachId, schemaName: string, name: string, atUnit?: string, atValue?: string, transactionId?: TransactionId): TableInfo | null {
-    return this._route(attachId).tableGet(attachId, schemaName, name, atUnit, atValue, transactionId);
+  override async tableGet(attachId: AttachId, schemaName: string, name: string, atUnit?: string, atValue?: string, transactionId?: TransactionId): Promise<TableInfo | null> {
+    return await this._route(attachId).tableGet(attachId, schemaName, name, atUnit, atValue, transactionId);
   }
 
-  override tableScanFunctionGet(attachId: AttachId, schemaName: string, name: string, atUnit?: string, atValue?: string, transactionId?: TransactionId) {
-    return this._route(attachId).tableScanFunctionGet(attachId, schemaName, name, atUnit, atValue, transactionId);
+  override async tableScanFunctionGet(attachId: AttachId, schemaName: string, name: string, atUnit?: string, atValue?: string, transactionId?: TransactionId): Promise<any> {
+    return await this._route(attachId).tableScanFunctionGet(attachId, schemaName, name, atUnit, atValue, transactionId);
   }
 
-  override tableColumnStatisticsGet(attachId: AttachId, schemaName: string, name: string, transactionId?: TransactionId) {
-    return this._route(attachId).tableColumnStatisticsGet(attachId, schemaName, name, transactionId);
+  override async tableColumnStatisticsGet(attachId: AttachId, schemaName: string, name: string, transactionId?: TransactionId): Promise<{ bytes: Uint8Array; cacheMaxAgeSeconds: number | null } | null> {
+    return await this._route(attachId).tableColumnStatisticsGet(attachId, schemaName, name, transactionId);
   }
 
-  override viewGet(attachId: AttachId, schemaName: string, name: string, transactionId?: TransactionId): ViewInfo | null {
-    return this._route(attachId).viewGet(attachId, schemaName, name, transactionId);
+  override async viewGet(attachId: AttachId, schemaName: string, name: string, transactionId?: TransactionId): Promise<ViewInfo | null> {
+    return await this._route(attachId).viewGet(attachId, schemaName, name, transactionId);
   }
 
-  override macroGet(attachId: AttachId, schemaName: string, name: string, transactionId?: TransactionId): MacroInfo | null {
-    return this._route(attachId).macroGet(attachId, schemaName, name, transactionId);
+  override async macroGet(attachId: AttachId, schemaName: string, name: string, transactionId?: TransactionId): Promise<MacroInfo | null> {
+    return await this._route(attachId).macroGet(attachId, schemaName, name, transactionId);
   }
 
-  override transactionBegin(attachId: AttachId): Uint8Array | null {
-    return this._route(attachId).transactionBegin(attachId);
+  override async transactionBegin(attachId: AttachId): Promise<Uint8Array | null> {
+    return await this._route(attachId).transactionBegin(attachId);
   }
 
-  override transactionCommit(attachId: AttachId, transactionId: TransactionId): void {
-    this._route(attachId).transactionCommit(attachId, transactionId);
+  override async transactionCommit(attachId: AttachId, transactionId: TransactionId): Promise<void> {
+    await this._route(attachId).transactionCommit(attachId, transactionId);
   }
 
-  override transactionRollback(attachId: AttachId, transactionId: TransactionId): void {
-    this._route(attachId).transactionRollback(attachId, transactionId);
+  override async transactionRollback(attachId: AttachId, transactionId: TransactionId): Promise<void> {
+    await this._route(attachId).transactionRollback(attachId, transactionId);
   }
 }

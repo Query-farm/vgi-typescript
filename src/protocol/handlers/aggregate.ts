@@ -44,7 +44,7 @@ export function registerAggregateMethods(protocol: Protocol, registry: FunctionR
   protocol.unary("aggregate_bind", {
     params: REQUEST_PARAMS_SCHEMA,
     result: RESULT_BINARY_SCHEMA,
-    handler: (params) => {
+    handler: async (params) => {
       const innerParams = unwrapRequest(params.request);
       const functionName: string = innerParams.function_name;
       const cfg = resolveAggregate(functionName);
@@ -71,7 +71,7 @@ export function registerAggregateMethods(protocol: Protocol, registry: FunctionR
       // optional onBind hook (for aggregates whose return type depends on
       // input — e.g. vgi_generic_sum takes ANY and returns the same type);
       // otherwise the declared cfg.outputType.
-      const outType = cfg.onBind ? cfg.onBind(bindParams) : cfg.outputType;
+      const outType = cfg.onBind ? await cfg.onBind(bindParams) : cfg.outputType;
       const outSchema = new Schema([new Field("result", outType, true)]);
       return wrapResult(
         { output_schema: serializeSchema(outSchema), execution_id: executionId },

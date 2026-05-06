@@ -59,11 +59,11 @@ export function registerFunctionMethods(protocol: Protocol, config: FunctionHand
   protocol.unary("bind", {
     params: REQUEST_PARAMS_SCHEMA,
     result: RESULT_BINARY_SCHEMA,
-    handler: (params) => {
+    handler: async (params) => {
       const innerParams = unwrapRequest(params.request);
       const request = deserializeBindRequest(innerParams);
       const func = registry.get(request.function_name, overloadContext(request));
-      const response = func.bind(request);
+      const response = await func.bind(request);
       const serialized = serializeBindResponse(response);
       return wrapResult(serialized, BindResultSchema);
     },
@@ -214,13 +214,13 @@ export function registerFunctionMethods(protocol: Protocol, config: FunctionHand
   protocol.unary("table_function_cardinality", {
     params: REQUEST_PARAMS_SCHEMA,
     result: RESULT_BINARY_SCHEMA,
-    handler: (params) => {
+    handler: async (params) => {
       const innerParams = unwrapRequest(params.request);
       const request = deserializeCardinalityRequest(innerParams);
       const func = registry.get(request.bind_call.function_name, overloadContext(request.bind_call));
       let cardResult: Record<string, any>;
       if (func.cardinality) {
-        cardResult = serializeTableCardinality(func.cardinality(request));
+        cardResult = serializeTableCardinality(await func.cardinality(request));
       } else {
         cardResult = { estimate: null, max: null };
       }

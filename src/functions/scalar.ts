@@ -83,7 +83,7 @@ export interface ScalarFunctionConfig {
   /** Output type (static) */
   returns?: DataType;
   /** Dynamic output type at bind time */
-  outputType?: (params: ScalarBindParameters) => DataType;
+  outputType?: (params: ScalarBindParameters) => DataType | Promise<DataType>;
   /** Process: receives columnar batch + const values, returns output array or values */
   compute: (
     batch: RecordBatch,
@@ -176,7 +176,7 @@ export function defineScalarFunction(config: ScalarFunctionConfig): VgiFunction 
     argumentSpecs: specs,
     defaultOutputSchema,
 
-    bind(request: BindRequest): BindResponse {
+    async bind(request: BindRequest): Promise<BindResponse> {
       const settings = batchToScalarDict(request.settings);
       const secrets = batchToSecretDict(request.secrets);
 
@@ -197,7 +197,7 @@ export function defineScalarFunction(config: ScalarFunctionConfig): VgiFunction 
       // Determine output type
       let outputType: DataType;
       if (config.outputType) {
-        outputType = config.outputType({
+        outputType = await config.outputType({
           constArgs,
           argumentsSchema: request.input_schema ?? new Schema([]),
           settings,

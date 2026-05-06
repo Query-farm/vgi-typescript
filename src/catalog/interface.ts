@@ -136,6 +136,17 @@ export function decodeScanFunctionResult(inner: Record<string, unknown>): ScanFu
 // CatalogInterface abstract class
 // ============================================================================
 
+/**
+ * Catalog method return type — sync `T` or `Promise<T>`. The framework's
+ * dispatch handlers `await` every catalog call, so async overrides work
+ * out of the box. Default impls return sync values.
+ */
+type Awaitable<T> = T | Promise<T>;
+
+function isPromise<T>(v: Awaitable<T>): v is Promise<T> {
+  return v != null && typeof (v as any).then === "function";
+}
+
 export abstract class CatalogInterface {
   // Required overrides
   abstract catalogs(): string[];
@@ -151,7 +162,7 @@ export abstract class CatalogInterface {
     options?: Record<string, unknown>,
     dataVersionSpec?: string | null,
     implementationVersion?: string | null,
-  ): CatalogAttachResult;
+  ): Awaitable<CatalogAttachResult>;
   /**
    * List the catalogs this worker exposes with their version metadata. The
    * `implementation_version` / `data_version_spec` come from the CatalogInfo
@@ -159,30 +170,33 @@ export abstract class CatalogInterface {
    * overrides `catalogs()` / `catalogsInfo()` to advertise real values; the
    * default derives them from the registered descriptor(s).
    */
-  catalogsInfo?(): import("../generated/vgi-client.js").CatalogInfo[];
-  abstract detach(attachId: AttachId): void;
+  catalogsInfo?(): Awaitable<import("../generated/vgi-client.js").CatalogInfo[]>;
+  abstract detach(attachId: AttachId): Awaitable<void>;
   abstract version(
     attachId: AttachId,
     transactionId?: TransactionId
-  ): number;
+  ): Awaitable<number>;
   abstract schemas(
     attachId: AttachId,
     transactionId?: TransactionId
-  ): SchemaInfo[];
+  ): Awaitable<SchemaInfo[]>;
 
   // Default implementations (throw CatalogReadOnlyError)
-  create(name: string, onConflict: string, options?: any): void {
+  create(name: string, onConflict: string, options?: any): Awaitable<void> {
     throw new CatalogReadOnlyError("create");
   }
-  drop(name: string): void {
+  drop(name: string): Awaitable<void> {
     throw new CatalogReadOnlyError("drop");
   }
   schemaGet(
     attachId: AttachId,
     name: string,
     transactionId?: TransactionId
-  ): SchemaInfo | null {
+  ): Awaitable<SchemaInfo | null> {
     const all = this.schemas(attachId, transactionId);
+    if (isPromise(all)) {
+      return all.then((arr) => arr.find((s) => s.name === name) ?? null);
+    }
     return all.find((s) => s.name === name) ?? null;
   }
   schemaCreate(
@@ -191,7 +205,7 @@ export abstract class CatalogInterface {
     comment?: string | null,
     tags?: any,
     transactionId?: TransactionId
-  ): void {
+  ): Awaitable<void> {
     throw new CatalogReadOnlyError("schema_create");
   }
   schemaDrop(
@@ -200,21 +214,21 @@ export abstract class CatalogInterface {
     ignoreNotFound?: boolean,
     cascade?: boolean,
     transactionId?: TransactionId
-  ): void {
+  ): Awaitable<void> {
     throw new CatalogReadOnlyError("schema_drop");
   }
   schemaContentsTables(
     attachId: AttachId,
     name: string,
     transactionId?: TransactionId
-  ): TableInfo[] {
+  ): Awaitable<TableInfo[]> {
     return [];
   }
   schemaContentsViews(
     attachId: AttachId,
     name: string,
     transactionId?: TransactionId
-  ): ViewInfo[] {
+  ): Awaitable<ViewInfo[]> {
     return [];
   }
   schemaContentsFunctions(
@@ -222,7 +236,7 @@ export abstract class CatalogInterface {
     name: string,
     type: string,
     transactionId?: TransactionId
-  ): FunctionInfo[] {
+  ): Awaitable<FunctionInfo[]> {
     return [];
   }
   tableGet(
@@ -232,7 +246,7 @@ export abstract class CatalogInterface {
     atUnit?: string,
     atValue?: string,
     transactionId?: TransactionId
-  ): TableInfo | null {
+  ): Awaitable<TableInfo | null> {
     return null;
   }
   tableCreate(
@@ -245,7 +259,7 @@ export abstract class CatalogInterface {
     uniqueConstraints?: number[][],
     checkConstraints?: string[],
     transactionId?: TransactionId
-  ): void {
+  ): Awaitable<void> {
     throw new CatalogReadOnlyError("table_create");
   }
   tableDrop(
@@ -254,7 +268,7 @@ export abstract class CatalogInterface {
     name: string,
     ignoreNotFound?: boolean,
     transactionId?: TransactionId
-  ): void {
+  ): Awaitable<void> {
     throw new CatalogReadOnlyError("table_drop");
   }
   tableScanFunctionGet(
@@ -264,7 +278,7 @@ export abstract class CatalogInterface {
     atUnit?: string,
     atValue?: string,
     transactionId?: TransactionId
-  ): any {
+  ): Awaitable<any> {
     throw new CatalogReadOnlyError("table_scan_function_get");
   }
   /**
@@ -280,7 +294,7 @@ export abstract class CatalogInterface {
     schemaName: string,
     name: string,
     transactionId?: TransactionId,
-  ): { bytes: Uint8Array; cacheMaxAgeSeconds: number | null } | null {
+  ): Awaitable<{ bytes: Uint8Array; cacheMaxAgeSeconds: number | null } | null> {
     return null;
   }
   tableCommentSet(
@@ -290,7 +304,7 @@ export abstract class CatalogInterface {
     comment?: string | null,
     ignoreNotFound?: boolean,
     transactionId?: TransactionId
-  ): void {
+  ): Awaitable<void> {
     throw new CatalogReadOnlyError("table_comment_set");
   }
   tableRename(
@@ -300,7 +314,7 @@ export abstract class CatalogInterface {
     newName: string,
     ignoreNotFound?: boolean,
     transactionId?: TransactionId
-  ): void {
+  ): Awaitable<void> {
     throw new CatalogReadOnlyError("table_rename");
   }
   tableColumnAdd(
@@ -312,7 +326,7 @@ export abstract class CatalogInterface {
     defaultValue?: string,
     ignoreNotFound?: boolean,
     transactionId?: TransactionId
-  ): void {
+  ): Awaitable<void> {
     throw new CatalogReadOnlyError("table_column_add");
   }
   tableColumnDrop(
@@ -322,7 +336,7 @@ export abstract class CatalogInterface {
     columnName: string,
     ignoreNotFound?: boolean,
     transactionId?: TransactionId
-  ): void {
+  ): Awaitable<void> {
     throw new CatalogReadOnlyError("table_column_drop");
   }
   tableColumnRename(
@@ -333,7 +347,7 @@ export abstract class CatalogInterface {
     newName: string,
     ignoreNotFound?: boolean,
     transactionId?: TransactionId
-  ): void {
+  ): Awaitable<void> {
     throw new CatalogReadOnlyError("table_column_rename");
   }
   tableColumnDefaultSet(
@@ -344,7 +358,7 @@ export abstract class CatalogInterface {
     defaultValue: string,
     ignoreNotFound?: boolean,
     transactionId?: TransactionId
-  ): void {
+  ): Awaitable<void> {
     throw new CatalogReadOnlyError("table_column_default_set");
   }
   tableColumnDefaultDrop(
@@ -354,7 +368,7 @@ export abstract class CatalogInterface {
     columnName: string,
     ignoreNotFound?: boolean,
     transactionId?: TransactionId
-  ): void {
+  ): Awaitable<void> {
     throw new CatalogReadOnlyError("table_column_default_drop");
   }
   tableColumnTypeChange(
@@ -365,7 +379,7 @@ export abstract class CatalogInterface {
     newType: string,
     ignoreNotFound?: boolean,
     transactionId?: TransactionId
-  ): void {
+  ): Awaitable<void> {
     throw new CatalogReadOnlyError("table_column_type_change");
   }
   tableNotNullSet(
@@ -375,7 +389,7 @@ export abstract class CatalogInterface {
     columnName: string,
     ignoreNotFound?: boolean,
     transactionId?: TransactionId
-  ): void {
+  ): Awaitable<void> {
     throw new CatalogReadOnlyError("table_not_null_set");
   }
   tableNotNullDrop(
@@ -385,7 +399,7 @@ export abstract class CatalogInterface {
     columnName: string,
     ignoreNotFound?: boolean,
     transactionId?: TransactionId
-  ): void {
+  ): Awaitable<void> {
     throw new CatalogReadOnlyError("table_not_null_drop");
   }
   viewGet(
@@ -393,7 +407,7 @@ export abstract class CatalogInterface {
     schemaName: string,
     name: string,
     transactionId?: TransactionId
-  ): ViewInfo | null {
+  ): Awaitable<ViewInfo | null> {
     return null;
   }
   viewCreate(
@@ -403,7 +417,7 @@ export abstract class CatalogInterface {
     definition: string,
     onConflict: string,
     transactionId?: TransactionId
-  ): void {
+  ): Awaitable<void> {
     throw new CatalogReadOnlyError("view_create");
   }
   viewDrop(
@@ -412,7 +426,7 @@ export abstract class CatalogInterface {
     name: string,
     ignoreNotFound?: boolean,
     transactionId?: TransactionId
-  ): void {
+  ): Awaitable<void> {
     throw new CatalogReadOnlyError("view_drop");
   }
   viewRename(
@@ -422,7 +436,7 @@ export abstract class CatalogInterface {
     newName: string,
     ignoreNotFound?: boolean,
     transactionId?: TransactionId
-  ): void {
+  ): Awaitable<void> {
     throw new CatalogReadOnlyError("view_rename");
   }
   viewCommentSet(
@@ -432,7 +446,7 @@ export abstract class CatalogInterface {
     comment?: string | null,
     ignoreNotFound?: boolean,
     transactionId?: TransactionId
-  ): void {
+  ): Awaitable<void> {
     throw new CatalogReadOnlyError("view_comment_set");
   }
   macroGet(
@@ -440,7 +454,7 @@ export abstract class CatalogInterface {
     schemaName: string,
     name: string,
     transactionId?: TransactionId
-  ): MacroInfo | null {
+  ): Awaitable<MacroInfo | null> {
     return null;
   }
   macroCreate(
@@ -453,7 +467,7 @@ export abstract class CatalogInterface {
     onConflict: string,
     parameterDefaultValues?: Uint8Array | null,
     transactionId?: TransactionId
-  ): void {
+  ): Awaitable<void> {
     throw new CatalogReadOnlyError("macro_create");
   }
   macroDrop(
@@ -462,7 +476,7 @@ export abstract class CatalogInterface {
     name: string,
     ignoreNotFound?: boolean,
     transactionId?: TransactionId
-  ): void {
+  ): Awaitable<void> {
     throw new CatalogReadOnlyError("macro_drop");
   }
   schemaContentsMacros(
@@ -470,14 +484,14 @@ export abstract class CatalogInterface {
     name: string,
     type: string,
     transactionId?: TransactionId
-  ): MacroInfo[] {
+  ): Awaitable<MacroInfo[]> {
     return [];
   }
   schemaContentsIndexes(
     attachId: AttachId,
     name: string,
     transactionId?: TransactionId
-  ): IndexInfo[] {
+  ): Awaitable<IndexInfo[]> {
     return [];
   }
   indexGet(
@@ -485,19 +499,19 @@ export abstract class CatalogInterface {
     schemaName: string,
     name: string,
     transactionId?: TransactionId
-  ): IndexInfo | null {
+  ): Awaitable<IndexInfo | null> {
     return null;
   }
-  transactionBegin(attachId: AttachId): Uint8Array | null {
+  transactionBegin(attachId: AttachId): Awaitable<Uint8Array | null> {
     return null;
   }
   transactionCommit(
     attachId: AttachId,
     transactionId: TransactionId
-  ): void {}
+  ): Awaitable<void> {}
   transactionRollback(
     attachId: AttachId,
     transactionId: TransactionId
-  ): void {}
+  ): Awaitable<void> {}
 }
 

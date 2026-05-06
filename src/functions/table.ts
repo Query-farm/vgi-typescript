@@ -137,14 +137,22 @@ export interface TableFunctionConfig<
   argDefaults?: Record<string, any>;
   /** Names of args that accept variable number of arguments */
   varargs?: string[];
-  /** Bind: return output schema */
-  onBind: (params: TableBindParams<TArgs>) => {
-    outputSchema: Schema;
-    opaqueData?: Uint8Array;
-    lookupSecretTypes?: string[];
-    lookupScopes?: string[];
-    lookupNames?: string[];
-  };
+  /** Bind: return output schema. May be async — handlers `await` the result. */
+  onBind: (params: TableBindParams<TArgs>) =>
+    | {
+        outputSchema: Schema;
+        opaqueData?: Uint8Array;
+        lookupSecretTypes?: string[];
+        lookupScopes?: string[];
+        lookupNames?: string[];
+      }
+    | Promise<{
+        outputSchema: Schema;
+        opaqueData?: Uint8Array;
+        lookupSecretTypes?: string[];
+        lookupScopes?: string[];
+        lookupNames?: string[];
+      }>;
   /** Init (optional). May be async — common when storage is HTTP-backed. */
   onInit?: (params: {
     args: TArgs;
@@ -162,7 +170,7 @@ export interface TableFunctionConfig<
     out: OutputCollector
   ) => void | Promise<void>;
   /** Cardinality hints */
-  cardinality?: (params: TableBindParams<TArgs>) => TableCardinality;
+  cardinality?: (params: TableBindParams<TArgs>) => TableCardinality | Promise<TableCardinality>;
   /**
    * Per-column statistics for the function's output. Returned to DuckDB via
    * the `table_function_statistics` RPC; the optimizer uses min/max to
@@ -268,11 +276,11 @@ export function defineTableFunction<
     meta,
     argumentSpecs: specs,
 
-    bind(request: BindRequest): BindResponse {
+    async bind(request: BindRequest): Promise<BindResponse> {
       const args = extractArgs(request);
       const settings = batchToScalarDict(request.settings);
       const secrets = batchToSecretDict(request.secrets);
-      const result = config.onBind({
+      const result = await config.onBind({
         args, bindCall: request, settings, secrets,
         resolvedSecretsProvided: request.resolved_secrets_provided ?? false,
       });

@@ -27,9 +27,9 @@ export function registerCatalogMacroMethods(protocol: Protocol, getCatalog: GetC
   protocol.unary("catalog_macro_get", {
     params: attachIdSchemaNameTxnParams,
     result: RESULT_BINARY_SCHEMA,
-    handler: (params) => {
+    handler: async (params) => {
       const cat = getCatalog();
-      const info = cat.macroGet(
+      const info = await cat.macroGet(
         toUint8Array(params.attach_id),
         params.schema_name,
         params.name,
@@ -45,10 +45,10 @@ export function registerCatalogMacroMethods(protocol: Protocol, getCatalog: GetC
   protocol.unary("catalog_macro_create", {
     params: REQUEST_PARAMS_SCHEMA,
     result: emptyResultSchema,
-    handler: (params) => {
+    handler: async (params) => {
       const cat = getCatalog();
       const innerParams = unwrapRequest(params.request);
-      cat.macroCreate(
+      await cat.macroCreate(
         toUint8Array(innerParams.attach_id),
         innerParams.schema_name,
         innerParams.name,
@@ -73,9 +73,9 @@ export function registerCatalogMacroMethods(protocol: Protocol, getCatalog: GetC
       new Field("transaction_id", new Binary(), true),
     ]),
     result: emptyResultSchema,
-    handler: (params) => {
+    handler: async (params) => {
       const cat = getCatalog();
-      cat.macroDrop(
+      await cat.macroDrop(
         toUint8Array(params.attach_id),
         params.schema_name,
         params.name,
@@ -95,9 +95,9 @@ export function registerCatalogMacroMethods(protocol: Protocol, getCatalog: GetC
       new Field("transaction_id", new Binary(), true),
     ]),
     result: RESULT_BINARY_SCHEMA,
-    handler: (params) => {
+    handler: async (params) => {
       const cat = getCatalog();
-      const macros = cat.schemaContentsMacros(
+      const macros = await cat.schemaContentsMacros(
         toUint8Array(params.attach_id),
         params.name,
         decodeDictValue(params.type),

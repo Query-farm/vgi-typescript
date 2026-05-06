@@ -37,14 +37,14 @@ export function registerCatalogAdminMethods(protocol: Protocol, getCatalog: GetC
   protocol.unary("catalog_catalogs", {
     params: emptyResultSchema,
     result: RESULT_BINARY_SCHEMA,
-    handler: () => {
+    handler: async () => {
       const cat = getCatalog();
       // Each catalog advertised as an IPC-serialized CatalogInfo
       // {name, implementation_version?, data_version_spec?}. Versioned workers
       // override catalogsInfo() to supply real values; otherwise both version
       // fields default to null.
       const infos = cat.catalogsInfo
-        ? cat.catalogsInfo()
+        ? await cat.catalogsInfo()
         : cat.catalogs().map((name) => ({
             name,
             implementation_version: null,
@@ -59,7 +59,7 @@ export function registerCatalogAdminMethods(protocol: Protocol, getCatalog: GetC
   protocol.unary("catalog_attach", {
     params: REQUEST_PARAMS_SCHEMA,
     result: RESULT_BINARY_SCHEMA,
-    handler: (params) => {
+    handler: async (params) => {
       const innerParams = unwrapRequest(params.request);
       const cat = getCatalog();
       // The extension sends user-supplied ATTACH options as an IPC-serialized
@@ -67,7 +67,7 @@ export function registerCatalogAdminMethods(protocol: Protocol, getCatalog: GetC
       // once here so workers see an ergonomic {name: value} dict instead of
       // raw bytes. Nullable / absent → {}.
       const optionsDict = decodeOptionsBatch(innerParams.options);
-      const result = cat.attach(
+      const result = await cat.attach(
         innerParams.name,
         optionsDict,
         innerParams.data_version_spec ?? null,
@@ -100,9 +100,9 @@ export function registerCatalogAdminMethods(protocol: Protocol, getCatalog: GetC
   protocol.unary("catalog_detach", {
     params: attachIdParam,
     result: emptyResultSchema,
-    handler: (params) => {
+    handler: async (params) => {
       const cat = getCatalog();
-      cat.detach(toUint8Array(params.attach_id));
+      await cat.detach(toUint8Array(params.attach_id));
       return {};
     },
   });
@@ -115,9 +115,9 @@ export function registerCatalogAdminMethods(protocol: Protocol, getCatalog: GetC
       new Field("options", new Binary(), true),
     ]),
     result: emptyResultSchema,
-    handler: (params) => {
+    handler: async (params) => {
       const cat = getCatalog();
-      cat.create(params.name, params.on_conflict, params.options);
+      await cat.create(params.name, params.on_conflict, params.options);
       return {};
     },
   });
@@ -126,9 +126,9 @@ export function registerCatalogAdminMethods(protocol: Protocol, getCatalog: GetC
   protocol.unary("catalog_drop", {
     params: new Schema([new Field("name", new Utf8(), false)]),
     result: emptyResultSchema,
-    handler: (params) => {
+    handler: async (params) => {
       const cat = getCatalog();
-      cat.drop(params.name);
+      await cat.drop(params.name);
       return {};
     },
   });
@@ -137,14 +137,13 @@ export function registerCatalogAdminMethods(protocol: Protocol, getCatalog: GetC
   protocol.unary("catalog_version", {
     params: attachIdTxnParams,
     result: RESULT_BINARY_SCHEMA,
-    handler: (params) => {
+    handler: async (params) => {
       const cat = getCatalog();
-      return wrapResult({
-        version: cat.version(
-          toUint8Array(params.attach_id),
-          params.transaction_id ? toUint8Array(params.transaction_id) : undefined
-        ),
-      }, CatalogVersionResultSchema);
+      const version = await cat.version(
+        toUint8Array(params.attach_id),
+        params.transaction_id ? toUint8Array(params.transaction_id) : undefined
+      );
+      return wrapResult({ version }, CatalogVersionResultSchema);
     },
   });
 
@@ -152,11 +151,10 @@ export function registerCatalogAdminMethods(protocol: Protocol, getCatalog: GetC
   protocol.unary("catalog_transaction_begin", {
     params: attachIdParam,
     result: RESULT_BINARY_SCHEMA,
-    handler: (params) => {
+    handler: async (params) => {
       const cat = getCatalog();
-      return wrapResult({
-        transaction_id: cat.transactionBegin(toUint8Array(params.attach_id)),
-      }, CatalogTransactionBeginResultSchema);
+      const transaction_id = await cat.transactionBegin(toUint8Array(params.attach_id));
+      return wrapResult({ transaction_id }, CatalogTransactionBeginResultSchema);
     },
   });
 
@@ -164,9 +162,9 @@ export function registerCatalogAdminMethods(protocol: Protocol, getCatalog: GetC
   protocol.unary("catalog_transaction_commit", {
     params: attachIdTxnParams,
     result: emptyResultSchema,
-    handler: (params) => {
+    handler: async (params) => {
       const cat = getCatalog();
-      cat.transactionCommit(
+      await cat.transactionCommit(
         toUint8Array(params.attach_id),
         toUint8Array(params.transaction_id)
       );
@@ -178,9 +176,9 @@ export function registerCatalogAdminMethods(protocol: Protocol, getCatalog: GetC
   protocol.unary("catalog_transaction_rollback", {
     params: attachIdTxnParams,
     result: emptyResultSchema,
-    handler: (params) => {
+    handler: async (params) => {
       const cat = getCatalog();
-      cat.transactionRollback(
+      await cat.transactionRollback(
         toUint8Array(params.attach_id),
         toUint8Array(params.transaction_id)
       );
@@ -192,9 +190,9 @@ export function registerCatalogAdminMethods(protocol: Protocol, getCatalog: GetC
   protocol.unary("catalog_schemas", {
     params: attachIdTxnParams,
     result: RESULT_BINARY_SCHEMA,
-    handler: (params) => {
+    handler: async (params) => {
       const cat = getCatalog();
-      const schemas = cat.schemas(
+      const schemas = await cat.schemas(
         toUint8Array(params.attach_id),
         params.transaction_id ? toUint8Array(params.transaction_id) : undefined
       );
@@ -208,9 +206,9 @@ export function registerCatalogAdminMethods(protocol: Protocol, getCatalog: GetC
   protocol.unary("catalog_schema_get", {
     params: attachIdNameTxnParams,
     result: RESULT_BINARY_SCHEMA,
-    handler: (params) => {
+    handler: async (params) => {
       const cat = getCatalog();
-      const info = cat.schemaGet(
+      const info = await cat.schemaGet(
         toUint8Array(params.attach_id),
         params.name,
         params.transaction_id ? toUint8Array(params.transaction_id) : undefined
@@ -231,9 +229,9 @@ export function registerCatalogAdminMethods(protocol: Protocol, getCatalog: GetC
       new Field("transaction_id", new Binary(), true),
     ]),
     result: emptyResultSchema,
-    handler: (params) => {
+    handler: async (params) => {
       const cat = getCatalog();
-      cat.schemaCreate(
+      await cat.schemaCreate(
         toUint8Array(params.attach_id),
         params.name,
         params.comment,
@@ -254,9 +252,9 @@ export function registerCatalogAdminMethods(protocol: Protocol, getCatalog: GetC
       new Field("transaction_id", new Binary(), true),
     ]),
     result: emptyResultSchema,
-    handler: (params) => {
+    handler: async (params) => {
       const cat = getCatalog();
-      cat.schemaDrop(
+      await cat.schemaDrop(
         toUint8Array(params.attach_id),
         params.name,
         params.ignore_not_found,
@@ -271,9 +269,9 @@ export function registerCatalogAdminMethods(protocol: Protocol, getCatalog: GetC
   protocol.unary("catalog_schema_contents_tables", {
     params: attachIdNameTxnParams,
     result: RESULT_BINARY_SCHEMA,
-    handler: (params) => {
+    handler: async (params) => {
       const cat = getCatalog();
-      const tables = cat.schemaContentsTables(
+      const tables = await cat.schemaContentsTables(
         toUint8Array(params.attach_id),
         params.name,
         params.transaction_id ? toUint8Array(params.transaction_id) : undefined
@@ -288,9 +286,9 @@ export function registerCatalogAdminMethods(protocol: Protocol, getCatalog: GetC
   protocol.unary("catalog_schema_contents_views", {
     params: attachIdNameTxnParams,
     result: RESULT_BINARY_SCHEMA,
-    handler: (params) => {
+    handler: async (params) => {
       const cat = getCatalog();
-      const views = cat.schemaContentsViews(
+      const views = await cat.schemaContentsViews(
         toUint8Array(params.attach_id),
         params.name,
         params.transaction_id ? toUint8Array(params.transaction_id) : undefined
@@ -310,9 +308,9 @@ export function registerCatalogAdminMethods(protocol: Protocol, getCatalog: GetC
       new Field("transaction_id", new Binary(), true),
     ]),
     result: RESULT_BINARY_SCHEMA,
-    handler: (params) => {
+    handler: async (params) => {
       const cat = getCatalog();
-      const funcs = cat.schemaContentsFunctions(
+      const funcs = await cat.schemaContentsFunctions(
         toUint8Array(params.attach_id),
         params.name,
         decodeDictValue(params.type),

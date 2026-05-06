@@ -25,9 +25,9 @@ export function registerCatalogIndexMethods(protocol: Protocol, getCatalog: GetC
       new Field("transaction_id", new Binary(), true),
     ]),
     result: RESULT_BINARY_SCHEMA,
-    handler: (params) => {
+    handler: async (params) => {
       const cat = getCatalog();
-      const indexes = cat.schemaContentsIndexes(
+      const indexes = await cat.schemaContentsIndexes(
         toUint8Array(params.attach_id),
         params.name,
         params.transaction_id ? toUint8Array(params.transaction_id) : undefined,
@@ -47,9 +47,9 @@ export function registerCatalogIndexMethods(protocol: Protocol, getCatalog: GetC
       new Field("transaction_id", new Binary(), true),
     ]),
     result: RESULT_BINARY_SCHEMA,
-    handler: (params) => {
+    handler: async (params) => {
       const cat = getCatalog();
-      const info = cat.indexGet(
+      const info = await cat.indexGet(
         toUint8Array(params.attach_id),
         params.schema_name,
         params.name,

@@ -21,9 +21,32 @@ import type {
 } from "./types.js";
 import { DEFAULT_MAX_WORKERS } from "../types.js";
 import type { FunctionExample } from "./types.js";
-import * as fs from "node:fs";
-import * as path from "node:path";
-import * as os from "node:os";
+// Aggregate state persistence uses node:fs/path/os to spill per-group state to
+// disk under VGI_AGG_STATE_DIR. Workers (Cloudflare workerd / browsers)
+// don't define aggregate functions in the first place, so we resolve the
+// node:* modules through indirect string variables that esbuild can't trace.
+// The bundle stays clean even without nodejs_compat polyfills.
+const _NODE_FS_MOD = "node:fs";
+const _NODE_PATH_MOD = "node:path";
+const _NODE_OS_MOD = "node:os";
+function _aggReq(): any {
+  const req: any = (globalThis as any).require ?? null;
+  if (!req) {
+    throw new Error(
+      "Aggregate state persistence requires Node.js or Bun (node:fs/path/os).",
+    );
+  }
+  return req;
+}
+const fs: any = new Proxy({} as any, {
+  get: (_t, prop) => (_aggReq()(_NODE_FS_MOD) as any)[prop],
+});
+const path: any = new Proxy({} as any, {
+  get: (_t, prop) => (_aggReq()(_NODE_PATH_MOD) as any)[prop],
+});
+const os: any = new Proxy({} as any, {
+  get: (_t, prop) => (_aggReq()(_NODE_OS_MOD) as any)[prop],
+});
 
 // Column name DuckDB prepends to every aggregate_update batch. One entry per
 // input row; the value identifies which group the row belongs to.
@@ -96,7 +119,7 @@ export interface AggregateFunctionConfig<TArgs = Record<string, any>, TState = a
    * parameters (including input_schema) and returns the Arrow type to
    * advertise for this invocation. Defaults to returning `config.outputType`.
    */
-  onBind?: (params: AggregateBindParams<TArgs>) => DataType;
+  onBind?: (params: AggregateBindParams<TArgs>) => DataType | Promise<DataType>;
   /** Optional per-arg default values (positional only here). */
   argDefaults?: Record<string, any>;
 

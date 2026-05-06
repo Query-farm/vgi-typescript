@@ -35,9 +35,9 @@ export function registerCatalogTableMethods(protocol: Protocol, getCatalog: GetC
       new Field("transaction_id", new Binary(), true),
     ]),
     result: RESULT_BINARY_SCHEMA,
-    handler: (params) => {
+    handler: async (params) => {
       const cat = getCatalog();
-      const info = cat.tableGet(
+      const info = await cat.tableGet(
         toUint8Array(params.attach_id),
         params.schema_name,
         params.name,
@@ -65,9 +65,9 @@ export function registerCatalogTableMethods(protocol: Protocol, getCatalog: GetC
       new Field("transaction_id", new Binary(), true),
     ]),
     result: emptyResultSchema,
-    handler: (params) => {
+    handler: async (params) => {
       const cat = getCatalog();
-      cat.tableCreate(
+      await cat.tableCreate(
         toUint8Array(params.attach_id),
         params.schema_name,
         params.name,
@@ -92,9 +92,9 @@ export function registerCatalogTableMethods(protocol: Protocol, getCatalog: GetC
       new Field("transaction_id", new Binary(), true),
     ]),
     result: emptyResultSchema,
-    handler: (params) => {
+    handler: async (params) => {
       const cat = getCatalog();
-      cat.tableDrop(
+      await cat.tableDrop(
         toUint8Array(params.attach_id),
         params.schema_name,
         params.name,
@@ -105,15 +105,7 @@ export function registerCatalogTableMethods(protocol: Protocol, getCatalog: GetC
     },
   });
 
-  // catalog_table_column_statistics_get — returns serialized ColumnStatistics
-  // (IPC bytes of the sparse-union batch) for a specific table, or null when
-  // the table has no declared stats. The cache TTL is attached via schema
-  // metadata on the returned batch's stream header (see Python's
-  // serialize_column_statistics for the wire detail); here we currently just
-  // return the raw bytes — DuckDB reads `cache_max_age_seconds` out of the
-  // IPC batch's custom_metadata if the serializer wrote it. For now the TTL
-  // is attached only via the top-level result wrapper (cache behavior
-  // intentionally conservative).
+  // catalog_table_column_statistics_get
   protocol.unary("catalog_table_column_statistics_get", {
     params: new Schema([
       new Field("attach_id", new Binary(), true),
@@ -122,9 +114,9 @@ export function registerCatalogTableMethods(protocol: Protocol, getCatalog: GetC
       new Field("transaction_id", new Binary(), true),
     ]),
     result: RESULT_BINARY_NULLABLE_SCHEMA,
-    handler: (params) => {
+    handler: async (params) => {
       const cat = getCatalog();
-      const stats = cat.tableColumnStatisticsGet(
+      const stats = await cat.tableColumnStatisticsGet(
         toUint8Array(params.attach_id),
         params.schema_name,
         params.name,
@@ -145,9 +137,9 @@ export function registerCatalogTableMethods(protocol: Protocol, getCatalog: GetC
       new Field("transaction_id", new Binary(), true),
     ]),
     result: RESULT_BINARY_SCHEMA,
-    handler: (params) => {
+    handler: async (params) => {
       const cat = getCatalog();
-      const scanResult = cat.tableScanFunctionGet(
+      const scanResult = await cat.tableScanFunctionGet(
         toUint8Array(params.attach_id),
         params.schema_name,
         params.name,
@@ -163,9 +155,9 @@ export function registerCatalogTableMethods(protocol: Protocol, getCatalog: GetC
   protocol.unary("catalog_table_comment_set", {
     params: schemaNameCommentParams,
     result: emptyResultSchema,
-    handler: (params) => {
+    handler: async (params) => {
       const cat = getCatalog();
-      cat.tableCommentSet(
+      await cat.tableCommentSet(
         toUint8Array(params.attach_id),
         params.schema_name,
         params.name,
@@ -181,9 +173,9 @@ export function registerCatalogTableMethods(protocol: Protocol, getCatalog: GetC
   protocol.unary("catalog_table_rename", {
     params: schemaNameRenameParams,
     result: emptyResultSchema,
-    handler: (params) => {
+    handler: async (params) => {
       const cat = getCatalog();
-      cat.tableRename(
+      await cat.tableRename(
         toUint8Array(params.attach_id),
         params.schema_name,
         params.name,
@@ -208,9 +200,9 @@ export function registerCatalogTableMethods(protocol: Protocol, getCatalog: GetC
       new Field("transaction_id", new Binary(), true),
     ]),
     result: emptyResultSchema,
-    handler: (params) => {
+    handler: async (params) => {
       const cat = getCatalog();
-      cat.tableColumnAdd(
+      await cat.tableColumnAdd(
         toUint8Array(params.attach_id),
         params.schema_name,
         params.name,
@@ -228,9 +220,9 @@ export function registerCatalogTableMethods(protocol: Protocol, getCatalog: GetC
   protocol.unary("catalog_table_column_drop", {
     params: columnOpParams,
     result: emptyResultSchema,
-    handler: (params) => {
+    handler: async (params) => {
       const cat = getCatalog();
-      cat.tableColumnDrop(
+      await cat.tableColumnDrop(
         toUint8Array(params.attach_id),
         params.schema_name,
         params.name,
@@ -254,9 +246,9 @@ export function registerCatalogTableMethods(protocol: Protocol, getCatalog: GetC
       new Field("transaction_id", new Binary(), true),
     ]),
     result: emptyResultSchema,
-    handler: (params) => {
+    handler: async (params) => {
       const cat = getCatalog();
-      cat.tableColumnRename(
+      await cat.tableColumnRename(
         toUint8Array(params.attach_id),
         params.schema_name,
         params.name,
@@ -281,9 +273,9 @@ export function registerCatalogTableMethods(protocol: Protocol, getCatalog: GetC
       new Field("transaction_id", new Binary(), true),
     ]),
     result: emptyResultSchema,
-    handler: (params) => {
+    handler: async (params) => {
       const cat = getCatalog();
-      cat.tableColumnDefaultSet(
+      await cat.tableColumnDefaultSet(
         toUint8Array(params.attach_id),
         params.schema_name,
         params.name,
@@ -300,9 +292,9 @@ export function registerCatalogTableMethods(protocol: Protocol, getCatalog: GetC
   protocol.unary("catalog_table_column_default_drop", {
     params: columnOpParams,
     result: emptyResultSchema,
-    handler: (params) => {
+    handler: async (params) => {
       const cat = getCatalog();
-      cat.tableColumnDefaultDrop(
+      await cat.tableColumnDefaultDrop(
         toUint8Array(params.attach_id),
         params.schema_name,
         params.name,
@@ -326,9 +318,9 @@ export function registerCatalogTableMethods(protocol: Protocol, getCatalog: GetC
       new Field("transaction_id", new Binary(), true),
     ]),
     result: emptyResultSchema,
-    handler: (params) => {
+    handler: async (params) => {
       const cat = getCatalog();
-      cat.tableColumnTypeChange(
+      await cat.tableColumnTypeChange(
         toUint8Array(params.attach_id),
         params.schema_name,
         params.name,
@@ -345,9 +337,9 @@ export function registerCatalogTableMethods(protocol: Protocol, getCatalog: GetC
   protocol.unary("catalog_table_not_null_set", {
     params: columnOpParams,
     result: emptyResultSchema,
-    handler: (params) => {
+    handler: async (params) => {
       const cat = getCatalog();
-      cat.tableNotNullSet(
+      await cat.tableNotNullSet(
         toUint8Array(params.attach_id),
         params.schema_name,
         params.name,
@@ -363,9 +355,9 @@ export function registerCatalogTableMethods(protocol: Protocol, getCatalog: GetC
   protocol.unary("catalog_table_not_null_drop", {
     params: columnOpParams,
     result: emptyResultSchema,
-    handler: (params) => {
+    handler: async (params) => {
       const cat = getCatalog();
-      cat.tableNotNullDrop(
+      await cat.tableNotNullDrop(
         toUint8Array(params.attach_id),
         params.schema_name,
         params.name,

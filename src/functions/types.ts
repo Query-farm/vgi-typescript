@@ -93,14 +93,14 @@ export interface VgiFunction {
   argumentSpecs: ArgumentSpec[];
   /** Default output schema (for catalog registration). May be overridden at bind time. */
   defaultOutputSchema?: Schema;
-  bind(request: BindRequest): BindResponse;
+  bind(request: BindRequest): BindResponse | Promise<BindResponse>;
   globalInit(request: InitRequest): GlobalInitResponse | Promise<GlobalInitResponse>;
   createStreamHandlers(
     request: InitRequest,
     response: GlobalInitResponse,
     accumulatedState?: any,
   ): StreamHandlers;
-  cardinality?(request: TableFunctionCardinalityRequest): TableCardinality;
+  cardinality?(request: TableFunctionCardinalityRequest): TableCardinality | Promise<TableCardinality>;
   /**
    * Per-column statistics for this table function's output given the user's
    * bind-time arguments. Returns null/[] when stats are unknown. Wired to the

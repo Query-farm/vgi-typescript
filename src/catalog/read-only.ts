@@ -146,15 +146,15 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
     };
   }
 
-  override schemaContentsTables(
+  override async schemaContentsTables(
     attachId: AttachId,
     name: string,
     transactionId?: TransactionId
-  ): TableInfo[] {
+  ): Promise<TableInfo[]> {
     const schema = this._descriptor.schemas.find((s) => s.name === name);
     if (!schema || !schema.tables) return [];
 
-    return schema.tables.map((t) => {
+    return await Promise.all(schema.tables.map(async (t) => {
       // Resolve the column schema
       let colSchema: Schema;
       if (t.columns) {
@@ -174,7 +174,7 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
             transaction_id: null,
             resolved_secrets_provided: false,
           };
-          const response = func.bind(bindRequest);
+          const response = await func.bind(bindRequest);
           colSchema = response.output_schema;
         } catch {
           colSchema = new Schema([]);
@@ -242,7 +242,7 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
           ? Number(t.inlinedCardinality.max)
           : null,
       };
-    });
+    }));
   }
 
   override tableColumnStatisticsGet(
@@ -468,14 +468,14 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
     throw new Error(`Table '${name}' is not function-backed`);
   }
 
-  override tableGet(
+  override async tableGet(
     attachId: AttachId,
     schemaName: string,
     name: string,
     atUnit?: string,
     atValue?: string,
     transactionId?: TransactionId
-  ): TableInfo | null {
+  ): Promise<TableInfo | null> {
     validateAtParams(atUnit, atValue);
 
     // Find the table descriptor to check supports_time_travel
@@ -487,7 +487,7 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
       }
     }
 
-    const tables = this.schemaContentsTables(attachId, schemaName, transactionId);
+    const tables = await this.schemaContentsTables(attachId, schemaName, transactionId);
     return tables.find((t) => t.name === name) ?? null;
   }
 
