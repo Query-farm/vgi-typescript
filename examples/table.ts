@@ -472,13 +472,13 @@ const partitioned_sequence = defineTableFunction<PartitionedSequenceArgs, Partit
     estimate: params.args.count,
     max: params.args.count,
   }),
-  onInit: (params) => {
+  onInit: async (params) => {
     const workItems: Uint8Array[] = [];
     for (let start = 0; start < params.args.count; start += CHUNK_SIZE) {
       const end = Math.min(start + CHUNK_SIZE, params.args.count);
       workItems.push(packQQ(start, end));
     }
-    params.storage.queuePush(workItems);
+    await params.storage.queuePush(workItems);
     return {
       max_workers: DEFAULT_MAX_WORKERS,
       execution_id: params.executionId,
@@ -490,14 +490,14 @@ const partitioned_sequence = defineTableFunction<PartitionedSequenceArgs, Partit
     currentEnd: null,
     currentIdx: 0,
   }),
-  process: (
+  process: async (
     params: TableProcessParams<PartitionedSequenceArgs>,
     state: PartitionedSequenceState,
     out: OutputCollector
   ) => {
     // Need a new chunk?
     if (state.currentStart === null || state.currentIdx >= (state.currentEnd ?? 0)) {
-      const workData = params.storage!.queuePop();
+      const workData = await params.storage!.queuePop();
       if (workData === null) {
         out.finish();
         return;
@@ -1307,7 +1307,7 @@ const filter_echo_partitioned = defineTableFunction<FilterEchoArgs, FilterEchoPa
   }),
   // Populate the shared work queue once. Subsequent process() ticks across
   // every worker process pop chunks from this queue.
-  onInit: (params) => {
+  onInit: async (params) => {
     const count = Number(params.args.count);
     const chunks: Uint8Array[] = [];
     for (let start = 0; start < count; start += FEPCHUNK) {
@@ -1318,7 +1318,7 @@ const filter_echo_partitioned = defineTableFunction<FilterEchoArgs, FilterEchoPa
       view.setBigUint64(8, BigInt(end), false);
       chunks.push(new Uint8Array(buf));
     }
-    params.storage.queuePush(chunks);
+    await params.storage.queuePush(chunks);
     return {
       execution_id: params.executionId,
       max_workers: 4,
@@ -1331,13 +1331,13 @@ const filter_echo_partitioned = defineTableFunction<FilterEchoArgs, FilterEchoPa
     chunkEnd: 0,
     chunkIdx: 0,
   }),
-  process: (
+  process: async (
     params: TableProcessParams<FilterEchoArgs>,
     state: FilterEchoPartitionedState,
     out: OutputCollector
   ) => {
     if (state.chunkStart === null || state.chunkIdx >= state.chunkEnd) {
-      const work = params.storage?.queuePop();
+      const work = await params.storage?.queuePop();
       if (!work) { out.finish(); return; }
       const view = new DataView(work.buffer, work.byteOffset, work.byteLength);
       state.chunkStart = Number(view.getBigUint64(0, false));
@@ -1386,7 +1386,7 @@ const profiling_demo = defineTableFunction<{ count: number; batch_size: number }
     batchesEmitted: 0n,
     startNs: BigInt(Date.now()) * 1_000_000n,
   }),
-  process: (params, state, out) => {
+  process: async (params, state, out) => {
     if (state.remaining <= 0) { out.finish(); return; }
     const size = Math.min(state.remaining, Number(params.args.batch_size));
     const a: bigint[] = [], b: bigint[] = [];
@@ -1408,16 +1408,16 @@ const profiling_demo = defineTableFunction<{ count: number; batch_size: number }
         batches_emitted: state.batchesEmitted.toString(),
         elapsed_ms: elapsedMs.toString(),
       }));
-      params.storage.put(bytes);
+      await params.storage.put(bytes);
     }
   },
-  dynamicToString: (_params, _executionId, storage) => {
+  dynamicToString: async (_params, _executionId, storage) => {
     // Sum across every persisted snapshot (one per process tick / worker).
     // Last snapshot wins per-key in vgi-python; we sum rows/batches and take
     // the max elapsed.
     let rows = 0n, batches = 0n, elapsed = 0n;
     const dec = new TextDecoder();
-    for (const bytes of storage.collect()) {
+    for (const bytes of await storage.collect()) {
       try {
         const snap = JSON.parse(dec.decode(bytes));
         const r = BigInt(snap.rows_produced ?? "0");

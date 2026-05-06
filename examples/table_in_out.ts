@@ -61,21 +61,21 @@ const buffer_input = defineTableInOutFunction({
     execution_id: params.executionId,
     opaque_data: null,
   }),
-  process: (
+  process: async (
     params: TableInOutProcessParams,
     _state: null,
     batch: RecordBatch,
     out: OutputCollector
   ) => {
     if (batch.numRows > 0) {
-      params.storage.queuePush([serializeBatch(batch)]);
+      await params.storage.queuePush([serializeBatch(batch)]);
     }
     out.emit(emptyBatch(params.outputSchema));
   },
-  finalize: (params: TableInOutProcessParams, _states: null[]) => {
+  finalize: async (params: TableInOutProcessParams, _states: null[]) => {
     const batches: RecordBatch[] = [];
     for (;;) {
-      const item = params.storage.queuePop();
+      const item = await params.storage.queuePop();
       if (!item) break;
       batches.push(deserializeBatch(item));
     }

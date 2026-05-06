@@ -77,7 +77,7 @@ export interface TableInOutConfig<
     initCall: InitRequest;
     outputSchema: Schema;
     executionId: Uint8Array;
-  }) => GlobalInitResponse;
+  }) => GlobalInitResponse | Promise<GlobalInitResponse>;
   initialState?: (params: TableInOutProcessParams<TArgs>) => TState;
   /** Process: transform input batch, emit output via out */
   process?: (
@@ -87,11 +87,11 @@ export interface TableInOutConfig<
     out: OutputCollector
   ) => void | Promise<void>;
   /** Finalize: emit final batches after all input processed.
-   *  Receives all worker states collected from SQLite (matches Python's finish(params, states)). */
+   *  Receives all worker states collected from storage (matches Python's finish(params, states)). */
   finalize?: (
     params: TableInOutProcessParams<TArgs>,
     states: TState[]
-  ) => RecordBatch[];
+  ) => RecordBatch[] | Promise<RecordBatch[]>;
   // Metadata
   projectionPushdown?: boolean;
   filterPushdown?: boolean;
@@ -204,7 +204,7 @@ export function defineTableInOutFunction<
       };
     },
 
-    globalInit(request: InitRequest): GlobalInitResponse {
+    async globalInit(request: InitRequest): Promise<GlobalInitResponse> {
       const executionId = new Uint8Array(16);
       crypto.getRandomValues(executionId);
 
@@ -218,7 +218,7 @@ export function defineTableInOutFunction<
 
       if (config.onInit) {
         const args = extractArgs(request.bind_call);
-        return config.onInit({
+        return await config.onInit({
           args,
           initCall: request,
           outputSchema: request.output_schema,
@@ -278,39 +278,40 @@ export function defineTableInOutFunction<
       const phase = request.phase;
 
       if (phase === TableInOutPhase.FINALIZE) {
-        // FINALIZE phase: producer mode
-        // Collect all worker states for the finalize callback.
-        // HTTP path: state recovered from state token.
-        // Subprocess path: collect all worker states from SQLite.
-        const finalizeStates: TState[] = [];
-        if (accumulatedState != null) {
-          finalizeStates.push(accumulatedState as TState);
-        }
-        // Collect any states persisted to SQLite by INPUT exchanges
-        const stored = boundStorage.collect();
-        for (const bytes of stored) {
-          finalizeStates.push(deserializeUserState(bytes) as TState);
-        }
-        // Fall back to initial state if nothing was collected
-        if (finalizeStates.length === 0) {
-          finalizeStates.push(
-            config.initialState
-              ? config.initialState(processParams)
-              : (null as TState),
-          );
-        }
-
-        const batches = config.finalize
-          ? config.finalize(processParams, finalizeStates)
-          : [];
-
+        // FINALIZE phase: producer mode.
+        // The actual collect+finalize work is deferred into the first
+        // producerFn call so the (now-async) FunctionStorage can be awaited
+        // there. Storing the materialized batches on the per-call state.
         return {
           outputSchema,
-          producerInit: () => ({ state: { batchIdx: 0 }, batches }),
-          producerFn: (
-            pState: { state: { batchIdx: number }; batches: RecordBatch[] },
+          producerInit: () => ({ state: { batchIdx: 0 }, batches: null as RecordBatch[] | null }),
+          producerFn: async (
+            pState: { state: { batchIdx: number }; batches: RecordBatch[] | null },
             out: OutputCollector
           ) => {
+            if (pState.batches == null) {
+              const finalizeStates: TState[] = [];
+              if (accumulatedState != null) {
+                finalizeStates.push(accumulatedState as TState);
+              }
+              // Collect any states persisted by INPUT exchanges. Subprocess
+              // path reads from SQLite; HTTP path reads from CF DO / wherever
+              // the configured storage backend lives.
+              const stored = await boundStorage.collect();
+              for (const bytes of stored) {
+                finalizeStates.push(deserializeUserState(bytes) as TState);
+              }
+              if (finalizeStates.length === 0) {
+                finalizeStates.push(
+                  config.initialState
+                    ? config.initialState(processParams)
+                    : (null as TState),
+                );
+              }
+              pState.batches = config.finalize
+                ? await config.finalize(processParams, finalizeStates)
+                : [];
+            }
             if (pState.state.batchIdx >= pState.batches.length) {
               out.finish();
               return;
@@ -356,7 +357,7 @@ export function defineTableInOutFunction<
           if (eState.state != null) {
             const serialized = serializeUserState(eState.state);
             if (serialized != null) {
-              boundStorage.put(serialized);
+              await boundStorage.put(serialized);
             }
           }
         },

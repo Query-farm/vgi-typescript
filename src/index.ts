@@ -117,8 +117,10 @@ export {
   FunctionStorageSqlite,
   BoundStorage,
   UnknownInvocationError,
+  resolveStorageFromEnv,
   storage as functionStorage,
 } from "./functions/storage.js";
+export { FunctionStorageCfDo } from "./functions/storage-cf-do.js";
 
 // Client
 export { VgiClient, VgiClientError } from "./client/client.js";

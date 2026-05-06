@@ -153,6 +153,59 @@ self-contained in the state token that round-trips through the client. If someth
 can't be serialized, rearchitect the approach rather than falling back to in-memory
 storage.
 
+## Storage backends
+
+`FunctionStorage` (`src/functions/storage.ts`) provides shared state across worker
+processes — work queues for partitioned producers, per-worker state buffers for
+table-in-out finalize. The interface is **async** (every method returns a Promise) so
+HTTP-backed implementations can use `fetch` without sync hacks.
+
+Backends:
+
+- **`FunctionStorageSqlite`** — default. `bun:sqlite` with WAL. Honors
+  `VGI_WORKER_SQLITE_PATH` (set to `:memory:` for ephemeral single-process fixtures).
+- **`FunctionStorageCfDo`** — Cloudflare Durable Object over HTTPS. The DO is
+  single-threaded SQLite, wire-compatible with `FunctionStorageSqlite`. Deploy the
+  worker from `vgi-python/cloudflare/vgi-storage/` to Cloudflare. Configure the
+  vgi-typescript worker via env vars. Aggregate-state, transaction-state, and
+  window-partition methods are not implemented on the DO side — those operations
+  throw on both the Python and TypeScript clients.
+
+Backend selection is driven by env vars on first use of the default `storage`
+singleton (matches Python's `_resolve_storage` pattern):
+
+```bash
+# Default — local SQLite under platform state dir
+unset VGI_WORKER_SHARED_STORAGE
+
+# In-memory SQLite for single-process fixtures
+VGI_WORKER_SHARED_STORAGE=sqlite VGI_WORKER_SQLITE_PATH=:memory:
+
+# Cloudflare Durable Object
+VGI_WORKER_SHARED_STORAGE=cloudflare-do \
+  VGI_CF_DO_URL=https://vgi-storage.<account>.workers.dev \
+  VGI_CF_DO_TOKEN=<optional-bearer>
+```
+
+The `storage` export is a Proxy that lazy-resolves on first method call — importing
+`vgi-typescript` no longer eagerly opens a SQLite connection. Construct
+`FunctionStorageSqlite` / `FunctionStorageCfDo` directly to bypass env-driven
+selection.
+
+### Async lifecycle implications
+
+Because `FunctionStorage` is async, lifecycle hooks that touch storage may also be
+async. Both forms (sync return, `Promise` return) are accepted by:
+
+- `defineTableFunction.onInit` — common: `queuePush(items)` to seed work
+- `defineTableFunction.process` — `queuePop()` for partitioned producers
+- `defineTableFunction.dynamicToString` — `storage.collect()` for EXPLAIN ANALYZE counters
+- `defineTableInOutFunction.onInit` / `process` / `finalize`
+- `VgiFunction.globalInit` (low-level)
+
+Inside these hooks, always `await` storage method calls. The framework awaits the
+hook returns, so a missing `await` will silently dispatch fire-and-forget writes.
+
 ## Dependencies
 
 - `apache-arrow`: Query-farm fork (`github:Query-farm/arrow-js#feat_query_farm_1`)

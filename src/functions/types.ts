@@ -94,7 +94,7 @@ export interface VgiFunction {
   /** Default output schema (for catalog registration). May be overridden at bind time. */
   defaultOutputSchema?: Schema;
   bind(request: BindRequest): BindResponse;
-  globalInit(request: InitRequest): GlobalInitResponse;
+  globalInit(request: InitRequest): GlobalInitResponse | Promise<GlobalInitResponse>;
   createStreamHandlers(
     request: InitRequest,
     response: GlobalInitResponse,
@@ -114,7 +114,7 @@ export interface VgiFunction {
    * Returns ordered key→value strings; the C++ extension merges these with
    * the intrinsic keys (Function, Rows Read, Threads).
    */
-  dynamicToString?(request: DynamicToStringRequest): Record<string, string>;
+  dynamicToString?(request: DynamicToStringRequest): Record<string, string> | Promise<Record<string, string>>;
 }
 
 /** Request bundle for the `table_function_dynamic_to_string` RPC. */

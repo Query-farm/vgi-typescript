@@ -1,6 +1,10 @@
 // Storage for VGI function state.
 // Provides shared state across worker processes for distributed execution.
-// Port of vgi-python's vgi/function_storage.py using bun:sqlite.
+// Port of vgi-python's vgi/function_storage.py.
+//
+// The interface is async so HTTP-backed implementations (Cloudflare DO,
+// Azure SQL, etc.) can use fetch/network drivers without sync hacks.
+// FunctionStorageSqlite wraps bun:sqlite's sync calls in resolved promises.
 
 import { Database } from "bun:sqlite";
 import { homedir, platform } from "node:os";
@@ -12,11 +16,18 @@ import { mkdirSync } from "node:fs";
 // ============================================================================
 
 export class UnknownInvocationError extends Error {
-  constructor(executionId: Uint8Array) {
-    super(
-      `Invocation ${hexEncode(executionId)} is not registered. ` +
-        "Call queuePush first to register the invocation."
-    );
+  constructor(message?: string | Uint8Array) {
+    let text: string;
+    if (message instanceof Uint8Array) {
+      text =
+        `Invocation ${hexEncode(message)} is not registered. ` +
+        "Call queuePush first to register the invocation.";
+    } else {
+      text =
+        message ??
+        "Invocation is not registered. Call queuePush first to register the invocation.";
+    }
+    super(text);
     this.name = "UnknownInvocationError";
   }
 }
@@ -30,12 +41,14 @@ function hexEncode(buf: Uint8Array): string {
 // ============================================================================
 
 export interface FunctionStorage {
-  workerPut(executionId: Uint8Array, workerId: number, state: Uint8Array): void;
-  workerCollect(executionId: Uint8Array): Uint8Array[];
-  workerScan(executionId: Uint8Array): Array<[number, Uint8Array]>;
-  queuePush(executionId: Uint8Array, items: Uint8Array[]): number;
-  queuePop(executionId: Uint8Array): Uint8Array | null;
-  queueClear(executionId: Uint8Array): number;
+  workerPut(executionId: Uint8Array, workerId: number, state: Uint8Array): Promise<void>;
+  workerCollect(executionId: Uint8Array): Promise<Uint8Array[]>;
+  workerScan(executionId: Uint8Array): Promise<Array<[number, Uint8Array]>>;
+  queuePush(executionId: Uint8Array, items: Uint8Array[]): Promise<number>;
+  queuePop(executionId: Uint8Array): Promise<Uint8Array | null>;
+  queueClear(executionId: Uint8Array): Promise<number>;
+  /** Optional cleanup hook. Implementations holding a connection should release it here. */
+  close?(): Promise<void> | void;
 }
 
 // ============================================================================
@@ -43,6 +56,11 @@ export interface FunctionStorage {
 // ============================================================================
 
 function getDefaultDbPath(): string {
+  // VGI_WORKER_SQLITE_PATH=":memory:" picks an in-process backend used by
+  // single-process test fixtures (notably the HTTP server fixture) to avoid
+  // per-op WAL fsync cost. Mirrors vgi-python's same env var.
+  const override = process.env.VGI_WORKER_SQLITE_PATH;
+  if (override) return override;
   const home = homedir();
   const stateDir =
     platform() === "darwin"
@@ -129,11 +147,11 @@ export class FunctionStorageSqlite implements FunctionStorage {
     `);
   }
 
-  workerPut(
+  async workerPut(
     executionId: Uint8Array,
     workerId: number,
     state: Uint8Array
-  ): void {
+  ): Promise<void> {
     if (Math.random() < 0.01) {
       this.cleanupOldEntries(1.0);
     }
@@ -146,7 +164,7 @@ export class FunctionStorageSqlite implements FunctionStorage {
       .run(bufferArg(executionId), workerId, bufferArg(state));
   }
 
-  workerCollect(executionId: Uint8Array): Uint8Array[] {
+  async workerCollect(executionId: Uint8Array): Promise<Uint8Array[]> {
     const rows = this._db
       .prepare(
         "DELETE FROM worker_state WHERE execution_id = ? RETURNING state_data"
@@ -155,7 +173,7 @@ export class FunctionStorageSqlite implements FunctionStorage {
     return rows.map((row) => new Uint8Array(row.state_data));
   }
 
-  workerScan(executionId: Uint8Array): Array<[number, Uint8Array]> {
+  async workerScan(executionId: Uint8Array): Promise<Array<[number, Uint8Array]>> {
     const rows = this._db
       .prepare(
         "SELECT process_id, state_data FROM worker_state WHERE execution_id = ?"
@@ -167,7 +185,7 @@ export class FunctionStorageSqlite implements FunctionStorage {
     return rows.map((row) => [row.process_id, new Uint8Array(row.state_data)]);
   }
 
-  queuePush(executionId: Uint8Array, items: Uint8Array[]): number {
+  async queuePush(executionId: Uint8Array, items: Uint8Array[]): Promise<number> {
     const eidBuf = bufferArg(executionId);
     this._db.exec("BEGIN");
     try {
@@ -190,7 +208,7 @@ export class FunctionStorageSqlite implements FunctionStorage {
     return items.length;
   }
 
-  queuePop(executionId: Uint8Array): Uint8Array | null {
+  async queuePop(executionId: Uint8Array): Promise<Uint8Array | null> {
     const eidBuf = bufferArg(executionId);
     const reg = this._db
       .prepare("SELECT 1 FROM invocation_registry WHERE execution_id = ?")
@@ -210,7 +228,7 @@ export class FunctionStorageSqlite implements FunctionStorage {
     return row ? new Uint8Array(row.work_item) : null;
   }
 
-  queueClear(executionId: Uint8Array): number {
+  async queueClear(executionId: Uint8Array): Promise<number> {
     const eidBuf = bufferArg(executionId);
     this._db.exec("BEGIN");
     try {
@@ -260,36 +278,82 @@ export class BoundStorage {
     this._executionId = executionId;
   }
 
-  put(state: Uint8Array): void {
-    this._base.workerPut(this._executionId, process.pid, state);
+  put(state: Uint8Array): Promise<void> {
+    return this._base.workerPut(this._executionId, process.pid, state);
   }
 
-  collect(): Uint8Array[] {
+  collect(): Promise<Uint8Array[]> {
     return this._base.workerCollect(this._executionId);
   }
 
-  workerScan(): Array<[number, Uint8Array]> {
+  workerScan(): Promise<Array<[number, Uint8Array]>> {
     return this._base.workerScan(this._executionId);
   }
 
-  queuePush(items: Uint8Array[]): number {
+  queuePush(items: Uint8Array[]): Promise<number> {
     return this._base.queuePush(this._executionId, items);
   }
 
-  queuePop(): Uint8Array | null {
+  queuePop(): Promise<Uint8Array | null> {
     return this._base.queuePop(this._executionId);
   }
 
-  queueClear(): number {
+  queueClear(): Promise<number> {
     return this._base.queueClear(this._executionId);
   }
 }
 
 // ============================================================================
-// Singleton storage instance
+// Backend factory + lazy default storage
 // ============================================================================
 
-export const storage: FunctionStorage = new FunctionStorageSqlite();
+/**
+ * Resolve the FunctionStorage backend from environment variables.
+ *
+ * Mirrors vgi-python's `_resolve_storage` in `vgi/function.py`.
+ *
+ * `VGI_WORKER_SHARED_STORAGE` selects the backend (default: `sqlite`):
+ *   - `sqlite`        — `FunctionStorageSqlite`. Honors `VGI_WORKER_SQLITE_PATH`
+ *                       (including `:memory:`).
+ *   - `cloudflare-do` — `FunctionStorageCfDo`. Requires `VGI_CF_DO_URL`;
+ *                       optional `VGI_CF_DO_TOKEN` for bearer auth.
+ */
+export function resolveStorageFromEnv(): FunctionStorage {
+  const backend = (process.env.VGI_WORKER_SHARED_STORAGE ?? "sqlite").toLowerCase();
+  if (backend === "sqlite") {
+    return new FunctionStorageSqlite();
+  }
+  if (backend === "cloudflare-do") {
+    // Lazy require to avoid loading the CF client when sqlite is in use.
+    const { FunctionStorageCfDo } = require("./storage-cf-do.js") as typeof import("./storage-cf-do.js");
+    return FunctionStorageCfDo.fromEnv();
+  }
+  throw new Error(
+    `Unknown VGI_WORKER_SHARED_STORAGE backend: '${backend}'. Supported: 'sqlite', 'cloudflare-do'.`,
+  );
+}
+
+// Module-level proxy that lazy-resolves the configured backend on first use.
+// Importing this module no longer opens a SQLite connection — that happens
+// the first time anyone touches a storage method. Matches Python's
+// _DefaultStorageDescriptor lazy attribute pattern.
+let _resolved: FunctionStorage | null = null;
+function getDefaultStorage(): FunctionStorage {
+  if (_resolved == null) _resolved = resolveStorageFromEnv();
+  return _resolved;
+}
+
+/** Default FunctionStorage instance. Backend is selected via env on first access. */
+export const storage: FunctionStorage = new Proxy(
+  {} as FunctionStorage,
+  {
+    get(_t, prop, _r) {
+      const inst = getDefaultStorage() as any;
+      const v = inst[prop];
+      return typeof v === "function" ? v.bind(inst) : v;
+    },
+  },
+);
 
 // ============================================================================
 // Helpers

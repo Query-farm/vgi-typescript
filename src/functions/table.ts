@@ -145,14 +145,14 @@ export interface TableFunctionConfig<
     lookupScopes?: string[];
     lookupNames?: string[];
   };
-  /** Init (optional) */
+  /** Init (optional). May be async — common when storage is HTTP-backed. */
   onInit?: (params: {
     args: TArgs;
     initCall: InitRequest;
     outputSchema: Schema;
     executionId: Uint8Array;
     storage: BoundStorage;
-  }) => GlobalInitResponse;
+  }) => GlobalInitResponse | Promise<GlobalInitResponse>;
   /** State factory */
   initialState?: (params: TableProcessParams<TArgs>) => TState;
   /** Process: emit batches via out, call out.finish() when done */
@@ -180,7 +180,11 @@ export interface TableFunctionConfig<
    * that this callback then reads back — see profiling_demo for the
    * canonical pattern.
    */
-  dynamicToString?: (params: TableBindParams<TArgs>, executionId: Uint8Array, storage: BoundStorage) => Record<string, string>;
+  dynamicToString?: (
+    params: TableBindParams<TArgs>,
+    executionId: Uint8Array,
+    storage: BoundStorage,
+  ) => Record<string, string> | Promise<Record<string, string>>;
   // Metadata
   projectionPushdown?: boolean;
   filterPushdown?: boolean;
@@ -281,7 +285,7 @@ export function defineTableFunction<
       };
     },
 
-    globalInit(request: InitRequest): GlobalInitResponse {
+    async globalInit(request: InitRequest): Promise<GlobalInitResponse> {
       const executionId = new Uint8Array(16);
       crypto.getRandomValues(executionId);
 
@@ -297,7 +301,7 @@ export function defineTableFunction<
       if (config.onInit) {
         const args = extractArgs(request.bind_call);
         const boundStorage = new BoundStorage(globalStorage, executionId);
-        return config.onInit({
+        return await config.onInit({
           args,
           initCall: request,
           outputSchema: request.output_schema,

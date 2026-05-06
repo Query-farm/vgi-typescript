@@ -76,14 +76,16 @@ export function registerFunctionMethods(protocol: Protocol, config: FunctionHand
     params: REQUEST_PARAMS_SCHEMA,
     inputSchema: dummyInputSchema,
     outputSchema: emptySchema,
-    init: (params) => {
+    init: async (params) => {
       // Preserve raw request IPC bytes for exchange reconstruction
       const requestIpcBytes = toUint8Array(params.request);
       const innerParams = unwrapRequest(params.request);
       const request = deserializeInitRequest(innerParams);
       const func = registry.get(request.bind_call.function_name, overloadContext(request.bind_call));
 
-      const initResponse = func.globalInit(request);
+      // globalInit is async — table function onInit may touch HTTP-backed
+      // FunctionStorage (e.g. Cloudflare DO).
+      const initResponse = await func.globalInit(request);
 
       // For FINALIZE over HTTP, recover accumulated INPUT state from init_opaque_data.
       // The C++ extension passes the last exchange state token as init_opaque_data.
@@ -259,7 +261,7 @@ export function registerFunctionMethods(protocol: Protocol, config: FunctionHand
   protocol.unary("table_function_dynamic_to_string", {
     params: REQUEST_PARAMS_SCHEMA,
     result: RESULT_BINARY_SCHEMA,
-    handler: (params) => {
+    handler: async (params) => {
       const innerParams = unwrapRequest(params.request);
       const bindCallBytes = toUint8Array(innerParams.bind_call);
       const bindCallBatch = deserializeBatch(bindCallBytes);
@@ -275,7 +277,7 @@ export function registerFunctionMethods(protocol: Protocol, config: FunctionHand
         : null;
       const func = registry.get(bindCall.function_name, overloadContext(bindCall));
       const map = func.dynamicToString
-        ? func.dynamicToString({ bindCall, bindOpaqueData, globalExecutionId })
+        ? await func.dynamicToString({ bindCall, bindOpaqueData, globalExecutionId })
         : {};
       const keys = Object.keys(map);
       const values = keys.map((k) => map[k] ?? "");
