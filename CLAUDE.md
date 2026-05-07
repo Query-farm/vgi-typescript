@@ -206,7 +206,67 @@ async. Both forms (sync return, `Promise` return) are accepted by:
 Inside these hooks, always `await` storage method calls. The framework awaits the
 hook returns, so a missing `await` will silently dispatch fire-and-forget writes.
 
+## Arrow backend selection
+
+The Arrow layer is a backend-agnostic facade (`src/arrow/`). Two implementations
+ship in the same source tree and the bundler picks one at build time via
+package.json `imports` conditional resolution:
+
+| Backend         | Picked when         | Bundle (worker-cf)  | Used for                              |
+| --------------- | ------------------- | ------------------- | ------------------------------------- |
+| `impl-arrowjs`  | `default` (Node/Bun) | n/a (Node entry)   | Subprocess workers, HTTP under Bun, integration tests |
+| `impl-flechette` | `workerd`/`worker`/`browser` | 252 KB min / 74 KB gzip | Cloudflare Workers, browsers          |
+
+`#arrow-impl` (in this repo) and `#vgi-rpc-arrow` (in vgi-rpc-typescript) are
+the resolution keys — see each `package.json`'s `imports` field. **Never import
+`@query-farm/apache-arrow` or `@uwdata/flechette` directly from app code.**
+Always go through `src/arrow/index.ts` so the same source compiles into either
+bundle.
+
+### Building each variant
+
+```bash
+# Node/Bun (default — uses arrow-js):
+bun build ./src/index.ts --target=node --format=esm \
+  --external @query-farm/apache-arrow --external vgi-rpc
+
+# Cloudflare Workers (uses flechette):
+bun build ./src/worker-cf-entry.ts --target=browser --format=esm \
+  --conditions workerd --minify
+```
+
+The `worker-cf` entry is a separate exported subpath
+(`vgi/worker-cf` → `src/worker-cf-entry.ts`); pulling it through the
+`workerd`/`worker`/`browser` conditional export is what makes the bundler
+resolve `#arrow-impl` to flechette.
+
+### Adding to the facade
+
+Both `impl-arrowjs/` and `impl-flechette/` must export the **same symbols**
+with **identical semantics** — the parity test (`src/arrow/__tests__/parity.test.ts`)
+runs a fixed corpus through both. When you add a new helper:
+
+1. Add it to `src/arrow/index.ts` and `src/arrow/types.ts` (if a new type).
+2. Implement in **both** `impl-arrowjs/` and `impl-flechette/` index.ts.
+3. Extend the parity test to cover it.
+
+Flechette has narrower coverage in a few places (no aggregate-statistics
+SparseUnion path, no batch-level `data.children` for cast-rebuild). When a
+backend can't implement something, throw `not implemented` on that backend
+rather than silently returning a wrong shape — the parity test then encodes
+the asymmetry as `expect(...).toThrow()`.
+
+### Flechette fork
+
+We depend on `github:Query-farm/flechette#fix/timestamp-bigint-encode`
+(devDependency only — flechette is bundled into the `worker-cf` output, not
+shipped as a runtime dep). The fork adds `tablesToIPC`/`concatTables` for
+multi-batch IPC streams and fixes timestamp BigInt encoding. If a missing
+flechette feature blocks a migration, prefer adding it to the fork over
+keeping the arrow-js path.
+
 ## Dependencies
 
 - `apache-arrow`: Query-farm fork (`github:Query-farm/arrow-js#feat_query_farm_1`)
-- `vgi-rpc`: Local package (`../vgi-rpc-typescript`) - provides Protocol, Server, IPC transport
+- `@uwdata/flechette`: Query-farm fork (`github:Query-farm/flechette#fix/timestamp-bigint-encode`), devDep — bundled into worker-cf
+- `vgi-rpc`: Local package (`../vgi-rpc-typescript`) - provides Protocol, Server, IPC transport. Has its own parallel facade under `src/arrow/` selected via `#vgi-rpc-arrow`.
