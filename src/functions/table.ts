@@ -1,7 +1,15 @@
 // Table function implementation.
 // Table functions produce output batches from arguments (no streaming input).
 
-import { Schema, Field, DataType, Null, RecordBatch, RecordBatchReader } from "@query-farm/apache-arrow";
+import {
+  type VgiSchema,
+  type VgiBatch,
+  type VgiDataType,
+  isBatch,
+  isNull,
+  nullType,
+  deserializeBatch,
+} from "../arrow/index.js";
 import type { OutputCollector } from "vgi-rpc";
 import { DEFAULT_MAX_WORKERS } from "../types.js";
 import type {
@@ -41,10 +49,10 @@ function base64Decode(s: string): Uint8Array {
 
 // Read the first RecordBatch from an Arrow IPC stream buffer. Returns null if
 // the stream has no batches.
-function deserializeFilterBatch(bytes: Uint8Array): RecordBatch | null {
-  const reader = RecordBatchReader.from(bytes);
-  for (const batch of reader) return batch;
-  return null;
+function deserializeFilterBatch(bytes: Uint8Array): VgiBatch | null {
+  if (!bytes || bytes.length === 0) return null;
+  const batch = deserializeBatch(bytes);
+  return batch.numRows === 0 && batch.schema.fields.length === 0 ? null : batch;
 }
 
 // Wrap an OutputCollector so each emitted RecordBatch is projected-by-name
@@ -52,19 +60,18 @@ function deserializeFilterBatch(bytes: Uint8Array): RecordBatch | null {
 // over-wide batches (full declared schema) and the framework drops the
 // columns DuckDB didn't ask for. Field name mismatches yield null columns
 // rather than wrong-position reads. Field types must already match.
-function makeProjectingCollector(inner: OutputCollector, targetSchema: Schema): OutputCollector {
-  const targetNames = new Set(targetSchema.fields.map((f) => f.name));
+function makeProjectingCollector(inner: OutputCollector, targetSchema: VgiSchema): OutputCollector {
   // Single-pass guard: don't project when a batch already matches.
-  function alreadyMatches(batch: RecordBatch): boolean {
+  function alreadyMatches(batch: VgiBatch): boolean {
     if (batch.schema.fields.length !== targetSchema.fields.length) return false;
     for (let i = 0; i < targetSchema.fields.length; i++) {
       if (batch.schema.fields[i].name !== targetSchema.fields[i].name) return false;
     }
     return true;
   }
-  function project(batch: RecordBatch): RecordBatch {
+  function project(batch: VgiBatch): VgiBatch {
     if (alreadyMatches(batch)) return batch;
-    const { batchFromColumns } = require("../util/arrow/index.js");
+    const { batchFromColumns } = require("../arrow/index.js");
     const cols: Record<string, any[]> = {};
     for (const f of targetSchema.fields) {
       const src = batch.getChild(f.name);
@@ -81,8 +88,8 @@ function makeProjectingCollector(inner: OutputCollector, targetSchema: Schema): 
   return new Proxy(inner, {
     get(target, prop, receiver) {
       if (prop === "emit") {
-        return function (this: OutputCollector, batchOrColumns: RecordBatch | Record<string, any[]>, metadata?: Map<string, string>) {
-          if (batchOrColumns instanceof RecordBatch) {
+        return function (this: OutputCollector, batchOrColumns: VgiBatch | Record<string, any[]>, metadata?: Map<string, string>) {
+          if (isBatch(batchOrColumns)) {
             return (target as any).emit(project(batchOrColumns), metadata);
           }
           // Object form: vgi-rpc itself converts to a batch via outputSchema,
@@ -112,7 +119,7 @@ export interface TableProcessParams<TArgs = Record<string, any>> {
   args: TArgs;
   initCall: InitRequest;
   initResponse: GlobalInitResponse;
-  outputSchema: Schema;
+  outputSchema: VgiSchema;
   settings: Record<string, any>;
   secrets: Record<string, Record<string, any>>;
   pushdownFilters?: PushdownFilters;
@@ -130,7 +137,7 @@ export interface TableFunctionConfig<
   name: string;
   description?: string;
   /** Argument schema (positional args) */
-  args?: Record<string, DataType>;
+  args?: Record<string, VgiDataType>;
   /** Argument docs */
   argDocs?: Record<string, string>;
   /** Argument defaults */
@@ -140,14 +147,14 @@ export interface TableFunctionConfig<
   /** Bind: return output schema. May be async — handlers `await` the result. */
   onBind: (params: TableBindParams<TArgs>) =>
     | {
-        outputSchema: Schema;
+        outputSchema: VgiSchema;
         opaqueData?: Uint8Array;
         lookupSecretTypes?: string[];
         lookupScopes?: string[];
         lookupNames?: string[];
       }
     | Promise<{
-        outputSchema: Schema;
+        outputSchema: VgiSchema;
         opaqueData?: Uint8Array;
         lookupSecretTypes?: string[];
         lookupScopes?: string[];
@@ -157,7 +164,7 @@ export interface TableFunctionConfig<
   onInit?: (params: {
     args: TArgs;
     initCall: InitRequest;
-    outputSchema: Schema;
+    outputSchema: VgiSchema;
     executionId: Uint8Array;
     storage: BoundStorage;
   }) => GlobalInitResponse | Promise<GlobalInitResponse>;
@@ -219,13 +226,13 @@ export function defineTableFunction<
   if (config.args) {
     const varargsSet = new Set(config.varargs ?? []);
     for (const [name, type] of Object.entries(config.args)) {
-      const isAny = type instanceof Null;
+      const isAny = isNull(type);
       const hasDefault = config.argDefaults?.[name] !== undefined;
       specs.push({
         name,
         // Args with defaults are named (string position), others are positional
         position: hasDefault ? name : posIdx++,
-        arrowType: isAny ? new Null() : type,
+        arrowType: isAny ? nullType() : type,
         isAnyType: isAny,
         isVarargs: varargsSet.has(name),
       });

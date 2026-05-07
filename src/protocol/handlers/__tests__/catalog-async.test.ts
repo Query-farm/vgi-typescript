@@ -12,7 +12,7 @@ import { describe, test, expect } from "bun:test";
 import { CatalogInterface, type AttachId, type TransactionId, type CatalogAttachResult, type SchemaInfo, type TableInfo, type CatalogInfo } from "../../../catalog/interface.js";
 import { buildVgiProtocol } from "../../dispatch.js";
 import { FunctionRegistry } from "../../../functions/registry.js";
-import { Schema, Field, Int64, RecordBatch } from "@query-farm/apache-arrow";
+import { type VgiSchema, schema, type VgiField, field, type VgiDataType, int64, type VgiBatch } from "../../../arrow/index.js";
 import { batchFromColumns, serializeSchema } from "../../../util/arrow/index.js";
 
 class AsyncStubCatalog extends CatalogInterface {
@@ -55,7 +55,7 @@ class AsyncStubCatalog extends CatalogInterface {
       tags: {},
       name,
       schema_name: schemaName,
-      columns: serializeSchema(new Schema([new Field("x", new Int64(), true)])),
+      columns: serializeSchema(schema([field("x", int64(), true)])),
       not_null_constraints: [],
       unique_constraints: [],
       check_constraints: [],

@@ -7,15 +7,14 @@ import {
   batchToScalarDict,
 } from "../util/arrow/index.js";
 import { toUint8Array } from "../util/bytes.js";
-import type { RecordBatch } from "@query-farm/apache-arrow";
-
+import type { VgiBatch } from "../arrow/index.js";
 export { toUint8Array };
 
 /**
  * Wrap a RecordBatch as a { request: Uint8Array } dict for RPC params.
  * DuckDB wraps ArrowSerializableDataclass params in a single "request" Binary column.
  */
-export function wrapRequest(batch: RecordBatch): { request: Uint8Array } {
+export function wrapRequest(batch: VgiBatch): { request: Uint8Array } {
   return { request: serializeBatch(batch) };
 }
 

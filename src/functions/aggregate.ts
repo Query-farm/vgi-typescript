@@ -12,7 +12,7 @@
 //   aggregate_finalize  → emit one result row per group_id
 //   aggregate_destructor → free states (best-effort; see Python worker.py)
 
-import { Schema, Field, RecordBatch, DataType, Null } from "@query-farm/apache-arrow";
+import { type VgiSchema, schema, type VgiField, field, type VgiBatch, type VgiDataType, nullType, isNull } from "../arrow/index.js";
 import type { Arguments } from "../arguments/arguments.js";
 import type { ArgumentSpec } from "../arguments/argument-spec.js";
 import type {
@@ -30,7 +30,7 @@ const _NODE_FS_MOD = "node:fs";
 const _NODE_PATH_MOD = "node:path";
 const _NODE_OS_MOD = "node:os";
 function _aggReq(): any {
-  const req: any = (globalThis as any).require ?? null;
+  const req: any = (import.meta as any).require ?? (globalThis as any).require ?? null;
   if (!req) {
     throw new Error(
       "Aggregate state persistence requires Node.js or Bun (node:fs/path/os).",
@@ -55,7 +55,7 @@ export const GROUP_COLUMN_NAME = "__vgi_group_id";
 export interface AggregateBindParams<TArgs = Record<string, any>> {
   args: TArgs;
   arguments: Arguments;
-  inputSchema: Schema | null;
+  inputSchema: VgiSchema | null;
   settings: Record<string, any>;
   secrets: Record<string, Record<string, any>>;
 }
@@ -79,7 +79,7 @@ export interface AggregateUpdateParams<TArgs = Record<string, any>, TState = any
 export interface AggregateFinalizeParams<TArgs = Record<string, any>, TState = any> {
   groupIds: bigint[];
   states: Map<bigint, TState | null>;
-  outputSchema: Schema;
+  outputSchema: VgiSchema;
   args: TArgs;
 }
 
@@ -90,7 +90,7 @@ export interface AggregateFunctionConfig<TArgs = Record<string, any>, TState = a
    * Map of positional argument name → Arrow type. Passed through to DuckDB
    * function registration. Use `null` (untyped) for varargs placeholders.
    */
-  args?: Record<string, DataType>;
+  args?: Record<string, VgiDataType>;
   /**
    * Names of args that accept a variable number of column arguments. DuckDB
    * treats these as varargs of the declared Arrow type; at call time the
@@ -113,13 +113,13 @@ export interface AggregateFunctionConfig<TArgs = Record<string, any>, TState = a
    * aggregates whose return type depends on the input column type
    * (e.g. vgi_generic_sum: BIGINT input → BIGINT output, DOUBLE → DOUBLE).
    */
-  outputType: DataType;
+  outputType: VgiDataType;
   /**
    * Optional bind-time hook for dynamic output types. Receives the bind
    * parameters (including input_schema) and returns the Arrow type to
    * advertise for this invocation. Defaults to returning `config.outputType`.
    */
-  onBind?: (params: AggregateBindParams<TArgs>) => DataType | Promise<DataType>;
+  onBind?: (params: AggregateBindParams<TArgs>) => VgiDataType | Promise<VgiDataType>;
   /** Optional per-arg default values (positional only here). */
   argDefaults?: Record<string, any>;
 
@@ -133,7 +133,7 @@ export interface AggregateFunctionConfig<TArgs = Record<string, any>, TState = a
   update: (params: AggregateUpdateParams<TArgs, TState>) => void;
   combine: (source: TState, target: TState, params: AggregateBindParams<TArgs>) => TState;
   /** Must return a single-column RecordBatch with `groupIds.length` rows. */
-  finalize: (params: AggregateFinalizeParams<TArgs, TState>) => RecordBatch;
+  finalize: (params: AggregateFinalizeParams<TArgs, TState>) => VgiBatch;
 
   examples?: FunctionExample[];
   categories?: string[];
@@ -318,7 +318,7 @@ export function defineAggregate<TArgs = Record<string, any>, TState = any>(
     for (const [name, type] of Object.entries(config.args)) {
       const hasDefault = config.argDefaults?.[name] !== undefined;
       const isConst = constSet.has(name);
-      const isAnyType = type instanceof Null;
+      const isAnyType = isNull(type);
       // Const params are always positional at the SQL call-site — a default
       // value just means "the user may omit it and we'll use the default",
       // not "rename to a named kwarg". Non-const args with defaults become
@@ -326,7 +326,7 @@ export function defineAggregate<TArgs = Record<string, any>, TState = any>(
       specs.push({
         name,
         position: isConst || !hasDefault ? posIdx++ : name,
-        arrowType: isAnyType ? new Null() : type,
+        arrowType: isAnyType ? nullType() : type,
         isAnyType,
         isVarargs: varargsSet.has(name),
         isConst,
@@ -350,12 +350,12 @@ export function defineAggregate<TArgs = Record<string, any>, TState = any>(
   // when it's a real type (anything other than Null) — onBind may still override
   // at bind time, but for the catalog listing we prefer the static declaration
   // so duckdb_functions() shows a meaningful return type. Aggregates whose
-  // return type genuinely depends on input set outputType: new Null() to
+  // return type genuinely depends on input set outputType: nullType() to
   // advertise ANY explicitly.
-  const isAnyType = DataType.isNull(config.outputType);
+  const isAnyType = isNull(config.outputType);
   const defaultOutputSchema = isAnyType
-    ? new Schema([new Field("result", new Null(), true, new Map([["vgi:any", "true"]]))])
-    : new Schema([new Field("result", config.outputType, true)]);
+    ? schema([field("result", nullType(), true, new Map([["vgi:any", "true"]]))])
+    : schema([field("result", config.outputType, true)]);
 
   return {
     kind: "aggregate" as any,

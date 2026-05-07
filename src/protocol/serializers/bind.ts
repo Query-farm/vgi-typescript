@@ -2,15 +2,7 @@
 // ArrowSerializableDataclass field declaration order so the format is
 // positional-compatible with the Python reader.
 
-import {
-  Schema,
-  Field,
-  RecordBatch,
-  Utf8,
-  Binary,
-  Bool,
-  List,
-} from "@query-farm/apache-arrow";
+import { type VgiSchema, schema, type VgiField, field, type VgiBatch, type VgiDataType, utf8, binary, bool, list } from "../../arrow/index.js";
 import { Arguments } from "../../arguments/arguments.js";
 import { FunctionType } from "../../types.js";
 import type { BindRequest, BindResponse } from "../types.js";
@@ -23,27 +15,27 @@ import {
 import { toUint8Array, buildSingleRowBatch } from "./shared.js";
 import { serializeArguments, deserializeArguments } from "./arguments.js";
 
-const BIND_REQUEST_SCHEMA = new Schema([
-  new Field("function_name", new Utf8(), false),
-  new Field("arguments", new Binary(), false),
-  new Field("function_type", new Utf8(), false),
-  new Field("input_schema", new Binary(), true),
-  new Field("settings", new Binary(), true),
-  new Field("secrets", new Binary(), true),
-  new Field("attach_id", new Binary(), true),
-  new Field("transaction_id", new Binary(), true),
-  new Field("resolved_secrets_provided", new Bool(), false),
+const BIND_REQUEST_SCHEMA = schema([
+  field("function_name", utf8(), false),
+  field("arguments", binary(), false),
+  field("function_type", utf8(), false),
+  field("input_schema", binary(), true),
+  field("settings", binary(), true),
+  field("secrets", binary(), true),
+  field("attach_id", binary(), true),
+  field("transaction_id", binary(), true),
+  field("resolved_secrets_provided", bool(), false),
 ]);
 
-const BIND_RESPONSE_SCHEMA = new Schema([
-  new Field("output_schema", new Binary(), false),
-  new Field("opaque_data", new Binary(), true),
-  new Field("lookup_secret_types", new List(new Field("item", new Utf8(), true)), false),
-  new Field("lookup_scopes", new List(new Field("item", new Utf8(), true)), false),
-  new Field("lookup_names", new List(new Field("item", new Utf8(), true)), false),
+const BIND_RESPONSE_SCHEMA = schema([
+  field("output_schema", binary(), false),
+  field("opaque_data", binary(), true),
+  field("lookup_secret_types", list(field("item", utf8(), true)), false),
+  field("lookup_scopes", list(field("item", utf8(), true)), false),
+  field("lookup_names", list(field("item", utf8(), true)), false),
 ]);
 
-export function serializeBindRequest(req: BindRequest): RecordBatch {
+export function serializeBindRequest(req: BindRequest): VgiBatch {
   const row: Record<string, any> = {
     function_name: req.function_name,
     arguments: serializeArguments(req.arguments),

@@ -19,7 +19,7 @@ const _NODE_PATH_MOD = "node:path";
 const _NODE_FS_MOD = "node:fs";
 let _Database: any = null;
 function _req(): any {
-  const req: any = (globalThis as any).require ?? null;
+  const req: any = (import.meta as any).require ?? (globalThis as any).require ?? null;
   if (!req) {
     throw new Error(
       "FunctionStorageSqlite requires Node.js or Bun (bun:sqlite + node:os/path/fs). " +

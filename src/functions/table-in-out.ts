@@ -2,7 +2,7 @@
 // Two-phase: INPUT phase receives and transforms batches,
 // FINALIZE phase emits final results.
 
-import { Schema, Field, DataType, RecordBatch, Null } from "@query-farm/apache-arrow";
+import { type VgiSchema, schema, type VgiField, type VgiDataType, type VgiBatch, nullType } from "../arrow/index.js";
 import type { OutputCollector } from "vgi-rpc";
 import { DEFAULT_MAX_WORKERS, TableInOutPhase } from "../types.js";
 import type {
@@ -44,7 +44,7 @@ export interface TableInOutProcessParams<TArgs = Record<string, any>> {
   args: TArgs;
   initCall: InitRequest;
   initResponse: GlobalInitResponse;
-  outputSchema: Schema;
+  outputSchema: VgiSchema;
   settings: Record<string, any>;
   secrets: Record<string, Record<string, any>>;
   pushdownFilters?: PushdownFilters;
@@ -62,19 +62,19 @@ export interface TableInOutConfig<
 > {
   name: string;
   description?: string;
-  args?: Record<string, DataType>;
+  args?: Record<string, VgiDataType>;
   /** Named arguments (optional, DuckDB passes by name) */
-  namedArgs?: Record<string, DataType>;
+  namedArgs?: Record<string, VgiDataType>;
   /** Argument defaults */
   argDefaults?: Record<string, any>;
   /** Bind: default passes through input schema. May be async. */
   onBind?: (params: TableInOutBindParams<TArgs>) =>
-    | { outputSchema: Schema; opaqueData?: Uint8Array }
-    | Promise<{ outputSchema: Schema; opaqueData?: Uint8Array }>;
+    | { outputSchema: VgiSchema; opaqueData?: Uint8Array }
+    | Promise<{ outputSchema: VgiSchema; opaqueData?: Uint8Array }>;
   onInit?: (params: {
     args: TArgs;
     initCall: InitRequest;
-    outputSchema: Schema;
+    outputSchema: VgiSchema;
     executionId: Uint8Array;
   }) => GlobalInitResponse | Promise<GlobalInitResponse>;
   initialState?: (params: TableInOutProcessParams<TArgs>) => TState;
@@ -82,7 +82,7 @@ export interface TableInOutConfig<
   process?: (
     params: TableInOutProcessParams<TArgs>,
     state: TState,
-    batch: RecordBatch,
+    batch: VgiBatch,
     out: OutputCollector
   ) => void | Promise<void>;
   /** Finalize: emit final batches after all input processed.
@@ -90,7 +90,7 @@ export interface TableInOutConfig<
   finalize?: (
     params: TableInOutProcessParams<TArgs>,
     states: TState[]
-  ) => RecordBatch[] | Promise<RecordBatch[]>;
+  ) => VgiBatch[] | Promise<VgiBatch[]>;
   // Metadata
   projectionPushdown?: boolean;
   filterPushdown?: boolean;
@@ -128,7 +128,7 @@ export function defineTableInOutFunction<
   specs.push({
     name: "data",
     position: posIdx++,
-    arrowType: new Null(),
+    arrowType: nullType(),
     isTableInput: true,
   });
 
@@ -198,7 +198,7 @@ export function defineTableInOutFunction<
       }
       // Default: pass through input schema
       return {
-        output_schema: request.input_schema ?? new Schema([]),
+        output_schema: request.input_schema ?? schema([]),
         opaque_data: null,
       };
     },
@@ -283,9 +283,9 @@ export function defineTableInOutFunction<
         // there. Storing the materialized batches on the per-call state.
         return {
           outputSchema,
-          producerInit: () => ({ state: { batchIdx: 0 }, batches: null as RecordBatch[] | null }),
+          producerInit: () => ({ state: { batchIdx: 0 }, batches: null as VgiBatch[] | null }),
           producerFn: async (
-            pState: { state: { batchIdx: number }; batches: RecordBatch[] | null },
+            pState: { state: { batchIdx: number }; batches: VgiBatch[] | null },
             out: OutputCollector
           ) => {
             if (pState.batches == null) {
@@ -331,7 +331,7 @@ export function defineTableInOutFunction<
 
       const processFn =
         config.process ??
-        ((_params: any, _state: any, batch: RecordBatch, out: OutputCollector) => {
+        ((_params: any, _state: any, batch: VgiBatch, out: OutputCollector) => {
           out.emit(batch);
         });
 
@@ -344,7 +344,7 @@ export function defineTableInOutFunction<
             state: TState;
             processParams: TableInOutProcessParams<TArgs>;
           },
-          input: RecordBatch,
+          input: VgiBatch,
           out: OutputCollector
         ) => {
           const wrappedOut = (config.autoApplyFilters && pushdownFilters)

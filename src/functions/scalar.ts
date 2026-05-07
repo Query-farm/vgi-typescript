@@ -3,16 +3,16 @@
 // with 1:1 row mapping.
 
 import {
-  Schema,
-  Field,
-  RecordBatch,
-  DataType,
-  Null,
-  Struct,
-  makeData,
-  vectorFromArray,
-  Int64,
-} from "@query-farm/apache-arrow";
+  type VgiSchema,
+  type VgiField,
+  type VgiBatch,
+  type VgiDataType,
+  schema as makeSchema,
+  field,
+  nullType,
+  isNull,
+  isBatch,
+} from "../arrow/index.js";
 import type { OutputCollector, AuthContext } from "vgi-rpc";
 import {
   FunctionType,
@@ -45,7 +45,7 @@ export interface ScalarBindParameters {
   /** Constant argument values (resolved at bind time) */
   constArgs: Record<string, any>;
   /** Schema of all arguments including columnar params */
-  argumentsSchema: Schema;
+  argumentsSchema: VgiSchema;
   /** Settings from DuckDB */
   settings: Record<string, any>;
   /** Secrets from DuckDB */
@@ -61,7 +61,7 @@ export interface ScalarBindParameters {
 /** Ordered parameter definition for scalar functions. */
 export interface ScalarParameterDef {
   name: string;
-  type: DataType;
+  type: VgiDataType;
   /** If true, this is a constant parameter (scalar value resolved at bind time). */
   const?: boolean;
   /** If true, this parameter accepts variable number of arguments. */
@@ -72,21 +72,21 @@ export interface ScalarFunctionConfig {
   name: string;
   description?: string;
   /** Columnar params (receive Arrow arrays at process time) */
-  params?: Record<string, DataType>;
+  params?: Record<string, VgiDataType>;
   /** Constant params (receive scalar values resolved at bind time) */
-  constParams?: Record<string, DataType>;
+  constParams?: Record<string, VgiDataType>;
   /**
    * Ordered parameter list. When provided, overrides `params` and `constParams`.
    * Use this when parameters need non-default ordering (e.g. const, param, const).
    */
   parameters?: ScalarParameterDef[];
   /** Output type (static) */
-  returns?: DataType;
+  returns?: VgiDataType;
   /** Dynamic output type at bind time */
-  outputType?: (params: ScalarBindParameters) => DataType | Promise<DataType>;
+  outputType?: (params: ScalarBindParameters) => VgiDataType | Promise<VgiDataType>;
   /** Process: receives columnar batch + const values, returns output array or values */
   compute: (
-    batch: RecordBatch,
+    batch: VgiBatch,
     consts: Record<string, any>,
     info: {
       settings: Record<string, any>;
@@ -112,11 +112,11 @@ export function defineScalarFunction(config: ScalarFunctionConfig): VgiFunction 
   if (config.parameters) {
     // Ordered parameter list — supports arbitrary interleaving of const/non-const
     for (const [idx, p] of config.parameters.entries()) {
-      const isAny = p.type instanceof Null;
+      const isAny = isNull(p.type);
       specs.push({
         name: p.name,
         position: idx,
-        arrowType: isAny ? new Null() : p.type,
+        arrowType: isAny ? nullType() : p.type,
         isAnyType: isAny,
         isConst: p.const,
         isVarargs: p.varargs,
@@ -128,11 +128,11 @@ export function defineScalarFunction(config: ScalarFunctionConfig): VgiFunction 
 
     if (config.params) {
       for (const [name, type] of Object.entries(config.params)) {
-        const isAny = type instanceof Null;
+        const isAny = isNull(type);
         specs.push({
           name,
           position: posIdx++,
-          arrowType: isAny ? new Null() : type,
+          arrowType: isAny ? nullType() : type,
           isAnyType: isAny,
         });
       }
@@ -167,8 +167,8 @@ export function defineScalarFunction(config: ScalarFunctionConfig): VgiFunction 
   // Static returns: use the declared type.
   // Dynamic outputType: use null with vgi:any metadata (matches Python convention).
   const defaultOutputSchema = config.returns
-    ? new Schema([new Field("result", config.returns, true)])
-    : new Schema([new Field("result", new Null(), true, new Map([["vgi:any", "true"]]))]);
+    ? makeSchema([field("result", config.returns, true)])
+    : makeSchema([field("result", nullType(), true, new Map([["vgi:any", "true"]]))]);
 
   return {
     kind: "scalar",
@@ -195,11 +195,11 @@ export function defineScalarFunction(config: ScalarFunctionConfig): VgiFunction 
       }
 
       // Determine output type
-      let outputType: DataType;
+      let outputType: VgiDataType;
       if (config.outputType) {
         outputType = await config.outputType({
           constArgs,
-          argumentsSchema: request.input_schema ?? new Schema([]),
+          argumentsSchema: request.input_schema ?? makeSchema([]),
           settings,
           secrets,
           bindCall: request,
@@ -212,8 +212,8 @@ export function defineScalarFunction(config: ScalarFunctionConfig): VgiFunction 
         );
       }
 
-      const outputSchema = new Schema([
-        new Field("result", outputType, true),
+      const outputSchema = makeSchema([
+        field("result", outputType, true),
       ]);
 
       return { output_schema: outputSchema, opaque_data: null };
@@ -253,31 +253,25 @@ export function defineScalarFunction(config: ScalarFunctionConfig): VgiFunction 
         outputSchema,
         inputSchema: inputSchema ?? undefined,
         exchangeInit: () => ({}),
-        exchangeFn: (state: any, input: RecordBatch, out: OutputCollector) => {
-          const result = config.compute(input, constArgs, { settings, secrets, auth: out.auth });
+        exchangeFn: (state: any, input: VgiBatch, out: OutputCollector) => {
+          const result = config.compute(input as any, constArgs, { settings, secrets, auth: out.auth });
 
           // Build output batch
-          let outputBatch: RecordBatch;
-          if (result instanceof RecordBatch) {
-            outputBatch = result;
+          let outputBatch: VgiBatch;
+          if (isBatch(result)) {
+            outputBatch = result as VgiBatch;
           } else if (Array.isArray(result)) {
             // Array of values -> single column. Route through batchFromColumns
             // so complex types (Decimal, BigInt-backed Timestamp/Duration,
-            // List, Map, Struct) are built via our buildColumnData rather
-            // than the raw vectorFromArray path, which requires already-
-            // byte-formed buffers for Decimal.
+            // List, Map, Struct) are built via our buildColumnData.
             const fieldName = outputSchema.fields[0].name;
             outputBatch = batchFromColumns({ [fieldName]: result }, outputSchema);
           } else {
-            // Assume it's a Vector/typed array
-            const structType = new Struct(outputSchema.fields);
-            const data = makeData({
-              type: structType,
-              length: result.length,
-              children: [result.data[0]],
-              nullCount: 0,
-            });
-            outputBatch = new RecordBatch(outputSchema, data);
+            // User returned an Arrow Vector / typed-array-shaped column. Iterate
+            // it into a JS array and re-route through batchFromColumns. Adds an
+            // O(n) copy but matches both backends' contract.
+            const fieldName = outputSchema.fields[0].name;
+            outputBatch = batchFromColumns({ [fieldName]: [...(result as Iterable<any>)] }, outputSchema);
           }
 
           // Validate row count

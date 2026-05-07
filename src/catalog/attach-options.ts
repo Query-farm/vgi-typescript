@@ -7,17 +7,7 @@
 // write `{ region: "us-east-1", maxRows: 1000n }` instead of hand-building
 // an Arrow batch.
 
-import {
-  Bool,
-  Binary,
-  DataType,
-  Field,
-  Float64,
-  Int64,
-  Null,
-  Schema,
-  Utf8,
-} from "@query-farm/apache-arrow";
+import { type VgiDataType, bool, binary, type VgiField, field, float64, int64, nullType, type VgiSchema, schema as schema_, utf8 } from "../arrow/index.js";
 import { batchFromColumns, serializeBatch } from "../util/arrow/index.js";
 
 /**
@@ -41,10 +31,10 @@ export type AttachOptionValue = string | number | bigint | boolean | null | Uint
  * Infer an Arrow DataType for a single JS value. Exported for tests; not
  * part of the stable public API.
  */
-export function inferAttachOptionArrowType(value: AttachOptionValue): DataType {
-  if (value === null) return new Null();
-  if (typeof value === "string") return new Utf8();
-  if (typeof value === "bigint") return new Int64();
+export function inferAttachOptionArrowType(value: AttachOptionValue): VgiDataType {
+  if (value === null) return nullType();
+  if (typeof value === "string") return utf8();
+  if (typeof value === "bigint") return int64();
   if (typeof value === "number") {
     if (!Number.isFinite(value)) {
       throw new TypeError(
@@ -52,10 +42,10 @@ export function inferAttachOptionArrowType(value: AttachOptionValue): DataType {
         `Use a bigint for integers or a finite number for floats.`,
       );
     }
-    return new Float64();
+    return float64();
   }
-  if (typeof value === "boolean") return new Bool();
-  if (value instanceof Uint8Array) return new Binary();
+  if (typeof value === "boolean") return bool();
+  if (value instanceof Uint8Array) return binary();
   throw new TypeError(
     `Unsupported attach option value type: ${typeof value}. ` +
     `Supported: string, number, bigint, boolean, null, Uint8Array.`,
@@ -76,14 +66,14 @@ export function serializeAttachOptions(
   const entries = Object.entries(options);
   if (entries.length === 0) return null;
 
-  const fields: Field[] = [];
+  const fields: VgiField[] = [];
   const columns: Record<string, unknown[]> = {};
   for (const [key, value] of entries) {
     const type = inferAttachOptionArrowType(value);
-    fields.push(new Field(key, type, true));
+    fields.push(field(key, type, true));
     columns[key] = [value];
   }
-  const schema = new Schema(fields);
+  const schema = schema_(fields);
   const batch = batchFromColumns(columns, schema);
   return serializeBatch(batch);
 }

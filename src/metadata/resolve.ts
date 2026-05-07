@@ -16,18 +16,23 @@ import {
   type ParameterInfo,
   type FunctionExample,
 } from "./types.js";
-import { DataType, Utf8, Binary, Int64, Int32, Float64, Float32, Bool, Null } from "@query-farm/apache-arrow";
-
-function arrowTypeToName(type: DataType): string | null {
-  if (type instanceof Utf8) return "VARCHAR";
-  if (type instanceof Binary) return "BLOB";
-  if (type instanceof Int64) return "BIGINT";
-  if (type instanceof Int32) return "INTEGER";
-  if (type instanceof Float64) return "DOUBLE";
-  if (type instanceof Float32) return "FLOAT";
-  if (type instanceof Bool) return "BOOLEAN";
-  if (type instanceof Null) return null;
-  return type.toString();
+import { type VgiDataType, TypeId, isUtf8, isBinary, isBool, isNull, isFloat, isInt } from "../arrow/index.js";
+function arrowTypeToName(type: VgiDataType): string | null {
+  if (isNull(type)) return null;
+  if (isUtf8(type)) return "VARCHAR";
+  if (isBinary(type)) return "BLOB";
+  if (isBool(type)) return "BOOLEAN";
+  if (isInt(type)) {
+    const bw = (type as any).bitWidth ?? 32;
+    return bw === 64 ? "BIGINT" : "INTEGER";
+  }
+  if (isFloat(type)) {
+    // arrow-js: Float.precision === 0/1/2 (HALF/SINGLE/DOUBLE).
+    // flechette: same precision values.
+    const precision = (type as any).precision ?? 2;
+    return precision === 1 ? "FLOAT" : "DOUBLE";
+  }
+  return String((type as any).toString?.() ?? type.typeId);
 }
 
 function specToParameterInfo(spec: ArgumentSpec): ParameterInfo {

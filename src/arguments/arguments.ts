@@ -1,19 +1,19 @@
 // Arguments container for VGI function invocations.
 // Holds positional and named scalar values from DuckDB.
 
-import type { Schema } from "@query-farm/apache-arrow";
+import type { VgiSchema } from "../arrow/index.js";
 import { safeNumber } from "../util/arrow/index.js";
 
 export class Arguments {
   readonly positional: (any | null)[];
   readonly named: Map<string, any | null>;
   /** Schema of the arguments batch (preserves original Arrow types). */
-  readonly argumentsSchema: Schema | null;
+  readonly argumentsSchema: VgiSchema | null;
 
   constructor(
     positional: (any | null)[] = [],
     named: Map<string, any | null> = new Map(),
-    argumentsSchema: Schema | null = null,
+    argumentsSchema: VgiSchema | null = null,
   ) {
     this.positional = positional;
     this.named = named;

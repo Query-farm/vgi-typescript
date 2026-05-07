@@ -1,6 +1,6 @@
 // Catalog macro handlers: macro_get/create/drop, schema_contents_macros.
 
-import { Schema, Field, Binary, Utf8, Bool } from "@query-farm/apache-arrow";
+import { type VgiSchema, schema, type VgiField, field, type VgiDataType, binary, utf8, bool } from "../../../arrow/index.js";
 import { Protocol } from "vgi-rpc";
 import { encodeMacroInfo } from "../../../generated/vgi-client.js";
 import {
@@ -65,12 +65,12 @@ export function registerCatalogMacroMethods(protocol: Protocol, getCatalog: GetC
 
   // catalog_macro_drop
   protocol.unary("catalog_macro_drop", {
-    params: new Schema([
-      new Field("attach_id", new Binary(), true),
-      new Field("schema_name", new Utf8(), false),
-      new Field("name", new Utf8(), false),
-      new Field("ignore_not_found", new Bool(), true),
-      new Field("transaction_id", new Binary(), true),
+    params: schema([
+      field("attach_id", binary(), true),
+      field("schema_name", utf8(), false),
+      field("name", utf8(), false),
+      field("ignore_not_found", bool(), true),
+      field("transaction_id", binary(), true),
     ]),
     result: emptyResultSchema,
     handler: async (params) => {
@@ -88,11 +88,11 @@ export function registerCatalogMacroMethods(protocol: Protocol, getCatalog: GetC
 
   // catalog_schema_contents_macros
   protocol.unary("catalog_schema_contents_macros", {
-    params: new Schema([
-      new Field("attach_id", new Binary(), true),
-      new Field("name", new Utf8(), false),
-      new Field("type", new Utf8(), false),
-      new Field("transaction_id", new Binary(), true),
+    params: schema([
+      field("attach_id", binary(), true),
+      field("name", utf8(), false),
+      field("type", utf8(), false),
+      field("transaction_id", binary(), true),
     ]),
     result: RESULT_BINARY_SCHEMA,
     handler: async (params) => {

@@ -1,6 +1,6 @@
 // Shared param schemas and helpers for catalog protocol handlers.
 
-import { Schema, Field, Binary, Utf8, Bool } from "@query-farm/apache-arrow";
+import { type VgiSchema, schema, type VgiField, field, type VgiDataType, binary, utf8, bool } from "../../../arrow/index.js";
 import type { CatalogInterface } from "../../../catalog/interface.js";
 import { NoCatalogError } from "../../../errors.js";
 import { deserializeBatch } from "../../../util/arrow/index.js";
@@ -39,61 +39,61 @@ export function decodeOptionsBatch(bytes: any): Record<string, unknown> {
 // Common param schemas
 // ---------------------------------------------------------------------------
 
-export const emptyResultSchema = new Schema([]);
+export const emptyResultSchema = schema([]);
 
-export const attachIdParam = new Schema([
-  new Field("attach_id", new Binary(), true),
+export const attachIdParam = schema([
+  field("attach_id", binary(), true),
 ]);
 
-export const attachIdTxnParams = new Schema([
-  new Field("attach_id", new Binary(), true),
-  new Field("transaction_id", new Binary(), true),
+export const attachIdTxnParams = schema([
+  field("attach_id", binary(), true),
+  field("transaction_id", binary(), true),
 ]);
 
-export const attachIdNameTxnParams = new Schema([
-  new Field("attach_id", new Binary(), true),
-  new Field("name", new Utf8(), false),
-  new Field("transaction_id", new Binary(), true),
+export const attachIdNameTxnParams = schema([
+  field("attach_id", binary(), true),
+  field("name", utf8(), false),
+  field("transaction_id", binary(), true),
 ]);
 
-export const attachIdSchemaNameTxnParams = new Schema([
-  new Field("attach_id", new Binary(), true),
-  new Field("schema_name", new Utf8(), false),
-  new Field("name", new Utf8(), false),
-  new Field("transaction_id", new Binary(), true),
+export const attachIdSchemaNameTxnParams = schema([
+  field("attach_id", binary(), true),
+  field("schema_name", utf8(), false),
+  field("name", utf8(), false),
+  field("transaction_id", binary(), true),
 ]);
 
-export const schemaNameIgnoreNotFoundTxnParams = new Schema([
-  new Field("attach_id", new Binary(), true),
-  new Field("schema_name", new Utf8(), false),
-  new Field("name", new Utf8(), false),
-  new Field("ignore_not_found", new Bool(), true),
-  new Field("transaction_id", new Binary(), true),
+export const schemaNameIgnoreNotFoundTxnParams = schema([
+  field("attach_id", binary(), true),
+  field("schema_name", utf8(), false),
+  field("name", utf8(), false),
+  field("ignore_not_found", bool(), true),
+  field("transaction_id", binary(), true),
 ]);
 
-export const schemaNameCommentParams = new Schema([
-  new Field("attach_id", new Binary(), true),
-  new Field("schema_name", new Utf8(), false),
-  new Field("name", new Utf8(), false),
-  new Field("comment", new Utf8(), true),
-  new Field("ignore_not_found", new Bool(), true),
-  new Field("transaction_id", new Binary(), true),
+export const schemaNameCommentParams = schema([
+  field("attach_id", binary(), true),
+  field("schema_name", utf8(), false),
+  field("name", utf8(), false),
+  field("comment", utf8(), true),
+  field("ignore_not_found", bool(), true),
+  field("transaction_id", binary(), true),
 ]);
 
-export const schemaNameRenameParams = new Schema([
-  new Field("attach_id", new Binary(), true),
-  new Field("schema_name", new Utf8(), false),
-  new Field("name", new Utf8(), false),
-  new Field("new_name", new Utf8(), false),
-  new Field("ignore_not_found", new Bool(), true),
-  new Field("transaction_id", new Binary(), true),
+export const schemaNameRenameParams = schema([
+  field("attach_id", binary(), true),
+  field("schema_name", utf8(), false),
+  field("name", utf8(), false),
+  field("new_name", utf8(), false),
+  field("ignore_not_found", bool(), true),
+  field("transaction_id", binary(), true),
 ]);
 
-export const columnOpParams = new Schema([
-  new Field("attach_id", new Binary(), true),
-  new Field("schema_name", new Utf8(), false),
-  new Field("name", new Utf8(), false),
-  new Field("column_name", new Utf8(), false),
-  new Field("ignore_not_found", new Bool(), true),
-  new Field("transaction_id", new Binary(), true),
+export const columnOpParams = schema([
+  field("attach_id", binary(), true),
+  field("schema_name", utf8(), false),
+  field("name", utf8(), false),
+  field("column_name", utf8(), false),
+  field("ignore_not_found", bool(), true),
+  field("transaction_id", binary(), true),
 ]);

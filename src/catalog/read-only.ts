@@ -1,6 +1,6 @@
 // ReadOnlyCatalogInterface: derives catalog from registered functions + descriptors.
 
-import { Schema, Field, Int32, Int64, DataType, Utf8, Binary, Bool, Null, List } from "@query-farm/apache-arrow";
+import { type VgiSchema, schema as schema_, type VgiField, field, type VgiDataType, int64, utf8, binary, bool, nullType, list, isInt } from "../arrow/index.js";
 import {
   CatalogInterface,
   type AttachId,
@@ -156,7 +156,7 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
 
     return await Promise.all(schema.tables.map(async (t) => {
       // Resolve the column schema
-      let colSchema: Schema;
+      let colSchema: VgiSchema;
       if (t.columns) {
         colSchema = t.columns;
       } else if (t.function) {
@@ -177,10 +177,10 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
           const response = await func.bind(bindRequest);
           colSchema = response.output_schema;
         } catch {
-          colSchema = new Schema([]);
+          colSchema = schema_([]);
         }
       } else {
-        colSchema = new Schema([]);
+        colSchema = schema_([]);
       }
 
       // Apply defaults as Arrow field metadata
@@ -308,7 +308,7 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
         // Use the function's default output schema if available,
         // otherwise empty schema (table functions determine output at bind time)
         const outputSchemaBytes = serializeSchema(
-          f.defaultOutputSchema ?? new Schema([])
+          f.defaultOutputSchema ?? schema_([])
         );
 
         const requiredSecrets = (meta.requiredSecrets ?? []).map(
@@ -506,7 +506,7 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
 // Constraint resolution helpers
 // ============================================================================
 
-function resolveIndices(schema: Schema, names?: string[]): number[] {
+function resolveIndices(schema: VgiSchema, names?: string[]): number[] {
   if (!names || names.length === 0) return [];
   return names.map((n) => {
     const idx = schema.fields.findIndex((f) => f.name === n);
@@ -515,16 +515,16 @@ function resolveIndices(schema: Schema, names?: string[]): number[] {
   });
 }
 
-function resolveIndexGroups(schema: Schema, groups?: string[][]): number[][] {
+function resolveIndexGroups(schema: VgiSchema, groups?: string[][]): number[][] {
   if (!groups || groups.length === 0) return [];
   return groups.map((group) => resolveIndices(schema, group));
 }
 
-const FK_SCHEMA = new Schema([
-  new Field("fk_columns", new List(new Field("item", new Utf8(), true)), false),
-  new Field("pk_columns", new List(new Field("item", new Utf8(), true)), false),
-  new Field("referenced_table", new Utf8(), false),
-  new Field("referenced_schema", new Utf8(), false),
+const FK_SCHEMA = schema_([
+  field("fk_columns", list(field("item", utf8(), true)), false),
+  field("pk_columns", list(field("item", utf8(), true)), false),
+  field("referenced_table", utf8(), false),
+  field("referenced_schema", utf8(), false),
 ]);
 
 function serializeForeignKeys(fks?: ForeignKeyDef[], schemaName?: string): Uint8Array[] {
@@ -553,7 +553,7 @@ function defaultToSql(value: DefaultValue): string {
   return `'${escaped}'`;
 }
 
-function applyDefaults(schema: Schema, defaults: Record<string, DefaultValue>): Schema {
+function applyDefaults(schema: VgiSchema, defaults: Record<string, DefaultValue>): VgiSchema {
   let result = schema;
   for (const [colName, value] of Object.entries(defaults)) {
     const idx = result.fields.findIndex((f) => f.name === colName);
@@ -561,15 +561,15 @@ function applyDefaults(schema: Schema, defaults: Record<string, DefaultValue>): 
     const f = result.fields[idx];
     const existingMeta = f.metadata ? new Map(f.metadata) : new Map<string, string>();
     existingMeta.set("default", defaultToSql(value));
-    const newField = new Field(f.name, f.type, f.nullable, existingMeta);
+    const newField = field(f.name, f.type, f.nullable, existingMeta);
     const fields = [...result.fields];
     fields[idx] = newField;
-    result = new Schema(fields);
+    result = schema_(fields);
   }
   return result;
 }
 
-function applyGeneratedColumns(schema: Schema, generated: Record<string, string>): Schema {
+function applyGeneratedColumns(schema: VgiSchema, generated: Record<string, string>): VgiSchema {
   let result = schema;
   for (const [colName, expression] of Object.entries(generated)) {
     const idx = result.fields.findIndex((f) => f.name === colName);
@@ -577,15 +577,15 @@ function applyGeneratedColumns(schema: Schema, generated: Record<string, string>
     const f = result.fields[idx];
     const existingMeta = f.metadata ? new Map(f.metadata) : new Map<string, string>();
     existingMeta.set("generated_expression", expression);
-    const newField = new Field(f.name, f.type, f.nullable, existingMeta);
+    const newField = field(f.name, f.type, f.nullable, existingMeta);
     const fields = [...result.fields];
     fields[idx] = newField;
-    result = new Schema(fields);
+    result = schema_(fields);
   }
   return result;
 }
 
-function applyColumnComments(schema: Schema, comments: Record<string, string>): Schema {
+function applyColumnComments(schema: VgiSchema, comments: Record<string, string>): VgiSchema {
   let result = schema;
   for (const [colName, comment] of Object.entries(comments)) {
     if (!comment) continue;
@@ -594,10 +594,10 @@ function applyColumnComments(schema: Schema, comments: Record<string, string>): 
     const f = result.fields[idx];
     const existingMeta = f.metadata ? new Map(f.metadata) : new Map<string, string>();
     existingMeta.set("comment", comment);
-    const newField = new Field(f.name, f.type, f.nullable, existingMeta);
+    const newField = field(f.name, f.type, f.nullable, existingMeta);
     const fields = [...result.fields];
     fields[idx] = newField;
-    result = new Schema(fields);
+    result = schema_(fields);
   }
   return result;
 }
@@ -606,16 +606,16 @@ function applyColumnComments(schema: Schema, comments: Record<string, string>): 
 // Setting serialization (matches Python SettingSpec.serialize() format)
 // ============================================================================
 
-const SETTING_SCHEMA = new Schema([
-  new Field("name", new Utf8(), false),
-  new Field("description", new Utf8(), false),
-  new Field("type", new Binary(), false),
-  new Field("default_value", new Binary(), true),
+const SETTING_SCHEMA = schema_([
+  field("name", utf8(), false),
+  field("description", utf8(), false),
+  field("type", binary(), false),
+  field("default_value", binary(), true),
 ]);
 
 function serializeSetting(setting: SettingDescriptor): Uint8Array {
   // Serialize the Arrow type as a schema with a single "value" field
-  const typeSchema = new Schema([new Field("value", setting.type, true)]);
+  const typeSchema = schema_([field("value", setting.type, true)]);
   const typeBytes = serializeSchema(typeSchema);
 
   // Serialize the default value as a single-row batch, or null
@@ -623,11 +623,11 @@ function serializeSetting(setting: SettingDescriptor): Uint8Array {
   if (setting.defaultValue != null) {
     let val: any = setting.defaultValue;
     // Coerce JS numbers to BigInt for 64-bit integer Arrow types
-    if (DataType.isInt(setting.type) && (setting.type as any).bitWidth === 64) {
+    if (isInt(setting.type) && (setting.type as any).bitWidth === 64) {
       if (typeof val === "number") val = BigInt(val);
     }
     // Coerce BigInt to Number for 32-bit integer Arrow types
-    if (DataType.isInt(setting.type) && (setting.type as any).bitWidth <= 32) {
+    if (isInt(setting.type) && (setting.type as any).bitWidth <= 32) {
       if (typeof val === "bigint") val = Number(val);
     }
     defaultBytes = serializeBatch(
@@ -653,10 +653,10 @@ function serializeSetting(setting: SettingDescriptor): Uint8Array {
 // Secret type serialization (matches Python SecretTypeSpec.serialize() format)
 // ============================================================================
 
-const SECRET_TYPE_SCHEMA = new Schema([
-  new Field("name", new Utf8(), false),
-  new Field("description", new Utf8(), false),
-  new Field("parameters_schema", new Binary(), false),
+const SECRET_TYPE_SCHEMA = schema_([
+  field("name", utf8(), false),
+  field("description", utf8(), false),
+  field("parameters_schema", binary(), false),
 ]);
 
 function serializeSecretType(spec: SecretTypeDescriptor): Uint8Array {
@@ -682,12 +682,12 @@ function bufferEquals(a: Uint8Array, b: Uint8Array): boolean {
   return true;
 }
 
-function serializeArgsBatch(args: Arguments, argSpecSchema: Schema): Uint8Array {
+function serializeArgsBatch(args: Arguments, argSpecSchema: VgiSchema): Uint8Array {
   // Serialize arguments as a FLAT batch using the argument spec field names.
   // DuckDB's VGI extension reads each column as a named argument and wraps it
   // with "named_" prefix when sending the bind request. The function extractArgs
   // will look up these by name as a fallback.
-  const fields: Field[] = [];
+  const fields: VgiField[] = [];
   const values: Record<string, any[]> = {};
 
   for (let i = 0; i < args.positional.length; i++) {
@@ -695,20 +695,20 @@ function serializeArgsBatch(args: Arguments, argSpecSchema: Schema): Uint8Array 
     const specField = argSpecSchema.fields[i];
     const fieldName = specField ? specField.name : `positional_${i}`;
     const fieldType = specField ? specField.type : inferScalarType(val);
-    fields.push(new Field(fieldName, fieldType, true));
+    fields.push(field(fieldName, fieldType, true));
     let coerced = val;
-    if (DataType.isInt(fieldType) && (fieldType as any).bitWidth === 64) {
+    if (isInt(fieldType) && (fieldType as any).bitWidth === 64) {
       coerced = typeof val === "number" ? BigInt(val) : val;
     }
     values[fieldName] = [coerced];
   }
 
   for (const [name, val] of args.named) {
-    fields.push(new Field(name, inferScalarType(val), true));
+    fields.push(field(name, inferScalarType(val), true));
     values[name] = [val];
   }
 
-  const batchSchema = new Schema(fields);
+  const batchSchema = schema_(fields);
 
   if (fields.length === 0) {
     return serializeBatch(emptyBatch(batchSchema));
@@ -723,14 +723,14 @@ function validateAtParams(atUnit?: string, atValue?: string): void {
   }
 }
 
-function inferScalarType(val: any): DataType {
-  if (val === null || val === undefined) return new Null();
-  if (typeof val === "string") return new Utf8();
-  if (typeof val === "boolean") return new Bool();
-  if (typeof val === "number") return new Int64();
-  if (typeof val === "bigint") return new Int64();
-  if (val instanceof Uint8Array || val instanceof ArrayBuffer) return new Binary();
-  return new Utf8();
+function inferScalarType(val: any): VgiDataType {
+  if (val === null || val === undefined) return nullType();
+  if (typeof val === "string") return utf8();
+  if (typeof val === "boolean") return bool();
+  if (typeof val === "number") return int64();
+  if (typeof val === "bigint") return int64();
+  if (val instanceof Uint8Array || val instanceof ArrayBuffer) return binary();
+  return utf8();
 }
 
 // Build the inlined `scan_function` payload for a function-backed table.
@@ -744,12 +744,12 @@ function inlineScanFunction(
 ): Uint8Array {
   const argSchema = argumentSpecsToSchema(func.argumentSpecs);
   const argBytes = serializeArgsBatch(args ?? new Arguments(), argSchema);
-  const scanSchema = new Schema([
-    new Field("function_name", new Utf8(), false),
-    new Field("arguments", new Binary(), false),
-    new Field(
+  const scanSchema = schema_([
+    field("function_name", utf8(), false),
+    field("arguments", binary(), false),
+    field(
       "required_extensions",
-      new List(new Field("item", new Utf8(), true)),
+      list(field("item", utf8(), true)),
       false,
     ),
   ]);

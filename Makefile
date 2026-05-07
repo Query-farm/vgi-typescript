@@ -139,6 +139,15 @@ test-http:
 
 test-all: test test-http
 
+# Run the Arrow facade parity tests against both backends back-to-back.
+# Both invocations must pass — same suite, different `#arrow-impl` resolution.
+test-facade-parity:
+	@echo "=== arrow-js (default condition) ==="
+	bun test src/arrow/__tests__/parity.test.ts
+	@echo ""
+	@echo "=== flechette (--conditions=worker) ==="
+	bun --conditions=worker test src/arrow/__tests__/parity.test.ts
+
 # Per-test entry point — useful when iterating on a single failure.
 # `make test/integration/filter_pushdown/integers` runs just that one test
 # with the verbose -s flag so the failure detail prints inline.

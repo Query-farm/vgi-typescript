@@ -2,7 +2,7 @@
 // statistics. Generic over scalar/table/table-in-out — each function kind
 // implements VgiFunction.bind/globalInit/createStreamHandlers.
 
-import { Schema, Field, Binary, Int64 } from "@query-farm/apache-arrow";
+import { type VgiSchema, schema, type VgiField, field, type VgiDataType, binary, int64 } from "../../arrow/index.js";
 import { Protocol } from "vgi-rpc";
 import type { FunctionRegistry } from "../../functions/registry.js";
 import type { StreamHandlers, HandlerState } from "../../functions/types.js";
@@ -37,20 +37,20 @@ export interface FunctionHandlerConfig {
 export function registerFunctionMethods(protocol: Protocol, config: FunctionHandlerConfig): void {
   const { registry } = config;
 
-  const initHeaderSchema = new Schema([
-    new Field("execution_id", new Binary(), false),
-    new Field("opaque_data", new Binary(), true),
-    new Field("max_workers", new Int64(), false),
+  const initHeaderSchema = schema([
+    field("execution_id", binary(), false),
+    field("opaque_data", binary(), true),
+    field("max_workers", int64(), false),
   ]);
 
-  const emptySchema = new Schema([]);
+  const emptySchema = schema([]);
 
   // Dummy non-empty schema for the init exchange registration.
   // The dispatch determines producer vs exchange based on inputSchema emptiness.
   // We need exchange mode so that input batches are passed to our callback.
   // The actual input schema comes from the IPC stream, not this registration.
-  const dummyInputSchema = new Schema([
-    new Field("_tick", new Binary(), true),
+  const dummyInputSchema = schema([
+    field("_tick", binary(), true),
   ]);
 
   // --------------------------------------------------------------------------

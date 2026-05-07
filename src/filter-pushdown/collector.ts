@@ -2,7 +2,7 @@
 // filters to every emitted batch — plus human-readable formatters used in
 // debug logs.
 
-import { RecordBatch, Schema } from "@query-farm/apache-arrow";
+import { type VgiBatch, type VgiSchema, isBatch } from "../arrow/index.js";
 import type { OutputCollector } from "vgi-rpc";
 import { batchFromColumns } from "../util/arrow/index.js";
 import { ComparisonOp, type ExprNode, type Filter } from "./types.js";
@@ -100,7 +100,7 @@ export class FilteringOutputCollector {
     private filters: PushdownFilters,
   ) {}
 
-  get outputSchema(): Schema {
+  get outputSchema(): VgiSchema {
     return this.inner.outputSchema;
   }
 
@@ -108,20 +108,20 @@ export class FilteringOutputCollector {
     return this.inner.finished;
   }
 
-  emit(batch: RecordBatch, metadata?: Map<string, string>): void;
+  emit(batch: VgiBatch, metadata?: Map<string, string>): void;
   emit(columns: Record<string, any[]>): void;
   emit(
-    batchOrColumns: RecordBatch | Record<string, any[]>,
+    batchOrColumns: VgiBatch | Record<string, any[]>,
     metadata?: Map<string, string>,
   ): void {
-    let batch: RecordBatch;
-    if (batchOrColumns instanceof RecordBatch) {
+    let batch: VgiBatch;
+    if (isBatch(batchOrColumns)) {
       batch = batchOrColumns;
     } else {
-      batch = batchFromColumns(batchOrColumns, this.inner.outputSchema);
+      batch = batchFromColumns(batchOrColumns as Record<string, any[]>, this.inner.outputSchema as any);
     }
-    const filtered = this.filters.apply(batch);
-    this.inner.emit(filtered, metadata);
+    const filtered = this.filters.apply(batch as any);
+    this.inner.emit(filtered as any, metadata);
   }
 
   emitRow(values: Record<string, any>): void {

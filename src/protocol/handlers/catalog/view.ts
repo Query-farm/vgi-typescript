@@ -1,6 +1,6 @@
 // Catalog view handlers: view_get/create/drop/rename/comment_set.
 
-import { Schema, Field, Binary, Utf8 } from "@query-farm/apache-arrow";
+import { type VgiSchema, schema, type VgiField, field, type VgiDataType, binary, utf8 } from "../../../arrow/index.js";
 import { Protocol } from "vgi-rpc";
 import { encodeViewInfo } from "../../../generated/vgi-client.js";
 import { CatalogViewGetResultSchema } from "../../../generated/vgi-protocol-schemas.js";
@@ -39,13 +39,13 @@ export function registerCatalogViewMethods(protocol: Protocol, getCatalog: GetCa
 
   // catalog_view_create
   protocol.unary("catalog_view_create", {
-    params: new Schema([
-      new Field("attach_id", new Binary(), true),
-      new Field("schema_name", new Utf8(), false),
-      new Field("name", new Utf8(), false),
-      new Field("definition", new Utf8(), false),
-      new Field("on_conflict", new Utf8(), false),
-      new Field("transaction_id", new Binary(), true),
+    params: schema([
+      field("attach_id", binary(), true),
+      field("schema_name", utf8(), false),
+      field("name", utf8(), false),
+      field("definition", utf8(), false),
+      field("on_conflict", utf8(), false),
+      field("transaction_id", binary(), true),
     ]),
     result: emptyResultSchema,
     handler: async (params) => {

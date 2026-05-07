@@ -23,17 +23,15 @@
 // per-spec declared type before forwarding them to the worker.
 
 import {
-  type DataType,
-  Field,
-  RecordBatch,
-  Schema,
-  RecordBatchStreamWriter,
-  Struct,
-  makeData,
-  Binary,
-  Utf8,
-} from "@query-farm/apache-arrow";
-import { batchFromColumns, serializeBatch, serializeSchema } from "../util/arrow/index.js";
+  type VgiDataType,
+  schema as makeSchema,
+  field,
+  utf8,
+  binary,
+  batchFromColumns,
+  serializeBatch,
+  serializeSchema,
+} from "../arrow/index.js";
 
 /**
  * Declarative spec for a single attach-time option.
@@ -49,7 +47,7 @@ export interface AttachOptionSpec {
   /** Human-readable description (shown in discovery UIs). */
   description: string;
   /** Arrow data type the extension should cast user input to. */
-  type: DataType;
+  type: VgiDataType;
   /**
    * Default value used when the user omits this option. Passed through to
    * the worker's catalog_attach handler as-is if no override is given.
@@ -59,11 +57,11 @@ export interface AttachOptionSpec {
   default?: unknown;
 }
 
-const SPEC_SCHEMA = new Schema([
-  new Field("name", new Utf8(), false),
-  new Field("description", new Utf8(), false),
-  new Field("type", new Binary(), false),
-  new Field("default_value", new Binary(), true),
+const SPEC_SCHEMA = makeSchema([
+  field("name", utf8(), false),
+  field("description", utf8(), false),
+  field("type", binary(), false),
+  field("default_value", binary(), true),
 ]);
 
 /**
@@ -74,7 +72,7 @@ export function serializeAttachOptionSpec(spec: AttachOptionSpec): Uint8Array {
   // `type` is encoded as a serialized Arrow Schema with one field named
   // "value" of the option's DataType. This lets the extension peek at the
   // logical type without a separate enum.
-  const typeSchema = new Schema([new Field("value", spec.type, true)]);
+  const typeSchema = makeSchema([field("value", spec.type, true)]);
   const typeBytes = serializeSchema(typeSchema);
 
   let defaultBytes: Uint8Array | null = null;

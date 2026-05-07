@@ -1,19 +1,19 @@
 // TableFunctionCardinalityRequest / TableCardinality wire serialization.
 
-import { Schema, Field, Binary, Int64 } from "@query-farm/apache-arrow";
+import { type VgiSchema, schema, type VgiField, field, type VgiDataType, binary, int64 } from "../../arrow/index.js";
 import type { TableFunctionCardinalityRequest, TableCardinality } from "../types.js";
 import { deserializeBatch } from "../../util/arrow/index.js";
 import { toUint8Array } from "./shared.js";
 import { deserializeBindRequest } from "./bind.js";
 
-const TABLE_CARDINALITY_SCHEMA = new Schema([
-  new Field("estimate", new Int64(), true),
-  new Field("max", new Int64(), true),
+const TABLE_CARDINALITY_SCHEMA = schema([
+  field("estimate", int64(), true),
+  field("max", int64(), true),
 ]);
 
-const TABLE_FUNCTION_CARDINALITY_REQUEST_SCHEMA = new Schema([
-  new Field("bind_call", new Binary(), false),
-  new Field("bind_opaque_data", new Binary(), true),
+const TABLE_FUNCTION_CARDINALITY_REQUEST_SCHEMA = schema([
+  field("bind_call", binary(), false),
+  field("bind_opaque_data", binary(), true),
 ]);
 
 export function deserializeCardinalityRequest(

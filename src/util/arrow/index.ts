@@ -1,8 +1,22 @@
-// Arrow utility helpers — barrel for the split modules under util/arrow/.
+// Back-compat shim. Arrow utilities have moved to src/arrow/ (the backend
+// facade). This file is kept so existing imports of `../util/arrow/index.js`
+// continue to work during step 2 of the facade migration. Once all callers
+// have switched to `../arrow/index.js`, this file can be deleted.
 
-export { emptyBatch } from "./empty.js";
-export { batchFromRows, batchFromColumns } from "./build.js";
-export { iterRows, batchToScalarDict, batchToSecretDict, safeNumber, decodeDictValue } from "./iterate.js";
-export { filterBatch } from "./filter.js";
-export { projectSchema, projectBatch } from "./project.js";
-export { serializeSchema, deserializeSchema, serializeBatch, deserializeBatch } from "./ipc.js";
+export {
+  emptyBatch,
+  batchFromRows,
+  batchFromColumns,
+  iterRows,
+  batchToScalarDict,
+  batchToSecretDict,
+  safeNumber,
+  decodeDictValue,
+  filterBatch,
+  projectSchema,
+  projectBatch,
+  serializeSchema,
+  deserializeSchema,
+  serializeBatch,
+  deserializeBatch,
+} from "../../arrow/index.js";

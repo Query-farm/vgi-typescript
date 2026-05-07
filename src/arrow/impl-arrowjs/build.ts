@@ -13,23 +13,45 @@ import {
   vectorFromArray,
   Map_,
 } from "@query-farm/apache-arrow";
+import type { VgiSchema, VgiDataType, VgiColumnData } from "../types.js";
 import { emptyBatch } from "./empty.js";
 
 /**
+ * Build an opaque column-data handle from a JS array. arrow-js wraps
+ * `vectorFromArray` and exposes its first `Data` node — that's what
+ * `makeData` and downstream consumers expect for `child` / `children`
+ * positions. Internally typed as `VgiColumnData` so the flechette backend
+ * can return a different concrete shape that satisfies the same opaque
+ * contract.
+ *
+ * Use this in place of direct `vectorFromArray(values, type).data[0]` —
+ * the `.data[0]` step varies per backend.
+ */
+export function columnFromArray(values: any[], type: VgiDataType): VgiColumnData {
+  return vectorFromArray(values, type as DataType).data[0] as VgiColumnData;
+}
+
+/**
  * Build a RecordBatch from row objects.
+ *
+ * Accepts either an arrow-js `Schema` or the facade's `VgiSchema`. Existing
+ * callers passing `Schema` keep working; new code can pass `VgiSchema` for
+ * portability across backends. arrow-js `Schema` is structurally a
+ * `VgiSchema` (has `fields`), so the cast is safe at runtime.
  */
 export function batchFromRows(
   rows: Record<string, any>[],
-  schema: Schema
+  schema: Schema | VgiSchema,
 ): RecordBatch {
+  const a = schema as Schema;
   if (rows.length === 0) {
-    return emptyBatch(schema);
+    return emptyBatch(a);
   }
   const columns: Record<string, any[]> = {};
-  for (const field of schema.fields) {
+  for (const field of a.fields) {
     columns[field.name] = rows.map((r) => r[field.name] ?? null);
   }
-  return batchFromColumns(columns, schema);
+  return batchFromColumns(columns, a);
 }
 
 /**
@@ -38,14 +60,15 @@ export function batchFromRows(
  */
 export function batchFromColumns(
   columns: Record<string, any[]>,
-  schema: Schema
+  schema: Schema | VgiSchema,
 ): RecordBatch {
+  const a = schema as Schema;
   const numRows =
-    schema.fields.length > 0
-      ? columns[schema.fields[0].name]?.length ?? 0
+    a.fields.length > 0
+      ? columns[a.fields[0].name]?.length ?? 0
       : 0;
 
-  const children = schema.fields.map((f: Field) => {
+  const children = a.fields.map((f: Field) => {
     const values = columns[f.name];
     if (!values) {
       return makeData({ type: f.type, length: numRows, nullCount: numRows });
@@ -53,7 +76,7 @@ export function batchFromColumns(
     return buildColumnData(values, f);
   });
 
-  const structType = new Struct(schema.fields);
+  const structType = new Struct(a.fields);
   const data = makeData({
     type: structType,
     length: numRows,
@@ -61,7 +84,7 @@ export function batchFromColumns(
     nullCount: 0,
   });
 
-  return new RecordBatch(schema, data);
+  return new RecordBatch(a, data);
 }
 
 /**
@@ -278,10 +301,12 @@ function buildListData(values: any[], field: Field): any {
   }
   offsets[numRows] = allItems.length;
 
-  // Build child data recursively
+  // Build child data recursively. Empty case must use the recursive empty
+  // builder so nested Struct/List children get their own children — arrow-js's
+  // IPC writer walks `data.children[]` and crashes on missing branches.
   const childData = allItems.length > 0
     ? buildColumnData(allItems, childField)
-    : makeData({ type: childField.type, length: 0, nullCount: 0 });
+    : emptyDataForType(childField.type);
 
   return makeData({
     type: listType,
@@ -344,10 +369,10 @@ function buildMapData(values: any[], field: Field): any {
   // Build key and value child data
   const keyData = allKeys.length > 0
     ? buildColumnData(allKeys, keyField)
-    : makeData({ type: keyField.type, length: 0, nullCount: 0 });
+    : emptyDataForType(keyField.type);
   const valueData = allValues.length > 0
     ? buildColumnData(allValues, valueField)
-    : makeData({ type: valueField.type, length: 0, nullCount: 0 });
+    : emptyDataForType(valueField.type);
 
   // Build the entries struct
   const entriesData = makeData({
@@ -412,4 +437,36 @@ function buildStructData(values: any[], field: Field): any {
     nullBitmap: nullCount > 0 ? nullBitmap : undefined,
     children,
   });
+}
+
+/**
+ * Build a 0-length Data node that arrow-js's IPC writer can serialize.
+ * Recurses into nested types (List/Map/Struct) so their child slots are
+ * present — a bare `makeData({type, length: 0})` for a nested type omits
+ * the child branch and crashes the assembler.
+ */
+function emptyDataForType(type: DataType): any {
+  if (DataType.isList(type)) {
+    return makeData({
+      type,
+      length: 0,
+      nullCount: 0,
+      child: emptyDataForType((type as List).children[0].type),
+      valueOffsets: new Int32Array([0]),
+    });
+  }
+  if (DataType.isMap(type)) {
+    return makeData({
+      type,
+      length: 0,
+      nullCount: 0,
+      child: emptyDataForType((type as Map_).children[0].type),
+      valueOffsets: new Int32Array([0]),
+    });
+  }
+  if (DataType.isStruct(type)) {
+    const children = (type as any).children.map((cf: Field) => emptyDataForType(cf.type));
+    return makeData({ type, length: 0, nullCount: 0, children });
+  }
+  return makeData({ type, length: 0, nullCount: 0 });
 }

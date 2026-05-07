@@ -1,7 +1,7 @@
 // Catalog admin handlers: attach/detach/create/drop, version, transactions,
 // schemas (list, get, create, drop), schema contents listings.
 
-import { Schema, Field, Binary, Utf8, Bool } from "@query-farm/apache-arrow";
+import { type VgiSchema, schema, type VgiField, field, type VgiDataType, binary, utf8, bool } from "../../../arrow/index.js";
 import { Protocol } from "vgi-rpc";
 import { encodeSchemaInfo, encodeTableInfo, encodeViewInfo, encodeFunctionInfo, encodeCatalogInfo } from "../../../generated/vgi-client.js";
 import {
@@ -109,10 +109,10 @@ export function registerCatalogAdminMethods(protocol: Protocol, getCatalog: GetC
 
   // catalog_create
   protocol.unary("catalog_create", {
-    params: new Schema([
-      new Field("name", new Utf8(), false),
-      new Field("on_conflict", new Utf8(), false),
-      new Field("options", new Binary(), true),
+    params: schema([
+      field("name", utf8(), false),
+      field("on_conflict", utf8(), false),
+      field("options", binary(), true),
     ]),
     result: emptyResultSchema,
     handler: async (params) => {
@@ -124,7 +124,7 @@ export function registerCatalogAdminMethods(protocol: Protocol, getCatalog: GetC
 
   // catalog_drop
   protocol.unary("catalog_drop", {
-    params: new Schema([new Field("name", new Utf8(), false)]),
+    params: schema([field("name", utf8(), false)]),
     result: emptyResultSchema,
     handler: async (params) => {
       const cat = getCatalog();
@@ -221,12 +221,12 @@ export function registerCatalogAdminMethods(protocol: Protocol, getCatalog: GetC
 
   // catalog_schema_create
   protocol.unary("catalog_schema_create", {
-    params: new Schema([
-      new Field("attach_id", new Binary(), true),
-      new Field("name", new Utf8(), false),
-      new Field("comment", new Utf8(), true),
-      new Field("tags", new Binary(), true),
-      new Field("transaction_id", new Binary(), true),
+    params: schema([
+      field("attach_id", binary(), true),
+      field("name", utf8(), false),
+      field("comment", utf8(), true),
+      field("tags", binary(), true),
+      field("transaction_id", binary(), true),
     ]),
     result: emptyResultSchema,
     handler: async (params) => {
@@ -244,12 +244,12 @@ export function registerCatalogAdminMethods(protocol: Protocol, getCatalog: GetC
 
   // catalog_schema_drop
   protocol.unary("catalog_schema_drop", {
-    params: new Schema([
-      new Field("attach_id", new Binary(), true),
-      new Field("name", new Utf8(), false),
-      new Field("ignore_not_found", new Bool(), true),
-      new Field("cascade", new Bool(), true),
-      new Field("transaction_id", new Binary(), true),
+    params: schema([
+      field("attach_id", binary(), true),
+      field("name", utf8(), false),
+      field("ignore_not_found", bool(), true),
+      field("cascade", bool(), true),
+      field("transaction_id", binary(), true),
     ]),
     result: emptyResultSchema,
     handler: async (params) => {
@@ -301,11 +301,11 @@ export function registerCatalogAdminMethods(protocol: Protocol, getCatalog: GetC
 
   // catalog_schema_contents_functions
   protocol.unary("catalog_schema_contents_functions", {
-    params: new Schema([
-      new Field("attach_id", new Binary(), true),
-      new Field("name", new Utf8(), false),
-      new Field("type", new Utf8(), false),
-      new Field("transaction_id", new Binary(), true),
+    params: schema([
+      field("attach_id", binary(), true),
+      field("name", utf8(), false),
+      field("type", utf8(), false),
+      field("transaction_id", binary(), true),
     ]),
     result: RESULT_BINARY_SCHEMA,
     handler: async (params) => {

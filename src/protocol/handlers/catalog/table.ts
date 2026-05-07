@@ -1,7 +1,7 @@
 // Catalog table handlers: table_get/create/drop, scan_function_get,
 // column_statistics_get, comment_set, rename, plus all column_* mutations.
 
-import { Schema, Field, Binary, Utf8, Bool, Int32, List } from "@query-farm/apache-arrow";
+import { type VgiSchema, schema, type VgiField, field, type VgiDataType, binary, utf8, bool, int32, list } from "../../../arrow/index.js";
 import { Protocol } from "vgi-rpc";
 import { encodeTableInfo } from "../../../generated/vgi-client.js";
 import {
@@ -26,13 +26,13 @@ import {
 export function registerCatalogTableMethods(protocol: Protocol, getCatalog: GetCatalog): void {
   // catalog_table_get
   protocol.unary("catalog_table_get", {
-    params: new Schema([
-      new Field("attach_id", new Binary(), true),
-      new Field("schema_name", new Utf8(), false),
-      new Field("name", new Utf8(), false),
-      new Field("at_unit", new Utf8(), true),
-      new Field("at_value", new Utf8(), true),
-      new Field("transaction_id", new Binary(), true),
+    params: schema([
+      field("attach_id", binary(), true),
+      field("schema_name", utf8(), false),
+      field("name", utf8(), false),
+      field("at_unit", utf8(), true),
+      field("at_value", utf8(), true),
+      field("transaction_id", binary(), true),
     ]),
     result: RESULT_BINARY_SCHEMA,
     handler: async (params) => {
@@ -53,16 +53,16 @@ export function registerCatalogTableMethods(protocol: Protocol, getCatalog: GetC
 
   // catalog_table_create
   protocol.unary("catalog_table_create", {
-    params: new Schema([
-      new Field("attach_id", new Binary(), true),
-      new Field("schema_name", new Utf8(), false),
-      new Field("name", new Utf8(), false),
-      new Field("columns", new Binary(), false),
-      new Field("on_conflict", new Utf8(), false),
-      new Field("not_null_constraints", new List(new Field("item", new Int32(), false)), true),
-      new Field("unique_constraints", new List(new Field("item", new List(new Field("item", new Int32(), false)), false)), true),
-      new Field("check_constraints", new List(new Field("item", new Utf8(), false)), true),
-      new Field("transaction_id", new Binary(), true),
+    params: schema([
+      field("attach_id", binary(), true),
+      field("schema_name", utf8(), false),
+      field("name", utf8(), false),
+      field("columns", binary(), false),
+      field("on_conflict", utf8(), false),
+      field("not_null_constraints", list(field("item", int32(), false)), true),
+      field("unique_constraints", list(field("item", list(field("item", int32(), false)), false)), true),
+      field("check_constraints", list(field("item", utf8(), false)), true),
+      field("transaction_id", binary(), true),
     ]),
     result: emptyResultSchema,
     handler: async (params) => {
@@ -84,12 +84,12 @@ export function registerCatalogTableMethods(protocol: Protocol, getCatalog: GetC
 
   // catalog_table_drop
   protocol.unary("catalog_table_drop", {
-    params: new Schema([
-      new Field("attach_id", new Binary(), true),
-      new Field("schema_name", new Utf8(), false),
-      new Field("name", new Utf8(), false),
-      new Field("ignore_not_found", new Bool(), true),
-      new Field("transaction_id", new Binary(), true),
+    params: schema([
+      field("attach_id", binary(), true),
+      field("schema_name", utf8(), false),
+      field("name", utf8(), false),
+      field("ignore_not_found", bool(), true),
+      field("transaction_id", binary(), true),
     ]),
     result: emptyResultSchema,
     handler: async (params) => {
@@ -107,11 +107,11 @@ export function registerCatalogTableMethods(protocol: Protocol, getCatalog: GetC
 
   // catalog_table_column_statistics_get
   protocol.unary("catalog_table_column_statistics_get", {
-    params: new Schema([
-      new Field("attach_id", new Binary(), true),
-      new Field("schema_name", new Utf8(), false),
-      new Field("name", new Utf8(), false),
-      new Field("transaction_id", new Binary(), true),
+    params: schema([
+      field("attach_id", binary(), true),
+      field("schema_name", utf8(), false),
+      field("name", utf8(), false),
+      field("transaction_id", binary(), true),
     ]),
     result: RESULT_BINARY_NULLABLE_SCHEMA,
     handler: async (params) => {
@@ -128,13 +128,13 @@ export function registerCatalogTableMethods(protocol: Protocol, getCatalog: GetC
 
   // catalog_table_scan_function_get
   protocol.unary("catalog_table_scan_function_get", {
-    params: new Schema([
-      new Field("attach_id", new Binary(), true),
-      new Field("schema_name", new Utf8(), false),
-      new Field("name", new Utf8(), false),
-      new Field("at_unit", new Utf8(), true),
-      new Field("at_value", new Utf8(), true),
-      new Field("transaction_id", new Binary(), true),
+    params: schema([
+      field("attach_id", binary(), true),
+      field("schema_name", utf8(), false),
+      field("name", utf8(), false),
+      field("at_unit", utf8(), true),
+      field("at_value", utf8(), true),
+      field("transaction_id", binary(), true),
     ]),
     result: RESULT_BINARY_SCHEMA,
     handler: async (params) => {
@@ -189,15 +189,15 @@ export function registerCatalogTableMethods(protocol: Protocol, getCatalog: GetC
 
   // catalog_table_column_add
   protocol.unary("catalog_table_column_add", {
-    params: new Schema([
-      new Field("attach_id", new Binary(), true),
-      new Field("schema_name", new Utf8(), false),
-      new Field("name", new Utf8(), false),
-      new Field("column_name", new Utf8(), false),
-      new Field("column_type", new Utf8(), false),
-      new Field("default_value", new Utf8(), true),
-      new Field("ignore_not_found", new Bool(), true),
-      new Field("transaction_id", new Binary(), true),
+    params: schema([
+      field("attach_id", binary(), true),
+      field("schema_name", utf8(), false),
+      field("name", utf8(), false),
+      field("column_name", utf8(), false),
+      field("column_type", utf8(), false),
+      field("default_value", utf8(), true),
+      field("ignore_not_found", bool(), true),
+      field("transaction_id", binary(), true),
     ]),
     result: emptyResultSchema,
     handler: async (params) => {
@@ -236,14 +236,14 @@ export function registerCatalogTableMethods(protocol: Protocol, getCatalog: GetC
 
   // catalog_table_column_rename
   protocol.unary("catalog_table_column_rename", {
-    params: new Schema([
-      new Field("attach_id", new Binary(), true),
-      new Field("schema_name", new Utf8(), false),
-      new Field("name", new Utf8(), false),
-      new Field("column_name", new Utf8(), false),
-      new Field("new_name", new Utf8(), false),
-      new Field("ignore_not_found", new Bool(), true),
-      new Field("transaction_id", new Binary(), true),
+    params: schema([
+      field("attach_id", binary(), true),
+      field("schema_name", utf8(), false),
+      field("name", utf8(), false),
+      field("column_name", utf8(), false),
+      field("new_name", utf8(), false),
+      field("ignore_not_found", bool(), true),
+      field("transaction_id", binary(), true),
     ]),
     result: emptyResultSchema,
     handler: async (params) => {
@@ -263,14 +263,14 @@ export function registerCatalogTableMethods(protocol: Protocol, getCatalog: GetC
 
   // catalog_table_column_default_set
   protocol.unary("catalog_table_column_default_set", {
-    params: new Schema([
-      new Field("attach_id", new Binary(), true),
-      new Field("schema_name", new Utf8(), false),
-      new Field("name", new Utf8(), false),
-      new Field("column_name", new Utf8(), false),
-      new Field("default_value", new Utf8(), false),
-      new Field("ignore_not_found", new Bool(), true),
-      new Field("transaction_id", new Binary(), true),
+    params: schema([
+      field("attach_id", binary(), true),
+      field("schema_name", utf8(), false),
+      field("name", utf8(), false),
+      field("column_name", utf8(), false),
+      field("default_value", utf8(), false),
+      field("ignore_not_found", bool(), true),
+      field("transaction_id", binary(), true),
     ]),
     result: emptyResultSchema,
     handler: async (params) => {
@@ -308,14 +308,14 @@ export function registerCatalogTableMethods(protocol: Protocol, getCatalog: GetC
 
   // catalog_table_column_type_change
   protocol.unary("catalog_table_column_type_change", {
-    params: new Schema([
-      new Field("attach_id", new Binary(), true),
-      new Field("schema_name", new Utf8(), false),
-      new Field("name", new Utf8(), false),
-      new Field("column_name", new Utf8(), false),
-      new Field("new_type", new Utf8(), false),
-      new Field("ignore_not_found", new Bool(), true),
-      new Field("transaction_id", new Binary(), true),
+    params: schema([
+      field("attach_id", binary(), true),
+      field("schema_name", utf8(), false),
+      field("name", utf8(), false),
+      field("column_name", utf8(), false),
+      field("new_type", utf8(), false),
+      field("ignore_not_found", bool(), true),
+      field("transaction_id", binary(), true),
     ]),
     result: emptyResultSchema,
     handler: async (params) => {

@@ -1,6 +1,6 @@
 // Function config interfaces and VgiFunction base type.
 
-import type { Schema, RecordBatch, DataType } from "@query-farm/apache-arrow";
+import type { VgiSchema, VgiBatch, VgiDataType } from "../arrow/index.js";
 import type { OutputCollector } from "vgi-rpc";
 import type {
   FunctionStability,
@@ -68,13 +68,13 @@ export interface StreamHandlers {
   exchangeInit?: () => any;
   exchangeFn?: (
     state: any,
-    input: RecordBatch,
+    input: VgiBatch,
     out: OutputCollector
   ) => void | Promise<void>;
   // Output schema for the stream
-  outputSchema: Schema;
+  outputSchema: VgiSchema;
   // Input schema for exchange (empty for producer)
-  inputSchema?: Schema;
+  inputSchema?: VgiSchema;
   /**
    * Fires once per tick batch on the producer path, before `producerFn`.
    * Receives the tick's Arrow custom metadata so the handler can pick up
@@ -92,7 +92,7 @@ export interface VgiFunction {
   meta: FunctionMeta;
   argumentSpecs: ArgumentSpec[];
   /** Default output schema (for catalog registration). May be overridden at bind time. */
-  defaultOutputSchema?: Schema;
+  defaultOutputSchema?: VgiSchema;
   bind(request: BindRequest): BindResponse | Promise<BindResponse>;
   globalInit(request: InitRequest): GlobalInitResponse | Promise<GlobalInitResponse>;
   createStreamHandlers(

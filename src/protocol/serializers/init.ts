@@ -12,15 +12,18 @@
 // Order pushdown hints + TABLESAMPLE pushdown hints follow.
 
 import {
-  Schema,
-  Field,
-  RecordBatch,
-  Utf8,
-  Binary,
-  Int64,
-  Float64,
-  List,
-} from "@query-farm/apache-arrow";
+  type VgiBatch,
+  schema as makeSchema,
+  field,
+  utf8,
+  binary,
+  int64,
+  float64,
+  list,
+} from "../../arrow/index.js";
+// RecordBatch type alias kept for the joinKeys closure below — it's a runtime
+// value that lands in BindRequest, not a wire shape.
+type RecordBatch = VgiBatch;
 import { TableInOutPhase } from "../../types.js";
 import {
   OrderByDirection,
@@ -38,33 +41,33 @@ import { toUint8Array, buildSingleRowBatch } from "./shared.js";
 import { serializeBindRequest, deserializeBindRequest } from "./bind.js";
 import { decodeDictValue } from "../../util/arrow/index.js";
 
-const INIT_REQUEST_SCHEMA = new Schema([
-  new Field("bind_call", new Binary(), false),
-  new Field("output_schema", new Binary(), false),
-  new Field("bind_opaque_data", new Binary(), true),
-  new Field("projection_ids", new List(new Field("item", new Int64(), false)), true),
-  new Field("pushdown_filters", new Binary(), true),
-  new Field("join_keys", new List(new Field("item", new Binary(), true)), false),
-  new Field("phase", new Utf8(), true),
-  new Field("execution_id", new Binary(), true),
-  new Field("init_opaque_data", new Binary(), true),
+const INIT_REQUEST_SCHEMA = makeSchema([
+  field("bind_call", binary(), false),
+  field("output_schema", binary(), false),
+  field("bind_opaque_data", binary(), true),
+  field("projection_ids", list(field("item", int64(), false)), true),
+  field("pushdown_filters", binary(), true),
+  field("join_keys", list(field("item", binary(), true)), false),
+  field("phase", utf8(), true),
+  field("execution_id", binary(), true),
+  field("init_opaque_data", binary(), true),
   // Order pushdown hints from DuckDB's RowGroupPruner (all null when no hint).
-  new Field("order_by_column_name", new Utf8(), true),
-  new Field("order_by_direction", new Utf8(), true),
-  new Field("order_by_null_order", new Utf8(), true),
-  new Field("order_by_limit", new Int64(), true),
+  field("order_by_column_name", utf8(), true),
+  field("order_by_direction", utf8(), true),
+  field("order_by_null_order", utf8(), true),
+  field("order_by_limit", int64(), true),
   // TABLESAMPLE pushdown hints from DuckDB's SamplingPushdown optimizer.
-  new Field("tablesample_percentage", new Float64(), true),
-  new Field("tablesample_seed", new Int64(), true),
+  field("tablesample_percentage", float64(), true),
+  field("tablesample_seed", int64(), true),
 ]);
 
-const GLOBAL_INIT_RESPONSE_SCHEMA = new Schema([
-  new Field("execution_id", new Binary(), false),
-  new Field("opaque_data", new Binary(), true),
-  new Field("max_workers", new Int64(), false),
+const GLOBAL_INIT_RESPONSE_SCHEMA = makeSchema([
+  field("execution_id", binary(), false),
+  field("opaque_data", binary(), true),
+  field("max_workers", int64(), false),
 ]);
 
-export function serializeInitRequest(req: InitRequest): RecordBatch {
+export function serializeInitRequest(req: InitRequest): VgiBatch {
   const bindCallBatch = serializeBindRequest(req.bind_call);
   const bindCallBytes = serializeBatch(bindCallBatch);
 

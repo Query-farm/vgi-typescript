@@ -6,14 +6,17 @@ import {
   RecordBatchStreamWriter,
   RecordBatchReader,
 } from "@query-farm/apache-arrow";
+import type { VgiSchema, VgiBatch } from "../types.js";
 import { emptyBatch } from "./empty.js";
 
 /**
- * Serialize a Schema to Arrow IPC bytes.
+ * Serialize a Schema to Arrow IPC bytes. Accepts arrow-js `Schema` or
+ * facade `VgiSchema` (the latter is satisfied structurally by arrow-js
+ * Schema instances at runtime).
  */
-export function serializeSchema(schema: Schema): Uint8Array {
+export function serializeSchema(schema: Schema | VgiSchema): Uint8Array {
   const writer = new RecordBatchStreamWriter();
-  writer.reset(undefined, schema);
+  writer.reset(undefined, schema as Schema);
   writer.close();
   return writer.toUint8Array(true);
 }
@@ -21,6 +24,8 @@ export function serializeSchema(schema: Schema): Uint8Array {
 /**
  * Deserialize an Arrow Schema from IPC bytes.
  * Note: In Bun, reader.schema is always undefined, so we must read from the batch.
+ *
+ * Returns arrow-js's `Schema` (which structurally satisfies VgiSchema).
  */
 export function deserializeSchema(bytes: Uint8Array): Schema {
   const reader = RecordBatchReader.from(bytes);
@@ -28,23 +33,21 @@ export function deserializeSchema(bytes: Uint8Array): Schema {
   if (batches.length > 0) {
     return batches[0].schema;
   }
-  // Schema-only stream (no batches): try reader.schema as fallback,
-  // otherwise parse the IPC messages manually
   if (reader.schema) return reader.schema;
-  // For schema-only streams, create a dummy batch from the writer
-  // and extract the schema from it
   throw new Error("Cannot deserialize schema from empty IPC stream");
 }
 
 /**
- * Serialize a RecordBatch to Arrow IPC bytes.
+ * Serialize a RecordBatch to Arrow IPC bytes. Accepts arrow-js `RecordBatch`
+ * or facade `VgiBatch`.
  */
-export function serializeBatch(batch: RecordBatch): Uint8Array {
+export function serializeBatch(batch: RecordBatch | VgiBatch): Uint8Array {
+  const a = batch as RecordBatch;
   const writer = new RecordBatchStreamWriter();
-  writer.reset(undefined, batch.schema);
+  writer.reset(undefined, a.schema);
   // Use _writeRecordBatch to bypass schema comparison bug
   // (public write() silently drops batches on nullability mismatch)
-  (writer as any)._writeRecordBatch(batch);
+  (writer as any)._writeRecordBatch(a);
   writer.close();
   return writer.toUint8Array(true);
 }
@@ -56,9 +59,8 @@ export function deserializeBatch(bytes: Uint8Array): RecordBatch {
   const reader = RecordBatchReader.from(bytes);
   const batches = [...reader];
   if (batches.length === 0) {
-    // In Bun, reader.schema is always undefined; fallback to empty schema
-    const schema = reader.schema ?? new Schema([]);
-    return emptyBatch(schema);
+    const sch = reader.schema ?? new Schema([]);
+    return emptyBatch(sch);
   }
   return batches[0];
 }

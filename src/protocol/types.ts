@@ -9,7 +9,7 @@
 // public API surfaces. Conversions happen at the layer boundary in
 // src/protocol/serialize.ts and the function/catalog dispatch sites.
 
-import type { Schema, RecordBatch } from "@query-farm/apache-arrow";
+import type { VgiSchema, VgiBatch } from "../arrow/index.js";
 import type { Arguments } from "../arguments/arguments.js";
 import { FunctionType, TableInOutPhase, type TableCardinality } from "../types.js";
 
@@ -17,16 +17,16 @@ export interface BindRequest {
   function_name: string;
   arguments: Arguments;
   function_type: FunctionType;
-  input_schema: Schema | null;
-  settings: RecordBatch | null;
-  secrets: RecordBatch | null;
+  input_schema: VgiSchema | null;
+  settings: VgiBatch | null;
+  secrets: VgiBatch | null;
   attach_id: Uint8Array | null;
   transaction_id: Uint8Array | null;
   resolved_secrets_provided: boolean;
 }
 
 export interface BindResponse {
-  output_schema: Schema;
+  output_schema: VgiSchema;
   opaque_data: Uint8Array | null;
   lookup_secret_types?: string[];
   lookup_scopes?: string[];
@@ -35,16 +35,16 @@ export interface BindResponse {
 
 export interface InitRequest {
   bind_call: BindRequest;
-  output_schema: Schema;
+  output_schema: VgiSchema;
   bind_opaque_data: Uint8Array | null;
   projection_ids: number[] | null;
-  pushdown_filters: RecordBatch | null;
+  pushdown_filters: VgiBatch | null;
   /**
    * Join-key value batches, one per join-keys column. Keyed by the column
    * name inside each batch's schema. Populated when DuckDB promotes
    * IN/OR lists or join predicates to batched join-keys pushdowns.
    */
-  join_keys: RecordBatch[];
+  join_keys: VgiBatch[];
   phase: TableInOutPhase | null;
   execution_id: Uint8Array | null;
   init_opaque_data: Uint8Array | null;

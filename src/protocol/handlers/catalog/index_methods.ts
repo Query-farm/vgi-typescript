@@ -1,6 +1,6 @@
 // Catalog index handlers: index_get, schema_contents_indexes.
 
-import { Schema, Field, Binary, Utf8 } from "@query-farm/apache-arrow";
+import { type VgiSchema, schema, type VgiField, field, type VgiDataType, binary, utf8 } from "../../../arrow/index.js";
 import { Protocol } from "vgi-rpc";
 import { encodeIndexInfo } from "../../../generated/vgi-client.js";
 import {
@@ -19,10 +19,10 @@ import {
 export function registerCatalogIndexMethods(protocol: Protocol, getCatalog: GetCatalog): void {
   // catalog_schema_contents_indexes
   protocol.unary("catalog_schema_contents_indexes", {
-    params: new Schema([
-      new Field("attach_id", new Binary(), true),
-      new Field("name", new Utf8(), false),
-      new Field("transaction_id", new Binary(), true),
+    params: schema([
+      field("attach_id", binary(), true),
+      field("name", utf8(), false),
+      field("transaction_id", binary(), true),
     ]),
     result: RESULT_BINARY_SCHEMA,
     handler: async (params) => {
@@ -40,11 +40,11 @@ export function registerCatalogIndexMethods(protocol: Protocol, getCatalog: GetC
 
   // catalog_index_get
   protocol.unary("catalog_index_get", {
-    params: new Schema([
-      new Field("attach_id", new Binary(), true),
-      new Field("schema_name", new Utf8(), false),
-      new Field("name", new Utf8(), false),
-      new Field("transaction_id", new Binary(), true),
+    params: schema([
+      field("attach_id", binary(), true),
+      field("schema_name", utf8(), false),
+      field("name", utf8(), false),
+      field("transaction_id", binary(), true),
     ]),
     result: RESULT_BINARY_SCHEMA,
     handler: async (params) => {

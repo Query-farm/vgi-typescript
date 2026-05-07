@@ -3,38 +3,51 @@
 // avoiding base64/hex overhead and staying consistent with the rest of the protocol.
 
 import {
-  Schema, Field, DataType, Struct, Binary, Int64, Bool, Float64, Utf8, Null,
-  makeData, RecordBatch,
-} from "@query-farm/apache-arrow";
+  type VgiDataType,
+  type VgiField,
+  schema as makeSchema,
+  field,
+  struct as makeStruct,
+  binary,
+  int64,
+  bool,
+  float64,
+  utf8,
+  nullType,
+  isStruct,
+  isBinary,
+  serializeBatch,
+  deserializeBatch,
+  batchFromColumns,
+} from "../arrow/index.js";
 import type { StateSerializer } from "vgi-rpc";
-import { serializeBatch, deserializeBatch, batchFromColumns } from "../util/arrow/index.js";
 import { toUint8Array } from "../util/bytes.js";
 
 /** Schema for the exchange state carried in HTTP state tokens. */
-export const EXCHANGE_STATE_SCHEMA = new Schema([
-  new Field("function_name", new Binary(), false),
-  new Field("init_request", new Binary(), false),
-  new Field("execution_id", new Binary(), false),
-  new Field("max_workers", new Int64(), false),
-  new Field("opaque_data", new Binary(), true),
-  new Field("is_producer", new Bool(), false),
-  new Field("user_state", new Binary(), true),
+export const EXCHANGE_STATE_SCHEMA = makeSchema([
+  field("function_name", binary(), false),
+  field("init_request", binary(), false),
+  field("execution_id", binary(), false),
+  field("max_workers", int64(), false),
+  field("opaque_data", binary(), true),
+  field("is_producer", bool(), false),
+  field("user_state", binary(), true),
 ]);
 
 const TEXT_ENCODER = new TextEncoder();
 const TEXT_DECODER = new TextDecoder();
 
 /** Infer an Arrow DataType from a JS value for user state serialization. */
-export function inferFieldType(value: any): DataType {
-  if (value === null || value === undefined) return new Null();
+export function inferFieldType(value: any): VgiDataType {
+  if (value === null || value === undefined) return nullType();
   switch (typeof value) {
-    case "number": return new Float64();
-    case "bigint": return new Int64();
-    case "string": return new Utf8();
-    case "boolean": return new Bool();
+    case "number": return float64();
+    case "bigint": return int64();
+    case "string": return utf8();
+    case "boolean": return bool();
     case "object":
-      if (value instanceof Uint8Array || value instanceof ArrayBuffer) return new Binary();
-      if (ArrayBuffer.isView(value)) return new Binary();
+      if (value instanceof Uint8Array || value instanceof ArrayBuffer) return binary();
+      if (ArrayBuffer.isView(value)) return binary();
       if (Array.isArray(value)) {
         throw new Error(`inferFieldType: arrays are not supported in userState (convert to a serializable form first)`);
       }
@@ -52,9 +65,9 @@ export function inferFieldType(value: any): DataType {
       }
       // Plain object → Struct
       const fields = Object.entries(value).map(
-        ([k, v]) => new Field(k, inferFieldType(v), true),
+        ([k, v]) => field(k, inferFieldType(v), true),
       );
-      return new Struct(fields);
+      return makeStruct(fields);
     default:
       throw new Error(`inferFieldType: unsupported type '${typeof value}'`);
   }
@@ -64,42 +77,43 @@ export function inferFieldType(value: any): DataType {
  * Serialize userState to Arrow IPC bytes.
  * Infers schema from the JS object at runtime. Arrow IPC is self-describing,
  * so deserialization doesn't need the schema ahead of time.
+ *
+ * For an empty object `{}`, we emit a 0-row batch with empty schema —
+ * `deserializeUserState` recognizes that shape and returns `{}` rather than
+ * `null`. (`null` is reserved for "no userState declared at all".)
  */
 export function serializeUserState(userState: any): Uint8Array | null {
   if (userState == null) return null;
   const entries = Object.entries(userState);
   if (entries.length === 0) {
-    // Empty object: create a 1-row batch with no fields.
-    // batchFromColumns would produce 0 rows, so build manually.
-    const schema = new Schema([]);
-    const structType = new Struct([]);
-    const data = makeData({ type: structType, length: 1, children: [], nullCount: 0 });
-    return serializeBatch(new RecordBatch(schema, data));
+    // 0-row, 0-field batch — round-trips back to {} via deserializeUserState.
+    return serializeBatch(batchFromColumns({}, makeSchema([])));
   }
   const fields = entries.map(
-    ([k, v]) => new Field(k, inferFieldType(v), true),
+    ([k, v]) => field(k, inferFieldType(v), true),
   );
-  const schema = new Schema(fields);
+  const sch = makeSchema(fields);
   const columns: Record<string, any[]> = {};
   for (const [key, val] of entries) {
     columns[key] = [val];
   }
-  return serializeBatch(batchFromColumns(columns, schema));
+  return serializeBatch(batchFromColumns(columns, sch));
 }
 
 /**
  * Extract a typed value from an Arrow column, preserving BigInt for Int64.
  * Recurses into Struct fields to produce plain JS objects.
  */
-function extractTypedValue(col: any, index: number, type: DataType): any {
+function extractTypedValue(col: any, index: number, type: VgiDataType): any {
   const val = col.get(index);
   if (val === null || val === undefined) return null;
 
-  if (DataType.isStruct(type)) {
+  if (isStruct(type)) {
     const result: Record<string, any> = {};
-    for (let i = 0; i < type.children.length; i++) {
-      const childField = type.children[i];
-      const childVec = col.getChildAt(i);
+    const children = (type as any).children as VgiField[];
+    for (let i = 0; i < children.length; i++) {
+      const childField = children[i];
+      const childVec = col.getChildAt ? col.getChildAt(i) : null;
       result[childField.name] = childVec
         ? extractTypedValue(childVec, index, childField.type)
         : null;
@@ -107,11 +121,10 @@ function extractTypedValue(col: any, index: number, type: DataType): any {
     return result;
   }
 
-  if (DataType.isBinary(type)) {
+  if (isBinary(type)) {
     return toUint8Array(val);
   }
 
-  // Arrow's .get() returns BigInt for Int64, number for Float64, etc.
   return val;
 }
 
@@ -123,15 +136,14 @@ export function deserializeUserState(bytes: Uint8Array | null): any {
   if (bytes == null) return null;
   const batch = deserializeBatch(bytes);
   if (batch.numRows === 0 && batch.schema.fields.length === 0) {
-    // Empty schema with 0 rows → was an empty object {}
     return {};
   }
   if (batch.numRows === 0) return null;
   const result: Record<string, any> = {};
-  for (const field of batch.schema.fields) {
-    const col = batch.getChild(field.name);
-    if (!col) { result[field.name] = null; continue; }
-    result[field.name] = extractTypedValue(col, 0, field.type);
+  for (const f of batch.schema.fields) {
+    const col = batch.getChild(f.name);
+    if (!col) { result[f.name] = null; continue; }
+    result[f.name] = extractTypedValue(col, 0, f.type);
   }
   return result;
 }

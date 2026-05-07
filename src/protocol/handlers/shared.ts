@@ -1,6 +1,6 @@
 // Shared schemas and helpers used by every protocol handler.
 
-import { Schema, Field, Binary } from "@query-farm/apache-arrow";
+import { type VgiSchema, schema, type VgiField, field, type VgiDataType, binary } from "../../arrow/index.js";
 import type { OverloadContext } from "../../functions/registry.js";
 import { batchToScalarDict, deserializeBatch, serializeBatch, batchFromColumns } from "../../util/arrow/index.js";
 import { toUint8Array } from "../../util/bytes.js";
@@ -10,17 +10,17 @@ import type { InitRequest } from "../types.js";
 // The Python vgi-rpc framework wraps ALL non-void unary results in a single
 // "result" column. For ArrowSerializableDataclass types, the result is serialized
 // as Arrow IPC bytes in a Binary column. DuckDB's VGI extension expects this format.
-export const RESULT_BINARY_SCHEMA = new Schema([
-  new Field("result", new Binary(), false),
+export const RESULT_BINARY_SCHEMA = schema([
+  field("result", binary(), false),
 ]);
 
 // DuckDB wraps ArrowSerializableDataclass parameters in a single "request" Binary column.
-export const REQUEST_PARAMS_SCHEMA = new Schema([
-  new Field("request", new Binary(), false),
+export const REQUEST_PARAMS_SCHEMA = schema([
+  field("request", binary(), false),
 ]);
 
-export const RESULT_BINARY_NULLABLE_SCHEMA = new Schema([
-  new Field("result", new Binary(), true),
+export const RESULT_BINARY_NULLABLE_SCHEMA = schema([
+  field("result", binary(), true),
 ]);
 
 /**
@@ -40,11 +40,12 @@ export function unwrapRequest(requestBytes: any): Record<string, any> {
  */
 export function wrapResult(
   values: Record<string, any>,
-  innerSchema: Schema,
+  innerSchema: VgiSchema | import("../../arrow/index.js").VgiSchema,
 ): { result: Uint8Array } {
+  const a = innerSchema as VgiSchema;
   const batch = batchFromColumns(
-    Object.fromEntries(innerSchema.fields.map(f => [f.name, [values[f.name] ?? null]])),
-    innerSchema,
+    Object.fromEntries(a.fields.map(f => [f.name, [values[f.name] ?? null]])),
+    a,
   );
   return { result: serializeBatch(batch) };
 }

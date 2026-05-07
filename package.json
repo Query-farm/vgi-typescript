@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "license": "Apache-2.0",
   "type": "module",
+  "sideEffects": false,
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "exports": {
@@ -15,19 +16,37 @@
       "types": "./dist/client-entry.d.ts",
       "bun": "./src/client-entry.ts",
       "import": "./dist/client-entry.js"
+    },
+    "./worker-cf": {
+      "types": "./dist/worker-cf-entry.d.ts",
+      "workerd": "./src/worker-cf-entry.ts",
+      "worker": "./src/worker-cf-entry.ts",
+      "browser": "./src/worker-cf-entry.ts",
+      "bun": "./src/worker-cf-entry.ts",
+      "import": "./dist/worker-cf-entry.js"
     }
   },
   "files": [
     "dist",
     "src"
   ],
+  "imports": {
+    "#arrow-impl": {
+      "workerd": "./src/arrow/impl-flechette/index.ts",
+      "worker": "./src/arrow/impl-flechette/index.ts",
+      "browser": "./src/arrow/impl-flechette/index.ts",
+      "default": "./src/arrow/impl-arrowjs/index.ts"
+    }
+  },
   "dependencies": {
     "@duckdb/node-api": "^1.5.2-r.1",
     "@query-farm/apache-arrow": "*",
     "vgi-rpc": "file:../vgi-rpc-typescript"
   },
   "devDependencies": {
-    "@types/bun": "latest"
+    "@types/bun": "latest",
+    "@uwdata/flechette": "github:Query-farm/flechette#fix/timestamp-bigint-encode",
+    "typescript": "^6.0.3"
   },
   "scripts": {
     "build": "bun run build:types && bun run build:js",

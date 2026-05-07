@@ -2,7 +2,7 @@
 // Arrow RecordBatches, plus the PushdownFilters class that owns a parsed
 // filter set and applies it to batches.
 
-import { RecordBatch, Schema } from "@query-farm/apache-arrow";
+import { type VgiBatch, type VgiSchema, schema } from "../arrow/index.js";
 import { batchFromColumns, emptyBatch } from "../util/arrow/index.js";
 import {
   ComparisonOp,
@@ -39,7 +39,7 @@ function compare(a: any, b: any, op: ComparisonOp): boolean {
 
 function evaluateFilter(
   filter: Filter,
-  batch: RecordBatch,
+  batch: VgiBatch,
   mask: Uint8Array,
 ): void {
   switch (filter.type) {
@@ -78,7 +78,7 @@ function evaluateFilter(
 // combine children.
 function evaluateExpr(
   node: ExprNode,
-  batch: RecordBatch,
+  batch: VgiBatch,
   rowIndex: number,
   colRefToBatchIndex: (index: number) => number,
 ): any {
@@ -203,7 +203,7 @@ function wkbBBox(bytes: any): { minX: number; minY: number; maxX: number; maxY: 
 
 function evaluateExpression(
   filter: ExpressionFilter,
-  batch: RecordBatch,
+  batch: VgiBatch,
   mask: Uint8Array,
 ): void {
   const n = batch.numRows;
@@ -227,14 +227,14 @@ function evaluateExpression(
 
 function evaluateConstant(
   filter: ConstantFilter,
-  batch: RecordBatch,
+  batch: VgiBatch,
   mask: Uint8Array,
 ): void {
   const col = batch.getChildAt(filter.columnIndex)!;
   const n = batch.numRows;
   for (let i = 0; i < n; i++) {
     if (!mask[i]) continue;
-    if (!col.isValid(i)) {
+    if (!(col.get(i) !== null)) {
       mask[i] = 0;
     } else {
       mask[i] = compare(col.get(i), filter.value, filter.op) ? 1 : 0;
@@ -244,40 +244,40 @@ function evaluateConstant(
 
 function evaluateIsNull(
   filter: IsNullFilter,
-  batch: RecordBatch,
+  batch: VgiBatch,
   mask: Uint8Array,
 ): void {
   const col = batch.getChildAt(filter.columnIndex)!;
   const n = batch.numRows;
   for (let i = 0; i < n; i++) {
     if (!mask[i]) continue;
-    mask[i] = col.isValid(i) ? 0 : 1;
+    mask[i] = (col.get(i) !== null) ? 0 : 1;
   }
 }
 
 function evaluateIsNotNull(
   filter: IsNotNullFilter,
-  batch: RecordBatch,
+  batch: VgiBatch,
   mask: Uint8Array,
 ): void {
   const col = batch.getChildAt(filter.columnIndex)!;
   const n = batch.numRows;
   for (let i = 0; i < n; i++) {
     if (!mask[i]) continue;
-    mask[i] = col.isValid(i) ? 1 : 0;
+    mask[i] = (col.get(i) !== null) ? 1 : 0;
   }
 }
 
 function evaluateIn(
   filter: InFilter,
-  batch: RecordBatch,
+  batch: VgiBatch,
   mask: Uint8Array,
 ): void {
   const col = batch.getChildAt(filter.columnIndex)!;
   const n = batch.numRows;
   for (let i = 0; i < n; i++) {
     if (!mask[i]) continue;
-    if (!col.isValid(i)) {
+    if (!(col.get(i) !== null)) {
       mask[i] = 0;
     } else {
       mask[i] = filter.values.has(col.get(i)) ? 1 : 0;
@@ -287,7 +287,7 @@ function evaluateIn(
 
 function evaluateAnd(
   filter: AndFilter,
-  batch: RecordBatch,
+  batch: VgiBatch,
   mask: Uint8Array,
 ): void {
   // AND: start with all-pass, then narrow with each child
@@ -305,7 +305,7 @@ function evaluateAnd(
 
 function evaluateOr(
   filter: OrFilter,
-  batch: RecordBatch,
+  batch: VgiBatch,
   mask: Uint8Array,
 ): void {
   // OR: start with all-fail, then widen with each child
@@ -329,7 +329,7 @@ function evaluateOr(
 
 function evaluateStruct(
   filter: StructFilter,
-  batch: RecordBatch,
+  batch: VgiBatch,
   mask: Uint8Array,
 ): void {
   // Extract the struct column's child field
@@ -344,8 +344,8 @@ function evaluateStruct(
   // Build a minimal wrapper that looks like a single-column batch to evaluateFilter.
   // We create a fake batch with just the child column so the child filter (with
   // columnIndex remapped to 0) can evaluate against it.
-  const childSchema = new Schema([
-    batch.schema.fields[filter.columnIndex].type.children[filter.childIndex],
+  const childSchema = schema([
+    (batch.schema.fields[filter.columnIndex].type as any).children[filter.childIndex],
   ]);
   const childBatch = batchFromColumns(
     { [filter.childName]: Array.from({ length: batch.numRows }, (_, i) => childCol.get(i)) },
@@ -434,7 +434,7 @@ export class PushdownFilters {
   }
 
   /** Evaluate filters against a batch, returning a Uint8Array mask (0=fail, 1=pass). */
-  evaluate(batch: RecordBatch): Uint8Array {
+  evaluate(batch: VgiBatch): Uint8Array {
     const n = batch.numRows;
     const mask = new Uint8Array(n);
     mask.fill(1);
@@ -447,7 +447,7 @@ export class PushdownFilters {
   }
 
   /** Apply filters to a batch, returning only passing rows. */
-  apply(batch: RecordBatch): RecordBatch {
+  apply(batch: VgiBatch): VgiBatch {
     if (batch.numRows === 0 || this.filters.length === 0) return batch;
 
     const mask = this.evaluate(batch);

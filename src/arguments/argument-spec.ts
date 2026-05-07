@@ -1,7 +1,7 @@
 // ArgumentSpec: converts function argument definitions to Arrow schema with VGI metadata keys.
 // Must produce byte-identical schemas to Python's argument_specs_to_schema().
 
-import { Schema, Field, DataType, Null } from "@query-farm/apache-arrow";
+import { type VgiSchema, schema as schema_, type VgiField, field as field_, type VgiDataType } from "../arrow/index.js";
 import {
   VGI_ARG_KEY,
   VGI_ARG_NAMED,
@@ -17,7 +17,7 @@ import {
 export interface ArgumentSpec {
   name: string;
   position: number | string;
-  arrowType: DataType;
+  arrowType: VgiDataType;
   isTableInput?: boolean;
   isAnyType?: boolean;
   isVarargs?: boolean;
@@ -35,7 +35,7 @@ function argumentSpecSortKey(spec: ArgumentSpec): [number, number | string] {
  * Convert ArgumentSpecs to an Arrow Schema with VGI metadata keys.
  * Positional arguments come first (in order), named arguments follow.
  */
-export function argumentSpecsToSchema(specs: ArgumentSpec[]): Schema {
+export function argumentSpecsToSchema(specs: ArgumentSpec[]): VgiSchema {
   const sorted = [...specs].sort((a, b) => {
     const ka = argumentSpecSortKey(a);
     const kb = argumentSpecSortKey(b);
@@ -46,7 +46,7 @@ export function argumentSpecsToSchema(specs: ArgumentSpec[]): Schema {
     return String(ka[1]).localeCompare(String(kb[1]));
   });
 
-  const fields: Field[] = [];
+  const fields: VgiField[] = [];
   for (const spec of sorted) {
     const metadata: Map<string, string> = new Map();
 
@@ -68,7 +68,7 @@ export function argumentSpecsToSchema(specs: ArgumentSpec[]): Schema {
       metadata.set(VGI_CONST_KEY, VGI_CONST_TRUE);
     }
 
-    const field = new Field(
+    const field = field_(
       spec.name,
       spec.arrowType,
       true,
@@ -77,13 +77,13 @@ export function argumentSpecsToSchema(specs: ArgumentSpec[]): Schema {
     fields.push(field);
   }
 
-  return new Schema(fields);
+  return schema_(fields);
 }
 
 /**
  * Convert an Arrow Schema back to ArgumentSpecs.
  */
-export function schemaToArgumentSpecs(schema: Schema): ArgumentSpec[] {
+export function schemaToArgumentSpecs(schema: VgiSchema): ArgumentSpec[] {
   const specs: ArgumentSpec[] = [];
   let positionIndex = 0;
 

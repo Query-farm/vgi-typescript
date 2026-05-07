@@ -1,7 +1,7 @@
 // Deserialize pushdown filters from the wire format (Arrow RecordBatch with
 // JSON specs in column 0 and value-ref scalars in columns 1+).
 
-import { RecordBatch } from "@query-farm/apache-arrow";
+import { type VgiBatch } from "../arrow/index.js";
 import { ComparisonOp, type ExprNode, type Filter } from "./types.js";
 import { PushdownFilters } from "./evaluate.js";
 
@@ -116,7 +116,7 @@ function parseFilter(
  * referenced by `spec.keys_column` on a join_keys filter.
  */
 export function buildJoinKeysLookup(
-  joinKeyBatches: RecordBatch[],
+  joinKeyBatches: VgiBatch[],
 ): (columnName: string) => any[] | null {
   const index = new Map<string, any[]>();
   for (const batch of joinKeyBatches) {
@@ -204,7 +204,7 @@ function opFromString(s: string): ComparisonOp {
  * - Columns 1+: Scalar values referenced by value_ref → column N+1
  */
 export function deserializeFilters(
-  batch: RecordBatch,
+  batch: VgiBatch,
   getJoinKeysColumn?: (columnName: string) => any[] | null,
 ): PushdownFilters {
   // Validate version

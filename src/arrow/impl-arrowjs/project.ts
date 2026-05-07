@@ -6,6 +6,7 @@ import {
   Struct,
   makeData,
 } from "@query-farm/apache-arrow";
+import type { VgiSchema, VgiBatch } from "../types.js";
 
 /**
  * Validate and filter projection IDs. Returns only valid column indices.
@@ -33,14 +34,13 @@ function validateProjectionIds(
  */
 export function projectSchema(
   projectionIds: number[] | null,
-  schema: Schema
+  schema: Schema | VgiSchema,
 ): Schema {
-  if (!projectionIds) return schema;
-  const validIds = validateProjectionIds("projectSchema", projectionIds, schema.fields.length);
-  // If no valid projections, return full schema so functions still produce
-  // rows with data (DuckDB only needs the row count for COUNT(*) etc.)
-  if (validIds.length === 0) return schema;
-  return new Schema(validIds.map((i) => schema.fields[i]));
+  const a = schema as Schema;
+  if (!projectionIds) return a;
+  const validIds = validateProjectionIds("projectSchema", projectionIds, a.fields.length);
+  if (validIds.length === 0) return a;
+  return new Schema(validIds.map((i) => a.fields[i]));
 }
 
 /**
@@ -48,21 +48,22 @@ export function projectSchema(
  */
 export function projectBatch(
   projectionIds: number[] | null,
-  batch: RecordBatch
+  batch: RecordBatch | VgiBatch,
 ): RecordBatch {
-  if (!projectionIds) return batch;
-  const validIds = validateProjectionIds("projectBatch", projectionIds, batch.schema.fields.length);
-  if (validIds.length === 0) return batch;
-  const projectedSchema = projectSchema(projectionIds, batch.schema);
+  const a = batch as RecordBatch;
+  if (!projectionIds) return a;
+  const validIds = validateProjectionIds("projectBatch", projectionIds, a.schema.fields.length);
+  if (validIds.length === 0) return a;
+  const projectedSchema = projectSchema(projectionIds, a.schema);
   const children = validIds.map((i) => {
-    const col = batch.getChildAt(i);
+    const col = a.getChildAt(i);
     return col!.data[0];
   });
 
   const structType = new Struct(projectedSchema.fields);
   const data = makeData({
     type: structType,
-    length: batch.numRows,
+    length: a.numRows,
     children,
     nullCount: 0,
   });

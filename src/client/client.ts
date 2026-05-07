@@ -1,7 +1,7 @@
 // VgiClient — high-level client for calling VGI worker functions and catalog API.
 // Works with any RpcClient (subprocess or HTTP transport).
 
-import { Schema, Field, RecordBatch, Utf8, Binary, List } from "@query-farm/apache-arrow";
+import { type VgiSchema, schema as schema_, type VgiField, field, type VgiBatch, type VgiDataType, utf8, binary, list } from "../arrow/index.js";
 import { type RpcClient, type StreamSession } from "vgi-rpc";
 import {
   serializeBindRequest,
@@ -109,9 +109,9 @@ export class VgiClient {
     functionName: string,
     functionType: FunctionType,
     args: Arguments,
-    inputSchema: Schema | null,
-    settings: RecordBatch | null,
-    secrets: RecordBatch | null,
+    inputSchema: VgiSchema | null,
+    settings: VgiBatch | null,
+    secrets: VgiBatch | null,
     transactionId: Uint8Array | null,
     attachId: Uint8Array | null = null,
     onBind?: ((response: BindResponse) => void) | null,
@@ -142,12 +142,12 @@ export class VgiClient {
     bindResponse: BindResponse,
     opts?: {
       projectionIds?: number[] | null;
-      pushdownFilters?: RecordBatch | null;
+      pushdownFilters?: VgiBatch | null;
       phase?: TableInOutPhase | null;
       executionId?: Uint8Array | null;
       orderBy?: OrderByPushdown | null;
       tablesample?: TablesamplePushdown | null;
-      joinKeys?: RecordBatch[] | null;
+      joinKeys?: VgiBatch[] | null;
     },
   ): Promise<{ session: StreamSession; initResponse: GlobalInitResponse }> {
     const ob = opts?.orderBy ?? null;
@@ -187,7 +187,7 @@ export class VgiClient {
   /** Call a table function, yielding output as RecordBatch instances. */
   async *tableFunction(
     opts: TableFunctionOptions,
-  ): AsyncGenerator<RecordBatch> {
+  ): AsyncGenerator<VgiBatch> {
     const args = opts.arguments ?? new Arguments();
 
     const { request: bindReq, response: bindResp } = await this._doBind(
@@ -240,7 +240,7 @@ export class VgiClient {
       );
     }
 
-    const firstBatch: RecordBatch = first.value;
+    const firstBatch: VgiBatch = first.value;
     const inputSchema = firstBatch.schema;
 
     const args = opts.arguments ?? new Arguments();
@@ -277,7 +277,7 @@ export class VgiClient {
   /** Call a scalar function, yielding output as RecordBatch instances. */
   async *scalarFunction(
     opts: ScalarFunctionOptions,
-  ): AsyncGenerator<RecordBatch> {
+  ): AsyncGenerator<VgiBatch> {
     // Same path as scalarFunctionRows, but with the output schema captured
     // here so we can pack rows back into batches without a re-bind.
     const inputIter = toAsyncIterator(opts.input);
@@ -289,7 +289,7 @@ export class VgiClient {
       );
     }
 
-    const firstBatch: RecordBatch = first.value;
+    const firstBatch: VgiBatch = first.value;
     const inputSchema = firstBatch.schema;
 
     const args = opts.arguments ?? new Arguments();
@@ -338,7 +338,7 @@ export class VgiClient {
       );
     }
 
-    const firstBatch: RecordBatch = first.value;
+    const firstBatch: VgiBatch = first.value;
     const inputSchema = firstBatch.schema;
 
     const args = opts.arguments ?? new Arguments();
@@ -409,7 +409,7 @@ export class VgiClient {
   /** Call a table-in-out function, yielding output as RecordBatch instances. */
   async *tableInOutFunction(
     opts: TableInOutFunctionOptions,
-  ): AsyncGenerator<RecordBatch> {
+  ): AsyncGenerator<VgiBatch> {
     const inputIter = toAsyncIterator(opts.input);
     const first = await inputIter.next();
     if (first.done) {
@@ -419,7 +419,7 @@ export class VgiClient {
       );
     }
 
-    const firstBatch: RecordBatch = first.value;
+    const firstBatch: VgiBatch = first.value;
     const inputSchema = firstBatch.schema;
 
     const args = opts.arguments ?? new Arguments();
@@ -587,11 +587,11 @@ export class VgiClient {
       wireOptions = serializeAttachOptions(opts?.options);
     }
 
-    const schema = new Schema([
-      new Field("name", new Utf8(), false),
-      new Field("options", new Binary(), true),
-      new Field("data_version_spec", new Utf8(), true),
-      new Field("implementation_version", new Utf8(), true),
+    const schema = schema_([
+      field("name", utf8(), false),
+      field("options", binary(), true),
+      field("data_version_spec", utf8(), true),
+      field("implementation_version", utf8(), true),
     ]);
     const innerBatch = batchFromColumns(
       {
@@ -1290,16 +1290,16 @@ export class VgiClient {
     parameterDefaultValues?: Uint8Array | null,
     transactionId?: TransactionId,
   ): Promise<void> {
-    const schema = new Schema([
-      new Field("attach_id", new Binary(), true),
-      new Field("schema_name", new Utf8(), false),
-      new Field("name", new Utf8(), false),
-      new Field("macro_type", new Utf8(), false),
-      new Field("parameters", new List(new Field("item", new Utf8(), false)), false),
-      new Field("definition", new Utf8(), false),
-      new Field("on_conflict", new Utf8(), false),
-      new Field("parameter_default_values", new Binary(), true),
-      new Field("transaction_id", new Binary(), true),
+    const schema = schema_([
+      field("attach_id", binary(), true),
+      field("schema_name", utf8(), false),
+      field("name", utf8(), false),
+      field("macro_type", utf8(), false),
+      field("parameters", list(field("item", utf8(), false)), false),
+      field("definition", utf8(), false),
+      field("on_conflict", utf8(), false),
+      field("parameter_default_values", binary(), true),
+      field("transaction_id", binary(), true),
     ]);
     const innerBatch = batchFromColumns(
       {

@@ -3,7 +3,16 @@
 // states across workers, finalize emits one result row per group, destructor
 // drops finished group state.
 
-import { Schema, Field, RecordBatch, RecordBatchReader, DataType, Decimal } from "@query-farm/apache-arrow";
+import {
+  type VgiSchema,
+  type VgiBatch,
+  type VgiDataType,
+  schema as makeSchema,
+  field,
+  isDecimal,
+  serializeBatch,
+  deserializeBatch,
+} from "../../arrow/index.js";
 import { Protocol } from "vgi-rpc";
 import type { FunctionRegistry } from "../../functions/registry.js";
 import { deserializeArguments } from "../serialize.js";
@@ -72,7 +81,7 @@ export function registerAggregateMethods(protocol: Protocol, registry: FunctionR
       // input — e.g. vgi_generic_sum takes ANY and returns the same type);
       // otherwise the declared cfg.outputType.
       const outType = cfg.onBind ? await cfg.onBind(bindParams) : cfg.outputType;
-      const outSchema = new Schema([new Field("result", outType, true)]);
+      const outSchema = makeSchema([field("result", outType, true)]);
       return wrapResult(
         { output_schema: serializeSchema(outSchema), execution_id: executionId },
         AggregateBindResultSchema,
@@ -92,7 +101,7 @@ export function registerAggregateMethods(protocol: Protocol, registry: FunctionR
       const executionId = toUint8Array(innerParams.execution_id);
       const cfg = resolveAggregate(functionName);
       const batch = readSingleBatch(toUint8Array(innerParams.input_batch));
-      if (!batch || batch.numRows === 0) return wrapResult({}, new Schema([]));
+      if (!batch || batch.numRows === 0) return wrapResult({}, makeSchema([]));
 
       const gidIdx = batch.schema.fields.findIndex((f) => f.name === GROUP_COLUMN_NAME);
       if (gidIdx < 0) {
@@ -103,7 +112,7 @@ export function registerAggregateMethods(protocol: Protocol, registry: FunctionR
       const uniqueGids = new Set<bigint>();
       for (let i = 0; i < batch.numRows; i++) {
         const v = gidCol.get(i);
-        const g = typeof v === "bigint" ? v : BigInt(v);
+        const g = typeof v === "bigint" ? v : BigInt(v as any);
         groupIds.push(g);
         uniqueGids.add(g);
       }
@@ -143,7 +152,7 @@ export function registerAggregateMethods(protocol: Protocol, registry: FunctionR
       // the pre-existing initial state; the idempotent rewrite is cheap
       // relative to the RPC overhead.
       persistGroupStates(executionId, uniqueGids);
-      return wrapResult({}, new Schema([]));
+      return wrapResult({}, makeSchema([]));
     },
   });
 
@@ -159,7 +168,7 @@ export function registerAggregateMethods(protocol: Protocol, registry: FunctionR
       const executionId = toUint8Array(innerParams.execution_id);
       const cfg = resolveAggregate(functionName);
       const batch = readSingleBatch(toUint8Array(innerParams.merge_batch));
-      if (!batch || batch.numRows === 0) return wrapResult({}, new Schema([]));
+      if (!batch || batch.numRows === 0) return wrapResult({}, makeSchema([]));
 
       const srcCol = batch.getChild("source_group_id")!;
       const tgtCol = batch.getChild("target_group_id")!;
@@ -192,7 +201,7 @@ export function registerAggregateMethods(protocol: Protocol, registry: FunctionR
         touchedTargets.add(tgt);
       }
       persistGroupStates(executionId, touchedTargets);
-      return wrapResult({}, new Schema([]));
+      return wrapResult({}, makeSchema([]));
     },
   });
 
@@ -215,7 +224,7 @@ export function registerAggregateMethods(protocol: Protocol, registry: FunctionR
         const col = gidBatch.getChild("group_id")!;
         for (let i = 0; i < gidBatch.numRows; i++) {
           const v = col.get(i);
-          const g = typeof v === "bigint" ? v : BigInt(v);
+          const g = typeof v === "bigint" ? v : BigInt(v as any);
           groupIds.push(g);
           uniqueGids.add(g);
         }
@@ -256,21 +265,21 @@ export function registerAggregateMethods(protocol: Protocol, registry: FunctionR
       const innerParams = unwrapRequest(params.request);
       const executionId = toUint8Array(innerParams.execution_id);
       const exec = getExecutionState(executionId);
-      if (!exec) return wrapResult({}, new Schema([]));
+      if (!exec) return wrapResult({}, makeSchema([]));
       const gidBatch = readSingleBatch(toUint8Array(innerParams.group_ids_batch));
-      if (!gidBatch || gidBatch.numRows === 0) return wrapResult({}, new Schema([]));
+      if (!gidBatch || gidBatch.numRows === 0) return wrapResult({}, makeSchema([]));
       const col = gidBatch.getChild("group_id")!;
       const toDrop = new Set<bigint>();
       for (let i = 0; i < gidBatch.numRows; i++) {
         const v = col.get(i);
-        const g = typeof v === "bigint" ? v : BigInt(v);
+        const g = typeof v === "bigint" ? v : BigInt(v as any);
         exec.states.delete(g);
         toDrop.add(g);
       }
       // Persist deletions (unlinks the per-group file so sibling workers
       // don't revive the state via getExecutionState's lazy disk load).
       persistGroupStates(executionId, toDrop);
-      return wrapResult({}, new Schema([]));
+      return wrapResult({}, makeSchema([]));
     },
   });
 }
@@ -298,8 +307,8 @@ function extractArgMap(
       // DECIMAL(2,1), which Arrow stores as the unscaled integer — a raw
       // BigInt here). Scale back to float using the declared scale.
       const field = args.argumentsSchema?.fields.find(f => f.name === `positional_${i}`);
-      if (field && DataType.isDecimal(field.type)) {
-        const scale = (field.type as Decimal).scale;
+      if (field && isDecimal(field.type)) {
+        const scale = (field.type as any).scale;
         if (typeof v === "bigint") v = Number(v) / Math.pow(10, scale);
         else if (typeof v === "number") v = v / Math.pow(10, scale);
       } else if (typeof v === "bigint") {
@@ -324,18 +333,14 @@ function extractArgMap(
   return out;
 }
 
-function readSingleBatch(bytes: Uint8Array): RecordBatch | null {
+function readSingleBatch(bytes: Uint8Array): VgiBatch | null {
   if (!bytes || bytes.length === 0) return null;
-  const reader = RecordBatchReader.from(bytes);
-  for (const b of reader) return b;
-  return null;
+  const batch = deserializeBatch(bytes);
+  return batch.numRows === 0 && batch.schema.fields.length === 0 ? null : batch;
 }
 
-function serializeBatchWithSchema(batch: RecordBatch): Uint8Array {
-  // RecordBatchStreamWriter.writeAll handles schema + batch + EOS in one pass;
-  // the C++ aggregate_finalize reader expects a full IPC stream (same wrapper
-  // used for update/combine/finalize inputs elsewhere).
-  const { RecordBatchStreamWriter } = require("@query-farm/apache-arrow");
-  const writer = RecordBatchStreamWriter.writeAll([batch]);
-  return writer.toUint8Array(true);
+function serializeBatchWithSchema(batch: VgiBatch): Uint8Array {
+  // serializeBatch emits a full IPC stream (schema + batch + EOS) — the C++
+  // aggregate_finalize reader expects exactly that.
+  return serializeBatch(batch);
 }

@@ -1,17 +1,20 @@
 // Read data out of Arrow batches as plain JS values.
 
 import { RecordBatch, DataType } from "@query-farm/apache-arrow";
+import type { VgiBatch } from "../types.js";
 
 /**
- * Iterate rows of a RecordBatch as plain objects.
+ * Iterate rows of a RecordBatch as plain objects. Accepts arrow-js
+ * `RecordBatch` or facade `VgiBatch`.
  */
 export function* iterRows(
-  batch: RecordBatch
+  batch: RecordBatch | VgiBatch
 ): Generator<Record<string, any>> {
-  for (let i = 0; i < batch.numRows; i++) {
+  const a = batch as RecordBatch;
+  for (let i = 0; i < a.numRows; i++) {
     const row: Record<string, any> = {};
-    for (const field of batch.schema.fields) {
-      const col = batch.getChild(field.name);
+    for (const field of a.schema.fields) {
+      const col = a.getChild(field.name);
       row[field.name] = col ? readCellValue(col, i, field.type) : null;
     }
     yield row;
@@ -22,12 +25,14 @@ export function* iterRows(
  * Extract single-row batch to a scalar dict.
  */
 export function batchToScalarDict(
-  batch: RecordBatch | null
+  batch: RecordBatch | VgiBatch | null
 ): Record<string, any> {
-  if (!batch || batch.numRows === 0) return {};
+  if (!batch) return {};
+  const a = batch as RecordBatch;
+  if (a.numRows === 0) return {};
   const result: Record<string, any> = {};
-  for (const field of batch.schema.fields) {
-    const col = batch.getChild(field.name);
+  for (const field of a.schema.fields) {
+    const col = a.getChild(field.name);
     if (col) {
       result[field.name] = readCellValue(col, 0, field.type);
     }
@@ -93,12 +98,14 @@ export function decodeDictValue(value: any, index = 0): any {
  * (column name = "secret_N" with secret_type in field metadata).
  */
 export function batchToSecretDict(
-  batch: RecordBatch | null
+  batch: RecordBatch | VgiBatch | null
 ): Record<string, Record<string, any>> {
-  if (!batch || batch.numRows === 0) return {};
+  if (!batch) return {};
+  const a = batch as RecordBatch;
+  if (a.numRows === 0) return {};
   const result: Record<string, Record<string, any>> = {};
-  for (const field of batch.schema.fields) {
-    const col = batch.getChild(field.name);
+  for (const field of a.schema.fields) {
+    const col = a.getChild(field.name);
     if (col) {
       const val = col.get(0);
 

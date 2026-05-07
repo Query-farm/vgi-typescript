@@ -5,7 +5,7 @@
 // function can route to the right backend.
 
 import { describe, test, expect } from "bun:test";
-import { Schema, Field, Int64, type DataType } from "@query-farm/apache-arrow";
+import { type VgiSchema, schema, type VgiField, field, type VgiDataType, int64 } from "../../arrow/index.js";
 import { defineScalarFunction, type ScalarBindParameters } from "../scalar.js";
 import { Arguments } from "../../arguments/arguments.js";
 import { FunctionType } from "../../types.js";
@@ -19,7 +19,7 @@ function makeBindRequest(opts: {
     function_name: "attach_id_echo",
     arguments: new Arguments(),
     function_type: FunctionType.SCALAR,
-    input_schema: new Schema([new Field("x", new Int64(), true)]),
+    input_schema: schema([field("x", int64(), true)]),
     settings: null,
     secrets: null,
     attach_id: opts.attach_id ?? null,
@@ -33,10 +33,10 @@ describe("scalar bind exposes attach_id / transaction_id", () => {
 
   const fn = defineScalarFunction({
     name: "attach_id_echo",
-    params: { x: new Int64() },
-    outputType: (params: ScalarBindParameters): DataType => {
+    params: { x: int64() },
+    outputType: (params: ScalarBindParameters): VgiDataType => {
       captured = params;
-      return new Int64();
+      return int64();
     },
     compute: () => [],
   });

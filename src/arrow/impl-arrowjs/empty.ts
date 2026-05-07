@@ -49,13 +49,17 @@ function emptyData(field: Field): any {
   return makeData({ type, length: 0, nullCount: 0 });
 }
 
-/**
- * Create an empty (0-row) batch with the given schema.
- */
-export function emptyBatch(schema: Schema): RecordBatch {
-  const children = schema.fields.map((f: Field) => emptyData(f));
+import type { VgiSchema } from "../types.js";
 
-  const structType = new Struct(schema.fields);
+/**
+ * Create an empty (0-row) batch with the given schema. Accepts arrow-js
+ * `Schema` or facade `VgiSchema` (cast at the boundary).
+ */
+export function emptyBatch(schema: Schema | VgiSchema): RecordBatch {
+  const a = schema as Schema;
+  const children = a.fields.map((f: Field) => emptyData(f));
+
+  const structType = new Struct(a.fields);
   const data = makeData({
     type: structType,
     length: 0,
@@ -63,5 +67,5 @@ export function emptyBatch(schema: Schema): RecordBatch {
     nullCount: 0,
   });
 
-  return new RecordBatch(schema, data);
+  return new RecordBatch(a, data);
 }

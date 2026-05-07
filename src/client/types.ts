@@ -1,6 +1,6 @@
 // Client option types for VgiClient.
 
-import type { RecordBatch } from "@query-farm/apache-arrow";
+import type { VgiBatch } from "../arrow/index.js";
 import type { Arguments } from "../arguments/arguments.js";
 import type { AttachOptionValue } from "../catalog/attach-options.js";
 import type { BindResponse } from "../protocol/types.js";
@@ -73,9 +73,9 @@ export interface TableFunctionOptions {
   /** Column indices to project (filter pushdown). */
   projectionIds?: number[];
   /** Filter pushdown batch. */
-  pushdownFilters?: RecordBatch;
+  pushdownFilters?: VgiBatch;
   /** DuckDB settings to pass to the function. */
-  settings?: RecordBatch;
+  settings?: VgiBatch;
   /** Transaction ID for transactional catalogs. */
   transactionId?: Uint8Array;
   /** Attach ID to bind this call to a specific catalog attach. Overrides the client-level attachId. */
@@ -85,7 +85,7 @@ export interface TableFunctionOptions {
   /** TABLESAMPLE pushdown hint from DuckDB's SamplingPushdown optimizer. */
   tablesample?: TablesamplePushdown;
   /** Join-key value batches, one per join-keys column. */
-  joinKeys?: RecordBatch[];
+  joinKeys?: VgiBatch[];
   /** Invoked after bind, before init. Receives the bind response. */
   onBind?: BindResultCallback;
 }
@@ -95,13 +95,13 @@ export interface ScalarFunctionOptions {
   /** Name of the function to call. */
   functionName: string;
   /** Input batches to process. */
-  input: Iterable<RecordBatch> | AsyncIterable<RecordBatch>;
+  input: Iterable<VgiBatch> | AsyncIterable<VgiBatch>;
   /** Positional and named arguments. */
   arguments?: Arguments;
   /** DuckDB settings to pass to the function. */
-  settings?: RecordBatch;
+  settings?: VgiBatch;
   /** DuckDB secrets to pass to the function. */
-  secrets?: RecordBatch;
+  secrets?: VgiBatch;
   /** Transaction ID for transactional catalogs. */
   transactionId?: Uint8Array;
   /** Attach ID to bind this call to a specific catalog attach. Overrides the client-level attachId. */
@@ -115,15 +115,15 @@ export interface TableInOutFunctionOptions {
   /** Name of the function to call. */
   functionName: string;
   /** Input batches to process. */
-  input: Iterable<RecordBatch> | AsyncIterable<RecordBatch>;
+  input: Iterable<VgiBatch> | AsyncIterable<VgiBatch>;
   /** Positional and named arguments. */
   arguments?: Arguments;
   /** Column indices to project (filter pushdown). */
   projectionIds?: number[];
   /** Filter pushdown batch. */
-  pushdownFilters?: RecordBatch;
+  pushdownFilters?: VgiBatch;
   /** DuckDB settings to pass to the function. */
-  settings?: RecordBatch;
+  settings?: VgiBatch;
   /** Transaction ID for transactional catalogs. */
   transactionId?: Uint8Array;
   /** Attach ID to bind this call to a specific catalog attach. Overrides the client-level attachId. */
@@ -133,7 +133,7 @@ export interface TableInOutFunctionOptions {
   /** TABLESAMPLE pushdown hint from DuckDB's SamplingPushdown optimizer. */
   tablesample?: TablesamplePushdown;
   /** Join-key value batches, one per join-keys column. */
-  joinKeys?: RecordBatch[];
+  joinKeys?: VgiBatch[];
   /** Invoked after bind, before init. Receives the bind response. */
   onBind?: BindResultCallback;
 }

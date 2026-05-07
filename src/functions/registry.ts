@@ -1,7 +1,7 @@
 // Function registry: name -> VgiFunction lookup with overload resolution.
 
-import { DataType, Null } from "@query-farm/apache-arrow";
-import type { Schema } from "@query-farm/apache-arrow";
+import { type VgiDataType, isBinary, isBool, isDecimal, isFloat, isInt, isNull, isUtf8 } from "../arrow/index.js";
+import type { VgiSchema } from "../arrow/index.js";
 import type { VgiFunction } from "./types.js";
 import type { Arguments } from "../arguments/arguments.js";
 import type { ArgumentSpec } from "../arguments/argument-spec.js";
@@ -9,32 +9,32 @@ import { FunctionNotFoundError } from "../errors.js";
 
 export interface OverloadContext {
   arguments?: Arguments;
-  inputSchema?: Schema | null;
+  inputSchema?: VgiSchema | null;
   isScalar?: boolean;
 }
 
 const EXACT_MATCH_SCORE = 2;
 const FAMILY_MATCH_SCORE = 1;
 
-function typesCompatible(actual: DataType, declared: DataType): boolean {
+function typesCompatible(actual: VgiDataType, declared: VgiDataType): boolean {
   if (actual.toString() === declared.toString()) return true;
   // Integer family
-  if (DataType.isInt(actual) && DataType.isInt(declared)) return true;
+  if (isInt(actual) && isInt(declared)) return true;
   // Float/decimal family
-  if ((DataType.isFloat(actual) || DataType.isDecimal(actual)) &&
-      (DataType.isFloat(declared) || DataType.isDecimal(declared))) return true;
+  if ((isFloat(actual) || isDecimal(actual)) &&
+      (isFloat(declared) || isDecimal(declared))) return true;
   // String family (Utf8, LargeUtf8)
-  if (DataType.isUtf8(actual) && DataType.isUtf8(declared)) return true;
+  if (isUtf8(actual) && isUtf8(declared)) return true;
   // Binary family
-  if (DataType.isBinary(actual) && DataType.isBinary(declared)) return true;
+  if (isBinary(actual) && isBinary(declared)) return true;
   // Boolean
-  if (DataType.isBool(actual) && DataType.isBool(declared)) return true;
+  if (isBool(actual) && isBool(declared)) return true;
   return false;
 }
 
 function scoreTypes(
   specs: ArgumentSpec[],
-  actualTypes: (DataType | null)[],
+  actualTypes: (VgiDataType | null)[],
 ): { score: number; matched: boolean } {
   let score = 0;
   let varArgsSpec: ArgumentSpec | null = null;
@@ -43,7 +43,7 @@ function scoreTypes(
     const spec = specs[i];
     if (spec.isVarargs) varArgsSpec = spec;
     if (i >= actualTypes.length) break;
-    if (spec.isAnyType || spec.arrowType instanceof Null) continue;
+    if (spec.isAnyType || isNull(spec.arrowType)) continue;
     const actual = actualTypes[i];
     if (actual === null) continue;
     if (actual.toString() === spec.arrowType.toString()) {
@@ -56,7 +56,7 @@ function scoreTypes(
   }
 
   // Score varargs tail beyond declared specs
-  if (varArgsSpec && !varArgsSpec.isAnyType && !(varArgsSpec.arrowType instanceof Null)) {
+  if (varArgsSpec && !varArgsSpec.isAnyType && !isNull(varArgsSpec.arrowType)) {
     for (let i = specs.length; i < actualTypes.length; i++) {
       const actual = actualTypes[i];
       if (actual === null) continue;
@@ -76,7 +76,7 @@ function scoreTypes(
 function filterByArgumentTypes(
   candidates: VgiFunction[],
   args: Arguments,
-  inputSchema: Schema | null | undefined,
+  inputSchema: VgiSchema | null | undefined,
   isScalar: boolean,
 ): VgiFunction[] {
   const scored: { score: number; func: VgiFunction }[] = [];
@@ -91,7 +91,7 @@ function filterByArgumentTypes(
       const colSpecs = specs.filter(s => !s.isConst && typeof s.position === "number");
 
       // Score const specs against positional argument types
-      const constTypes: (DataType | null)[] = [];
+      const constTypes: (VgiDataType | null)[] = [];
       const argsSchema = args.argumentsSchema;
       for (let i = 0; i < args.positional.length; i++) {
         const field = argsSchema?.fields.find(f => f.name === `positional_${i}`);
@@ -103,7 +103,7 @@ function filterByArgumentTypes(
 
       // Score column specs against inputSchema
       if (matched && inputSchema) {
-        const colTypes: (DataType | null)[] = [];
+        const colTypes: (VgiDataType | null)[] = [];
         let varArgsColSpec: ArgumentSpec | null = null;
         for (const spec of colSpecs) {
           if (spec.isVarargs) varArgsColSpec = spec;
@@ -127,7 +127,7 @@ function filterByArgumentTypes(
         .filter(s => typeof s.position === "number" && !s.isTableInput)
         .sort((a, b) => (a.position as number) - (b.position as number));
 
-      const posTypes: (DataType | null)[] = [];
+      const posTypes: (VgiDataType | null)[] = [];
       const argsSchema = args.argumentsSchema;
       for (let i = 0; i < args.positional.length; i++) {
         const field = argsSchema?.fields.find(f => f.name === `positional_${i}`);

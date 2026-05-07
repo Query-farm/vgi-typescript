@@ -7,7 +7,7 @@
 // that async-resolved schemas survive the bind path.
 
 import { describe, test, expect } from "bun:test";
-import { Schema, Field, Int64 } from "@query-farm/apache-arrow";
+import { type VgiSchema, schema, type VgiField, field, type VgiDataType, int64 } from "../../arrow/index.js";
 import { Arguments } from "../../arguments/arguments.js";
 import { FunctionType } from "../../types.js";
 import type { BindRequest } from "../../protocol/types.js";
@@ -34,25 +34,23 @@ describe("table function onBind may be async", () => {
       onBind: async () => {
         // Simulate an HTTP fetch that resolves on the next microtask.
         await Promise.resolve();
-        return { outputSchema: new Schema([new Field("x", new Int64(), true)]) };
+        return { outputSchema: schema([field("x", int64(), true)]) };
       },
       process: () => {},
     });
 
     const bindResp = await fn.bind(makeBindRequest());
-    expect(bindResp.output_schema).toBeInstanceOf(Schema);
-    expect(bindResp.output_schema.fields[0].name).toBe("x");
+    expect((bindResp.output_schema as any).fields[0].name).toBe("x");
   });
 
   test("Sync onBind still works (backwards compatibility)", async () => {
     const fn = defineTableFunction({
       name: "sync_bind",
-      onBind: () => ({ outputSchema: new Schema([new Field("y", new Int64(), true)]) }),
+      onBind: () => ({ outputSchema: schema([field("y", int64(), true)]) }),
       process: () => {},
     });
 
     const bindResp = await fn.bind(makeBindRequest());
-    expect(bindResp.output_schema).toBeInstanceOf(Schema);
-    expect(bindResp.output_schema.fields[0].name).toBe("y");
+    expect((bindResp.output_schema as any).fields[0].name).toBe("y");
   });
 });

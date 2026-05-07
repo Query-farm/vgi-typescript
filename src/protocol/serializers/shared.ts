@@ -1,14 +1,11 @@
 // Shared helpers for protocol wire serialization.
 
 import {
-  Schema,
-  Field,
-  RecordBatch,
-  DataType,
-  Struct,
-  makeData,
-  vectorFromArray,
-} from "@query-farm/apache-arrow";
+  type VgiSchema,
+  type VgiBatch,
+  isInt,
+  batchFromColumns,
+} from "../../arrow/index.js";
 import { toUint8Array as toUint8ArrayBase } from "../../util/bytes.js";
 
 /**
@@ -30,26 +27,19 @@ export function toUint8Array(val: any): Uint8Array {
  * given schema. Auto-coerces JS numbers to BigInt for Int64 fields.
  */
 export function buildSingleRowBatch(
-  schema: Schema,
-  values: Record<string, any>
-): RecordBatch {
-  const children = schema.fields.map((f: Field) => {
+  schema: VgiSchema,
+  values: Record<string, any>,
+): VgiBatch {
+  // Build column dict, coercing Int64 numbers to BigInt where the schema
+  // declares one — vectorFromArray/columnFromArray rejects plain Number for
+  // 64-bit ints under both backends.
+  const cols: Record<string, any[]> = {};
+  for (const f of schema.fields) {
     let val = values[f.name];
-    // Coerce int64
-    if (DataType.isInt(f.type) && (f.type as any).bitWidth === 64) {
-      if (typeof val === "number") val = BigInt(val);
+    if (isInt(f.type) && (f.type as any).bitWidth === 64 && typeof val === "number") {
+      val = BigInt(val);
     }
-    const arr = vectorFromArray([val], f.type);
-    return arr.data[0];
-  });
-
-  const structType = new Struct(schema.fields);
-  const data = makeData({
-    type: structType,
-    length: 1,
-    children,
-    nullCount: 0,
-  });
-
-  return new RecordBatch(schema, data);
+    cols[f.name] = [val];
+  }
+  return batchFromColumns(cols, schema);
 }
