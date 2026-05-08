@@ -7,7 +7,8 @@
 
 import {
   columnFromArray as f_columnFromArray,
-  tableFromColumns,
+  field as f_field,
+  Table,
   type Column,
 } from "@uwdata/flechette";
 import type { VgiSchema, VgiBatch, VgiDataType, VgiColumnData } from "../types.js";
@@ -49,25 +50,61 @@ export function batchFromColumns(
   columns: Record<string, any[]>,
   schema: VgiSchema,
 ): VgiBatch {
-  const cols: Record<string, Column<any>> = {};
+  // We can't go through `tableFromColumns` because it discards the per-field
+  // `nullable` flag — every output field becomes nullable. The vgi-rpc wire
+  // protocol cares: the C++ extension validates response schemas exactly,
+  // and a `nullable` mismatch on a `not null` field rejects the batch with
+  // "Worker returned an out-of-date Apache Arrow schema". Build the Table
+  // directly with a schema that preserves both `nullable` and per-field
+  // metadata from the source VgiSchema.
+  const childCols: Column<any>[] = [];
+  const fields: any[] = [];
   for (const f of schema.fields) {
+    let col: Column<any>;
     const values = columns[f.name];
     if (values) {
-      cols[f.name] = f_columnFromArray(values, f.type as any, {
+      // flechette's Map builder iterates values via for-of, so plain objects
+      // (e.g. `{}` returned from a handler that hasn't migrated to Map) blow
+      // up with "value is not iterable". Coerce plain objects to Map per row
+      // for Map-typed fields so producer code that worked under arrow-js
+      // continues to work here.
+      const coerced = isMapType(f.type) ? values.map(coerceToMap) : values;
+      col = f_columnFromArray(coerced, f.type as any, {
         useBigInt: true,
         useBigIntTimestamp: true,
         useDecimalInt: true,
       });
     } else {
-      // No values — emit an all-null column of the schema's expected length.
       const rowCount = inferRowCount(columns, schema);
-      cols[f.name] = f_columnFromArray(
-        new Array(rowCount).fill(null),
-        f.type as any,
-      );
+      col = f_columnFromArray(new Array(rowCount).fill(null), f.type as any);
     }
+    childCols.push(col);
+    // f.nullable on a VgiSchema field defaults to true if not specified.
+    const nullable = (f as any).nullable ?? true;
+    const metadata = (f as any).metadata ?? null;
+    fields.push(f_field(f.name, col.type as any, nullable, metadata));
   }
-  return tableFromColumns(cols) as unknown as VgiBatch;
+  const flechSchema = {
+    version: 5,
+    endianness: 0, // Little
+    fields,
+    metadata: (schema as any).metadata ?? null,
+  };
+  return new Table(flechSchema as any, childCols) as unknown as VgiBatch;
+}
+
+function isMapType(t: VgiDataType): boolean {
+  // Arrow Type enum: Map = 17 in the FlatBuffer schema. flechette exposes
+  // this via DataType.typeId (same numeric encoding as arrow-js).
+  return (t as any)?.typeId === 17;
+}
+
+function coerceToMap(v: any): Map<any, any> | null {
+  if (v == null) return null;
+  if (v instanceof Map) return v;
+  if (Array.isArray(v)) return new Map(v);
+  if (typeof v === "object") return new Map(Object.entries(v));
+  return v;
 }
 
 function inferRowCount(

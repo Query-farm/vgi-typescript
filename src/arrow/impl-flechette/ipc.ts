@@ -9,12 +9,13 @@
 import {
   tableFromIPC,
   tableToIPC,
-  tableFromColumns,
   columnFromArray,
-  utf8 as f_utf8,
+  field as f_field,
+  Table,
 } from "@uwdata/flechette";
 
 import type { VgiSchema, VgiBatch } from "../types.js";
+import { readFirstRecordBatchMeta } from "./message-meta.js";
 
 // flechette decoding options that match how vgi-typescript callers expect
 // values to come out: 64-bit ints stay as BigInt, decimals as scaled BigInts,
@@ -35,23 +36,21 @@ const EXTRACT_OPTS = {
  * `RecordBatchStreamWriter.close()` produces for an empty stream.
  */
 export function serializeSchema(schema: VgiSchema): Uint8Array {
-  // Build a 0-row table by creating a column for each field with an empty
-  // typed array of the appropriate type, then encode as a stream.
-  const cols: Record<string, ReturnType<typeof columnFromArray>> = {};
-  for (const f of schema.fields) {
-    cols[f.name] = columnFromArray([], f.type as any);
-  }
-  // Empty schema: still need at least one column to satisfy flechette, fall
-  // back to a single nullable utf8 dummy that we strip on decode. (Schemas
-  // with zero fields are extremely rare; handlers checking for them already
-  // guard via fields.length.)
-  if (schema.fields.length === 0) {
-    return tableToIPC(tableFromColumns({ __placeholder: columnFromArray([], f_utf8()) }), {
-      format: "stream",
-    }) as Uint8Array;
-  }
-  const table = tableFromColumns(cols);
-  return tableToIPC(table, { format: "stream" }) as Uint8Array;
+  // Build the Table directly so we preserve per-field `nullable`/`metadata`.
+  // tableFromColumns rebuilds fields with nullable=true, which round-trips
+  // wrong on the C++ side (rejects schema-conforming payloads as schema
+  // mismatches). See build.ts for the same fix on batches.
+  const cols = schema.fields.map((f) => columnFromArray([], f.type as any));
+  const fields = schema.fields.map((f, i) =>
+    f_field(f.name, cols[i].type as any, (f as any).nullable ?? true, (f as any).metadata ?? null),
+  );
+  const flechSchema = {
+    version: 5,
+    endianness: 0,
+    fields,
+    metadata: (schema as any).metadata ?? null,
+  };
+  return tableToIPC(new Table(flechSchema as any, cols), { format: "stream" }) as Uint8Array;
 }
 
 /**
@@ -74,8 +73,7 @@ export function deserializeSchema(bytes: Uint8Array): VgiSchema {
  */
 export function serializeBatch(batch: VgiBatch): Uint8Array {
   // VgiBatch is structurally a flechette Table at this point.
-  const table = batch as any;
-  return tableToIPC(table, { format: "stream" }) as Uint8Array;
+  return tableToIPC(batch as any, { format: "stream" }) as Uint8Array;
 }
 
 /**
@@ -87,6 +85,25 @@ export function serializeBatch(batch: VgiBatch): Uint8Array {
  * the subprocess transport's one-batch-per-call convention.
  */
 export function deserializeBatch(bytes: Uint8Array): VgiBatch {
-  const table = tableFromIPC(bytes, EXTRACT_OPTS);
-  return table as unknown as VgiBatch;
+  const table: any = tableFromIPC(bytes, EXTRACT_OPTS);
+  // flechette's IPC parser ignores the Message-level `custom_metadata` field
+  // and reports row counts only via column children, so a "metadata-only"
+  // batch over a 0-field schema (legal in vgi-rpc — used to ferry state
+  // tokens / cancel signals) round-trips as numRows=0/metadata=undefined.
+  // Backfill both from the wire bytes so VgiBatch matches arrow-js's shape.
+  const meta = readFirstRecordBatchMeta(bytes);
+  if (meta === null) return table as VgiBatch;
+  const wantRows = table.numRows === 0 && meta.numRows > 0;
+  const wantMeta = !table.metadata && meta.metadata.size > 0;
+  if (!wantRows && !wantMeta) return table as VgiBatch;
+  // flechette Tables freeze their properties; wrap with a Proxy so reads of
+  // numRows / metadata see the backfilled values while everything else
+  // (schema, getChild, factory, …) flows through to the underlying Table.
+  return new Proxy(table, {
+    get(target, prop, receiver) {
+      if (wantRows && prop === "numRows") return meta.numRows;
+      if (wantMeta && prop === "metadata") return meta.metadata;
+      return Reflect.get(target, prop, receiver);
+    },
+  }) as unknown as VgiBatch;
 }

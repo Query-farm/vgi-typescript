@@ -45,7 +45,7 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
     options?: Record<string, unknown>,
     dataVersionSpec?: string | null,
     implementationVersion?: string | null,
-  ): CatalogAttachResult {
+  ): CatalogAttachResult | Promise<CatalogAttachResult> {
     if (!this.catalogs().includes(name)) {
       throw new Error(`No worker handles catalog '${name}'`);
     }
@@ -94,7 +94,7 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
     }
   }
 
-  version(attachId: AttachId, transactionId?: TransactionId): number {
+  version(attachId: AttachId, transactionId?: TransactionId): number | Promise<number> {
     return this._version;
   }
 

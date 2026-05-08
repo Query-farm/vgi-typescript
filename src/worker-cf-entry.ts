@@ -73,5 +73,97 @@ export {
   ReadOnlyCatalogInterface,
   CompositeCatalogInterface,
   CatalogInterface,
+  Worker,
+  Arguments,
+  FunctionType,
+  serializeAttachOptionSpec,
+  serializeAttachOptionSpecs,
+  serializeColumnStatistics,
+  BindResultSchema,
+  ScanFunctionResultSchema,
 } from "./index.js";
+
+export type {
+  AttachOptionSpec,
+  ColumnStatistics,
+  CatalogAttachResult,
+  CatalogDescriptor,
+  CatalogInfo,
+  TableInfo,
+  AttachId,
+  TransactionId,
+  SchemaInfo,
+  VgiFunction,
+  TableProcessParams,
+} from "./index.js";
+
 export type { ProtocolConfig } from "./protocol/dispatch.js";
+
+// Backend-agnostic Arrow facade. Same source resolves to arrow-js on
+// Node/Bun and flechette under workerd/worker/browser via the package's
+// `#arrow-impl` conditional import. Worker authors should always go
+// through these factories instead of importing arrow-js / flechette
+// directly.
+export {
+  // Type guards
+  TypeId,
+  isNull,
+  isInt,
+  isFloat,
+  isBinary,
+  isUtf8,
+  isBool,
+  isDecimal,
+  isDate,
+  isTime,
+  isTimestamp,
+  isInterval,
+  isList,
+  isStruct,
+  isUnion,
+  isFixedSizeBinary,
+  isFixedSizeList,
+  isMap,
+  isDuration,
+  isDictionary,
+  isBatch,
+  // Active backend's surface
+  backend,
+  schema, field,
+  nullType, bool,
+  int, int8, int16, int32, int64,
+  uint8, uint16, uint32, uint64,
+  float16, float32, float64,
+  utf8, binary, fixedSizeBinary,
+  decimal, decimal128, decimal256,
+  date, dateDay, dateMillisecond,
+  time, timeSecond, timeMillisecond, timeMicrosecond, timeNanosecond,
+  timestamp, duration, interval,
+  list, fixedSizeList, struct, map,
+  dictionary,
+  union, sparseUnion, denseUnion,
+  TimeUnit, DateUnit, IntervalUnit, UnionMode,
+  emptyBatch, batchFromRows, batchFromColumns, columnFromArray,
+  iterRows, batchToScalarDict, batchToSecretDict, safeNumber, decodeDictValue,
+  filterBatch, projectSchema, projectBatch,
+  serializeSchema, deserializeSchema, serializeBatch, deserializeBatch,
+  buildStatisticsBatch,
+} from "./arrow/index.js";
+
+export type {
+  VgiTypeId,
+  VgiDataType,
+  VgiField,
+  VgiSchema,
+  VgiColumn,
+  VgiColumnData,
+  VgiBatch,
+  VgiBackendInfo,
+} from "./arrow/index.js";
+
+// State serializer (HMAC-signed token round-trip across stateless requests)
+export { arrowStateSerializer, EXCHANGE_STATE_SCHEMA } from "./protocol/state-serializer.js";
+
+// Re-export from vgi-rpc for convenience.
+export { OutputCollector, AuthContext } from "vgi-rpc";
+export type { LogMessage } from "vgi-rpc";
