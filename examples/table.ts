@@ -24,6 +24,7 @@ import {
   reprPushedFilters,
   DEFAULT_MAX_WORKERS,
   ArgumentValidationError,
+  OrderPreservation,
   type TableBindParams,
   type TableProcessParams,
   type TableCardinality,
@@ -521,6 +522,102 @@ const partitioned_sequence = defineTableFunction<PartitionedSequenceArgs, Partit
   ],
   categories: ["generator", "utility"],
 });
+
+// ============================================================================
+// 6b. partitioned_{preserves_order,no_order_guarantee,fixed_order}
+//
+// Three clones of partitioned_sequence that differ only in
+// Meta.preserves_order. Used by integration/table/order_preservation_modes.test
+// to verify the parsed value flows end-to-end onto DuckDB's
+// TableFunction::order_preservation_type. Argument is `count` only (no
+// `increment`); output values are the raw integers 0..count-1.
+// Mirrors vgi-python's _BasePartitionedOrderMode trio.
+// ============================================================================
+
+interface OrderModeArgs {
+  count: number;
+}
+
+interface OrderModeState {
+  currentStart: number | null;
+  currentEnd: number | null;
+  currentIdx: number;
+}
+
+const ORDER_MODE_SCHEMA = new Schema([new Field("n", new Int64(), true)]);
+
+function makeOrderModeFunction(name: string, mode: OrderPreservation, description: string) {
+  return defineTableFunction<OrderModeArgs, OrderModeState>({
+    name,
+    description,
+    args: { count: new Int64() },
+    maxWorkers: DEFAULT_MAX_WORKERS,
+    preservesOrder: mode,
+    onBind: () => ({ outputSchema: ORDER_MODE_SCHEMA }),
+    cardinality: (params: TableBindParams<OrderModeArgs>) => ({
+      estimate: params.args.count,
+      max: params.args.count,
+    }),
+    onInit: async (params) => {
+      const workItems: Uint8Array[] = [];
+      for (let start = 0; start < params.args.count; start += CHUNK_SIZE) {
+        const end = Math.min(start + CHUNK_SIZE, params.args.count);
+        workItems.push(packQQ(start, end));
+      }
+      await params.storage.queuePush(workItems);
+      return {
+        max_workers: DEFAULT_MAX_WORKERS,
+        execution_id: params.executionId,
+        opaque_data: null,
+      };
+    },
+    initialState: () => ({ currentStart: null, currentEnd: null, currentIdx: 0 }),
+    process: async (
+      params: TableProcessParams<OrderModeArgs>,
+      state: OrderModeState,
+      out: OutputCollector
+    ) => {
+      if (state.currentStart === null || state.currentIdx >= (state.currentEnd ?? 0)) {
+        const workData = await params.storage!.queuePop();
+        if (workData === null) {
+          out.finish();
+          return;
+        }
+        [state.currentStart, state.currentEnd] = unpackQQ(workData);
+        state.currentIdx = state.currentStart;
+      }
+      const batchEnd = Math.min(state.currentIdx + BATCH_SIZE, state.currentEnd!);
+      const values: bigint[] = [];
+      for (let idx = state.currentIdx; idx < batchEnd; idx++) {
+        values.push(BigInt(idx));
+      }
+      out.emit(batchFromColumns({ n: values }, params.outputSchema));
+      state.currentIdx = batchEnd;
+    },
+    examples: [
+      { sql: `SELECT * FROM ${name}(100)`, description },
+    ],
+    categories: ["generator", "utility"],
+  });
+}
+
+const partitioned_preserves_order = makeOrderModeFunction(
+  "partitioned_preserves_order",
+  OrderPreservation.PRESERVES_ORDER,
+  "Multi-worker partitioned sequence; preserves_order=PRESERVES_ORDER (DuckDB INSERTION_ORDER).",
+);
+
+const partitioned_no_order_guarantee = makeOrderModeFunction(
+  "partitioned_no_order_guarantee",
+  OrderPreservation.NO_ORDER_GUARANTEE,
+  "Multi-worker partitioned sequence; preserves_order=NO_ORDER_GUARANTEE (DuckDB NO_ORDER).",
+);
+
+const partitioned_fixed_order = makeOrderModeFunction(
+  "partitioned_fixed_order",
+  OrderPreservation.FIXED_ORDER,
+  "Multi-worker partitioned sequence; preserves_order=FIXED_ORDER (DuckDB serialises pipeline to a single worker).",
+);
 
 // ============================================================================
 // 7. projected_data - 4 columns, projection pushdown
@@ -2652,6 +2749,9 @@ export const tableFunctions: VgiFunction[] = [
   generator_exception,
   logging_generator,
   partitioned_sequence,
+  partitioned_preserves_order,
+  partitioned_no_order_guarantee,
+  partitioned_fixed_order,
   projected_data,
   settings_aware,
   ten_thousand,

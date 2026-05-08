@@ -18,8 +18,13 @@ export enum NullHandling {
 }
 
 export enum OrderPreservation {
+  /** Output rows are in same order as input rows (DuckDB INSERTION_ORDER). */
   PRESERVES_ORDER = "PRESERVES_ORDER",
+  /** Output order is undefined; may be reordered (DuckDB NO_ORDER). */
   NO_ORDER_GUARANTEE = "NO_ORDER_GUARANTEE",
+  /** Output is in a fixed mandatory order; DuckDB serialises the pipeline
+   *  (single worker) to preserve it (DuckDB FIXED_ORDER). */
+  FIXED_ORDER = "FIXED_ORDER",
 }
 
 export enum OrderDependence {

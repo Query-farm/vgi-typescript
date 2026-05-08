@@ -2,7 +2,7 @@
 # Build and test targets for vgi-typescript.
 # Tests are independent targets — use `make -j8 test` for parallel execution.
 
-.PHONY: build build\:types build\:js install clean test test-http test-all test-client
+.PHONY: build build\:types build\:js install clean test test-subprocess test-http test-all test-client
 
 # --- Configuration (all overridable) ---
 
@@ -76,6 +76,30 @@ TEST_PATTERNS := "test/sql/*" \
 	"~test/sql/integration/table/constant_columns_types.test" \
 	"~test/sql/integration/catalog/zero_count_bypass.test"
 
+# Launcher transport excludes a few extra tests that assert subprocess-pool
+# semantics — `launch:` workers are pooled by the AF_UNIX socket, not by
+# DuckDB's per-process subprocess pool, so these intentionally don't apply.
+# Mirrors vgi's own test_launcher target.
+#
+# order_preservation_modes is also excluded: its FIXED_ORDER → 1-distinct-conn
+# assertion is meaningful only on the subprocess transport. Under launcher
+# (and HTTP), DuckDB allocates one FunctionConnection per worker thread
+# eagerly during InitLocalState, so all N pre-allocated conns appear in the
+# per-batch logs even when the planner has serialised execution onto a
+# single producer. Reproduces with the upstream Python worker too.
+LAUNCHER_TEST_PATTERNS := $(TEST_PATTERNS) \
+	"~test/sql/vgi_worker_pool.test" \
+	"~test/sql/integration/table/filter_echo_partitioned.test" \
+	"~test/sql/integration/attach/versioned_tables_impl.test" \
+	"~test/sql/integration/table/order_preservation_modes.test"
+
+# Idle-timeout for launcher-spawned workers. The C++ launcher passes
+# --idle-timeout 300 by default; src/worker.ts honours
+# VGI_WORKER_IDLE_TIMEOUT as an override so the suite leaves no stale Bun
+# processes after it finishes. 5 s is enough that a slow second test still
+# warms onto the same worker within the per-test interval.
+LAUNCHER_IDLE_TIMEOUT ?= 5
+
 HTTP_TEST_PATTERNS := "test/sql/integration/*" \
 	"~test/sql/integration/writable/*" \
 	"~test/sql/integration/schema_reconcile.test" \
@@ -84,9 +108,43 @@ HTTP_TEST_PATTERNS := "test/sql/integration/*" \
 	"~test/sql/integration/table/filter_echo_partitioned.test" \
 	"~test/sql/integration/table/partitioned_sequence.test"
 
-# Single-shot subprocess transport run. Pass `KEEP_LOG=1` to suppress the
-# rm-on-exit so you can grep through the per-test verbose output.
+# Default test target: launcher (`launch:`) transport.
+#
+# The vgi extension's C++ AF_UNIX launcher spawns each worker once per
+# (argv, cwd, VGI_RPC_*-env) tuple and reuses it across every parallel
+# unittest invocation that hashes to the same tuple. Running 8 jobs no
+# longer means 8× Bun cold-starts — measured ~5× wall-clock improvement
+# in the upstream extension's own suite.
+#
+# Worker support: src/worker.ts parses `--unix PATH` / `--idle-timeout SEC`
+# (added by the launcher) and dispatches to vgi-rpc's serveUnix() instead
+# of the stdio VgiRpcServer.
+#
+# Use `make test-subprocess` if you specifically need per-process subprocess
+# semantics (e.g. debugging a worker startup issue).
 test:
+	@cd $(VGI_DIR) && \
+	export VGI_TEST_WORKER="launch:$(WORKER)"; \
+	export VGI_VERSIONED_WORKER="launch:$(VERSIONED_WORKER)"; \
+	export VGI_ATTACH_OPTIONS_WORKER="launch:$(ATTACH_OPTIONS_WORKER)"; \
+	export VGI_REQUIRE_LAUNCHER_TRANSPORT=1; \
+	export VGI_WORKER_IDLE_TIMEOUT=$(LAUNCHER_IDLE_TIMEOUT); \
+	./build/release/test/unittest -j 8 $(LAUNCHER_TEST_PATTERNS) > $(TEST_LOG) 2>&1; \
+	rc=$$?; \
+	tail -n 20 $(TEST_LOG); \
+	echo ""; \
+	if [ $$rc -eq 0 ]; then \
+		echo "All tests passed (launcher). Log: $(TEST_LOG)"; \
+	else \
+		echo "Some tests failed (rc=$$rc, launcher). Full log: $(TEST_LOG)"; \
+	fi; \
+	exit $$rc
+
+# Plain subprocess transport — one worker per DuckDB process, pooled.
+# Same suite as `test` plus three tests the launcher path can't satisfy
+# (vgi_worker_pool, filter_echo_partitioned, versioned_tables_impl assert
+# per-process pool semantics — meaningful only under subprocess transport).
+test-subprocess:
 	@cd $(VGI_DIR) && \
 	export VGI_TEST_WORKER="$(WORKER)"; \
 	export VGI_VERSIONED_WORKER="$(VERSIONED_WORKER)"; \
@@ -96,9 +154,9 @@ test:
 	tail -n 20 $(TEST_LOG); \
 	echo ""; \
 	if [ $$rc -eq 0 ]; then \
-		echo "All tests passed. Log: $(TEST_LOG)"; \
+		echo "All tests passed (subprocess). Log: $(TEST_LOG)"; \
 	else \
-		echo "Some tests failed (rc=$$rc). Full log: $(TEST_LOG)"; \
+		echo "Some tests failed (rc=$$rc, subprocess). Full log: $(TEST_LOG)"; \
 	fi; \
 	exit $$rc
 
@@ -150,8 +208,26 @@ test-facade-parity:
 
 # Per-test entry point — useful when iterating on a single failure.
 # `make test/integration/filter_pushdown/integers` runs just that one test
-# with the verbose -s flag so the failure detail prints inline.
+# with the verbose -s flag so the failure detail prints inline. Defaults
+# to the launcher transport; use `make test-subprocess/...` to force the
+# subprocess path.
 test/%:
+	@test_file="$(TEST_DIR)/$*.test"; \
+	if [ ! -f "$$test_file" ]; then \
+		echo "ERROR: test file not found: $$test_file"; \
+		exit 1; \
+	fi; \
+	export VGI_TEST_WORKER="launch:$(WORKER)"; \
+	export VGI_VERSIONED_WORKER="launch:$(VERSIONED_WORKER)"; \
+	export VGI_ATTACH_OPTIONS_WORKER="launch:$(ATTACH_OPTIONS_WORKER)"; \
+	export VGI_REQUIRE_LAUNCHER_TRANSPORT=1; \
+	export VGI_WORKER_IDLE_TIMEOUT=$(LAUNCHER_IDLE_TIMEOUT); \
+	cd $(VGI_DIR) && ./build/release/test/unittest -s "$$test_file"
+
+# Subprocess single-test entry point — same shape as `test/%` but without
+# the `launch:` prefix. Useful when isolating a hang at the worker spawn
+# layer rather than the launcher cache layer.
+test-subprocess/%:
 	@test_file="$(TEST_DIR)/$*.test"; \
 	if [ ! -f "$$test_file" ]; then \
 		echo "ERROR: test file not found: $$test_file"; \

@@ -11,13 +11,15 @@ make install              # bun install
 make build                # Build types + JS bundle
 make clean                # Remove dist/
 
-make test                 # Run all subprocess transport tests (sequentially)
-make -j8 test             # Run all subprocess tests in parallel (8 jobs)
+make test                 # Run all tests via the launcher transport (preferred)
+make -j8 test             # Same, with unittest -j 8 in parallel
+make test-subprocess      # Run all tests via plain subprocess transport (legacy)
 make test-http            # Run all HTTP transport tests
 make -j8 test-http        # Run all HTTP tests in parallel
-make -j8 test-all         # Run both subprocess and HTTP tests
-make test/vgi_cardinality # Run a single subprocess test by name
-make test-http/vgi_cardinality  # Run a single HTTP test by name
+make -j8 test-all         # Run launcher + HTTP suites
+make test/vgi_cardinality # Run a single test by name (launcher transport)
+make test-subprocess/vgi_cardinality  # Same test, force subprocess transport
+make test-http/vgi_cardinality        # Same test, HTTP transport
 make test/integration/table/sequence  # Subdirectory tests work too
 
 # Override defaults:
@@ -34,9 +36,33 @@ Each test runs the **release** binary first. On failure, it reruns with the **de
 
 ### Both transports must pass
 
-Always run tests on **both** subprocess and HTTP transports. Use `make -j8 test-all`
-or run `make -j8 test` and `make -j8 test-http` separately. A change is not complete
-until both transports pass.
+Always run tests on **both** the local-IPC transport (launcher *or* subprocess)
+and HTTP. `make -j8 test-all` runs `make -j8 test` (launcher) followed by
+`make -j8 test-http`. A change is not complete until both transports pass.
+
+### Launcher transport (default for `make test`)
+
+The vgi C++ extension exposes a `launch:<argv>` LOCATION scheme that spawns
+or reuses a long-running worker over AF_UNIX. The Makefile sets
+`VGI_TEST_WORKER="launch:.../bin/vgi-example-worker"` so every parallel
+unittest invocation hashing to the same `(argv, cwd, VGI_RPC_*-env)` tuple
+shares a single warm Bun process — no per-test Bun cold-start, ~5× faster
+than the per-process subprocess pool in the upstream extension's measured
+runs.
+
+How the worker handles it: `Worker.run()` (src/worker.ts) parses
+`--unix PATH` / `--idle-timeout SEC` from argv (the C++ launcher appends
+both) and dispatches to vgi-rpc's `serveUnix()` instead of the stdio
+`VgiRpcServer`. With no `--unix`, it falls back to stdin/stdout — so the
+same example-worker binary serves both the launcher and the legacy
+subprocess paths.
+
+Three tests are excluded from the launcher suite because they assert
+subprocess-pool semantics (worker_pool, filter_echo_partitioned,
+versioned_tables_impl) — these only run under `make test-subprocess`.
+
+Use `make test-subprocess` when you need to debug worker spawn itself
+or specifically exercise the per-process subprocess pool.
 
 ## Build (raw commands)
 

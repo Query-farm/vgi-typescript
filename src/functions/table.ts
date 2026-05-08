@@ -35,7 +35,13 @@ import {
   type PushdownFilters,
 } from "../filter-pushdown/index.js";
 import type { ColumnStatistics } from "../util/statistics.js";
-import { FunctionStability } from "../types.js";
+import {
+  FunctionStability,
+  type NullHandling,
+  type OrderPreservation,
+  type OrderDependence,
+  type DistinctDependence,
+} from "../types.js";
 import { BoundStorage, storage as globalStorage } from "./storage.js";
 
 // Base64-decode a string into raw bytes. Used to unpack the dynamic filter
@@ -213,6 +219,12 @@ export interface TableFunctionConfig<
   maxWorkers?: number;
   requiredSettings?: string[];
   requiredSecrets?: string[];
+  /** Row-order preservation behavior; flows to DuckDB's
+   *  TableFunction::order_preservation_type. */
+  preservesOrder?: OrderPreservation;
+  nullHandling?: NullHandling;
+  orderDependent?: OrderDependence;
+  distinctDependent?: DistinctDependence;
 }
 
 export function defineTableFunction<
@@ -254,6 +266,10 @@ export function defineTableFunction<
     maxWorkers: config.maxWorkers,
     requiredSettings: config.requiredSettings,
     requiredSecrets: config.requiredSecrets,
+    preservesOrder: config.preservesOrder,
+    nullHandling: config.nullHandling,
+    orderDependent: config.orderDependent,
+    distinctDependent: config.distinctDependent,
   };
 
   function extractArgs(request: BindRequest): TArgs {
