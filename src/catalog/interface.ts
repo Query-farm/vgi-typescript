@@ -3,8 +3,8 @@
 
 import { CatalogReadOnlyError } from "../errors.js";
 
-export type AttachId = Uint8Array;
-export type TransactionId = Uint8Array;
+export type AttachOpaqueData = Uint8Array;
+export type TransactionOpaqueData = Uint8Array;
 
 // Wire-encoded string union (matches Python's CatalogMacroType enum names).
 import type { MacroType } from "../generated/vgi-client.js";
@@ -171,14 +171,14 @@ export abstract class CatalogInterface {
    * default derives them from the registered descriptor(s).
    */
   catalogsInfo?(): Awaitable<import("../generated/vgi-client.js").CatalogInfo[]>;
-  abstract detach(attachId: AttachId): Awaitable<void>;
+  abstract detach(attachOpaqueData: AttachOpaqueData): Awaitable<void>;
   abstract version(
-    attachId: AttachId,
-    transactionId?: TransactionId
+    attachOpaqueData: AttachOpaqueData,
+    transactionOpaqueData?: TransactionOpaqueData
   ): Awaitable<number>;
   abstract schemas(
-    attachId: AttachId,
-    transactionId?: TransactionId
+    attachOpaqueData: AttachOpaqueData,
+    transactionOpaqueData?: TransactionOpaqueData
   ): Awaitable<SchemaInfo[]>;
 
   // Default implementations (throw CatalogReadOnlyError)
@@ -189,68 +189,68 @@ export abstract class CatalogInterface {
     throw new CatalogReadOnlyError("drop");
   }
   schemaGet(
-    attachId: AttachId,
+    attachOpaqueData: AttachOpaqueData,
     name: string,
-    transactionId?: TransactionId
+    transactionOpaqueData?: TransactionOpaqueData
   ): Awaitable<SchemaInfo | null> {
-    const all = this.schemas(attachId, transactionId);
+    const all = this.schemas(attachOpaqueData, transactionOpaqueData);
     if (isPromise(all)) {
       return all.then((arr) => arr.find((s) => s.name === name) ?? null);
     }
     return all.find((s) => s.name === name) ?? null;
   }
   schemaCreate(
-    attachId: AttachId,
+    attachOpaqueData: AttachOpaqueData,
     name: string,
     comment?: string | null,
     tags?: any,
-    transactionId?: TransactionId
+    transactionOpaqueData?: TransactionOpaqueData
   ): Awaitable<void> {
     throw new CatalogReadOnlyError("schema_create");
   }
   schemaDrop(
-    attachId: AttachId,
+    attachOpaqueData: AttachOpaqueData,
     name: string,
     ignoreNotFound?: boolean,
     cascade?: boolean,
-    transactionId?: TransactionId
+    transactionOpaqueData?: TransactionOpaqueData
   ): Awaitable<void> {
     throw new CatalogReadOnlyError("schema_drop");
   }
   schemaContentsTables(
-    attachId: AttachId,
+    attachOpaqueData: AttachOpaqueData,
     name: string,
-    transactionId?: TransactionId
+    transactionOpaqueData?: TransactionOpaqueData
   ): Awaitable<TableInfo[]> {
     return [];
   }
   schemaContentsViews(
-    attachId: AttachId,
+    attachOpaqueData: AttachOpaqueData,
     name: string,
-    transactionId?: TransactionId
+    transactionOpaqueData?: TransactionOpaqueData
   ): Awaitable<ViewInfo[]> {
     return [];
   }
   schemaContentsFunctions(
-    attachId: AttachId,
+    attachOpaqueData: AttachOpaqueData,
     name: string,
     type: string,
-    transactionId?: TransactionId
+    transactionOpaqueData?: TransactionOpaqueData
   ): Awaitable<FunctionInfo[]> {
     return [];
   }
   tableGet(
-    attachId: AttachId,
+    attachOpaqueData: AttachOpaqueData,
     schemaName: string,
     name: string,
     atUnit?: string,
     atValue?: string,
-    transactionId?: TransactionId
+    transactionOpaqueData?: TransactionOpaqueData
   ): Awaitable<TableInfo | null> {
     return null;
   }
   tableCreate(
-    attachId: AttachId,
+    attachOpaqueData: AttachOpaqueData,
     schemaName: string,
     name: string,
     columns: Uint8Array,
@@ -258,26 +258,26 @@ export abstract class CatalogInterface {
     notNullConstraints?: number[],
     uniqueConstraints?: number[][],
     checkConstraints?: string[],
-    transactionId?: TransactionId
+    transactionOpaqueData?: TransactionOpaqueData
   ): Awaitable<void> {
     throw new CatalogReadOnlyError("table_create");
   }
   tableDrop(
-    attachId: AttachId,
+    attachOpaqueData: AttachOpaqueData,
     schemaName: string,
     name: string,
     ignoreNotFound?: boolean,
-    transactionId?: TransactionId
+    transactionOpaqueData?: TransactionOpaqueData
   ): Awaitable<void> {
     throw new CatalogReadOnlyError("table_drop");
   }
   tableScanFunctionGet(
-    attachId: AttachId,
+    attachOpaqueData: AttachOpaqueData,
     schemaName: string,
     name: string,
     atUnit?: string,
     atValue?: string,
-    transactionId?: TransactionId
+    transactionOpaqueData?: TransactionOpaqueData
   ): Awaitable<any> {
     throw new CatalogReadOnlyError("table_scan_function_get");
   }
@@ -290,175 +290,175 @@ export abstract class CatalogInterface {
    * the function-level `table_function_statistics` path.
    */
   tableColumnStatisticsGet(
-    attachId: AttachId,
+    attachOpaqueData: AttachOpaqueData,
     schemaName: string,
     name: string,
-    transactionId?: TransactionId,
+    transactionOpaqueData?: TransactionOpaqueData,
   ): Awaitable<{ bytes: Uint8Array; cacheMaxAgeSeconds: number | null } | null> {
     return null;
   }
   tableCommentSet(
-    attachId: AttachId,
+    attachOpaqueData: AttachOpaqueData,
     schemaName: string,
     name: string,
     comment?: string | null,
     ignoreNotFound?: boolean,
-    transactionId?: TransactionId
+    transactionOpaqueData?: TransactionOpaqueData
   ): Awaitable<void> {
     throw new CatalogReadOnlyError("table_comment_set");
   }
   tableRename(
-    attachId: AttachId,
+    attachOpaqueData: AttachOpaqueData,
     schemaName: string,
     name: string,
     newName: string,
     ignoreNotFound?: boolean,
-    transactionId?: TransactionId
+    transactionOpaqueData?: TransactionOpaqueData
   ): Awaitable<void> {
     throw new CatalogReadOnlyError("table_rename");
   }
   tableColumnAdd(
-    attachId: AttachId,
+    attachOpaqueData: AttachOpaqueData,
     schemaName: string,
     name: string,
     columnName: string,
     columnType: string,
     defaultValue?: string,
     ignoreNotFound?: boolean,
-    transactionId?: TransactionId
+    transactionOpaqueData?: TransactionOpaqueData
   ): Awaitable<void> {
     throw new CatalogReadOnlyError("table_column_add");
   }
   tableColumnDrop(
-    attachId: AttachId,
+    attachOpaqueData: AttachOpaqueData,
     schemaName: string,
     name: string,
     columnName: string,
     ignoreNotFound?: boolean,
-    transactionId?: TransactionId
+    transactionOpaqueData?: TransactionOpaqueData
   ): Awaitable<void> {
     throw new CatalogReadOnlyError("table_column_drop");
   }
   tableColumnRename(
-    attachId: AttachId,
+    attachOpaqueData: AttachOpaqueData,
     schemaName: string,
     name: string,
     columnName: string,
     newName: string,
     ignoreNotFound?: boolean,
-    transactionId?: TransactionId
+    transactionOpaqueData?: TransactionOpaqueData
   ): Awaitable<void> {
     throw new CatalogReadOnlyError("table_column_rename");
   }
   tableColumnDefaultSet(
-    attachId: AttachId,
+    attachOpaqueData: AttachOpaqueData,
     schemaName: string,
     name: string,
     columnName: string,
     defaultValue: string,
     ignoreNotFound?: boolean,
-    transactionId?: TransactionId
+    transactionOpaqueData?: TransactionOpaqueData
   ): Awaitable<void> {
     throw new CatalogReadOnlyError("table_column_default_set");
   }
   tableColumnDefaultDrop(
-    attachId: AttachId,
+    attachOpaqueData: AttachOpaqueData,
     schemaName: string,
     name: string,
     columnName: string,
     ignoreNotFound?: boolean,
-    transactionId?: TransactionId
+    transactionOpaqueData?: TransactionOpaqueData
   ): Awaitable<void> {
     throw new CatalogReadOnlyError("table_column_default_drop");
   }
   tableColumnTypeChange(
-    attachId: AttachId,
+    attachOpaqueData: AttachOpaqueData,
     schemaName: string,
     name: string,
     columnName: string,
     newType: string,
     ignoreNotFound?: boolean,
-    transactionId?: TransactionId
+    transactionOpaqueData?: TransactionOpaqueData
   ): Awaitable<void> {
     throw new CatalogReadOnlyError("table_column_type_change");
   }
   tableNotNullSet(
-    attachId: AttachId,
+    attachOpaqueData: AttachOpaqueData,
     schemaName: string,
     name: string,
     columnName: string,
     ignoreNotFound?: boolean,
-    transactionId?: TransactionId
+    transactionOpaqueData?: TransactionOpaqueData
   ): Awaitable<void> {
     throw new CatalogReadOnlyError("table_not_null_set");
   }
   tableNotNullDrop(
-    attachId: AttachId,
+    attachOpaqueData: AttachOpaqueData,
     schemaName: string,
     name: string,
     columnName: string,
     ignoreNotFound?: boolean,
-    transactionId?: TransactionId
+    transactionOpaqueData?: TransactionOpaqueData
   ): Awaitable<void> {
     throw new CatalogReadOnlyError("table_not_null_drop");
   }
   viewGet(
-    attachId: AttachId,
+    attachOpaqueData: AttachOpaqueData,
     schemaName: string,
     name: string,
-    transactionId?: TransactionId
+    transactionOpaqueData?: TransactionOpaqueData
   ): Awaitable<ViewInfo | null> {
     return null;
   }
   viewCreate(
-    attachId: AttachId,
+    attachOpaqueData: AttachOpaqueData,
     schemaName: string,
     name: string,
     definition: string,
     onConflict: string,
-    transactionId?: TransactionId
+    transactionOpaqueData?: TransactionOpaqueData
   ): Awaitable<void> {
     throw new CatalogReadOnlyError("view_create");
   }
   viewDrop(
-    attachId: AttachId,
+    attachOpaqueData: AttachOpaqueData,
     schemaName: string,
     name: string,
     ignoreNotFound?: boolean,
-    transactionId?: TransactionId
+    transactionOpaqueData?: TransactionOpaqueData
   ): Awaitable<void> {
     throw new CatalogReadOnlyError("view_drop");
   }
   viewRename(
-    attachId: AttachId,
+    attachOpaqueData: AttachOpaqueData,
     schemaName: string,
     name: string,
     newName: string,
     ignoreNotFound?: boolean,
-    transactionId?: TransactionId
+    transactionOpaqueData?: TransactionOpaqueData
   ): Awaitable<void> {
     throw new CatalogReadOnlyError("view_rename");
   }
   viewCommentSet(
-    attachId: AttachId,
+    attachOpaqueData: AttachOpaqueData,
     schemaName: string,
     name: string,
     comment?: string | null,
     ignoreNotFound?: boolean,
-    transactionId?: TransactionId
+    transactionOpaqueData?: TransactionOpaqueData
   ): Awaitable<void> {
     throw new CatalogReadOnlyError("view_comment_set");
   }
   macroGet(
-    attachId: AttachId,
+    attachOpaqueData: AttachOpaqueData,
     schemaName: string,
     name: string,
-    transactionId?: TransactionId
+    transactionOpaqueData?: TransactionOpaqueData
   ): Awaitable<MacroInfo | null> {
     return null;
   }
   macroCreate(
-    attachId: AttachId,
+    attachOpaqueData: AttachOpaqueData,
     schemaName: string,
     name: string,
     macroType: MacroType,
@@ -466,52 +466,52 @@ export abstract class CatalogInterface {
     definition: string,
     onConflict: string,
     parameterDefaultValues?: Uint8Array | null,
-    transactionId?: TransactionId
+    transactionOpaqueData?: TransactionOpaqueData
   ): Awaitable<void> {
     throw new CatalogReadOnlyError("macro_create");
   }
   macroDrop(
-    attachId: AttachId,
+    attachOpaqueData: AttachOpaqueData,
     schemaName: string,
     name: string,
     ignoreNotFound?: boolean,
-    transactionId?: TransactionId
+    transactionOpaqueData?: TransactionOpaqueData
   ): Awaitable<void> {
     throw new CatalogReadOnlyError("macro_drop");
   }
   schemaContentsMacros(
-    attachId: AttachId,
+    attachOpaqueData: AttachOpaqueData,
     name: string,
     type: string,
-    transactionId?: TransactionId
+    transactionOpaqueData?: TransactionOpaqueData
   ): Awaitable<MacroInfo[]> {
     return [];
   }
   schemaContentsIndexes(
-    attachId: AttachId,
+    attachOpaqueData: AttachOpaqueData,
     name: string,
-    transactionId?: TransactionId
+    transactionOpaqueData?: TransactionOpaqueData
   ): Awaitable<IndexInfo[]> {
     return [];
   }
   indexGet(
-    attachId: AttachId,
+    attachOpaqueData: AttachOpaqueData,
     schemaName: string,
     name: string,
-    transactionId?: TransactionId
+    transactionOpaqueData?: TransactionOpaqueData
   ): Awaitable<IndexInfo | null> {
     return null;
   }
-  transactionBegin(attachId: AttachId): Awaitable<Uint8Array | null> {
+  transactionBegin(attachOpaqueData: AttachOpaqueData): Awaitable<Uint8Array | null> {
     return null;
   }
   transactionCommit(
-    attachId: AttachId,
-    transactionId: TransactionId
+    attachOpaqueData: AttachOpaqueData,
+    transactionOpaqueData: TransactionOpaqueData
   ): Awaitable<void> {}
   transactionRollback(
-    attachId: AttachId,
-    transactionId: TransactionId
+    attachOpaqueData: AttachOpaqueData,
+    transactionOpaqueData: TransactionOpaqueData
   ): Awaitable<void> {}
 }
 

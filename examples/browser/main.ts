@@ -29,20 +29,20 @@ async function main() {
     const catalogName = catalogs[0] ?? "trains";
     log(`\n=== Attach '${catalogName}' ===`);
     const attach = await client.catalogAttach(catalogName);
-    const attachId = attach.attach_id;
-    log(`  attachId: ${attachId.length} bytes`);
+    const attachOpaqueData = attach.attach_opaque_data;
+    log(`  attachOpaqueData: ${attachOpaqueData.length} bytes`);
     log(`  defaultSchema: ${attach.default_schema}`);
 
     // --- Schemas ---
     log("\n=== Schemas ===");
-    const schemas = await client.schemas(attachId);
+    const schemas = await client.schemas(attachOpaqueData);
     for (const s of schemas) log(`  ${s.name}`);
 
     // --- Functions (table) ---
     const schemaName = schemas[0]?.name ?? "main";
     log(`\n=== Table functions in '${schemaName}' ===`);
     const funcs = await client.schemaContentsFunctions(
-      attachId,
+      attachOpaqueData,
       schemaName,
       "TABLE_FUNCTION",
     );
@@ -50,7 +50,7 @@ async function main() {
 
     // --- Tables ---
     log(`\n=== Tables in '${schemaName}' ===`);
-    const tables = await client.schemaContentsTables(attachId, schemaName);
+    const tables = await client.schemaContentsTables(attachOpaqueData, schemaName);
     for (const t of tables) {
       log(`  ${t.name}${t.comment ? ": " + t.comment : ""}`);
     }
@@ -92,7 +92,7 @@ async function main() {
     log(`  Total departures: ${depCount}`);
 
     // --- Detach ---
-    await client.catalogDetach(attachId);
+    await client.catalogDetach(attachOpaqueData);
     log("\nDone!");
   } catch (err: any) {
     log(`\nERROR: ${err.message ?? err}`);

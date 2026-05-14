@@ -69,8 +69,8 @@ export {
   encodeMacroInfo,
   decodeMacroInfo,
   type CatalogAttachResult,
-  type AttachId,
-  type TransactionId,
+  type AttachOpaqueData,
+  type TransactionOpaqueData,
 } from "./catalog/interface.js";
 
 // Errors

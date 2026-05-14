@@ -61,7 +61,7 @@ export type CatalogMacroType = "SCALAR_MACRO" | "TABLE_MACRO";
 /** Options for constructing a VgiClient. */
 export interface VgiClientOptions {
   /** Pre-existing attach ID to bind this client to a specific catalog. */
-  attachId?: Uint8Array;
+  attachOpaqueData?: Uint8Array;
 }
 
 /** Options for calling a table function. */
@@ -77,9 +77,9 @@ export interface TableFunctionOptions {
   /** DuckDB settings to pass to the function. */
   settings?: VgiBatch;
   /** Transaction ID for transactional catalogs. */
-  transactionId?: Uint8Array;
-  /** Attach ID to bind this call to a specific catalog attach. Overrides the client-level attachId. */
-  attachId?: Uint8Array;
+  transactionOpaqueData?: Uint8Array;
+  /** Attach ID to bind this call to a specific catalog attach. Overrides the client-level attachOpaqueData. */
+  attachOpaqueData?: Uint8Array;
   /** ORDER BY pushdown hint from DuckDB's RowGroupPruner. */
   orderBy?: OrderByPushdown;
   /** TABLESAMPLE pushdown hint from DuckDB's SamplingPushdown optimizer. */
@@ -103,9 +103,9 @@ export interface ScalarFunctionOptions {
   /** DuckDB secrets to pass to the function. */
   secrets?: VgiBatch;
   /** Transaction ID for transactional catalogs. */
-  transactionId?: Uint8Array;
-  /** Attach ID to bind this call to a specific catalog attach. Overrides the client-level attachId. */
-  attachId?: Uint8Array;
+  transactionOpaqueData?: Uint8Array;
+  /** Attach ID to bind this call to a specific catalog attach. Overrides the client-level attachOpaqueData. */
+  attachOpaqueData?: Uint8Array;
   /** Invoked after bind, before init. Receives the bind response. */
   onBind?: BindResultCallback;
 }
@@ -125,9 +125,9 @@ export interface TableInOutFunctionOptions {
   /** DuckDB settings to pass to the function. */
   settings?: VgiBatch;
   /** Transaction ID for transactional catalogs. */
-  transactionId?: Uint8Array;
-  /** Attach ID to bind this call to a specific catalog attach. Overrides the client-level attachId. */
-  attachId?: Uint8Array;
+  transactionOpaqueData?: Uint8Array;
+  /** Attach ID to bind this call to a specific catalog attach. Overrides the client-level attachOpaqueData. */
+  attachOpaqueData?: Uint8Array;
   /** ORDER BY pushdown hint from DuckDB's RowGroupPruner. */
   orderBy?: OrderByPushdown;
   /** TABLESAMPLE pushdown hint from DuckDB's SamplingPushdown optimizer. */

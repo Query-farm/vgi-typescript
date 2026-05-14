@@ -20,17 +20,17 @@ export function registerCatalogIndexMethods(protocol: Protocol, getCatalog: GetC
   // catalog_schema_contents_indexes
   protocol.unary("catalog_schema_contents_indexes", {
     params: schema([
-      field("attach_id", binary(), true),
+      field("attach_opaque_data", binary(), true),
       field("name", utf8(), false),
-      field("transaction_id", binary(), true),
+      field("transaction_opaque_data", binary(), true),
     ]),
     result: RESULT_BINARY_SCHEMA,
     handler: async (params) => {
       const cat = getCatalog();
       const indexes = await cat.schemaContentsIndexes(
-        toUint8Array(params.attach_id),
+        toUint8Array(params.attach_opaque_data),
         params.name,
-        params.transaction_id ? toUint8Array(params.transaction_id) : undefined,
+        params.transaction_opaque_data ? toUint8Array(params.transaction_opaque_data) : undefined,
       );
       return wrapResult({
         items: indexes.map((i) => encodeIndexInfo(i)),
@@ -41,19 +41,19 @@ export function registerCatalogIndexMethods(protocol: Protocol, getCatalog: GetC
   // catalog_index_get
   protocol.unary("catalog_index_get", {
     params: schema([
-      field("attach_id", binary(), true),
+      field("attach_opaque_data", binary(), true),
       field("schema_name", utf8(), false),
       field("name", utf8(), false),
-      field("transaction_id", binary(), true),
+      field("transaction_opaque_data", binary(), true),
     ]),
     result: RESULT_BINARY_SCHEMA,
     handler: async (params) => {
       const cat = getCatalog();
       const info = await cat.indexGet(
-        toUint8Array(params.attach_id),
+        toUint8Array(params.attach_opaque_data),
         params.schema_name,
         params.name,
-        params.transaction_id ? toUint8Array(params.transaction_id) : undefined,
+        params.transaction_opaque_data ? toUint8Array(params.transaction_opaque_data) : undefined,
       );
       return wrapResult({
         items: info ? [encodeIndexInfo(info)] : [],

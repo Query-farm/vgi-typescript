@@ -27,23 +27,23 @@ export function registerCatalogTableMethods(protocol: Protocol, getCatalog: GetC
   // catalog_table_get
   protocol.unary("catalog_table_get", {
     params: schema([
-      field("attach_id", binary(), true),
+      field("attach_opaque_data", binary(), true),
       field("schema_name", utf8(), false),
       field("name", utf8(), false),
       field("at_unit", utf8(), true),
       field("at_value", utf8(), true),
-      field("transaction_id", binary(), true),
+      field("transaction_opaque_data", binary(), true),
     ]),
     result: RESULT_BINARY_SCHEMA,
     handler: async (params) => {
       const cat = getCatalog();
       const info = await cat.tableGet(
-        toUint8Array(params.attach_id),
+        toUint8Array(params.attach_opaque_data),
         params.schema_name,
         params.name,
         params.at_unit,
         params.at_value,
-        params.transaction_id ? toUint8Array(params.transaction_id) : undefined
+        params.transaction_opaque_data ? toUint8Array(params.transaction_opaque_data) : undefined
       );
       return wrapResult({
         items: info ? [encodeTableInfo(info)] : [],
@@ -54,7 +54,7 @@ export function registerCatalogTableMethods(protocol: Protocol, getCatalog: GetC
   // catalog_table_create
   protocol.unary("catalog_table_create", {
     params: schema([
-      field("attach_id", binary(), true),
+      field("attach_opaque_data", binary(), true),
       field("schema_name", utf8(), false),
       field("name", utf8(), false),
       field("columns", binary(), false),
@@ -62,13 +62,13 @@ export function registerCatalogTableMethods(protocol: Protocol, getCatalog: GetC
       field("not_null_constraints", list(field("item", int32(), false)), true),
       field("unique_constraints", list(field("item", list(field("item", int32(), false)), false)), true),
       field("check_constraints", list(field("item", utf8(), false)), true),
-      field("transaction_id", binary(), true),
+      field("transaction_opaque_data", binary(), true),
     ]),
     result: emptyResultSchema,
     handler: async (params) => {
       const cat = getCatalog();
       await cat.tableCreate(
-        toUint8Array(params.attach_id),
+        toUint8Array(params.attach_opaque_data),
         params.schema_name,
         params.name,
         toUint8Array(params.columns),
@@ -76,7 +76,7 @@ export function registerCatalogTableMethods(protocol: Protocol, getCatalog: GetC
         params.not_null_constraints ?? [],
         params.unique_constraints ?? [],
         params.check_constraints ?? [],
-        params.transaction_id ? toUint8Array(params.transaction_id) : undefined
+        params.transaction_opaque_data ? toUint8Array(params.transaction_opaque_data) : undefined
       );
       return {};
     },
@@ -85,21 +85,21 @@ export function registerCatalogTableMethods(protocol: Protocol, getCatalog: GetC
   // catalog_table_drop
   protocol.unary("catalog_table_drop", {
     params: schema([
-      field("attach_id", binary(), true),
+      field("attach_opaque_data", binary(), true),
       field("schema_name", utf8(), false),
       field("name", utf8(), false),
       field("ignore_not_found", bool(), true),
-      field("transaction_id", binary(), true),
+      field("transaction_opaque_data", binary(), true),
     ]),
     result: emptyResultSchema,
     handler: async (params) => {
       const cat = getCatalog();
       await cat.tableDrop(
-        toUint8Array(params.attach_id),
+        toUint8Array(params.attach_opaque_data),
         params.schema_name,
         params.name,
         params.ignore_not_found,
-        params.transaction_id ? toUint8Array(params.transaction_id) : undefined
+        params.transaction_opaque_data ? toUint8Array(params.transaction_opaque_data) : undefined
       );
       return {};
     },
@@ -108,19 +108,19 @@ export function registerCatalogTableMethods(protocol: Protocol, getCatalog: GetC
   // catalog_table_column_statistics_get
   protocol.unary("catalog_table_column_statistics_get", {
     params: schema([
-      field("attach_id", binary(), true),
+      field("attach_opaque_data", binary(), true),
       field("schema_name", utf8(), false),
       field("name", utf8(), false),
-      field("transaction_id", binary(), true),
+      field("transaction_opaque_data", binary(), true),
     ]),
     result: RESULT_BINARY_NULLABLE_SCHEMA,
     handler: async (params) => {
       const cat = getCatalog();
       const stats = await cat.tableColumnStatisticsGet(
-        toUint8Array(params.attach_id),
+        toUint8Array(params.attach_opaque_data),
         params.schema_name,
         params.name,
-        params.transaction_id ? toUint8Array(params.transaction_id) : undefined,
+        params.transaction_opaque_data ? toUint8Array(params.transaction_opaque_data) : undefined,
       );
       return { result: stats?.bytes ?? null };
     },
@@ -129,23 +129,23 @@ export function registerCatalogTableMethods(protocol: Protocol, getCatalog: GetC
   // catalog_table_scan_function_get
   protocol.unary("catalog_table_scan_function_get", {
     params: schema([
-      field("attach_id", binary(), true),
+      field("attach_opaque_data", binary(), true),
       field("schema_name", utf8(), false),
       field("name", utf8(), false),
       field("at_unit", utf8(), true),
       field("at_value", utf8(), true),
-      field("transaction_id", binary(), true),
+      field("transaction_opaque_data", binary(), true),
     ]),
     result: RESULT_BINARY_SCHEMA,
     handler: async (params) => {
       const cat = getCatalog();
       const scanResult = await cat.tableScanFunctionGet(
-        toUint8Array(params.attach_id),
+        toUint8Array(params.attach_opaque_data),
         params.schema_name,
         params.name,
         params.at_unit,
         params.at_value,
-        params.transaction_id ? toUint8Array(params.transaction_id) : undefined
+        params.transaction_opaque_data ? toUint8Array(params.transaction_opaque_data) : undefined
       );
       return wrapResult(scanResult, ScanFunctionResultSchema);
     },
@@ -158,12 +158,12 @@ export function registerCatalogTableMethods(protocol: Protocol, getCatalog: GetC
     handler: async (params) => {
       const cat = getCatalog();
       await cat.tableCommentSet(
-        toUint8Array(params.attach_id),
+        toUint8Array(params.attach_opaque_data),
         params.schema_name,
         params.name,
         params.comment,
         params.ignore_not_found,
-        params.transaction_id ? toUint8Array(params.transaction_id) : undefined
+        params.transaction_opaque_data ? toUint8Array(params.transaction_opaque_data) : undefined
       );
       return {};
     },
@@ -176,12 +176,12 @@ export function registerCatalogTableMethods(protocol: Protocol, getCatalog: GetC
     handler: async (params) => {
       const cat = getCatalog();
       await cat.tableRename(
-        toUint8Array(params.attach_id),
+        toUint8Array(params.attach_opaque_data),
         params.schema_name,
         params.name,
         params.new_name,
         params.ignore_not_found,
-        params.transaction_id ? toUint8Array(params.transaction_id) : undefined
+        params.transaction_opaque_data ? toUint8Array(params.transaction_opaque_data) : undefined
       );
       return {};
     },
@@ -190,27 +190,27 @@ export function registerCatalogTableMethods(protocol: Protocol, getCatalog: GetC
   // catalog_table_column_add
   protocol.unary("catalog_table_column_add", {
     params: schema([
-      field("attach_id", binary(), true),
+      field("attach_opaque_data", binary(), true),
       field("schema_name", utf8(), false),
       field("name", utf8(), false),
       field("column_name", utf8(), false),
       field("column_type", utf8(), false),
       field("default_value", utf8(), true),
       field("ignore_not_found", bool(), true),
-      field("transaction_id", binary(), true),
+      field("transaction_opaque_data", binary(), true),
     ]),
     result: emptyResultSchema,
     handler: async (params) => {
       const cat = getCatalog();
       await cat.tableColumnAdd(
-        toUint8Array(params.attach_id),
+        toUint8Array(params.attach_opaque_data),
         params.schema_name,
         params.name,
         params.column_name,
         params.column_type,
         params.default_value,
         params.ignore_not_found,
-        params.transaction_id ? toUint8Array(params.transaction_id) : undefined
+        params.transaction_opaque_data ? toUint8Array(params.transaction_opaque_data) : undefined
       );
       return {};
     },
@@ -223,12 +223,12 @@ export function registerCatalogTableMethods(protocol: Protocol, getCatalog: GetC
     handler: async (params) => {
       const cat = getCatalog();
       await cat.tableColumnDrop(
-        toUint8Array(params.attach_id),
+        toUint8Array(params.attach_opaque_data),
         params.schema_name,
         params.name,
         params.column_name,
         params.ignore_not_found,
-        params.transaction_id ? toUint8Array(params.transaction_id) : undefined
+        params.transaction_opaque_data ? toUint8Array(params.transaction_opaque_data) : undefined
       );
       return {};
     },
@@ -237,25 +237,25 @@ export function registerCatalogTableMethods(protocol: Protocol, getCatalog: GetC
   // catalog_table_column_rename
   protocol.unary("catalog_table_column_rename", {
     params: schema([
-      field("attach_id", binary(), true),
+      field("attach_opaque_data", binary(), true),
       field("schema_name", utf8(), false),
       field("name", utf8(), false),
       field("column_name", utf8(), false),
       field("new_name", utf8(), false),
       field("ignore_not_found", bool(), true),
-      field("transaction_id", binary(), true),
+      field("transaction_opaque_data", binary(), true),
     ]),
     result: emptyResultSchema,
     handler: async (params) => {
       const cat = getCatalog();
       await cat.tableColumnRename(
-        toUint8Array(params.attach_id),
+        toUint8Array(params.attach_opaque_data),
         params.schema_name,
         params.name,
         params.column_name,
         params.new_name,
         params.ignore_not_found,
-        params.transaction_id ? toUint8Array(params.transaction_id) : undefined
+        params.transaction_opaque_data ? toUint8Array(params.transaction_opaque_data) : undefined
       );
       return {};
     },
@@ -264,25 +264,25 @@ export function registerCatalogTableMethods(protocol: Protocol, getCatalog: GetC
   // catalog_table_column_default_set
   protocol.unary("catalog_table_column_default_set", {
     params: schema([
-      field("attach_id", binary(), true),
+      field("attach_opaque_data", binary(), true),
       field("schema_name", utf8(), false),
       field("name", utf8(), false),
       field("column_name", utf8(), false),
       field("default_value", utf8(), false),
       field("ignore_not_found", bool(), true),
-      field("transaction_id", binary(), true),
+      field("transaction_opaque_data", binary(), true),
     ]),
     result: emptyResultSchema,
     handler: async (params) => {
       const cat = getCatalog();
       await cat.tableColumnDefaultSet(
-        toUint8Array(params.attach_id),
+        toUint8Array(params.attach_opaque_data),
         params.schema_name,
         params.name,
         params.column_name,
         params.default_value,
         params.ignore_not_found,
-        params.transaction_id ? toUint8Array(params.transaction_id) : undefined
+        params.transaction_opaque_data ? toUint8Array(params.transaction_opaque_data) : undefined
       );
       return {};
     },
@@ -295,12 +295,12 @@ export function registerCatalogTableMethods(protocol: Protocol, getCatalog: GetC
     handler: async (params) => {
       const cat = getCatalog();
       await cat.tableColumnDefaultDrop(
-        toUint8Array(params.attach_id),
+        toUint8Array(params.attach_opaque_data),
         params.schema_name,
         params.name,
         params.column_name,
         params.ignore_not_found,
-        params.transaction_id ? toUint8Array(params.transaction_id) : undefined
+        params.transaction_opaque_data ? toUint8Array(params.transaction_opaque_data) : undefined
       );
       return {};
     },
@@ -309,25 +309,25 @@ export function registerCatalogTableMethods(protocol: Protocol, getCatalog: GetC
   // catalog_table_column_type_change
   protocol.unary("catalog_table_column_type_change", {
     params: schema([
-      field("attach_id", binary(), true),
+      field("attach_opaque_data", binary(), true),
       field("schema_name", utf8(), false),
       field("name", utf8(), false),
       field("column_name", utf8(), false),
       field("new_type", utf8(), false),
       field("ignore_not_found", bool(), true),
-      field("transaction_id", binary(), true),
+      field("transaction_opaque_data", binary(), true),
     ]),
     result: emptyResultSchema,
     handler: async (params) => {
       const cat = getCatalog();
       await cat.tableColumnTypeChange(
-        toUint8Array(params.attach_id),
+        toUint8Array(params.attach_opaque_data),
         params.schema_name,
         params.name,
         params.column_name,
         params.new_type,
         params.ignore_not_found,
-        params.transaction_id ? toUint8Array(params.transaction_id) : undefined
+        params.transaction_opaque_data ? toUint8Array(params.transaction_opaque_data) : undefined
       );
       return {};
     },
@@ -340,12 +340,12 @@ export function registerCatalogTableMethods(protocol: Protocol, getCatalog: GetC
     handler: async (params) => {
       const cat = getCatalog();
       await cat.tableNotNullSet(
-        toUint8Array(params.attach_id),
+        toUint8Array(params.attach_opaque_data),
         params.schema_name,
         params.name,
         params.column_name,
         params.ignore_not_found,
-        params.transaction_id ? toUint8Array(params.transaction_id) : undefined
+        params.transaction_opaque_data ? toUint8Array(params.transaction_opaque_data) : undefined
       );
       return {};
     },
@@ -358,12 +358,12 @@ export function registerCatalogTableMethods(protocol: Protocol, getCatalog: GetC
     handler: async (params) => {
       const cat = getCatalog();
       await cat.tableNotNullDrop(
-        toUint8Array(params.attach_id),
+        toUint8Array(params.attach_opaque_data),
         params.schema_name,
         params.name,
         params.column_name,
         params.ignore_not_found,
-        params.transaction_id ? toUint8Array(params.transaction_id) : undefined
+        params.transaction_opaque_data ? toUint8Array(params.transaction_opaque_data) : undefined
       );
       return {};
     },

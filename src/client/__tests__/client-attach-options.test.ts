@@ -68,7 +68,7 @@ describe.skipIf(skip)("VgiClient — attach-options round-trip", () => {
       const rows: Record<string, any>[] = [];
       for await (const batch of client.tableFunctionRows({
         functionName: "echo_attach_options",
-        attachId: r.attach_id,
+        attachOpaqueData: r.attach_opaque_data,
       })) {
         rows.push(...batch);
       }
@@ -80,7 +80,7 @@ describe.skipIf(skip)("VgiClient — attach-options round-trip", () => {
       expect(Number(row.opt_int32)).toBe(-32);
       expect(Number(row.opt_int64)).toBe(-64);
     } finally {
-      await client.catalogDetach(r.attach_id);
+      await client.catalogDetach(r.attach_opaque_data);
     }
   });
 
@@ -98,7 +98,7 @@ describe.skipIf(skip)("VgiClient — attach-options round-trip", () => {
       const rows: Record<string, any>[] = [];
       for await (const batch of client.tableFunctionRows({
         functionName: "echo_attach_options",
-        attachId: r.attach_id,
+        attachOpaqueData: r.attach_opaque_data,
       })) {
         rows.push(...batch);
       }
@@ -110,7 +110,7 @@ describe.skipIf(skip)("VgiClient — attach-options round-trip", () => {
       expect(row.opt_string).toBe("world");
       expect(row.opt_float64).toBe(3.25);
     } finally {
-      await client.catalogDetach(r.attach_id);
+      await client.catalogDetach(r.attach_opaque_data);
     }
   });
 
@@ -122,25 +122,25 @@ describe.skipIf(skip)("VgiClient — attach-options round-trip", () => {
       options: { opt_int32: 22, opt_string: "b" },
     });
     try {
-      const echo = async (attachId: Uint8Array) => {
+      const echo = async (attachOpaqueData: Uint8Array) => {
         const rows: Record<string, any>[] = [];
         for await (const batch of client.tableFunctionRows({
           functionName: "echo_attach_options",
-          attachId,
+          attachOpaqueData,
         })) {
           rows.push(...batch);
         }
         return rows[0];
       };
-      const ra = await echo(a.attach_id);
-      const rb = await echo(b.attach_id);
+      const ra = await echo(a.attach_opaque_data);
+      const rb = await echo(b.attach_opaque_data);
       expect(Number(ra.opt_int32)).toBe(11);
       expect(ra.opt_string).toBe("a");
       expect(Number(rb.opt_int32)).toBe(22);
       expect(rb.opt_string).toBe("b");
     } finally {
-      await client.catalogDetach(a.attach_id);
-      await client.catalogDetach(b.attach_id);
+      await client.catalogDetach(a.attach_opaque_data);
+      await client.catalogDetach(b.attach_opaque_data);
     }
   });
 });

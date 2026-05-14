@@ -7,7 +7,7 @@ import {
   type CatalogDescriptor, type MacroDescriptor, Arguments,
   serializeBatch, batchFromColumns,
   ReadOnlyCatalogInterface, TableInfo,
-  type AttachId, type TransactionId,
+  type AttachOpaqueData, type TransactionOpaqueData,
 } from "../src/index.js";
 import { serializeSchema } from "../src/util/arrow/index.js";
 import { argumentSpecsToSchema } from "../src/arguments/argument-spec.js";
@@ -528,12 +528,12 @@ export function createExampleCatalog(base: ReadOnlyCatalogInterface): ReadOnlyCa
   const origTableScanFunctionGet = base.tableScanFunctionGet.bind(base);
 
   base.tableGet = (
-    attachId: AttachId,
+    attachOpaqueData: AttachOpaqueData,
     schemaName: string,
     name: string,
     atUnit?: string,
     atValue?: string,
-    transactionId?: TransactionId,
+    transactionOpaqueData?: TransactionOpaqueData,
   ): TableInfo | null => {
     if (schemaName.toLowerCase() === "data" && name.toLowerCase() === "versioned_data" && atUnit) {
       const version = resolveVersion(atUnit, atValue);
@@ -604,16 +604,16 @@ export function createExampleCatalog(base: ReadOnlyCatalogInterface): ReadOnlyCa
         cardinality_max: 0,
       };
     }
-    return origTableGet(attachId, schemaName, name, atUnit, atValue, transactionId);
+    return origTableGet(attachOpaqueData, schemaName, name, atUnit, atValue, transactionOpaqueData);
   };
 
   base.tableScanFunctionGet = (
-    attachId: AttachId,
+    attachOpaqueData: AttachOpaqueData,
     schemaName: string,
     name: string,
     atUnit?: string,
     atValue?: string,
-    transactionId?: TransactionId,
+    transactionOpaqueData?: TransactionOpaqueData,
   ): any => {
     // Time-travel tables
     if (schemaName.toLowerCase() === "data" && name.toLowerCase() === "versioned_data") {
@@ -636,7 +636,7 @@ export function createExampleCatalog(base: ReadOnlyCatalogInterface): ReadOnlyCa
       return { function_name: staticTables[name.toLowerCase()], arguments: serializeBatch(batchFromColumns({}, new Schema([]))), required_extensions: [] };
     }
 
-    return origTableScanFunctionGet(attachId, schemaName, name, atUnit, atValue, transactionId);
+    return origTableScanFunctionGet(attachOpaqueData, schemaName, name, atUnit, atValue, transactionOpaqueData);
   };
 
   return base;

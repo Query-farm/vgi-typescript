@@ -32,14 +32,14 @@ describe("ASD codec", () => {
 
   test("SchemaInfo round-trip with tags Map", () => {
     const v: SchemaInfo = {
-      attach_id: new Uint8Array([1, 2, 3, 4]),
+      attach_opaque_data: new Uint8Array([1, 2, 3, 4]),
       name: "public",
       comment: "hello",
       tags: { env: "prod", owner: "rusty" },
     };
     const bytes = encodeASD(SchemaInfoSchema, v);
     const back = decodeASD<SchemaInfo>(SchemaInfoSchema, bytes);
-    expect(Array.from(back.attach_id)).toEqual([1, 2, 3, 4]);
+    expect(Array.from(back.attach_opaque_data)).toEqual([1, 2, 3, 4]);
     expect(back.name).toBe("public");
     expect(back.comment).toBe("hello");
     expect(back.tags).toEqual({ env: "prod", owner: "rusty" });
@@ -47,7 +47,7 @@ describe("ASD codec", () => {
 
   test("SchemaInfo with empty tags", () => {
     const v: SchemaInfo = {
-      attach_id: new Uint8Array([5]),
+      attach_opaque_data: new Uint8Array([5]),
       name: "main",
       comment: null,
       tags: {},

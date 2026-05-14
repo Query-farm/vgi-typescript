@@ -22,8 +22,8 @@ const BIND_REQUEST_SCHEMA = schema([
   field("input_schema", binary(), true),
   field("settings", binary(), true),
   field("secrets", binary(), true),
-  field("attach_id", binary(), true),
-  field("transaction_id", binary(), true),
+  field("attach_opaque_data", binary(), true),
+  field("transaction_opaque_data", binary(), true),
   field("resolved_secrets_provided", bool(), false),
 ]);
 
@@ -43,8 +43,8 @@ export function serializeBindRequest(req: BindRequest): VgiBatch {
     input_schema: req.input_schema ? serializeSchema(req.input_schema) : null,
     settings: req.settings ? serializeBatch(req.settings) : null,
     secrets: req.secrets ? serializeBatch(req.secrets) : null,
-    attach_id: req.attach_id ?? null,
-    transaction_id: req.transaction_id ?? null,
+    attach_opaque_data: req.attach_opaque_data ?? null,
+    transaction_opaque_data: req.transaction_opaque_data ?? null,
     resolved_secrets_provided: req.resolved_secrets_provided ?? false,
   };
   return buildSingleRowBatch(BIND_REQUEST_SCHEMA, row);
@@ -85,9 +85,9 @@ export function deserializeBindRequest(
     secrets: params.secrets
       ? deserializeBatch(toUint8Array(params.secrets))
       : null,
-    attach_id: params.attach_id ? toUint8Array(params.attach_id) : null,
-    transaction_id: params.transaction_id
-      ? toUint8Array(params.transaction_id)
+    attach_opaque_data: params.attach_opaque_data ? toUint8Array(params.attach_opaque_data) : null,
+    transaction_opaque_data: params.transaction_opaque_data
+      ? toUint8Array(params.transaction_opaque_data)
       : null,
     resolved_secrets_provided: params.resolved_secrets_provided ?? false,
   };

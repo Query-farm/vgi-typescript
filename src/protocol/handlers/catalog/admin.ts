@@ -27,9 +27,9 @@ import {
   type GetCatalog,
   decodeOptionsBatch,
   emptyResultSchema,
-  attachIdParam,
-  attachIdTxnParams,
-  attachIdNameTxnParams,
+  attachOpaqueDataParam,
+  attachOpaqueDataTxnParams,
+  attachOpaqueDataNameTxnParams,
 } from "./shared.js";
 
 export function registerCatalogAdminMethods(protocol: Protocol, getCatalog: GetCatalog): void {
@@ -74,12 +74,12 @@ export function registerCatalogAdminMethods(protocol: Protocol, getCatalog: GetC
         innerParams.implementation_version ?? null,
       );
       return wrapResult({
-        attach_id: result.attach_id,
+        attach_opaque_data: result.attach_opaque_data,
         supports_transactions: result.supports_transactions,
         supports_time_travel: result.supports_time_travel,
         catalog_version_frozen: result.catalog_version_frozen,
         catalog_version: result.catalog_version,
-        attach_id_required: result.attach_id_required ?? true,
+        attach_opaque_data_required: result.attach_opaque_data_required ?? true,
         default_schema: result.default_schema ?? "main",
         settings: result.settings ?? [],
         secret_types: result.secret_types ?? [],
@@ -98,11 +98,11 @@ export function registerCatalogAdminMethods(protocol: Protocol, getCatalog: GetC
 
   // catalog_detach
   protocol.unary("catalog_detach", {
-    params: attachIdParam,
+    params: attachOpaqueDataParam,
     result: emptyResultSchema,
     handler: async (params) => {
       const cat = getCatalog();
-      await cat.detach(toUint8Array(params.attach_id));
+      await cat.detach(toUint8Array(params.attach_opaque_data));
       return {};
     },
   });
@@ -135,13 +135,13 @@ export function registerCatalogAdminMethods(protocol: Protocol, getCatalog: GetC
 
   // catalog_version
   protocol.unary("catalog_version", {
-    params: attachIdTxnParams,
+    params: attachOpaqueDataTxnParams,
     result: RESULT_BINARY_SCHEMA,
     handler: async (params) => {
       const cat = getCatalog();
       const version = await cat.version(
-        toUint8Array(params.attach_id),
-        params.transaction_id ? toUint8Array(params.transaction_id) : undefined
+        toUint8Array(params.attach_opaque_data),
+        params.transaction_opaque_data ? toUint8Array(params.transaction_opaque_data) : undefined
       );
       return wrapResult({ version }, CatalogVersionResultSchema);
     },
@@ -149,24 +149,24 @@ export function registerCatalogAdminMethods(protocol: Protocol, getCatalog: GetC
 
   // catalog_transaction_begin
   protocol.unary("catalog_transaction_begin", {
-    params: attachIdParam,
+    params: attachOpaqueDataParam,
     result: RESULT_BINARY_SCHEMA,
     handler: async (params) => {
       const cat = getCatalog();
-      const transaction_id = await cat.transactionBegin(toUint8Array(params.attach_id));
-      return wrapResult({ transaction_id }, CatalogTransactionBeginResultSchema);
+      const transaction_opaque_data = await cat.transactionBegin(toUint8Array(params.attach_opaque_data));
+      return wrapResult({ transaction_opaque_data }, CatalogTransactionBeginResultSchema);
     },
   });
 
   // catalog_transaction_commit
   protocol.unary("catalog_transaction_commit", {
-    params: attachIdTxnParams,
+    params: attachOpaqueDataTxnParams,
     result: emptyResultSchema,
     handler: async (params) => {
       const cat = getCatalog();
       await cat.transactionCommit(
-        toUint8Array(params.attach_id),
-        toUint8Array(params.transaction_id)
+        toUint8Array(params.attach_opaque_data),
+        toUint8Array(params.transaction_opaque_data)
       );
       return {};
     },
@@ -174,13 +174,13 @@ export function registerCatalogAdminMethods(protocol: Protocol, getCatalog: GetC
 
   // catalog_transaction_rollback
   protocol.unary("catalog_transaction_rollback", {
-    params: attachIdTxnParams,
+    params: attachOpaqueDataTxnParams,
     result: emptyResultSchema,
     handler: async (params) => {
       const cat = getCatalog();
       await cat.transactionRollback(
-        toUint8Array(params.attach_id),
-        toUint8Array(params.transaction_id)
+        toUint8Array(params.attach_opaque_data),
+        toUint8Array(params.transaction_opaque_data)
       );
       return {};
     },
@@ -188,13 +188,13 @@ export function registerCatalogAdminMethods(protocol: Protocol, getCatalog: GetC
 
   // catalog_schemas
   protocol.unary("catalog_schemas", {
-    params: attachIdTxnParams,
+    params: attachOpaqueDataTxnParams,
     result: RESULT_BINARY_SCHEMA,
     handler: async (params) => {
       const cat = getCatalog();
       const schemas = await cat.schemas(
-        toUint8Array(params.attach_id),
-        params.transaction_id ? toUint8Array(params.transaction_id) : undefined
+        toUint8Array(params.attach_opaque_data),
+        params.transaction_opaque_data ? toUint8Array(params.transaction_opaque_data) : undefined
       );
       return wrapResult({
         items: schemas.map((s) => encodeSchemaInfo(s)),
@@ -204,14 +204,14 @@ export function registerCatalogAdminMethods(protocol: Protocol, getCatalog: GetC
 
   // catalog_schema_get
   protocol.unary("catalog_schema_get", {
-    params: attachIdNameTxnParams,
+    params: attachOpaqueDataNameTxnParams,
     result: RESULT_BINARY_SCHEMA,
     handler: async (params) => {
       const cat = getCatalog();
       const info = await cat.schemaGet(
-        toUint8Array(params.attach_id),
+        toUint8Array(params.attach_opaque_data),
         params.name,
-        params.transaction_id ? toUint8Array(params.transaction_id) : undefined
+        params.transaction_opaque_data ? toUint8Array(params.transaction_opaque_data) : undefined
       );
       return wrapResult({
         items: info ? [encodeSchemaInfo(info)] : [],
@@ -222,21 +222,21 @@ export function registerCatalogAdminMethods(protocol: Protocol, getCatalog: GetC
   // catalog_schema_create
   protocol.unary("catalog_schema_create", {
     params: schema([
-      field("attach_id", binary(), true),
+      field("attach_opaque_data", binary(), true),
       field("name", utf8(), false),
       field("comment", utf8(), true),
       field("tags", binary(), true),
-      field("transaction_id", binary(), true),
+      field("transaction_opaque_data", binary(), true),
     ]),
     result: emptyResultSchema,
     handler: async (params) => {
       const cat = getCatalog();
       await cat.schemaCreate(
-        toUint8Array(params.attach_id),
+        toUint8Array(params.attach_opaque_data),
         params.name,
         params.comment,
         null, // tags
-        params.transaction_id ? toUint8Array(params.transaction_id) : undefined
+        params.transaction_opaque_data ? toUint8Array(params.transaction_opaque_data) : undefined
       );
       return {};
     },
@@ -245,21 +245,21 @@ export function registerCatalogAdminMethods(protocol: Protocol, getCatalog: GetC
   // catalog_schema_drop
   protocol.unary("catalog_schema_drop", {
     params: schema([
-      field("attach_id", binary(), true),
+      field("attach_opaque_data", binary(), true),
       field("name", utf8(), false),
       field("ignore_not_found", bool(), true),
       field("cascade", bool(), true),
-      field("transaction_id", binary(), true),
+      field("transaction_opaque_data", binary(), true),
     ]),
     result: emptyResultSchema,
     handler: async (params) => {
       const cat = getCatalog();
       await cat.schemaDrop(
-        toUint8Array(params.attach_id),
+        toUint8Array(params.attach_opaque_data),
         params.name,
         params.ignore_not_found,
         params.cascade,
-        params.transaction_id ? toUint8Array(params.transaction_id) : undefined
+        params.transaction_opaque_data ? toUint8Array(params.transaction_opaque_data) : undefined
       );
       return {};
     },
@@ -267,14 +267,14 @@ export function registerCatalogAdminMethods(protocol: Protocol, getCatalog: GetC
 
   // catalog_schema_contents_tables
   protocol.unary("catalog_schema_contents_tables", {
-    params: attachIdNameTxnParams,
+    params: attachOpaqueDataNameTxnParams,
     result: RESULT_BINARY_SCHEMA,
     handler: async (params) => {
       const cat = getCatalog();
       const tables = await cat.schemaContentsTables(
-        toUint8Array(params.attach_id),
+        toUint8Array(params.attach_opaque_data),
         params.name,
-        params.transaction_id ? toUint8Array(params.transaction_id) : undefined
+        params.transaction_opaque_data ? toUint8Array(params.transaction_opaque_data) : undefined
       );
       return wrapResult({
         items: tables.map((t) => encodeTableInfo(t)),
@@ -284,14 +284,14 @@ export function registerCatalogAdminMethods(protocol: Protocol, getCatalog: GetC
 
   // catalog_schema_contents_views
   protocol.unary("catalog_schema_contents_views", {
-    params: attachIdNameTxnParams,
+    params: attachOpaqueDataNameTxnParams,
     result: RESULT_BINARY_SCHEMA,
     handler: async (params) => {
       const cat = getCatalog();
       const views = await cat.schemaContentsViews(
-        toUint8Array(params.attach_id),
+        toUint8Array(params.attach_opaque_data),
         params.name,
-        params.transaction_id ? toUint8Array(params.transaction_id) : undefined
+        params.transaction_opaque_data ? toUint8Array(params.transaction_opaque_data) : undefined
       );
       return wrapResult({
         items: views.map((v) => encodeViewInfo(v)),
@@ -302,19 +302,19 @@ export function registerCatalogAdminMethods(protocol: Protocol, getCatalog: GetC
   // catalog_schema_contents_functions
   protocol.unary("catalog_schema_contents_functions", {
     params: schema([
-      field("attach_id", binary(), true),
+      field("attach_opaque_data", binary(), true),
       field("name", utf8(), false),
       field("type", utf8(), false),
-      field("transaction_id", binary(), true),
+      field("transaction_opaque_data", binary(), true),
     ]),
     result: RESULT_BINARY_SCHEMA,
     handler: async (params) => {
       const cat = getCatalog();
       const funcs = await cat.schemaContentsFunctions(
-        toUint8Array(params.attach_id),
+        toUint8Array(params.attach_opaque_data),
         params.name,
         decodeDictValue(params.type),
-        params.transaction_id ? toUint8Array(params.transaction_id) : undefined
+        params.transaction_opaque_data ? toUint8Array(params.transaction_opaque_data) : undefined
       );
       return wrapResult({
         items: funcs.map((f) => encodeFunctionInfo(f)),

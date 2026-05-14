@@ -70,7 +70,7 @@ describe.skipIf(skip)("VgiClient — versioned attach", () => {
       // No tags set on the versioned catalog — must be {}.
       expect(r.tags).toEqual({});
     } finally {
-      await client.catalogDetach(r.attach_id);
+      await client.catalogDetach(r.attach_opaque_data);
     }
   });
 
@@ -83,7 +83,7 @@ describe.skipIf(skip)("VgiClient — versioned attach", () => {
       expect(r.resolved_data_version).toBe("1.1.0");
       expect(r.resolved_implementation_version).toBe("1.0.0");
     } finally {
-      await client.catalogDetach(r.attach_id);
+      await client.catalogDetach(r.attach_opaque_data);
     }
   });
 
@@ -93,7 +93,7 @@ describe.skipIf(skip)("VgiClient — versioned attach", () => {
       try {
         expect(r.resolved_data_version).toBe(v);
       } finally {
-        await client.catalogDetach(r.attach_id);
+        await client.catalogDetach(r.attach_opaque_data);
       }
     }
   });
@@ -246,17 +246,17 @@ describe.skipIf(skip)("VgiClient — versioned attach", () => {
   });
 
   test("two concurrent attach IDs are distinct", async () => {
-    // Each attach allocates a fresh UUID-backed attach_id.
+    // Each attach allocates a fresh UUID-backed attach_opaque_data.
     const a = await client.catalogAttach("versioned");
     const b = await client.catalogAttach("versioned");
     try {
       // Compare bytes — two Uint8Arrays aren't === but content should differ.
-      const sa = Array.from(a.attach_id).join(",");
-      const sb = Array.from(b.attach_id).join(",");
+      const sa = Array.from(a.attach_opaque_data).join(",");
+      const sb = Array.from(b.attach_opaque_data).join(",");
       expect(sa).not.toBe(sb);
     } finally {
-      await client.catalogDetach(a.attach_id);
-      await client.catalogDetach(b.attach_id);
+      await client.catalogDetach(a.attach_opaque_data);
+      await client.catalogDetach(b.attach_opaque_data);
     }
   });
 
@@ -268,7 +268,7 @@ describe.skipIf(skip)("VgiClient — versioned attach", () => {
     try {
       expect(r.resolved_data_version).toBe("1.0.0");
     } finally {
-      await client.catalogDetach(r.attach_id);
+      await client.catalogDetach(r.attach_opaque_data);
     }
   });
 });
@@ -281,10 +281,10 @@ describe.skipIf(skip)("VgiClient — versioned worker schemas", () => {
   test("schemas() returns the default 'main' schema", async () => {
     const r = await client.catalogAttach("versioned");
     try {
-      const schemas = await client.schemas(r.attach_id);
+      const schemas = await client.schemas(r.attach_opaque_data);
       expect(schemas.map((s) => s.name)).toContain("main");
     } finally {
-      await client.catalogDetach(r.attach_id);
+      await client.catalogDetach(r.attach_opaque_data);
     }
   });
 });

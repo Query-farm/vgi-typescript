@@ -54,18 +54,18 @@ async function main() {
     // --- Attach ---
     console.log("\n=== Attach 'example' ===");
     const attachResult = await client.catalogAttach("example");
-    console.log(`  attachId: ${attachResult.attach_id.length} bytes`);
+    console.log(`  attachOpaqueData: ${attachResult.attach_opaque_data.length} bytes`);
     console.log(`  defaultSchema: ${attachResult.default_schema}`);
 
-    const attachId = attachResult.attach_id;
+    const attachOpaqueData = attachResult.attach_opaque_data;
 
     // --- Version ---
-    const version = await client.catalogVersion(attachId);
+    const version = await client.catalogVersion(attachOpaqueData);
     console.log(`  version: ${version}`);
 
     // --- List schemas ---
     console.log("\n=== Schemas ===");
-    const schemas = await client.schemas(attachId);
+    const schemas = await client.schemas(attachOpaqueData);
     for (const s of schemas) {
       console.log(`  ${s.name}: ${s.comment ?? "(no comment)"}`);
     }
@@ -73,7 +73,7 @@ async function main() {
     // --- List functions (scalar) ---
     console.log("\n=== Scalar functions in 'main' ===");
     const scalarFuncs = await client.schemaContentsFunctions(
-      attachId,
+      attachOpaqueData,
       "main",
       "SCALAR_FUNCTION",
     );
@@ -84,7 +84,7 @@ async function main() {
     // --- List functions (table) ---
     console.log("\n=== Table functions in 'main' ===");
     const tableFuncs = await client.schemaContentsFunctions(
-      attachId,
+      attachOpaqueData,
       "main",
       "TABLE_FUNCTION",
     );
@@ -94,13 +94,13 @@ async function main() {
 
     // --- List tables ---
     console.log("\n=== Tables in 'data' ===");
-    const tables = await client.schemaContentsTables(attachId, "data");
+    const tables = await client.schemaContentsTables(attachOpaqueData, "data");
     for (const t of tables) {
       console.log(`  ${t.name}: ${t.comment ?? "(no comment)"}`);
     }
 
     // --- Detach ---
-    await client.catalogDetach(attachId);
+    await client.catalogDetach(attachOpaqueData);
     console.log("\nDetached. Done!");
   } finally {
     client.close();

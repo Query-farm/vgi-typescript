@@ -12,7 +12,7 @@ import {
 import {
   type GetCatalog,
   emptyResultSchema,
-  attachIdSchemaNameTxnParams,
+  attachOpaqueDataSchemaNameTxnParams,
   schemaNameIgnoreNotFoundTxnParams,
   schemaNameRenameParams,
   schemaNameCommentParams,
@@ -21,15 +21,15 @@ import {
 export function registerCatalogViewMethods(protocol: Protocol, getCatalog: GetCatalog): void {
   // catalog_view_get
   protocol.unary("catalog_view_get", {
-    params: attachIdSchemaNameTxnParams,
+    params: attachOpaqueDataSchemaNameTxnParams,
     result: RESULT_BINARY_SCHEMA,
     handler: async (params) => {
       const cat = getCatalog();
       const info = await cat.viewGet(
-        toUint8Array(params.attach_id),
+        toUint8Array(params.attach_opaque_data),
         params.schema_name,
         params.name,
-        params.transaction_id ? toUint8Array(params.transaction_id) : undefined
+        params.transaction_opaque_data ? toUint8Array(params.transaction_opaque_data) : undefined
       );
       return wrapResult({
         items: info ? [encodeViewInfo(info)] : [],
@@ -40,23 +40,23 @@ export function registerCatalogViewMethods(protocol: Protocol, getCatalog: GetCa
   // catalog_view_create
   protocol.unary("catalog_view_create", {
     params: schema([
-      field("attach_id", binary(), true),
+      field("attach_opaque_data", binary(), true),
       field("schema_name", utf8(), false),
       field("name", utf8(), false),
       field("definition", utf8(), false),
       field("on_conflict", utf8(), false),
-      field("transaction_id", binary(), true),
+      field("transaction_opaque_data", binary(), true),
     ]),
     result: emptyResultSchema,
     handler: async (params) => {
       const cat = getCatalog();
       await cat.viewCreate(
-        toUint8Array(params.attach_id),
+        toUint8Array(params.attach_opaque_data),
         params.schema_name,
         params.name,
         params.definition,
         params.on_conflict,
-        params.transaction_id ? toUint8Array(params.transaction_id) : undefined
+        params.transaction_opaque_data ? toUint8Array(params.transaction_opaque_data) : undefined
       );
       return {};
     },
@@ -69,11 +69,11 @@ export function registerCatalogViewMethods(protocol: Protocol, getCatalog: GetCa
     handler: async (params) => {
       const cat = getCatalog();
       await cat.viewDrop(
-        toUint8Array(params.attach_id),
+        toUint8Array(params.attach_opaque_data),
         params.schema_name,
         params.name,
         params.ignore_not_found,
-        params.transaction_id ? toUint8Array(params.transaction_id) : undefined
+        params.transaction_opaque_data ? toUint8Array(params.transaction_opaque_data) : undefined
       );
       return {};
     },
@@ -86,12 +86,12 @@ export function registerCatalogViewMethods(protocol: Protocol, getCatalog: GetCa
     handler: async (params) => {
       const cat = getCatalog();
       await cat.viewRename(
-        toUint8Array(params.attach_id),
+        toUint8Array(params.attach_opaque_data),
         params.schema_name,
         params.name,
         params.new_name,
         params.ignore_not_found,
-        params.transaction_id ? toUint8Array(params.transaction_id) : undefined
+        params.transaction_opaque_data ? toUint8Array(params.transaction_opaque_data) : undefined
       );
       return {};
     },
@@ -104,12 +104,12 @@ export function registerCatalogViewMethods(protocol: Protocol, getCatalog: GetCa
     handler: async (params) => {
       const cat = getCatalog();
       await cat.viewCommentSet(
-        toUint8Array(params.attach_id),
+        toUint8Array(params.attach_opaque_data),
         params.schema_name,
         params.name,
         params.comment,
         params.ignore_not_found,
-        params.transaction_id ? toUint8Array(params.transaction_id) : undefined
+        params.transaction_opaque_data ? toUint8Array(params.transaction_opaque_data) : undefined
       );
       return {};
     },

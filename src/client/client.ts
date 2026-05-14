@@ -35,8 +35,8 @@ import {
   decodeMacroInfo,
   type MacroType,
   type CatalogAttachResult,
-  type AttachId,
-  type TransactionId,
+  type AttachOpaqueData,
+  type TransactionOpaqueData,
   decodeCatalogInfo,
   type CatalogInfo,
   type ScanFunctionResult,
@@ -85,20 +85,20 @@ import type {
  */
 export class VgiClient {
   private readonly rpc: RpcClient;
-  private readonly defaultAttachId: Uint8Array | null;
+  private readonly defaultAttachOpaqueData: Uint8Array | null;
 
   /**
    * Construct a VgiClient wrapping an `RpcClient` transport.
    *
-   * `options.attachId` sets a client-wide default attach ID used by every
-   * function call that doesn't supply its own. Per-call `attachId` on
+   * `options.attachOpaqueData` sets a client-wide default attach ID used by every
+   * function call that doesn't supply its own. Per-call `attachOpaqueData` on
    * `TableFunctionOptions`/`ScalarFunctionOptions`/`TableInOutFunctionOptions`
    * takes precedence — useful when a single client talks to multiple
    * attached catalogs.
    */
   constructor(rpc: RpcClient, options?: VgiClientOptions) {
     this.rpc = wrapRpcWithErrorEnrichment(rpc);
-    this.defaultAttachId = options?.attachId ?? null;
+    this.defaultAttachOpaqueData = options?.attachOpaqueData ?? null;
   }
 
   // ==========================================================================
@@ -112,8 +112,8 @@ export class VgiClient {
     inputSchema: VgiSchema | null,
     settings: VgiBatch | null,
     secrets: VgiBatch | null,
-    transactionId: Uint8Array | null,
-    attachId: Uint8Array | null = null,
+    transactionOpaqueData: Uint8Array | null,
+    attachOpaqueData: Uint8Array | null = null,
     onBind?: ((response: BindResponse) => void) | null,
   ): Promise<{ request: BindRequest; response: BindResponse }> {
     const request: BindRequest = {
@@ -123,8 +123,8 @@ export class VgiClient {
       input_schema: inputSchema,
       settings: settings ?? null,
       secrets: secrets ?? null,
-      attach_id: attachId ?? this.defaultAttachId,
-      transaction_id: transactionId ?? null,
+      attach_opaque_data: attachOpaqueData ?? this.defaultAttachOpaqueData,
+      transaction_opaque_data: transactionOpaqueData ?? null,
       resolved_secrets_provided: false,
     };
 
@@ -197,8 +197,8 @@ export class VgiClient {
       null,
       opts.settings ?? null,
       null,
-      opts.transactionId ?? null,
-      opts.attachId ?? null,
+      opts.transactionOpaqueData ?? null,
+      opts.attachOpaqueData ?? null,
       opts.onBind ?? null,
     );
 
@@ -252,8 +252,8 @@ export class VgiClient {
       inputSchema,
       opts.settings ?? null,
       opts.secrets ?? null,
-      opts.transactionId ?? null,
-      opts.attachId ?? null,
+      opts.transactionOpaqueData ?? null,
+      opts.attachOpaqueData ?? null,
       opts.onBind ?? null,
     );
 
@@ -301,8 +301,8 @@ export class VgiClient {
       inputSchema,
       opts.settings ?? null,
       opts.secrets ?? null,
-      opts.transactionId ?? null,
-      opts.attachId ?? null,
+      opts.transactionOpaqueData ?? null,
+      opts.attachOpaqueData ?? null,
       opts.onBind ?? null,
     );
 
@@ -350,8 +350,8 @@ export class VgiClient {
       inputSchema,
       opts.settings ?? null,
       null,
-      opts.transactionId ?? null,
-      opts.attachId ?? null,
+      opts.transactionOpaqueData ?? null,
+      opts.attachOpaqueData ?? null,
       opts.onBind ?? null,
     );
 
@@ -431,8 +431,8 @@ export class VgiClient {
       inputSchema,
       opts.settings ?? null,
       null,
-      opts.transactionId ?? null,
-      opts.attachId ?? null,
+      opts.transactionOpaqueData ?? null,
+      opts.attachOpaqueData ?? null,
       opts.onBind ?? null,
     );
 
@@ -501,8 +501,8 @@ export class VgiClient {
       null,
       opts.settings ?? null,
       null,
-      opts.transactionId ?? null,
-      opts.attachId ?? null,
+      opts.transactionOpaqueData ?? null,
+      opts.attachOpaqueData ?? null,
       opts.onBind ?? null,
     );
     const { session } = await this._doInit(bindReq, bindResp, {
@@ -547,7 +547,7 @@ export class VgiClient {
 
   /**
    * Attach a catalog by name. Returns connection details including the
-   * attachId.
+   * attachOpaqueData.
    *
    * `opts.options` is a plain key→value map; column types are inferred from
    * the value at runtime (see AttachOptionValue for the mapping). Use
@@ -606,12 +606,12 @@ export class VgiClient {
     if (!result) throw new VgiClientError("catalog_attach returned null");
     const inner = unwrapResult(result);
     return {
-      attach_id: toUint8Array(inner.attach_id),
+      attach_opaque_data: toUint8Array(inner.attach_opaque_data),
       supports_transactions: inner.supports_transactions ?? false,
       supports_time_travel: inner.supports_time_travel ?? false,
       catalog_version_frozen: inner.catalog_version_frozen ?? false,
       catalog_version: Number(inner.catalog_version ?? 0),
-      attach_id_required: inner.attach_id_required ?? true,
+      attach_opaque_data_required: inner.attach_opaque_data_required ?? true,
       default_schema: inner.default_schema ?? "main",
       settings: inner.settings
         ? (Array.isArray(inner.settings) ? inner.settings : [...inner.settings]).map(toUint8Array)
@@ -628,8 +628,8 @@ export class VgiClient {
   }
 
   /** Detach a previously-attached catalog. */
-  async catalogDetach(attachId: AttachId): Promise<void> {
-    await this.rpc.call("catalog_detach", { attach_id: attachId });
+  async catalogDetach(attachOpaqueData: AttachOpaqueData): Promise<void> {
+    await this.rpc.call("catalog_detach", { attach_opaque_data: attachOpaqueData });
   }
 
   /**
@@ -679,12 +679,12 @@ export class VgiClient {
 
   /** Get the current catalog version number. */
   async catalogVersion(
-    attachId: AttachId,
-    transactionId?: TransactionId,
+    attachOpaqueData: AttachOpaqueData,
+    transactionOpaqueData?: TransactionOpaqueData,
   ): Promise<number> {
     const result = await this.rpc.call("catalog_version", {
-      attach_id: attachId,
-      transaction_id: transactionId ?? null,
+      attach_opaque_data: attachOpaqueData,
+      transaction_opaque_data: transactionOpaqueData ?? null,
     });
     if (!result) throw new VgiClientError("catalog_version returned null");
     const inner = unwrapResult(result);
@@ -692,48 +692,48 @@ export class VgiClient {
   }
 
   /** Begin a new transaction. Returns the transaction ID. */
-  async transactionBegin(attachId: AttachId): Promise<Uint8Array> {
+  async transactionBegin(attachOpaqueData: AttachOpaqueData): Promise<Uint8Array> {
     const result = await this.rpc.call("catalog_transaction_begin", {
-      attach_id: attachId,
+      attach_opaque_data: attachOpaqueData,
     });
     if (!result) throw new VgiClientError("transaction_begin returned null");
     const inner = unwrapResult(result);
-    if (!inner.transaction_id) {
-      throw new VgiClientError("transaction_begin returned no transaction_id");
+    if (!inner.transaction_opaque_data) {
+      throw new VgiClientError("transaction_begin returned no transaction_opaque_data");
     }
-    return toUint8Array(inner.transaction_id);
+    return toUint8Array(inner.transaction_opaque_data);
   }
 
   /** Commit a transaction. */
   async transactionCommit(
-    attachId: AttachId,
-    transactionId: TransactionId,
+    attachOpaqueData: AttachOpaqueData,
+    transactionOpaqueData: TransactionOpaqueData,
   ): Promise<void> {
     await this.rpc.call("catalog_transaction_commit", {
-      attach_id: attachId,
-      transaction_id: transactionId,
+      attach_opaque_data: attachOpaqueData,
+      transaction_opaque_data: transactionOpaqueData,
     });
   }
 
   /** Rollback a transaction. */
   async transactionRollback(
-    attachId: AttachId,
-    transactionId: TransactionId,
+    attachOpaqueData: AttachOpaqueData,
+    transactionOpaqueData: TransactionOpaqueData,
   ): Promise<void> {
     await this.rpc.call("catalog_transaction_rollback", {
-      attach_id: attachId,
-      transaction_id: transactionId,
+      attach_opaque_data: attachOpaqueData,
+      transaction_opaque_data: transactionOpaqueData,
     });
   }
 
   /** List schemas in an attached catalog. */
   async schemas(
-    attachId: AttachId,
-    transactionId?: TransactionId,
+    attachOpaqueData: AttachOpaqueData,
+    transactionOpaqueData?: TransactionOpaqueData,
   ): Promise<SchemaInfo[]> {
     const result = await this.rpc.call("catalog_schemas", {
-      attach_id: attachId,
-      transaction_id: transactionId ?? null,
+      attach_opaque_data: attachOpaqueData,
+      transaction_opaque_data: transactionOpaqueData ?? null,
     });
     if (!result) return [];
     const inner = unwrapResult(result);
@@ -742,14 +742,14 @@ export class VgiClient {
 
   /** Get a schema by name, or null if not found. */
   async schemaGet(
-    attachId: AttachId,
+    attachOpaqueData: AttachOpaqueData,
     name: string,
-    transactionId?: TransactionId,
+    transactionOpaqueData?: TransactionOpaqueData,
   ): Promise<SchemaInfo | null> {
     const result = await this.rpc.call("catalog_schema_get", {
-      attach_id: attachId,
+      attach_opaque_data: attachOpaqueData,
       name,
-      transaction_id: transactionId ?? null,
+      transaction_opaque_data: transactionOpaqueData ?? null,
     });
     if (!result) return null;
     const inner = unwrapResult(result);
@@ -759,55 +759,55 @@ export class VgiClient {
 
   /** Create a new schema. */
   async schemaCreate(
-    attachId: AttachId,
+    attachOpaqueData: AttachOpaqueData,
     name: string,
     opts?: {
       onConflict?: OnCreateConflict;
       comment?: string | null;
       tags?: Record<string, string> | null;
-      transactionId?: TransactionId;
+      transactionOpaqueData?: TransactionOpaqueData;
     },
   ): Promise<void> {
     const tagsMap = opts?.tags
       ? new Map(Object.entries(opts.tags))
       : null;
     await this.rpc.call("catalog_schema_create", {
-      attach_id: attachId,
+      attach_opaque_data: attachOpaqueData,
       name,
       on_conflict: opts?.onConflict ?? "error",
       comment: opts?.comment ?? null,
       tags: tagsMap,
-      transaction_id: opts?.transactionId ?? null,
+      transaction_opaque_data: opts?.transactionOpaqueData ?? null,
     });
   }
 
   /** Drop a schema by name. */
   async schemaDrop(
-    attachId: AttachId,
+    attachOpaqueData: AttachOpaqueData,
     name: string,
     ignoreNotFound?: boolean,
     cascade?: boolean,
-    transactionId?: TransactionId,
+    transactionOpaqueData?: TransactionOpaqueData,
   ): Promise<void> {
     await this.rpc.call("catalog_schema_drop", {
-      attach_id: attachId,
+      attach_opaque_data: attachOpaqueData,
       name,
       ignore_not_found: ignoreNotFound ?? false,
       cascade: cascade ?? false,
-      transaction_id: transactionId ?? null,
+      transaction_opaque_data: transactionOpaqueData ?? null,
     });
   }
 
   /** List tables in a schema. */
   async schemaContentsTables(
-    attachId: AttachId,
+    attachOpaqueData: AttachOpaqueData,
     name: string,
-    transactionId?: TransactionId,
+    transactionOpaqueData?: TransactionOpaqueData,
   ): Promise<TableInfo[]> {
     const result = await this.rpc.call("catalog_schema_contents_tables", {
-      attach_id: attachId,
+      attach_opaque_data: attachOpaqueData,
       name,
-      transaction_id: transactionId ?? null,
+      transaction_opaque_data: transactionOpaqueData ?? null,
     });
     if (!result) return [];
     const inner = unwrapResult(result);
@@ -816,14 +816,14 @@ export class VgiClient {
 
   /** List views in a schema. */
   async schemaContentsViews(
-    attachId: AttachId,
+    attachOpaqueData: AttachOpaqueData,
     name: string,
-    transactionId?: TransactionId,
+    transactionOpaqueData?: TransactionOpaqueData,
   ): Promise<ViewInfo[]> {
     const result = await this.rpc.call("catalog_schema_contents_views", {
-      attach_id: attachId,
+      attach_opaque_data: attachOpaqueData,
       name,
-      transaction_id: transactionId ?? null,
+      transaction_opaque_data: transactionOpaqueData ?? null,
     });
     if (!result) return [];
     const inner = unwrapResult(result);
@@ -832,16 +832,16 @@ export class VgiClient {
 
   /** List functions in a schema, filtered by type. */
   async schemaContentsFunctions(
-    attachId: AttachId,
+    attachOpaqueData: AttachOpaqueData,
     name: string,
     type: CatalogFunctionType,
-    transactionId?: TransactionId,
+    transactionOpaqueData?: TransactionOpaqueData,
   ): Promise<FunctionInfo[]> {
     const result = await this.rpc.call("catalog_schema_contents_functions", {
-      attach_id: attachId,
+      attach_opaque_data: attachOpaqueData,
       name,
       type,
-      transaction_id: transactionId ?? null,
+      transaction_opaque_data: transactionOpaqueData ?? null,
     });
     if (!result) return [];
     const inner = unwrapResult(result);
@@ -850,16 +850,16 @@ export class VgiClient {
 
   /** Get a table by name, or null if not found. */
   async tableGet(
-    attachId: AttachId,
+    attachOpaqueData: AttachOpaqueData,
     schemaName: string,
     name: string,
-    transactionId?: TransactionId,
+    transactionOpaqueData?: TransactionOpaqueData,
   ): Promise<TableInfo | null> {
     const result = await this.rpc.call("catalog_table_get", {
-      attach_id: attachId,
+      attach_opaque_data: attachOpaqueData,
       schema_name: schemaName,
       name,
-      transaction_id: transactionId ?? null,
+      transaction_opaque_data: transactionOpaqueData ?? null,
     });
     if (!result) return null;
     const inner = unwrapResult(result);
@@ -869,7 +869,7 @@ export class VgiClient {
 
   /** Create a new table. */
   async tableCreate(
-    attachId: AttachId,
+    attachOpaqueData: AttachOpaqueData,
     schemaName: string,
     name: string,
     columns: Uint8Array,
@@ -877,10 +877,10 @@ export class VgiClient {
     notNullConstraints?: number[],
     uniqueConstraints?: number[][],
     checkConstraints?: string[],
-    transactionId?: TransactionId,
+    transactionOpaqueData?: TransactionOpaqueData,
   ): Promise<void> {
     await this.rpc.call("catalog_table_create", {
-      attach_id: attachId,
+      attach_opaque_data: attachOpaqueData,
       schema_name: schemaName,
       name,
       columns,
@@ -888,26 +888,26 @@ export class VgiClient {
       not_null_constraints: notNullConstraints ?? null,
       unique_constraints: uniqueConstraints ?? null,
       check_constraints: checkConstraints ?? null,
-      transaction_id: transactionId ?? null,
+      transaction_opaque_data: transactionOpaqueData ?? null,
     });
   }
 
   /** Drop a table by name. */
   async tableDrop(
-    attachId: AttachId,
+    attachOpaqueData: AttachOpaqueData,
     schemaName: string,
     name: string,
     ignoreNotFound?: boolean,
     cascade?: boolean,
-    transactionId?: TransactionId,
+    transactionOpaqueData?: TransactionOpaqueData,
   ): Promise<void> {
     await this.rpc.call("catalog_table_drop", {
-      attach_id: attachId,
+      attach_opaque_data: attachOpaqueData,
       schema_name: schemaName,
       name,
       ignore_not_found: ignoreNotFound ?? false,
       cascade: cascade ?? false,
-      transaction_id: transactionId ?? null,
+      transaction_opaque_data: transactionOpaqueData ?? null,
     });
   }
 
@@ -917,20 +917,20 @@ export class VgiClient {
    * by the VGI extension during query planning.
    */
   async tableScanFunctionGet(
-    attachId: AttachId,
+    attachOpaqueData: AttachOpaqueData,
     schemaName: string,
     name: string,
     atUnit?: string | null,
     atValue?: string | null,
-    transactionId?: TransactionId,
+    transactionOpaqueData?: TransactionOpaqueData,
   ): Promise<ScanFunctionResult> {
     const result = await this.rpc.call("catalog_table_scan_function_get", {
-      attach_id: attachId,
+      attach_opaque_data: attachOpaqueData,
       schema_name: schemaName,
       name,
       at_unit: atUnit ?? null,
       at_value: atValue ?? null,
-      transaction_id: transactionId ?? null,
+      transaction_opaque_data: transactionOpaqueData ?? null,
     });
     if (!result) throw new VgiClientError("table_scan_function_get returned null");
     return decodeScanFunctionResult(unwrapResult(result));
@@ -938,142 +938,142 @@ export class VgiClient {
 
   /** Set or clear the comment on a table. */
   async tableCommentSet(
-    attachId: AttachId,
+    attachOpaqueData: AttachOpaqueData,
     schemaName: string,
     name: string,
     comment?: string | null,
     ignoreNotFound?: boolean,
-    transactionId?: TransactionId,
+    transactionOpaqueData?: TransactionOpaqueData,
   ): Promise<void> {
     await this.rpc.call("catalog_table_comment_set", {
-      attach_id: attachId,
+      attach_opaque_data: attachOpaqueData,
       schema_name: schemaName,
       name,
       comment: comment ?? null,
       ignore_not_found: ignoreNotFound ?? null,
-      transaction_id: transactionId ?? null,
+      transaction_opaque_data: transactionOpaqueData ?? null,
     });
   }
 
   /** Rename a table. */
   async tableRename(
-    attachId: AttachId,
+    attachOpaqueData: AttachOpaqueData,
     schemaName: string,
     name: string,
     newName: string,
     ignoreNotFound?: boolean,
-    transactionId?: TransactionId,
+    transactionOpaqueData?: TransactionOpaqueData,
   ): Promise<void> {
     await this.rpc.call("catalog_table_rename", {
-      attach_id: attachId,
+      attach_opaque_data: attachOpaqueData,
       schema_name: schemaName,
       name,
       new_name: newName,
       ignore_not_found: ignoreNotFound ?? null,
-      transaction_id: transactionId ?? null,
+      transaction_opaque_data: transactionOpaqueData ?? null,
     });
   }
 
   /** Add a column to a table. */
   async tableColumnAdd(
-    attachId: AttachId,
+    attachOpaqueData: AttachOpaqueData,
     schemaName: string,
     name: string,
     columnName: string,
     columnType: string,
     defaultValue?: string | null,
     ignoreNotFound?: boolean,
-    transactionId?: TransactionId,
+    transactionOpaqueData?: TransactionOpaqueData,
   ): Promise<void> {
     await this.rpc.call("catalog_table_column_add", {
-      attach_id: attachId,
+      attach_opaque_data: attachOpaqueData,
       schema_name: schemaName,
       name,
       column_name: columnName,
       column_type: columnType,
       default_value: defaultValue ?? null,
       ignore_not_found: ignoreNotFound ?? null,
-      transaction_id: transactionId ?? null,
+      transaction_opaque_data: transactionOpaqueData ?? null,
     });
   }
 
   /** Drop a column from a table. */
   async tableColumnDrop(
-    attachId: AttachId,
+    attachOpaqueData: AttachOpaqueData,
     schemaName: string,
     name: string,
     columnName: string,
     ignoreNotFound?: boolean,
-    transactionId?: TransactionId,
+    transactionOpaqueData?: TransactionOpaqueData,
   ): Promise<void> {
     await this.rpc.call("catalog_table_column_drop", {
-      attach_id: attachId,
+      attach_opaque_data: attachOpaqueData,
       schema_name: schemaName,
       name,
       column_name: columnName,
       ignore_not_found: ignoreNotFound ?? null,
-      transaction_id: transactionId ?? null,
+      transaction_opaque_data: transactionOpaqueData ?? null,
     });
   }
 
   /** Rename a column in a table. */
   async tableColumnRename(
-    attachId: AttachId,
+    attachOpaqueData: AttachOpaqueData,
     schemaName: string,
     name: string,
     columnName: string,
     newName: string,
     ignoreNotFound?: boolean,
-    transactionId?: TransactionId,
+    transactionOpaqueData?: TransactionOpaqueData,
   ): Promise<void> {
     await this.rpc.call("catalog_table_column_rename", {
-      attach_id: attachId,
+      attach_opaque_data: attachOpaqueData,
       schema_name: schemaName,
       name,
       column_name: columnName,
       new_name: newName,
       ignore_not_found: ignoreNotFound ?? null,
-      transaction_id: transactionId ?? null,
+      transaction_opaque_data: transactionOpaqueData ?? null,
     });
   }
 
   /** Set the default value for a column. */
   async tableColumnDefaultSet(
-    attachId: AttachId,
+    attachOpaqueData: AttachOpaqueData,
     schemaName: string,
     name: string,
     columnName: string,
     defaultValue: string,
     ignoreNotFound?: boolean,
-    transactionId?: TransactionId,
+    transactionOpaqueData?: TransactionOpaqueData,
   ): Promise<void> {
     await this.rpc.call("catalog_table_column_default_set", {
-      attach_id: attachId,
+      attach_opaque_data: attachOpaqueData,
       schema_name: schemaName,
       name,
       column_name: columnName,
       default_value: defaultValue,
       ignore_not_found: ignoreNotFound ?? null,
-      transaction_id: transactionId ?? null,
+      transaction_opaque_data: transactionOpaqueData ?? null,
     });
   }
 
   /** Remove the default value from a column. */
   async tableColumnDefaultDrop(
-    attachId: AttachId,
+    attachOpaqueData: AttachOpaqueData,
     schemaName: string,
     name: string,
     columnName: string,
     ignoreNotFound?: boolean,
-    transactionId?: TransactionId,
+    transactionOpaqueData?: TransactionOpaqueData,
   ): Promise<void> {
     await this.rpc.call("catalog_table_column_default_drop", {
-      attach_id: attachId,
+      attach_opaque_data: attachOpaqueData,
       schema_name: schemaName,
       name,
       column_name: columnName,
       ignore_not_found: ignoreNotFound ?? null,
-      transaction_id: transactionId ?? null,
+      transaction_opaque_data: transactionOpaqueData ?? null,
     });
   }
 
@@ -1085,75 +1085,75 @@ export class VgiClient {
    * `expression` is an optional SQL expression used to convert existing values.
    */
   async tableColumnTypeChange(
-    attachId: AttachId,
+    attachOpaqueData: AttachOpaqueData,
     schemaName: string,
     name: string,
     columnDefinition: Uint8Array,
     expression?: string | null,
     ignoreNotFound?: boolean,
-    transactionId?: TransactionId,
+    transactionOpaqueData?: TransactionOpaqueData,
   ): Promise<void> {
     await this.rpc.call("catalog_table_column_type_change", {
-      attach_id: attachId,
+      attach_opaque_data: attachOpaqueData,
       schema_name: schemaName,
       name,
       column_definition: columnDefinition,
       expression: expression ?? null,
       ignore_not_found: ignoreNotFound ?? false,
-      transaction_id: transactionId ?? null,
+      transaction_opaque_data: transactionOpaqueData ?? null,
     });
   }
 
   /** Set a NOT NULL constraint on a column. */
   async tableNotNullSet(
-    attachId: AttachId,
+    attachOpaqueData: AttachOpaqueData,
     schemaName: string,
     name: string,
     columnName: string,
     ignoreNotFound?: boolean,
-    transactionId?: TransactionId,
+    transactionOpaqueData?: TransactionOpaqueData,
   ): Promise<void> {
     await this.rpc.call("catalog_table_not_null_set", {
-      attach_id: attachId,
+      attach_opaque_data: attachOpaqueData,
       schema_name: schemaName,
       name,
       column_name: columnName,
       ignore_not_found: ignoreNotFound ?? null,
-      transaction_id: transactionId ?? null,
+      transaction_opaque_data: transactionOpaqueData ?? null,
     });
   }
 
   /** Remove a NOT NULL constraint from a column. */
   async tableNotNullDrop(
-    attachId: AttachId,
+    attachOpaqueData: AttachOpaqueData,
     schemaName: string,
     name: string,
     columnName: string,
     ignoreNotFound?: boolean,
-    transactionId?: TransactionId,
+    transactionOpaqueData?: TransactionOpaqueData,
   ): Promise<void> {
     await this.rpc.call("catalog_table_not_null_drop", {
-      attach_id: attachId,
+      attach_opaque_data: attachOpaqueData,
       schema_name: schemaName,
       name,
       column_name: columnName,
       ignore_not_found: ignoreNotFound ?? null,
-      transaction_id: transactionId ?? null,
+      transaction_opaque_data: transactionOpaqueData ?? null,
     });
   }
 
   /** Get a view by name, or null if not found. */
   async viewGet(
-    attachId: AttachId,
+    attachOpaqueData: AttachOpaqueData,
     schemaName: string,
     name: string,
-    transactionId?: TransactionId,
+    transactionOpaqueData?: TransactionOpaqueData,
   ): Promise<ViewInfo | null> {
     const result = await this.rpc.call("catalog_view_get", {
-      attach_id: attachId,
+      attach_opaque_data: attachOpaqueData,
       schema_name: schemaName,
       name,
-      transaction_id: transactionId ?? null,
+      transaction_opaque_data: transactionOpaqueData ?? null,
     });
     if (!result) return null;
     const inner = unwrapResult(result);
@@ -1163,77 +1163,77 @@ export class VgiClient {
 
   /** Create a new view. */
   async viewCreate(
-    attachId: AttachId,
+    attachOpaqueData: AttachOpaqueData,
     schemaName: string,
     name: string,
     definition: string,
     onConflict: OnCreateConflict,
-    transactionId?: TransactionId,
+    transactionOpaqueData?: TransactionOpaqueData,
   ): Promise<void> {
     await this.rpc.call("catalog_view_create", {
-      attach_id: attachId,
+      attach_opaque_data: attachOpaqueData,
       schema_name: schemaName,
       name,
       definition,
       on_conflict: onConflict,
-      transaction_id: transactionId ?? null,
+      transaction_opaque_data: transactionOpaqueData ?? null,
     });
   }
 
   /** Drop a view by name. */
   async viewDrop(
-    attachId: AttachId,
+    attachOpaqueData: AttachOpaqueData,
     schemaName: string,
     name: string,
     ignoreNotFound?: boolean,
     cascade?: boolean,
-    transactionId?: TransactionId,
+    transactionOpaqueData?: TransactionOpaqueData,
   ): Promise<void> {
     await this.rpc.call("catalog_view_drop", {
-      attach_id: attachId,
+      attach_opaque_data: attachOpaqueData,
       schema_name: schemaName,
       name,
       ignore_not_found: ignoreNotFound ?? false,
       cascade: cascade ?? false,
-      transaction_id: transactionId ?? null,
+      transaction_opaque_data: transactionOpaqueData ?? null,
     });
   }
 
   /** Rename a view. */
   async viewRename(
-    attachId: AttachId,
+    attachOpaqueData: AttachOpaqueData,
     schemaName: string,
     name: string,
     newName: string,
     ignoreNotFound?: boolean,
-    transactionId?: TransactionId,
+    transactionOpaqueData?: TransactionOpaqueData,
   ): Promise<void> {
     await this.rpc.call("catalog_view_rename", {
-      attach_id: attachId,
+      attach_opaque_data: attachOpaqueData,
       schema_name: schemaName,
       name,
       new_name: newName,
       ignore_not_found: ignoreNotFound ?? null,
-      transaction_id: transactionId ?? null,
+      transaction_opaque_data: transactionOpaqueData ?? null,
     });
   }
 
   /** Set or clear the comment on a view. */
   async viewCommentSet(
-    attachId: AttachId,
+    attachOpaqueData: AttachOpaqueData,
     schemaName: string,
     name: string,
     comment?: string | null,
     ignoreNotFound?: boolean,
-    transactionId?: TransactionId,
+    transactionOpaqueData?: TransactionOpaqueData,
   ): Promise<void> {
     await this.rpc.call("catalog_view_comment_set", {
-      attach_id: attachId,
+      attach_opaque_data: attachOpaqueData,
       schema_name: schemaName,
       name,
       comment: comment ?? null,
       ignore_not_found: ignoreNotFound ?? null,
-      transaction_id: transactionId ?? null,
+      transaction_opaque_data: transactionOpaqueData ?? null,
     });
   }
 
@@ -1243,16 +1243,16 @@ export class VgiClient {
 
   /** Get a macro by name, or null if not found. */
   async macroGet(
-    attachId: AttachId,
+    attachOpaqueData: AttachOpaqueData,
     schemaName: string,
     name: string,
-    transactionId?: TransactionId,
+    transactionOpaqueData?: TransactionOpaqueData,
   ): Promise<MacroInfo | null> {
     const result = await this.rpc.call("catalog_macro_get", {
-      attach_id: attachId,
+      attach_opaque_data: attachOpaqueData,
       schema_name: schemaName,
       name,
-      transaction_id: transactionId ?? null,
+      transaction_opaque_data: transactionOpaqueData ?? null,
     });
     if (!result) return null;
     const inner = unwrapResult(result);
@@ -1262,16 +1262,16 @@ export class VgiClient {
 
   /** List macros in a schema, filtered by type. */
   async schemaContentsMacros(
-    attachId: AttachId,
+    attachOpaqueData: AttachOpaqueData,
     name: string,
     type: CatalogMacroType,
-    transactionId?: TransactionId,
+    transactionOpaqueData?: TransactionOpaqueData,
   ): Promise<MacroInfo[]> {
     const result = await this.rpc.call("catalog_schema_contents_macros", {
-      attach_id: attachId,
+      attach_opaque_data: attachOpaqueData,
       name,
       type,
-      transaction_id: transactionId ?? null,
+      transaction_opaque_data: transactionOpaqueData ?? null,
     });
     if (!result) return [];
     const inner = unwrapResult(result);
@@ -1280,7 +1280,7 @@ export class VgiClient {
 
   /** Create a new macro. */
   async macroCreate(
-    attachId: AttachId,
+    attachOpaqueData: AttachOpaqueData,
     schemaName: string,
     name: string,
     macroType: MacroType,
@@ -1288,10 +1288,10 @@ export class VgiClient {
     definition: string,
     onConflict: OnCreateConflict,
     parameterDefaultValues?: Uint8Array | null,
-    transactionId?: TransactionId,
+    transactionOpaqueData?: TransactionOpaqueData,
   ): Promise<void> {
     const schema = schema_([
-      field("attach_id", binary(), true),
+      field("attach_opaque_data", binary(), true),
       field("schema_name", utf8(), false),
       field("name", utf8(), false),
       field("macro_type", utf8(), false),
@@ -1299,11 +1299,11 @@ export class VgiClient {
       field("definition", utf8(), false),
       field("on_conflict", utf8(), false),
       field("parameter_default_values", binary(), true),
-      field("transaction_id", binary(), true),
+      field("transaction_opaque_data", binary(), true),
     ]);
     const innerBatch = batchFromColumns(
       {
-        attach_id: [attachId],
+        attach_opaque_data: [attachOpaqueData],
         schema_name: [schemaName],
         name: [name],
         macro_type: [macroType],
@@ -1311,7 +1311,7 @@ export class VgiClient {
         definition: [definition],
         on_conflict: [onConflict],
         parameter_default_values: [parameterDefaultValues ?? null],
-        transaction_id: [transactionId ?? null],
+        transaction_opaque_data: [transactionOpaqueData ?? null],
       },
       schema,
     );
@@ -1320,18 +1320,18 @@ export class VgiClient {
 
   /** Drop a macro by name. */
   async macroDrop(
-    attachId: AttachId,
+    attachOpaqueData: AttachOpaqueData,
     schemaName: string,
     name: string,
     ignoreNotFound?: boolean,
-    transactionId?: TransactionId,
+    transactionOpaqueData?: TransactionOpaqueData,
   ): Promise<void> {
     await this.rpc.call("catalog_macro_drop", {
-      attach_id: attachId,
+      attach_opaque_data: attachOpaqueData,
       schema_name: schemaName,
       name,
       ignore_not_found: ignoreNotFound ?? false,
-      transaction_id: transactionId ?? null,
+      transaction_opaque_data: transactionOpaqueData ?? null,
     });
   }
 

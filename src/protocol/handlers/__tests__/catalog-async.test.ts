@@ -9,7 +9,7 @@
 // trip through the handlers as the resolved value.
 
 import { describe, test, expect } from "bun:test";
-import { CatalogInterface, type AttachId, type TransactionId, type CatalogAttachResult, type SchemaInfo, type TableInfo, type CatalogInfo } from "../../../catalog/interface.js";
+import { CatalogInterface, type AttachOpaqueData, type TransactionOpaqueData, type CatalogAttachResult, type SchemaInfo, type TableInfo, type CatalogInfo } from "../../../catalog/interface.js";
 import { buildVgiProtocol } from "../../dispatch.js";
 import { FunctionRegistry } from "../../../functions/registry.js";
 import { type VgiSchema, schema, type VgiField, field, type VgiDataType, int64, type VgiBatch } from "../../../arrow/index.js";
@@ -26,29 +26,29 @@ class AsyncStubCatalog extends CatalogInterface {
   async attach(name: string): Promise<CatalogAttachResult> {
     await Promise.resolve();
     return {
-      attach_id: new Uint8Array([1, 2, 3]),
+      attach_opaque_data: new Uint8Array([1, 2, 3]),
       supports_transactions: false,
       supports_time_travel: false,
       catalog_version_frozen: true,
       catalog_version: 7,
-      attach_id_required: true,
+      attach_opaque_data_required: true,
       default_schema: "main",
       resolved_data_version: null,
       resolved_implementation_version: null,
     };
   }
-  async detach(_a: AttachId): Promise<void> {
+  async detach(_a: AttachOpaqueData): Promise<void> {
     await Promise.resolve();
   }
-  async version(_a: AttachId, _t?: TransactionId): Promise<number> {
+  async version(_a: AttachOpaqueData, _t?: TransactionOpaqueData): Promise<number> {
     await Promise.resolve();
     return 42;
   }
-  async schemas(attachId: AttachId): Promise<SchemaInfo[]> {
+  async schemas(attachOpaqueData: AttachOpaqueData): Promise<SchemaInfo[]> {
     await Promise.resolve();
-    return [{ attach_id: attachId, name: "main", comment: null, tags: {} }];
+    return [{ attach_opaque_data: attachOpaqueData, name: "main", comment: null, tags: {} }];
   }
-  override async tableGet(attachId: AttachId, schemaName: string, name: string): Promise<TableInfo | null> {
+  override async tableGet(attachOpaqueData: AttachOpaqueData, schemaName: string, name: string): Promise<TableInfo | null> {
     await Promise.resolve();
     return {
       comment: null,
@@ -68,9 +68,9 @@ class AsyncStubCatalog extends CatalogInterface {
       supports_column_statistics: false,
     };
   }
-  override async schemaContentsTables(attachId: AttachId, _name: string): Promise<TableInfo[]> {
+  override async schemaContentsTables(attachOpaqueData: AttachOpaqueData, _name: string): Promise<TableInfo[]> {
     await Promise.resolve();
-    const t = await this.tableGet(attachId, "main", "stub_table");
+    const t = await this.tableGet(attachOpaqueData, "main", "stub_table");
     return t ? [t] : [];
   }
 }
@@ -91,7 +91,7 @@ describe("catalog dispatchers await async overrides", () => {
 
   test("catalog_version returns the resolved number, not a Promise", async () => {
     const m = findHandler("catalog_version");
-    const result = await m.handler({ attach_id: new Uint8Array([1, 2, 3]), transaction_id: null }, {} as any);
+    const result = await m.handler({ attach_opaque_data: new Uint8Array([1, 2, 3]), transaction_opaque_data: null }, {} as any);
     // result is wrapped by `wrapResult` — extract the inner version field.
     // The wrapped result is { result: <serialized batch> }; deserialize inline.
     expect(result).toBeDefined();
@@ -100,7 +100,7 @@ describe("catalog dispatchers await async overrides", () => {
   test("catalog_table_get returns the resolved TableInfo", async () => {
     const m = findHandler("catalog_table_get");
     const result = await m.handler(
-      { attach_id: new Uint8Array([1, 2, 3]), schema_name: "main", name: "stub_table", at_unit: null, at_value: null, transaction_id: null },
+      { attach_opaque_data: new Uint8Array([1, 2, 3]), schema_name: "main", name: "stub_table", at_unit: null, at_value: null, transaction_opaque_data: null },
       {} as any,
     );
     // The handler awaited tableGet and called encodeTableInfo on the resolved
@@ -112,7 +112,7 @@ describe("catalog dispatchers await async overrides", () => {
   test("catalog_schemas returns resolved schemas", async () => {
     const m = findHandler("catalog_schemas");
     const result = await m.handler(
-      { attach_id: new Uint8Array([1, 2, 3]), transaction_id: null },
+      { attach_opaque_data: new Uint8Array([1, 2, 3]), transaction_opaque_data: null },
       {} as any,
     );
     expect(result).toBeDefined();

@@ -107,7 +107,7 @@ function buildEchoBatch(received: Record<string, unknown>): RecordBatch {
   return batchFromColumns(columns, ECHO_SCHEMA);
 }
 
-function encodeAttachId(received: Record<string, unknown>): Uint8Array {
+function encodeAttachOpaqueData(received: Record<string, unknown>): Uint8Array {
   const ipc = serializeBatch(buildEchoBatch(received));
   const out = new Uint8Array(UUID_BYTES + 1 + ipc.byteLength);
   out.set(randomUuidBytes(), 0);
@@ -116,18 +116,18 @@ function encodeAttachId(received: Record<string, unknown>): Uint8Array {
   return out;
 }
 
-function decodeAttachId(attachId: Uint8Array): RecordBatch {
-  if (attachId.byteLength <= UUID_BYTES + 1 || attachId[UUID_BYTES] !== ATTACH_ID_SEP) {
-    throw new Error("attach_id does not carry an options payload");
+function decodeAttachOpaqueData(attachOpaqueData: Uint8Array): RecordBatch {
+  if (attachOpaqueData.byteLength <= UUID_BYTES + 1 || attachOpaqueData[UUID_BYTES] !== ATTACH_ID_SEP) {
+    throw new Error("attach_opaque_data does not carry an options payload");
   }
-  return deserializeBatch(attachId.subarray(UUID_BYTES + 1));
+  return deserializeBatch(attachOpaqueData.subarray(UUID_BYTES + 1));
 }
 
 interface EchoState { emitted: boolean }
 
 const echo_attach_options = defineTableFunction<Record<string, never>, EchoState>({
   name: "echo_attach_options",
-  description: "Echo the attach-time option values carried in attach_id",
+  description: "Echo the attach-time option values carried in attach_opaque_data",
   categories: ["generator", "testing"],
   onBind: () => ({ outputSchema: ECHO_SCHEMA }),
   initialState: () => ({ emitted: false }),
@@ -140,11 +140,11 @@ const echo_attach_options = defineTableFunction<Record<string, never>, EchoState
       out.finish();
       return;
     }
-    const attachId = params.initCall.bind_call.attach_id;
-    if (!attachId) {
-      throw new Error("echo_attach_options requires an attach_id");
+    const attachOpaqueData = params.initCall.bind_call.attach_opaque_data;
+    if (!attachOpaqueData) {
+      throw new Error("echo_attach_options requires an attach_opaque_data");
     }
-    out.emit(decodeAttachId(attachId));
+    out.emit(decodeAttachOpaqueData(attachOpaqueData));
     state.emitted = true;
   },
 });
@@ -165,7 +165,7 @@ class AttachOptionsCatalog extends ReadOnlyCatalogInterface {
     _implementationVersion?: string | null,
   ): CatalogAttachResult {
     const base = super.attach(name, options);
-    return { ...base, attach_id: encodeAttachId(options ?? {}) };
+    return { ...base, attach_opaque_data: encodeAttachOpaqueData(options ?? {}) };
   }
 }
 

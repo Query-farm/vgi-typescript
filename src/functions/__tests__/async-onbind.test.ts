@@ -21,8 +21,8 @@ function makeBindRequest(): BindRequest {
     input_schema: null,
     settings: null,
     secrets: null,
-    attach_id: null,
-    transaction_id: null,
+    attach_opaque_data: null,
+    transaction_opaque_data: null,
     resolved_secrets_provided: false,
   };
 }

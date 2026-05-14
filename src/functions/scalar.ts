@@ -50,7 +50,7 @@ export interface ScalarBindParameters {
   settings: Record<string, any>;
   /** Secrets from DuckDB */
   secrets: Record<string, Record<string, any>>;
-  /** Original bind request — exposes attach_id, transaction_id, function_type, etc. */
+  /** Original bind request — exposes attach_opaque_data, transaction_opaque_data, function_type, etc. */
   bindCall: BindRequest;
 }
 

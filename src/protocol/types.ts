@@ -20,8 +20,8 @@ export interface BindRequest {
   input_schema: VgiSchema | null;
   settings: VgiBatch | null;
   secrets: VgiBatch | null;
-  attach_id: Uint8Array | null;
-  transaction_id: Uint8Array | null;
+  attach_opaque_data: Uint8Array | null;
+  transaction_opaque_data: Uint8Array | null;
   resolved_secrets_provided: boolean;
 }
 

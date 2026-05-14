@@ -3,8 +3,8 @@
 
 import {
   CatalogInterface,
-  type AttachId,
-  type TransactionId,
+  type AttachOpaqueData,
+  type TransactionOpaqueData,
   type CatalogAttachResult,
   SchemaInfo,
   TableInfo,
@@ -41,7 +41,7 @@ interface InMemoryView {
 }
 
 export class InMemoryCatalog extends CatalogInterface {
-  private _attachments = new Map<string, { attachId: AttachId; schemas: Map<string, InMemorySchema> }>();
+  private _attachments = new Map<string, { attachOpaqueData: AttachOpaqueData; schemas: Map<string, InMemorySchema> }>();
   private _version = 1;
 
   catalogs(): string[] {
@@ -58,8 +58,8 @@ export class InMemoryCatalog extends CatalogInterface {
       throw new Error(`Unknown catalog: '${name}'`);
     }
 
-    const attachId = new Uint8Array(16);
-    crypto.getRandomValues(attachId);
+    const attachOpaqueData = new Uint8Array(16);
+    crypto.getRandomValues(attachOpaqueData);
 
     const schemas = new Map<string, InMemorySchema>();
     schemas.set("main", {
@@ -70,35 +70,35 @@ export class InMemoryCatalog extends CatalogInterface {
       views: new Map(),
     });
 
-    const key = this._attachIdKey(attachId);
-    this._attachments.set(key, { attachId, schemas });
+    const key = this._attachOpaqueDataKey(attachOpaqueData);
+    this._attachments.set(key, { attachOpaqueData, schemas });
 
     return {
-      attach_id: attachId,
+      attach_opaque_data: attachOpaqueData,
       supports_transactions: false,
       supports_time_travel: false,
       catalog_version_frozen: false,
       catalog_version: this._version,
-      attach_id_required: true,
+      attach_opaque_data_required: true,
       default_schema: "main",
       resolved_data_version: null,
       resolved_implementation_version: null,
     };
   }
 
-  detach(attachId: AttachId): void {
-    const key = this._attachIdKey(attachId);
+  detach(attachOpaqueData: AttachOpaqueData): void {
+    const key = this._attachOpaqueDataKey(attachOpaqueData);
     this._attachments.delete(key);
   }
 
-  version(attachId: AttachId, transactionId?: TransactionId): number {
+  version(attachOpaqueData: AttachOpaqueData, transactionOpaqueData?: TransactionOpaqueData): number {
     return this._version;
   }
 
-  schemas(attachId: AttachId, transactionId?: TransactionId): SchemaInfo[] {
-    const att = this._getAttachment(attachId);
+  schemas(attachOpaqueData: AttachOpaqueData, transactionOpaqueData?: TransactionOpaqueData): SchemaInfo[] {
+    const att = this._getAttachment(attachOpaqueData);
     return [...att.schemas.values()].map((s) => ({
-      attach_id: attachId,
+      attach_opaque_data: attachOpaqueData,
       name: s.name,
       comment: s.comment ?? null,
       tags: s.tags ?? {},
@@ -106,15 +106,15 @@ export class InMemoryCatalog extends CatalogInterface {
   }
 
   override schemaGet(
-    attachId: AttachId,
+    attachOpaqueData: AttachOpaqueData,
     name: string,
-    transactionId?: TransactionId
+    transactionOpaqueData?: TransactionOpaqueData
   ): SchemaInfo | null {
-    const att = this._getAttachment(attachId);
+    const att = this._getAttachment(attachOpaqueData);
     const s = att.schemas.get(name);
     if (!s) return null;
     return {
-      attach_id: attachId,
+      attach_opaque_data: attachOpaqueData,
       name: s.name,
       comment: s.comment ?? null,
       tags: s.tags ?? {},
@@ -122,13 +122,13 @@ export class InMemoryCatalog extends CatalogInterface {
   }
 
   override schemaCreate(
-    attachId: AttachId,
+    attachOpaqueData: AttachOpaqueData,
     name: string,
     comment?: string | null,
     tags?: any,
-    transactionId?: TransactionId
+    transactionOpaqueData?: TransactionOpaqueData
   ): void {
-    const att = this._getAttachment(attachId);
+    const att = this._getAttachment(attachOpaqueData);
     if (att.schemas.has(name)) {
       throw new CatalogAlreadyExistsError("Schema", name);
     }
@@ -143,13 +143,13 @@ export class InMemoryCatalog extends CatalogInterface {
   }
 
   override schemaDrop(
-    attachId: AttachId,
+    attachOpaqueData: AttachOpaqueData,
     name: string,
     ignoreNotFound?: boolean,
     cascade?: boolean,
-    transactionId?: TransactionId
+    transactionOpaqueData?: TransactionOpaqueData
   ): void {
-    const att = this._getAttachment(attachId);
+    const att = this._getAttachment(attachOpaqueData);
     if (!att.schemas.has(name)) {
       if (ignoreNotFound) return;
       throw new CatalogNotFoundError("Schema", name);
@@ -159,11 +159,11 @@ export class InMemoryCatalog extends CatalogInterface {
   }
 
   override schemaContentsTables(
-    attachId: AttachId,
+    attachOpaqueData: AttachOpaqueData,
     name: string,
-    transactionId?: TransactionId
+    transactionOpaqueData?: TransactionOpaqueData
   ): TableInfo[] {
-    const att = this._getAttachment(attachId);
+    const att = this._getAttachment(attachOpaqueData);
     const schema = att.schemas.get(name);
     if (!schema) return [];
     return [...schema.tables.values()].map((t) => ({
@@ -192,11 +192,11 @@ export class InMemoryCatalog extends CatalogInterface {
   }
 
   override schemaContentsViews(
-    attachId: AttachId,
+    attachOpaqueData: AttachOpaqueData,
     name: string,
-    transactionId?: TransactionId
+    transactionOpaqueData?: TransactionOpaqueData
   ): ViewInfo[] {
-    const att = this._getAttachment(attachId);
+    const att = this._getAttachment(attachOpaqueData);
     const schema = att.schemas.get(name);
     if (!schema) return [];
     return [...schema.views.values()].map(
@@ -211,12 +211,12 @@ export class InMemoryCatalog extends CatalogInterface {
   }
 
   override tableGet(
-    attachId: AttachId,
+    attachOpaqueData: AttachOpaqueData,
     schemaName: string,
     name: string,
-    transactionId?: TransactionId
+    transactionOpaqueData?: TransactionOpaqueData
   ): TableInfo | null {
-    const att = this._getAttachment(attachId);
+    const att = this._getAttachment(attachOpaqueData);
     const schema = att.schemas.get(schemaName);
     if (!schema) return null;
     const t = schema.tables.get(name);
@@ -247,7 +247,7 @@ export class InMemoryCatalog extends CatalogInterface {
   }
 
   override tableCreate(
-    attachId: AttachId,
+    attachOpaqueData: AttachOpaqueData,
     schemaName: string,
     name: string,
     columns: Uint8Array,
@@ -255,9 +255,9 @@ export class InMemoryCatalog extends CatalogInterface {
     notNullConstraints?: number[],
     uniqueConstraints?: number[][],
     checkConstraints?: string[],
-    transactionId?: TransactionId
+    transactionOpaqueData?: TransactionOpaqueData
   ): void {
-    const att = this._getAttachment(attachId);
+    const att = this._getAttachment(attachOpaqueData);
     const schema = att.schemas.get(schemaName);
     if (!schema) throw new CatalogNotFoundError("Schema", schemaName);
     if (schema.tables.has(name)) {
@@ -282,13 +282,13 @@ export class InMemoryCatalog extends CatalogInterface {
   }
 
   override tableDrop(
-    attachId: AttachId,
+    attachOpaqueData: AttachOpaqueData,
     schemaName: string,
     name: string,
     ignoreNotFound?: boolean,
-    transactionId?: TransactionId
+    transactionOpaqueData?: TransactionOpaqueData
   ): void {
-    const att = this._getAttachment(attachId);
+    const att = this._getAttachment(attachOpaqueData);
     const schema = att.schemas.get(schemaName);
     if (!schema || !schema.tables.has(name)) {
       if (ignoreNotFound) return;
@@ -299,14 +299,14 @@ export class InMemoryCatalog extends CatalogInterface {
   }
 
   override tableCommentSet(
-    attachId: AttachId,
+    attachOpaqueData: AttachOpaqueData,
     schemaName: string,
     name: string,
     comment?: string | null,
     ignoreNotFound?: boolean,
-    transactionId?: TransactionId
+    transactionOpaqueData?: TransactionOpaqueData
   ): void {
-    const att = this._getAttachment(attachId);
+    const att = this._getAttachment(attachOpaqueData);
     const schema = att.schemas.get(schemaName);
     if (!schema) throw new CatalogNotFoundError("Schema", schemaName);
     const t = schema.tables.get(name);
@@ -319,14 +319,14 @@ export class InMemoryCatalog extends CatalogInterface {
   }
 
   override tableRename(
-    attachId: AttachId,
+    attachOpaqueData: AttachOpaqueData,
     schemaName: string,
     name: string,
     newName: string,
     ignoreNotFound?: boolean,
-    transactionId?: TransactionId
+    transactionOpaqueData?: TransactionOpaqueData
   ): void {
-    const att = this._getAttachment(attachId);
+    const att = this._getAttachment(attachOpaqueData);
     const schema = att.schemas.get(schemaName);
     if (!schema) throw new CatalogNotFoundError("Schema", schemaName);
     const t = schema.tables.get(name);
@@ -341,12 +341,12 @@ export class InMemoryCatalog extends CatalogInterface {
   }
 
   override viewGet(
-    attachId: AttachId,
+    attachOpaqueData: AttachOpaqueData,
     schemaName: string,
     name: string,
-    transactionId?: TransactionId
+    transactionOpaqueData?: TransactionOpaqueData
   ): ViewInfo | null {
-    const att = this._getAttachment(attachId);
+    const att = this._getAttachment(attachOpaqueData);
     const schema = att.schemas.get(schemaName);
     if (!schema) return null;
     const v = schema.views.get(name);
@@ -361,14 +361,14 @@ export class InMemoryCatalog extends CatalogInterface {
   }
 
   override viewCreate(
-    attachId: AttachId,
+    attachOpaqueData: AttachOpaqueData,
     schemaName: string,
     name: string,
     definition: string,
     onConflict: string,
-    transactionId?: TransactionId
+    transactionOpaqueData?: TransactionOpaqueData
   ): void {
-    const att = this._getAttachment(attachId);
+    const att = this._getAttachment(attachOpaqueData);
     const schema = att.schemas.get(schemaName);
     if (!schema) throw new CatalogNotFoundError("Schema", schemaName);
     if (schema.views.has(name)) {
@@ -390,13 +390,13 @@ export class InMemoryCatalog extends CatalogInterface {
   }
 
   override viewDrop(
-    attachId: AttachId,
+    attachOpaqueData: AttachOpaqueData,
     schemaName: string,
     name: string,
     ignoreNotFound?: boolean,
-    transactionId?: TransactionId
+    transactionOpaqueData?: TransactionOpaqueData
   ): void {
-    const att = this._getAttachment(attachId);
+    const att = this._getAttachment(attachOpaqueData);
     const schema = att.schemas.get(schemaName);
     if (!schema || !schema.views.has(name)) {
       if (ignoreNotFound) return;
@@ -407,14 +407,14 @@ export class InMemoryCatalog extends CatalogInterface {
   }
 
   override viewRename(
-    attachId: AttachId,
+    attachOpaqueData: AttachOpaqueData,
     schemaName: string,
     name: string,
     newName: string,
     ignoreNotFound?: boolean,
-    transactionId?: TransactionId
+    transactionOpaqueData?: TransactionOpaqueData
   ): void {
-    const att = this._getAttachment(attachId);
+    const att = this._getAttachment(attachOpaqueData);
     const schema = att.schemas.get(schemaName);
     if (!schema) throw new CatalogNotFoundError("Schema", schemaName);
     const v = schema.views.get(name);
@@ -429,14 +429,14 @@ export class InMemoryCatalog extends CatalogInterface {
   }
 
   override viewCommentSet(
-    attachId: AttachId,
+    attachOpaqueData: AttachOpaqueData,
     schemaName: string,
     name: string,
     comment?: string | null,
     ignoreNotFound?: boolean,
-    transactionId?: TransactionId
+    transactionOpaqueData?: TransactionOpaqueData
   ): void {
-    const att = this._getAttachment(attachId);
+    const att = this._getAttachment(attachOpaqueData);
     const schema = att.schemas.get(schemaName);
     if (!schema) throw new CatalogNotFoundError("Schema", schemaName);
     const v = schema.views.get(name);
@@ -450,12 +450,12 @@ export class InMemoryCatalog extends CatalogInterface {
 
   // Helpers
 
-  private _attachIdKey(attachId: AttachId): string {
-    return Array.from(attachId).map((b) => b.toString(16).padStart(2, "0")).join("");
+  private _attachOpaqueDataKey(attachOpaqueData: AttachOpaqueData): string {
+    return Array.from(attachOpaqueData).map((b) => b.toString(16).padStart(2, "0")).join("");
   }
 
-  private _getAttachment(attachId: AttachId) {
-    const key = this._attachIdKey(attachId);
+  private _getAttachment(attachOpaqueData: AttachOpaqueData) {
+    const key = this._attachOpaqueDataKey(attachOpaqueData);
     const att = this._attachments.get(key);
     if (!att) throw new Error("Catalog not attached");
     return att;

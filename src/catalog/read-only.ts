@@ -3,8 +3,8 @@
 import { type VgiSchema, schema as schema_, type VgiField, field, type VgiDataType, int64, utf8, binary, bool, nullType, list, isInt } from "../arrow/index.js";
 import {
   CatalogInterface,
-  type AttachId,
-  type TransactionId,
+  type AttachOpaqueData,
+  type TransactionOpaqueData,
   type CatalogAttachResult,
   type SchemaInfo,
   type TableInfo,
@@ -27,7 +27,7 @@ import { Arguments } from "../arguments/arguments.js";
 export class ReadOnlyCatalogInterface extends CatalogInterface {
   private _descriptor: CatalogDescriptor;
   private _registry: FunctionRegistry;
-  private _attachments = new Map<string, AttachId>();
+  private _attachments = new Map<string, AttachOpaqueData>();
   private _version = 1;
 
   constructor(descriptor: CatalogDescriptor, registry: FunctionRegistry) {
@@ -50,9 +50,9 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
       throw new Error(`No worker handles catalog '${name}'`);
     }
 
-    const attachId = new Uint8Array(16);
-    crypto.getRandomValues(attachId);
-    this._attachments.set(name, attachId);
+    const attachOpaqueData = new Uint8Array(16);
+    crypto.getRandomValues(attachOpaqueData);
+    this._attachments.set(name, attachOpaqueData);
 
     const settings = (this._descriptor.settings ?? []).map((s) =>
       serializeSetting(s)
@@ -68,12 +68,12 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
     );
 
     return {
-      attach_id: attachId,
+      attach_opaque_data: attachOpaqueData,
       supports_transactions: false,
       supports_time_travel: hasTimeTravel,
       catalog_version_frozen: true,
       catalog_version: this._version,
-      attach_id_required: true,
+      attach_opaque_data_required: true,
       default_schema: this._descriptor.defaultSchema ?? "main",
       settings,
       secret_types: secretTypes,
@@ -84,23 +84,23 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
     };
   }
 
-  detach(attachId: AttachId): void {
+  detach(attachOpaqueData: AttachOpaqueData): void {
     // Remove attachment
     for (const [name, id] of this._attachments) {
-      if (bufferEquals(id, attachId)) {
+      if (bufferEquals(id, attachOpaqueData)) {
         this._attachments.delete(name);
         break;
       }
     }
   }
 
-  version(attachId: AttachId, transactionId?: TransactionId): number | Promise<number> {
+  version(attachOpaqueData: AttachOpaqueData, transactionOpaqueData?: TransactionOpaqueData): number | Promise<number> {
     return this._version;
   }
 
-  schemas(attachId: AttachId, transactionId?: TransactionId): SchemaInfo[] {
+  schemas(attachOpaqueData: AttachOpaqueData, transactionOpaqueData?: TransactionOpaqueData): SchemaInfo[] {
     return this._descriptor.schemas.map((s) => ({
-      attach_id: attachId,
+      attach_opaque_data: attachOpaqueData,
       name: s.name,
       comment: s.comment ?? null,
       tags: s.tags ?? {},
@@ -131,14 +131,14 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
   }
 
   override schemaGet(
-    attachId: AttachId,
+    attachOpaqueData: AttachOpaqueData,
     name: string,
-    transactionId?: TransactionId
+    transactionOpaqueData?: TransactionOpaqueData
   ): SchemaInfo | null {
     const desc = this._descriptor.schemas.find((s) => s.name === name);
     if (!desc) return null;
     return {
-      attach_id: attachId,
+      attach_opaque_data: attachOpaqueData,
       name: desc.name,
       comment: desc.comment ?? null,
       tags: desc.tags ?? {},
@@ -147,9 +147,9 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
   }
 
   override async schemaContentsTables(
-    attachId: AttachId,
+    attachOpaqueData: AttachOpaqueData,
     name: string,
-    transactionId?: TransactionId
+    transactionOpaqueData?: TransactionOpaqueData
   ): Promise<TableInfo[]> {
     const schema = this._descriptor.schemas.find((s) => s.name === name);
     if (!schema || !schema.tables) return [];
@@ -170,8 +170,8 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
             input_schema: null,
             settings: null,
             secrets: null,
-            attach_id: attachId,
-            transaction_id: null,
+            attach_opaque_data: attachOpaqueData,
+            transaction_opaque_data: null,
             resolved_secrets_provided: false,
           };
           const response = await func.bind(bindRequest);
@@ -246,10 +246,10 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
   }
 
   override tableColumnStatisticsGet(
-    attachId: AttachId,
+    attachOpaqueData: AttachOpaqueData,
     schemaName: string,
     name: string,
-    transactionId?: TransactionId,
+    transactionOpaqueData?: TransactionOpaqueData,
   ): { bytes: Uint8Array; cacheMaxAgeSeconds: number | null } | null {
     const schema = this._descriptor.schemas.find((s) => s.name === schemaName);
     if (!schema || !schema.tables) return null;
@@ -264,9 +264,9 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
   }
 
   override schemaContentsViews(
-    attachId: AttachId,
+    attachOpaqueData: AttachOpaqueData,
     name: string,
-    transactionId?: TransactionId
+    transactionOpaqueData?: TransactionOpaqueData
   ): ViewInfo[] {
     const schema = this._descriptor.schemas.find((s) => s.name === name);
     if (!schema || !schema.views) return [];
@@ -281,10 +281,10 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
   }
 
   override schemaContentsFunctions(
-    attachId: AttachId,
+    attachOpaqueData: AttachOpaqueData,
     name: string,
     type: string,
-    transactionId?: TransactionId
+    transactionOpaqueData?: TransactionOpaqueData
   ): FunctionInfo[] {
     const schema = this._descriptor.schemas.find((s) => s.name === name);
     if (!schema || !schema.functions) return [];
@@ -358,10 +358,10 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
   }
 
   override schemaContentsMacros(
-    attachId: AttachId,
+    attachOpaqueData: AttachOpaqueData,
     name: string,
     type: string,
-    transactionId?: TransactionId
+    transactionOpaqueData?: TransactionOpaqueData
   ): MacroInfo[] {
     const schema = this._descriptor.schemas.find((s) => s.name === name);
     if (!schema || !schema.macros) return [];
@@ -387,9 +387,9 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
   }
 
   override schemaContentsIndexes(
-    attachId: AttachId,
+    attachOpaqueData: AttachOpaqueData,
     name: string,
-    transactionId?: TransactionId
+    transactionOpaqueData?: TransactionOpaqueData
   ): IndexInfo[] {
     const schema = this._descriptor.schemas.find((s) => s.name === name);
     if (!schema || !schema.indexes) return [];
@@ -407,34 +407,34 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
   }
 
   override indexGet(
-    attachId: AttachId,
+    attachOpaqueData: AttachOpaqueData,
     schemaName: string,
     name: string,
-    transactionId?: TransactionId
+    transactionOpaqueData?: TransactionOpaqueData
   ): IndexInfo | null {
-    const all = this.schemaContentsIndexes(attachId, schemaName, transactionId);
+    const all = this.schemaContentsIndexes(attachOpaqueData, schemaName, transactionOpaqueData);
     return all.find((i) => i.name === name) ?? null;
   }
 
   override macroGet(
-    attachId: AttachId,
+    attachOpaqueData: AttachOpaqueData,
     schemaName: string,
     name: string,
-    transactionId?: TransactionId
+    transactionOpaqueData?: TransactionOpaqueData
   ): MacroInfo | null {
-    const macros = this.schemaContentsMacros(attachId, schemaName, "SCALAR_MACRO", transactionId);
-    const tableMacros = this.schemaContentsMacros(attachId, schemaName, "TABLE_MACRO", transactionId);
+    const macros = this.schemaContentsMacros(attachOpaqueData, schemaName, "SCALAR_MACRO", transactionOpaqueData);
+    const tableMacros = this.schemaContentsMacros(attachOpaqueData, schemaName, "TABLE_MACRO", transactionOpaqueData);
     const all = [...macros, ...tableMacros];
     return all.find((m) => m.name.toLowerCase() === name.toLowerCase()) ?? null;
   }
 
   override tableScanFunctionGet(
-    attachId: AttachId,
+    attachOpaqueData: AttachOpaqueData,
     schemaName: string,
     name: string,
     atUnit?: string,
     atValue?: string,
-    transactionId?: TransactionId
+    transactionOpaqueData?: TransactionOpaqueData
   ): any {
     validateAtParams(atUnit, atValue);
 
@@ -469,12 +469,12 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
   }
 
   override async tableGet(
-    attachId: AttachId,
+    attachOpaqueData: AttachOpaqueData,
     schemaName: string,
     name: string,
     atUnit?: string,
     atValue?: string,
-    transactionId?: TransactionId
+    transactionOpaqueData?: TransactionOpaqueData
   ): Promise<TableInfo | null> {
     validateAtParams(atUnit, atValue);
 
@@ -487,17 +487,17 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
       }
     }
 
-    const tables = await this.schemaContentsTables(attachId, schemaName, transactionId);
+    const tables = await this.schemaContentsTables(attachOpaqueData, schemaName, transactionOpaqueData);
     return tables.find((t) => t.name === name) ?? null;
   }
 
   override viewGet(
-    attachId: AttachId,
+    attachOpaqueData: AttachOpaqueData,
     schemaName: string,
     name: string,
-    transactionId?: TransactionId
+    transactionOpaqueData?: TransactionOpaqueData
   ): ViewInfo | null {
-    const views = this.schemaContentsViews(attachId, schemaName, transactionId);
+    const views = this.schemaContentsViews(attachOpaqueData, schemaName, transactionOpaqueData);
     return views.find((v) => v.name === name) ?? null;
   }
 }

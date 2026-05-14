@@ -41,59 +41,59 @@ export function decodeOptionsBatch(bytes: any): Record<string, unknown> {
 
 export const emptyResultSchema = schema([]);
 
-export const attachIdParam = schema([
-  field("attach_id", binary(), true),
+export const attachOpaqueDataParam = schema([
+  field("attach_opaque_data", binary(), true),
 ]);
 
-export const attachIdTxnParams = schema([
-  field("attach_id", binary(), true),
-  field("transaction_id", binary(), true),
+export const attachOpaqueDataTxnParams = schema([
+  field("attach_opaque_data", binary(), true),
+  field("transaction_opaque_data", binary(), true),
 ]);
 
-export const attachIdNameTxnParams = schema([
-  field("attach_id", binary(), true),
+export const attachOpaqueDataNameTxnParams = schema([
+  field("attach_opaque_data", binary(), true),
   field("name", utf8(), false),
-  field("transaction_id", binary(), true),
+  field("transaction_opaque_data", binary(), true),
 ]);
 
-export const attachIdSchemaNameTxnParams = schema([
-  field("attach_id", binary(), true),
+export const attachOpaqueDataSchemaNameTxnParams = schema([
+  field("attach_opaque_data", binary(), true),
   field("schema_name", utf8(), false),
   field("name", utf8(), false),
-  field("transaction_id", binary(), true),
+  field("transaction_opaque_data", binary(), true),
 ]);
 
 export const schemaNameIgnoreNotFoundTxnParams = schema([
-  field("attach_id", binary(), true),
+  field("attach_opaque_data", binary(), true),
   field("schema_name", utf8(), false),
   field("name", utf8(), false),
   field("ignore_not_found", bool(), true),
-  field("transaction_id", binary(), true),
+  field("transaction_opaque_data", binary(), true),
 ]);
 
 export const schemaNameCommentParams = schema([
-  field("attach_id", binary(), true),
+  field("attach_opaque_data", binary(), true),
   field("schema_name", utf8(), false),
   field("name", utf8(), false),
   field("comment", utf8(), true),
   field("ignore_not_found", bool(), true),
-  field("transaction_id", binary(), true),
+  field("transaction_opaque_data", binary(), true),
 ]);
 
 export const schemaNameRenameParams = schema([
-  field("attach_id", binary(), true),
+  field("attach_opaque_data", binary(), true),
   field("schema_name", utf8(), false),
   field("name", utf8(), false),
   field("new_name", utf8(), false),
   field("ignore_not_found", bool(), true),
-  field("transaction_id", binary(), true),
+  field("transaction_opaque_data", binary(), true),
 ]);
 
 export const columnOpParams = schema([
-  field("attach_id", binary(), true),
+  field("attach_opaque_data", binary(), true),
   field("schema_name", utf8(), false),
   field("name", utf8(), false),
   field("column_name", utf8(), false),
   field("ignore_not_found", bool(), true),
-  field("transaction_id", binary(), true),
+  field("transaction_opaque_data", binary(), true),
 ]);

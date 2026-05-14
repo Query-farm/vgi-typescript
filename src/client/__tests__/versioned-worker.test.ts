@@ -9,7 +9,7 @@
 // wired into `make test` via VGI_VERSIONED_WORKER).
 
 import { describe, test, expect } from "bun:test";
-import { CatalogInterface, type CatalogInfo, type CatalogAttachResult, type AttachId, type TransactionId, type SchemaInfo } from "../../index.js";
+import { CatalogInterface, type CatalogInfo, type CatalogAttachResult, type AttachOpaqueData, type TransactionOpaqueData, type SchemaInfo } from "../../index.js";
 
 const IMPLEMENTATION_VERSION = "1.0.0";
 const DATA_VERSION_SPEC = ">=1.0.0,<2.0.0";
@@ -40,23 +40,23 @@ class VersionedCatalog extends CatalogInterface {
     if (dataVersionSpec != null && !SUPPORTED_DATA_VERSIONS.has(dataVersionSpec)) {
       throw new Error(`Unsupported data_version_spec '${dataVersionSpec}'`);
     }
-    const attachId = new Uint8Array(16);
-    crypto.getRandomValues(attachId);
+    const attachOpaqueData = new Uint8Array(16);
+    crypto.getRandomValues(attachOpaqueData);
     return {
-      attach_id: attachId,
+      attach_opaque_data: attachOpaqueData,
       supports_transactions: false,
       supports_time_travel: false,
       catalog_version_frozen: true,
       catalog_version: 1,
-      attach_id_required: false,
+      attach_opaque_data_required: false,
       default_schema: "main",
       resolved_data_version: dataVersionSpec ?? DEFAULT_DATA_VERSION,
       resolved_implementation_version: IMPLEMENTATION_VERSION,
     };
   }
-  detach(_attachId: AttachId): void {}
-  version(_attachId: AttachId, _transactionId?: TransactionId): number { return 1; }
-  schemas(_attachId: AttachId, _transactionId?: TransactionId): SchemaInfo[] { return []; }
+  detach(_attachOpaqueData: AttachOpaqueData): void {}
+  version(_attachOpaqueData: AttachOpaqueData, _transactionOpaqueData?: TransactionOpaqueData): number { return 1; }
+  schemas(_attachOpaqueData: AttachOpaqueData, _transactionOpaqueData?: TransactionOpaqueData): SchemaInfo[] { return []; }
 }
 
 describe("VersionedCatalog — attach protocol", () => {
@@ -97,7 +97,7 @@ describe("VersionedCatalog — attach protocol", () => {
     const b = cat.attach("versioned", undefined, "1.1.0", null);
     expect(a.resolved_data_version).toBe("1.0.0");
     expect(b.resolved_data_version).toBe("1.1.0");
-    // Distinct attach_ids
-    expect(a.attach_id).not.toEqual(b.attach_id);
+    // Distinct attach_opaque_data values
+    expect(a.attach_opaque_data).not.toEqual(b.attach_opaque_data);
   });
 });

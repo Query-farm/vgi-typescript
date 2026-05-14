@@ -23,7 +23,7 @@ const skip = !pythonHttpWorkerAvailable();
 
 let handle: PythonHttpWorkerHandle;
 let client: VgiClient;
-let attachId: Uint8Array;
+let attachOpaqueData: Uint8Array;
 
 // Long timeout: `uv run` + Python import + waitress startup can easily take
 // 10+ seconds on a cold cache.
@@ -32,13 +32,13 @@ beforeAll(async () => {
   handle = await startPythonHttpWorker();
   client = handle.client;
   const result = await client.catalogAttach("example");
-  attachId = result.attach_id;
+  attachOpaqueData = result.attach_opaque_data;
 }, 30_000);
 
 afterAll(async () => {
   if (skip) return;
   try {
-    if (attachId) await client.catalogDetach(attachId);
+    if (attachOpaqueData) await client.catalogDetach(attachOpaqueData);
   } catch { /* already detached / server gone */ }
   await handle?.stop();
 });
@@ -64,7 +64,7 @@ describe.skipIf(skip)("VgiClient — catalog discovery and attach", () => {
   });
 
   test("catalogVersion returns a non-negative int", async () => {
-    const v = await client.catalogVersion(attachId);
+    const v = await client.catalogVersion(attachOpaqueData);
     expect(typeof v).toBe("number");
     expect(v).toBeGreaterThanOrEqual(0);
   });
@@ -73,8 +73,8 @@ describe.skipIf(skip)("VgiClient — catalog discovery and attach", () => {
     await expect(client.catalogAttach("does-not-exist")).rejects.toThrow();
   });
 
-  test("attach_id bytes length is sensible", () => {
-    expect(attachId.byteLength).toBeGreaterThan(0);
+  test("attach_opaque_data bytes length is sensible", () => {
+    expect(attachOpaqueData.byteLength).toBeGreaterThan(0);
   });
 });
 
@@ -84,27 +84,27 @@ describe.skipIf(skip)("VgiClient — catalog discovery and attach", () => {
 
 describe.skipIf(skip)("VgiClient — schemas", () => {
   test("schemas() lists at least 'main' and 'data'", async () => {
-    const schemas = await client.schemas(attachId);
+    const schemas = await client.schemas(attachOpaqueData);
     const names = schemas.map((s) => s.name).sort();
     expect(names).toContain("main");
     expect(names).toContain("data");
   });
 
   test("schemaGet('main') returns a schema with the right name", async () => {
-    const main = await client.schemaGet(attachId, "main");
+    const main = await client.schemaGet(attachOpaqueData, "main");
     expect(main).not.toBeNull();
     expect(main!.name).toBe("main");
   });
 
   test("schemaGet('not-real') returns null", async () => {
-    const nope = await client.schemaGet(attachId, "not-a-real-schema");
+    const nope = await client.schemaGet(attachOpaqueData, "not-a-real-schema");
     expect(nope).toBeNull();
   });
 
-  test("each SchemaInfo carries a byte attach_id", async () => {
-    const schemas = await client.schemas(attachId);
+  test("each SchemaInfo carries a byte attach_opaque_data", async () => {
+    const schemas = await client.schemas(attachOpaqueData);
     for (const s of schemas) {
-      expect(s.attach_id).toBeInstanceOf(Uint8Array);
+      expect(s.attach_opaque_data).toBeInstanceOf(Uint8Array);
     }
   });
 });
@@ -115,7 +115,7 @@ describe.skipIf(skip)("VgiClient — schemas", () => {
 
 describe.skipIf(skip)("VgiClient — tables", () => {
   test("schemaContentsTables('data') returns the expected tables", async () => {
-    const tables = await client.schemaContentsTables(attachId, "data");
+    const tables = await client.schemaContentsTables(attachOpaqueData, "data");
     const names = tables.map((t) => t.name);
     // A handful we know exist — don't hard-pin the full list (too brittle).
     for (const expected of ["large_sequence", "versioned_data", "numbers", "departments"]) {
@@ -126,7 +126,7 @@ describe.skipIf(skip)("VgiClient — tables", () => {
   });
 
   test("tableGet('data', 'numbers') returns a populated TableInfo", async () => {
-    const t = await client.tableGet(attachId, "data", "numbers");
+    const t = await client.tableGet(attachOpaqueData, "data", "numbers");
     expect(t).not.toBeNull();
     expect(t!.name).toBe("numbers");
     expect(t!.schema_name).toBe("data");
@@ -135,12 +135,12 @@ describe.skipIf(skip)("VgiClient — tables", () => {
   });
 
   test("tableGet on unknown table returns null", async () => {
-    const t = await client.tableGet(attachId, "data", "not-a-real-table");
+    const t = await client.tableGet(attachOpaqueData, "data", "not-a-real-table");
     expect(t).toBeNull();
   });
 
   test("schemaContentsTables on unknown schema returns [] ", async () => {
-    const tables = await client.schemaContentsTables(attachId, "no-such-schema");
+    const tables = await client.schemaContentsTables(attachOpaqueData, "no-such-schema");
     expect(tables).toEqual([]);
   });
 });
@@ -151,12 +151,12 @@ describe.skipIf(skip)("VgiClient — tables", () => {
 
 describe.skipIf(skip)("VgiClient — views", () => {
   test("schemaContentsViews('data') returns an array (may be empty)", async () => {
-    const views = await client.schemaContentsViews(attachId, "data");
+    const views = await client.schemaContentsViews(attachOpaqueData, "data");
     expect(Array.isArray(views)).toBe(true);
   });
 
   test("viewGet on an unknown view returns null", async () => {
-    const v = await client.viewGet(attachId, "data", "definitely-not-a-view");
+    const v = await client.viewGet(attachOpaqueData, "data", "definitely-not-a-view");
     expect(v).toBeNull();
   });
 });
@@ -167,7 +167,7 @@ describe.skipIf(skip)("VgiClient — views", () => {
 
 describe.skipIf(skip)("VgiClient — functions", () => {
   test("schemaContentsFunctions('main', 'SCALAR_FUNCTION') returns scalars only", async () => {
-    const scalars = await client.schemaContentsFunctions(attachId, "main", "SCALAR_FUNCTION");
+    const scalars = await client.schemaContentsFunctions(attachOpaqueData, "main", "SCALAR_FUNCTION");
     expect(scalars.length).toBeGreaterThan(0);
     const names = scalars.map((f) => f.name);
     // Known scalar from the example worker.
@@ -178,7 +178,7 @@ describe.skipIf(skip)("VgiClient — functions", () => {
   });
 
   test("schemaContentsFunctions('main', 'TABLE_FUNCTION') returns tables only", async () => {
-    const tables = await client.schemaContentsFunctions(attachId, "main", "TABLE_FUNCTION");
+    const tables = await client.schemaContentsFunctions(attachOpaqueData, "main", "TABLE_FUNCTION");
     expect(tables.length).toBeGreaterThan(0);
     const names = tables.map((f) => f.name);
     expect(names).toContain("sequence");
@@ -188,7 +188,7 @@ describe.skipIf(skip)("VgiClient — functions", () => {
   });
 
   test("each FunctionInfo carries typed metadata fields", async () => {
-    const fns = await client.schemaContentsFunctions(attachId, "main", "SCALAR_FUNCTION");
+    const fns = await client.schemaContentsFunctions(attachOpaqueData, "main", "SCALAR_FUNCTION");
     const d = fns.find((f) => f.name === "double")!;
     expect(d).toBeDefined();
     expect(d.schema_name).toBe("main");
@@ -205,7 +205,7 @@ describe.skipIf(skip)("VgiClient — functions", () => {
 
 describe.skipIf(skip)("VgiClient — macros", () => {
   test("schemaContentsMacros('main', 'SCALAR_MACRO') contains vgi_multiply + vgi_clamp", async () => {
-    const macros = await client.schemaContentsMacros(attachId, "main", "SCALAR_MACRO");
+    const macros = await client.schemaContentsMacros(attachOpaqueData, "main", "SCALAR_MACRO");
     const names = macros.map((m) => m.name).sort();
     expect(names).toContain("vgi_multiply");
     expect(names).toContain("vgi_clamp");
@@ -213,14 +213,14 @@ describe.skipIf(skip)("VgiClient — macros", () => {
   });
 
   test("schemaContentsMacros('main', 'TABLE_MACRO') contains vgi_range_table", async () => {
-    const macros = await client.schemaContentsMacros(attachId, "main", "TABLE_MACRO");
+    const macros = await client.schemaContentsMacros(attachOpaqueData, "main", "TABLE_MACRO");
     const names = macros.map((m) => m.name);
     expect(names).toContain("vgi_range_table");
     for (const m of macros) expect(m.macro_type).toBe("TABLE");
   });
 
   test("macroGet returns the right macro", async () => {
-    const m = await client.macroGet(attachId, "main", "vgi_multiply");
+    const m = await client.macroGet(attachOpaqueData, "main", "vgi_multiply");
     expect(m).not.toBeNull();
     expect(m!.name).toBe("vgi_multiply");
     expect(m!.parameters).toEqual(["x", "y"]);
@@ -228,7 +228,7 @@ describe.skipIf(skip)("VgiClient — macros", () => {
   });
 
   test("macroGet on unknown macro returns null", async () => {
-    const m = await client.macroGet(attachId, "main", "not-a-real-macro");
+    const m = await client.macroGet(attachOpaqueData, "main", "not-a-real-macro");
     expect(m).toBeNull();
   });
 });
@@ -239,7 +239,7 @@ describe.skipIf(skip)("VgiClient — macros", () => {
 
 describe.skipIf(skip)("VgiClient — tableScanFunctionGet", () => {
   test("returns a record describing the scan function for a known table", async () => {
-    const result = await client.tableScanFunctionGet(attachId, "data", "numbers");
+    const result = await client.tableScanFunctionGet(attachOpaqueData, "data", "numbers");
     // Shape comes back as { result: <bytes> } unwrapped by VgiClient — the
     // outer call returns the inner dict. We only assert it's a non-null
     // object; its exact schema (function_name, arguments, required_extensions)
@@ -273,24 +273,24 @@ describe.skipIf(skip)("VgiClient — content fidelity: comments and tags", () =>
       // Catalog-level comment must round-trip byte-exact.
       expect(r.comment).toBe("Example VGI catalog for testing");
     } finally {
-      await client.catalogDetach(r.attach_id);
+      await client.catalogDetach(r.attach_opaque_data);
     }
   });
 
   test("schemaGet('main').comment round-trips exactly", async () => {
-    const main = await client.schemaGet(attachId, "main");
+    const main = await client.schemaGet(attachOpaqueData, "main");
     expect(main).not.toBeNull();
     expect(main!.comment).toBe("Example functions for testing VGI");
   });
 
   test("schemaGet('data').comment round-trips exactly", async () => {
-    const data = await client.schemaGet(attachId, "data");
+    const data = await client.schemaGet(attachOpaqueData, "data");
     expect(data).not.toBeNull();
     expect(data!.comment).toBe("Example tables backed by functions");
   });
 
   test("tableGet.comment round-trips exactly for a known table", async () => {
-    const t = await client.tableGet(attachId, "data", "numbers");
+    const t = await client.tableGet(attachOpaqueData, "data", "numbers");
     expect(t).not.toBeNull();
     expect(t!.comment).toBe("First 100 integers (demonstrates explicit columns)");
   });
@@ -298,14 +298,14 @@ describe.skipIf(skip)("VgiClient — content fidelity: comments and tags", () =>
   test("tableGet.tags is an empty plain object for tables without tags", async () => {
     // Most example tables don't set tags. The generic ASD Map decoder must
     // produce {} — not null, not Map, not some iterator shell.
-    const t = await client.tableGet(attachId, "data", "numbers");
+    const t = await client.tableGet(attachOpaqueData, "data", "numbers");
     expect(t).not.toBeNull();
     expect(t!.tags).toEqual({});
     expect(Object.prototype.toString.call(t!.tags)).toBe("[object Object]");
   });
 
   test("viewGet retrieves a view with its comment round-tripped", async () => {
-    const v = await client.viewGet(attachId, "main", "first_ten");
+    const v = await client.viewGet(attachOpaqueData, "main", "first_ten");
     expect(v).not.toBeNull();
     expect(v!.name).toBe("first_ten");
     expect(v!.definition).toBe("SELECT * FROM sequence(10)");
@@ -313,7 +313,7 @@ describe.skipIf(skip)("VgiClient — content fidelity: comments and tags", () =>
   });
 
   test("schemaContentsViews('main') returns all views with exact comments", async () => {
-    const views = await client.schemaContentsViews(attachId, "main");
+    const views = await client.schemaContentsViews(attachOpaqueData, "main");
     const byName = Object.fromEntries(views.map((v) => [v.name, v]));
     expect(byName["first_ten"]?.comment).toBe("First 10 integers");
     expect(byName["even_numbers"]?.comment).toBe("Even numbers from 0 to 98");
@@ -321,14 +321,14 @@ describe.skipIf(skip)("VgiClient — content fidelity: comments and tags", () =>
   });
 
   test("FunctionInfo.description round-trips for a known scalar", async () => {
-    const scalars = await client.schemaContentsFunctions(attachId, "main", "SCALAR_FUNCTION");
+    const scalars = await client.schemaContentsFunctions(attachOpaqueData, "main", "SCALAR_FUNCTION");
     const d = scalars.find((f) => f.name === "double");
     expect(d).toBeDefined();
     expect(d!.description).toBe("Doubles numeric values");
   });
 
   test("FunctionInfo.description round-trips for a known table function", async () => {
-    const fns = await client.schemaContentsFunctions(attachId, "main", "TABLE_FUNCTION");
+    const fns = await client.schemaContentsFunctions(attachOpaqueData, "main", "TABLE_FUNCTION");
     const seq = fns.find((f) => f.name === "sequence");
     expect(seq).toBeDefined();
     // Exact description depends on SequenceFunction; assert non-empty at
@@ -338,19 +338,19 @@ describe.skipIf(skip)("VgiClient — content fidelity: comments and tags", () =>
   });
 
   test("MacroInfo.comment round-trips exactly", async () => {
-    const m = await client.macroGet(attachId, "main", "vgi_multiply");
+    const m = await client.macroGet(attachOpaqueData, "main", "vgi_multiply");
     expect(m).not.toBeNull();
     expect(m!.comment).toBe("Multiply two values");
   });
 
   test("MacroInfo.comment round-trips for the table-macro variant", async () => {
-    const m = await client.macroGet(attachId, "main", "vgi_range_table");
+    const m = await client.macroGet(attachOpaqueData, "main", "vgi_range_table");
     expect(m).not.toBeNull();
     expect(m!.comment).toBe("Table macro returning range of values");
   });
 
   test("SchemaInfo.tags is {} for schemas that don't set tags", async () => {
-    const schemas = await client.schemas(attachId);
+    const schemas = await client.schemas(attachOpaqueData);
     for (const s of schemas) {
       // Python side defaults to empty dict.
       expect(s.tags).toEqual({});
@@ -375,10 +375,10 @@ describe.skipIf(skip)("VgiClient — catalogAttach options", () => {
     // error. This test pins that behavior.
     const r = await client.catalogAttach("example", { optionsBytes: new Uint8Array(0) });
     try {
-      expect(r.attach_id).toBeInstanceOf(Uint8Array);
-      expect(r.attach_id.byteLength).toBeGreaterThan(0);
+      expect(r.attach_opaque_data).toBeInstanceOf(Uint8Array);
+      expect(r.attach_opaque_data.byteLength).toBeGreaterThan(0);
     } finally {
-      await client.catalogDetach(r.attach_id);
+      await client.catalogDetach(r.attach_opaque_data);
     }
   });
 
@@ -386,9 +386,9 @@ describe.skipIf(skip)("VgiClient — catalogAttach options", () => {
     // Same result path as above — explicit vs implicit "no options".
     const r = await client.catalogAttach("example");
     try {
-      expect(r.attach_id.byteLength).toBeGreaterThan(0);
+      expect(r.attach_opaque_data.byteLength).toBeGreaterThan(0);
     } finally {
-      await client.catalogDetach(r.attach_id);
+      await client.catalogDetach(r.attach_opaque_data);
     }
   });
 
@@ -408,9 +408,9 @@ describe.skipIf(skip)("VgiClient — catalogAttach options", () => {
       },
     });
     try {
-      expect(r.attach_id.byteLength).toBeGreaterThan(0);
+      expect(r.attach_opaque_data.byteLength).toBeGreaterThan(0);
     } finally {
-      await client.catalogDetach(r.attach_id);
+      await client.catalogDetach(r.attach_opaque_data);
     }
   });
 
@@ -418,9 +418,9 @@ describe.skipIf(skip)("VgiClient — catalogAttach options", () => {
     // Empty object → null on the wire (zero-column IPC would fail downstream).
     const r = await client.catalogAttach("example", { options: {} });
     try {
-      expect(r.attach_id.byteLength).toBeGreaterThan(0);
+      expect(r.attach_opaque_data.byteLength).toBeGreaterThan(0);
     } finally {
-      await client.catalogDetach(r.attach_id);
+      await client.catalogDetach(r.attach_opaque_data);
     }
   });
 
@@ -443,7 +443,7 @@ describe.skipIf(skip)("VgiClient — catalogAttach options", () => {
       const r = await client.catalogAttach("example", { optionsBytes: junk });
       // If the server accepts it silently (common when options are ignored),
       // that's fine — clean up and move on.
-      await client.catalogDetach(r.attach_id);
+      await client.catalogDetach(r.attach_opaque_data);
     } catch (err) {
       // If it fails, it must fail with a structured error, not a hang or
       // unhandled rejection. Just checking the promise rejected is enough.

@@ -11,8 +11,8 @@ import {
   CatalogInterface,
   ReadOnlyCatalogInterface,
   Worker,
-  type AttachId,
-  type TransactionId,
+  type AttachOpaqueData,
+  type TransactionOpaqueData,
   type CatalogAttachResult,
 } from "../src/index.js";
 import type { CatalogInfo } from "../src/index.js";
@@ -24,7 +24,7 @@ const SUPPORTED_DATA_VERSIONS = new Set(["1.0.0", "1.1.0", "1.2.0"]);
 const DEFAULT_DATA_VERSION = "1.2.0";
 const CATALOG_NAME = "versioned";
 
-function randomAttachId(): Uint8Array {
+function randomAttachOpaqueData(): Uint8Array {
   const buf = new Uint8Array(16);
   crypto.getRandomValues(buf);
   return buf;
@@ -67,12 +67,12 @@ class VersionedCatalog extends CatalogInterface {
     const resolvedDataVersion = dataVersionSpec ?? DEFAULT_DATA_VERSION;
 
     return {
-      attach_id: randomAttachId(),
+      attach_opaque_data: randomAttachOpaqueData(),
       supports_transactions: false,
       supports_time_travel: false,
       catalog_version_frozen: true,
       catalog_version: 1,
-      attach_id_required: false,
+      attach_opaque_data_required: false,
       default_schema: "main",
       comment: "Example catalog demonstrating data_version_spec validation and cookie stickiness",
       tags: {},
@@ -81,15 +81,15 @@ class VersionedCatalog extends CatalogInterface {
     };
   }
 
-  detach(_attachId: AttachId): void { /* no-op */ }
+  detach(_attachOpaqueData: AttachOpaqueData): void { /* no-op */ }
 
-  version(_attachId: AttachId, _transactionId?: TransactionId): number {
+  version(_attachOpaqueData: AttachOpaqueData, _transactionOpaqueData?: TransactionOpaqueData): number {
     return 1;
   }
 
-  schemas(_attachId: AttachId, _transactionId?: TransactionId): SchemaInfo[] {
+  schemas(_attachOpaqueData: AttachOpaqueData, _transactionOpaqueData?: TransactionOpaqueData): SchemaInfo[] {
     return [{
-      attach_id: new Uint8Array(0),
+      attach_opaque_data: new Uint8Array(0),
       name: "main",
       comment: null,
       tags: {},

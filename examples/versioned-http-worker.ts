@@ -8,8 +8,8 @@ import { FunctionRegistry } from "../src/functions/registry.js";
 import { buildVgiProtocol } from "../src/protocol/dispatch.js";
 import {
   CatalogInterface,
-  type AttachId,
-  type TransactionId,
+  type AttachOpaqueData,
+  type TransactionOpaqueData,
   type CatalogAttachResult,
 } from "../src/index.js";
 import type { CatalogInfo, SchemaInfo } from "../src/index.js";
@@ -52,15 +52,15 @@ class VersionedCatalog extends CatalogInterface {
       );
     }
     const resolvedDataVersion = dataVersionSpec ?? DEFAULT_DATA_VERSION;
-    const attachId = new Uint8Array(16);
-    crypto.getRandomValues(attachId);
+    const attachOpaqueData = new Uint8Array(16);
+    crypto.getRandomValues(attachOpaqueData);
     return {
-      attach_id: attachId,
+      attach_opaque_data: attachOpaqueData,
       supports_transactions: false,
       supports_time_travel: false,
       catalog_version_frozen: true,
       catalog_version: 1,
-      attach_id_required: false,
+      attach_opaque_data_required: false,
       default_schema: "main",
       comment: "Example catalog demonstrating data_version_spec validation and cookie stickiness",
       tags: {},
@@ -68,12 +68,12 @@ class VersionedCatalog extends CatalogInterface {
       resolved_implementation_version: IMPLEMENTATION_VERSION,
     };
   }
-  detach(_attachId: AttachId): void { /* no-op */ }
-  version(_attachId: AttachId, _transactionId?: TransactionId): number {
+  detach(_attachOpaqueData: AttachOpaqueData): void { /* no-op */ }
+  version(_attachOpaqueData: AttachOpaqueData, _transactionOpaqueData?: TransactionOpaqueData): number {
     return 1;
   }
-  schemas(_attachId: AttachId, _transactionId?: TransactionId): SchemaInfo[] {
-    return [{ attach_id: new Uint8Array(0), name: "main", comment: null, tags: {} }];
+  schemas(_attachOpaqueData: AttachOpaqueData, _transactionOpaqueData?: TransactionOpaqueData): SchemaInfo[] {
+    return [{ attach_opaque_data: new Uint8Array(0), name: "main", comment: null, tags: {} }];
   }
 }
 

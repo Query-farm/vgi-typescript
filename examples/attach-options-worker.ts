@@ -2,9 +2,9 @@
 // declares attach-time options of many Arrow types and echoes them back
 // via a table function. Exercises the attach-time options pipeline
 // end-to-end (pre-attach discovery, per-option type validation done by
-// the C++ extension, worker receipt, attach_id round-trip).
+// the C++ extension, worker receipt, attach_opaque_data round-trip).
 //
-// Options are encoded into attach_id on attach, so they survive pooled
+// Options are encoded into attach_opaque_data on attach, so they survive pooled
 // worker reuse (subprocess) and stateless dispatch (HTTP) without any
 // per-attach state on the catalog.
 //
@@ -103,7 +103,7 @@ const ECHO_SCHEMA = new Schema(
 );
 
 // ============================================================================
-// attach_id encoding / decoding
+// attach_opaque_data encoding / decoding
 // ============================================================================
 
 function randomUuidBytes(): Uint8Array {
@@ -123,7 +123,7 @@ function buildEchoBatch(received: Record<string, unknown>): RecordBatch {
   return batchFromColumns(columns, ECHO_SCHEMA);
 }
 
-function encodeAttachId(received: Record<string, unknown>): Uint8Array {
+function encodeAttachOpaqueData(received: Record<string, unknown>): Uint8Array {
   const batch = buildEchoBatch(received);
   const ipc = serializeBatch(batch);
   const out = new Uint8Array(UUID_BYTES + 1 + ipc.byteLength);
@@ -133,11 +133,11 @@ function encodeAttachId(received: Record<string, unknown>): Uint8Array {
   return out;
 }
 
-function decodeAttachId(attachId: Uint8Array): RecordBatch {
-  if (attachId.byteLength <= UUID_BYTES + 1 || attachId[UUID_BYTES] !== ATTACH_ID_SEP) {
-    throw new Error("attach_id does not carry an options payload");
+function decodeAttachOpaqueData(attachOpaqueData: Uint8Array): RecordBatch {
+  if (attachOpaqueData.byteLength <= UUID_BYTES + 1 || attachOpaqueData[UUID_BYTES] !== ATTACH_ID_SEP) {
+    throw new Error("attach_opaque_data does not carry an options payload");
   }
-  const ipc = attachId.subarray(UUID_BYTES + 1);
+  const ipc = attachOpaqueData.subarray(UUID_BYTES + 1);
   return deserializeBatch(ipc);
 }
 
@@ -149,7 +149,7 @@ interface EchoState { emitted: boolean }
 
 const echo_attach_options = defineTableFunction<Record<string, never>, EchoState>({
   name: "echo_attach_options",
-  description: "Echo the attach-time option values carried in attach_id",
+  description: "Echo the attach-time option values carried in attach_opaque_data",
   categories: ["generator", "testing"],
   onBind: () => ({ outputSchema: ECHO_SCHEMA }),
   initialState: () => ({ emitted: false }),
@@ -162,11 +162,11 @@ const echo_attach_options = defineTableFunction<Record<string, never>, EchoState
       out.finish();
       return;
     }
-    const attachId = params.initCall.bind_call.attach_id;
-    if (!attachId) {
-      throw new Error("echo_attach_options requires an attach_id");
+    const attachOpaqueData = params.initCall.bind_call.attach_opaque_data;
+    if (!attachOpaqueData) {
+      throw new Error("echo_attach_options requires an attach_opaque_data");
     }
-    const batch = decodeAttachId(attachId);
+    const batch = decodeAttachOpaqueData(attachOpaqueData);
     out.emit(batch);
     state.emitted = true;
   },
@@ -179,7 +179,7 @@ const echo_attach_options = defineTableFunction<Record<string, never>, EchoState
 // Extend ReadOnlyCatalogInterface so schemaContentsFunctions / schemaGet /
 // tableGet / etc. all Just Work from the descriptor. We only need to
 // override (a) catalogsInfo to advertise attach_option_specs, and
-// (b) attach to encode received options into attach_id.
+// (b) attach to encode received options into attach_opaque_data.
 class AttachOptionsCatalog extends ReadOnlyCatalogInterface {
   override catalogsInfo(): CatalogInfo[] {
     return [{
@@ -197,7 +197,7 @@ class AttachOptionsCatalog extends ReadOnlyCatalogInterface {
     _implementationVersion?: string | null,
   ): CatalogAttachResult {
     const base = super.attach(name, options);
-    return { ...base, attach_id: encodeAttachId(options ?? {}) };
+    return { ...base, attach_opaque_data: encodeAttachOpaqueData(options ?? {}) };
   }
 }
 

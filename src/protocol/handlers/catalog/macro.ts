@@ -19,21 +19,21 @@ import {
 import {
   type GetCatalog,
   emptyResultSchema,
-  attachIdSchemaNameTxnParams,
+  attachOpaqueDataSchemaNameTxnParams,
 } from "./shared.js";
 
 export function registerCatalogMacroMethods(protocol: Protocol, getCatalog: GetCatalog): void {
   // catalog_macro_get
   protocol.unary("catalog_macro_get", {
-    params: attachIdSchemaNameTxnParams,
+    params: attachOpaqueDataSchemaNameTxnParams,
     result: RESULT_BINARY_SCHEMA,
     handler: async (params) => {
       const cat = getCatalog();
       const info = await cat.macroGet(
-        toUint8Array(params.attach_id),
+        toUint8Array(params.attach_opaque_data),
         params.schema_name,
         params.name,
-        params.transaction_id ? toUint8Array(params.transaction_id) : undefined
+        params.transaction_opaque_data ? toUint8Array(params.transaction_opaque_data) : undefined
       );
       return wrapResult({
         items: info ? [encodeMacroInfo(info)] : [],
@@ -49,7 +49,7 @@ export function registerCatalogMacroMethods(protocol: Protocol, getCatalog: GetC
       const cat = getCatalog();
       const innerParams = unwrapRequest(params.request);
       await cat.macroCreate(
-        toUint8Array(innerParams.attach_id),
+        toUint8Array(innerParams.attach_opaque_data),
         innerParams.schema_name,
         innerParams.name,
         innerParams.macro_type as MacroType,
@@ -57,7 +57,7 @@ export function registerCatalogMacroMethods(protocol: Protocol, getCatalog: GetC
         innerParams.definition,
         innerParams.on_conflict,
         innerParams.parameter_default_values ? toUint8Array(innerParams.parameter_default_values) : null,
-        innerParams.transaction_id ? toUint8Array(innerParams.transaction_id) : undefined
+        innerParams.transaction_opaque_data ? toUint8Array(innerParams.transaction_opaque_data) : undefined
       );
       return {};
     },
@@ -66,21 +66,21 @@ export function registerCatalogMacroMethods(protocol: Protocol, getCatalog: GetC
   // catalog_macro_drop
   protocol.unary("catalog_macro_drop", {
     params: schema([
-      field("attach_id", binary(), true),
+      field("attach_opaque_data", binary(), true),
       field("schema_name", utf8(), false),
       field("name", utf8(), false),
       field("ignore_not_found", bool(), true),
-      field("transaction_id", binary(), true),
+      field("transaction_opaque_data", binary(), true),
     ]),
     result: emptyResultSchema,
     handler: async (params) => {
       const cat = getCatalog();
       await cat.macroDrop(
-        toUint8Array(params.attach_id),
+        toUint8Array(params.attach_opaque_data),
         params.schema_name,
         params.name,
         params.ignore_not_found,
-        params.transaction_id ? toUint8Array(params.transaction_id) : undefined
+        params.transaction_opaque_data ? toUint8Array(params.transaction_opaque_data) : undefined
       );
       return {};
     },
@@ -89,19 +89,19 @@ export function registerCatalogMacroMethods(protocol: Protocol, getCatalog: GetC
   // catalog_schema_contents_macros
   protocol.unary("catalog_schema_contents_macros", {
     params: schema([
-      field("attach_id", binary(), true),
+      field("attach_opaque_data", binary(), true),
       field("name", utf8(), false),
       field("type", utf8(), false),
-      field("transaction_id", binary(), true),
+      field("transaction_opaque_data", binary(), true),
     ]),
     result: RESULT_BINARY_SCHEMA,
     handler: async (params) => {
       const cat = getCatalog();
       const macros = await cat.schemaContentsMacros(
-        toUint8Array(params.attach_id),
+        toUint8Array(params.attach_opaque_data),
         params.name,
         decodeDictValue(params.type),
-        params.transaction_id ? toUint8Array(params.transaction_id) : undefined
+        params.transaction_opaque_data ? toUint8Array(params.transaction_opaque_data) : undefined
       );
       return wrapResult({
         items: macros.map((m) => encodeMacroInfo(m)),
