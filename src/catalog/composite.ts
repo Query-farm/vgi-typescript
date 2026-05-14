@@ -67,7 +67,7 @@ export class CompositeCatalogInterface extends CatalogInterface {
         all.push(...(await b.catalogsInfo()));
       } else {
         for (const name of b.catalogs()) {
-          all.push({ name, implementation_version: null, data_version_spec: null });
+          all.push({ name, implementation_version: null, data_version_spec: null, attach_option_specs: [] });
         }
       }
     }

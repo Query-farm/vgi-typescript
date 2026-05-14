@@ -25,6 +25,7 @@ class VersionedCatalog extends CatalogInterface {
       name: "versioned",
       implementation_version: IMPLEMENTATION_VERSION,
       data_version_spec: DATA_VERSION_SPEC,
+      attach_option_specs: [],
     }];
   }
   attach(
@@ -50,6 +51,10 @@ class VersionedCatalog extends CatalogInterface {
       catalog_version: 1,
       attach_opaque_data_required: false,
       default_schema: "main",
+      settings: [],
+      secret_types: [],
+      tags: {},
+      supports_column_statistics: false,
       resolved_data_version: dataVersionSpec ?? DEFAULT_DATA_VERSION,
       resolved_implementation_version: IMPLEMENTATION_VERSION,
     };

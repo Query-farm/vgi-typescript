@@ -21,7 +21,7 @@ class AsyncStubCatalog extends CatalogInterface {
   }
   async catalogsInfo(): Promise<CatalogInfo[]> {
     await Promise.resolve();
-    return [{ name: "stub", implementation_version: null, data_version_spec: null }];
+    return [{ name: "stub", implementation_version: null, data_version_spec: null, attach_option_specs: [] }];
   }
   async attach(name: string): Promise<CatalogAttachResult> {
     await Promise.resolve();
@@ -33,6 +33,10 @@ class AsyncStubCatalog extends CatalogInterface {
       catalog_version: 7,
       attach_opaque_data_required: true,
       default_schema: "main",
+      settings: [],
+      secret_types: [],
+      tags: {},
+      supports_column_statistics: false,
       resolved_data_version: null,
       resolved_implementation_version: null,
     };

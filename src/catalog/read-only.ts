@@ -79,6 +79,9 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
       secret_types: secretTypes,
       comment: this._descriptor.comment ?? null,
       tags: this._descriptor.tags ?? {},
+      // Advertise true so DuckDB routes catalog_table_column_statistics_get
+      // for tables whose TableInfo.supports_column_statistics is also true.
+      supports_column_statistics: true,
       resolved_data_version: null,
       resolved_implementation_version: null,
     };

@@ -22,6 +22,7 @@ describe("ASD codec", () => {
       name: "my_cat",
       implementation_version: "v1.2",
       data_version_spec: null,
+      attach_option_specs: [],
     };
     const bytes = encodeASD(CatalogInfoSchema, v);
     const back = decodeASD<CatalogInfo>(CatalogInfoSchema, bytes);

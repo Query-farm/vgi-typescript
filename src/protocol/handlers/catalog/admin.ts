@@ -53,6 +53,7 @@ export function registerCatalogAdminMethods(protocol: Protocol, getCatalog: GetC
             name,
             implementation_version: null,
             data_version_spec: null,
+            attach_option_specs: [],
           }));
       const items = infos.map((info) => encodeCatalogInfo(info));
       return wrapResult({ items }, CatalogCatalogsResultSchema);
