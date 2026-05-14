@@ -2,7 +2,7 @@
 // schemas (list, get, create, drop), schema contents listings.
 
 import { type VgiSchema, schema, type VgiField, field, type VgiDataType, binary, utf8, bool } from "../../../arrow/index.js";
-import { Protocol } from "vgi-rpc";
+import { Protocol, type CallContext } from "vgi-rpc";
 import { encodeSchemaInfo, encodeTableInfo, encodeViewInfo, encodeFunctionInfo, encodeCatalogInfo } from "../../../generated/vgi-client.js";
 import {
   CatalogCatalogsResultSchema,
@@ -30,11 +30,15 @@ import {
   attachOpaqueDataParam,
   attachOpaqueDataTxnParams,
   attachOpaqueDataNameTxnParams,
+  catalogUnary,
+  sealAttach,
+  openAttach,
+  sealTransaction,
 } from "./shared.js";
 
-export function registerCatalogAdminMethods(protocol: Protocol, getCatalog: GetCatalog): void {
+export function registerCatalogAdminMethods(protocol: Protocol, getCatalog: GetCatalog, signingKey?: Uint8Array): void {
   // catalog_catalogs
-  protocol.unary("catalog_catalogs", {
+  catalogUnary(protocol, signingKey, "catalog_catalogs", {
     params: emptyResultSchema,
     result: RESULT_BINARY_SCHEMA,
     handler: async () => {
@@ -59,7 +63,7 @@ export function registerCatalogAdminMethods(protocol: Protocol, getCatalog: GetC
   protocol.unary("catalog_attach", {
     params: REQUEST_PARAMS_SCHEMA,
     result: RESULT_BINARY_SCHEMA,
-    handler: async (params) => {
+    handler: async (params, ctx) => {
       const innerParams = unwrapRequest(params.request);
       const cat = getCatalog();
       // The extension sends user-supplied ATTACH options as an IPC-serialized
@@ -73,8 +77,16 @@ export function registerCatalogAdminMethods(protocol: Protocol, getCatalog: GetC
         innerParams.data_version_spec ?? null,
         innerParams.implementation_version ?? null,
       );
+      // Seal the attach value into an AEAD envelope bound to the caller's
+      // identity before it leaves the worker (HTTP transport; pass-through
+      // when there is no signing key).
+      const sealedAttach = await sealAttach(
+        toUint8Array(result.attach_opaque_data),
+        (ctx as CallContext | undefined)?.auth,
+        signingKey,
+      );
       return wrapResult({
-        attach_opaque_data: result.attach_opaque_data,
+        attach_opaque_data: sealedAttach,
         supports_transactions: result.supports_transactions,
         supports_time_travel: result.supports_time_travel,
         catalog_version_frozen: result.catalog_version_frozen,
@@ -97,7 +109,7 @@ export function registerCatalogAdminMethods(protocol: Protocol, getCatalog: GetC
   });
 
   // catalog_detach
-  protocol.unary("catalog_detach", {
+  catalogUnary(protocol, signingKey, "catalog_detach", {
     params: attachOpaqueDataParam,
     result: emptyResultSchema,
     handler: async (params) => {
@@ -108,7 +120,7 @@ export function registerCatalogAdminMethods(protocol: Protocol, getCatalog: GetC
   });
 
   // catalog_create
-  protocol.unary("catalog_create", {
+  catalogUnary(protocol, signingKey, "catalog_create", {
     params: schema([
       field("name", utf8(), false),
       field("on_conflict", utf8(), false),
@@ -123,7 +135,7 @@ export function registerCatalogAdminMethods(protocol: Protocol, getCatalog: GetC
   });
 
   // catalog_drop
-  protocol.unary("catalog_drop", {
+  catalogUnary(protocol, signingKey, "catalog_drop", {
     params: schema([field("name", utf8(), false)]),
     result: emptyResultSchema,
     handler: async (params) => {
@@ -134,7 +146,7 @@ export function registerCatalogAdminMethods(protocol: Protocol, getCatalog: GetC
   });
 
   // catalog_version
-  protocol.unary("catalog_version", {
+  catalogUnary(protocol, signingKey, "catalog_version", {
     params: attachOpaqueDataTxnParams,
     result: RESULT_BINARY_SCHEMA,
     handler: async (params) => {
@@ -147,19 +159,29 @@ export function registerCatalogAdminMethods(protocol: Protocol, getCatalog: GetC
     },
   });
 
-  // catalog_transaction_begin
+  // catalog_transaction_begin — bespoke: it must keep the *sealed* attach
+  // envelope to bind the transaction envelope's AAD, so it cannot route
+  // through catalogUnary (which would replace it with plaintext).
   protocol.unary("catalog_transaction_begin", {
     params: attachOpaqueDataParam,
     result: RESULT_BINARY_SCHEMA,
-    handler: async (params) => {
+    handler: async (params, ctx) => {
+      const auth = (ctx as CallContext | undefined)?.auth;
+      const sealedAttach =
+        params.attach_opaque_data != null ? toUint8Array(params.attach_opaque_data) : new Uint8Array(0);
+      const attachPlain = await openAttach(sealedAttach, auth, signingKey);
       const cat = getCatalog();
-      const transaction_opaque_data = await cat.transactionBegin(toUint8Array(params.attach_opaque_data));
+      const txPlain = await cat.transactionBegin(attachPlain);
+      // Seal the transaction value, binding it to the caller's identity and
+      // the parent attach envelope it was minted under. null → null.
+      const transaction_opaque_data =
+        txPlain != null ? await sealTransaction(toUint8Array(txPlain), sealedAttach, auth, signingKey) : null;
       return wrapResult({ transaction_opaque_data }, CatalogTransactionBeginResultSchema);
     },
   });
 
   // catalog_transaction_commit
-  protocol.unary("catalog_transaction_commit", {
+  catalogUnary(protocol, signingKey, "catalog_transaction_commit", {
     params: attachOpaqueDataTxnParams,
     result: emptyResultSchema,
     handler: async (params) => {
@@ -173,7 +195,7 @@ export function registerCatalogAdminMethods(protocol: Protocol, getCatalog: GetC
   });
 
   // catalog_transaction_rollback
-  protocol.unary("catalog_transaction_rollback", {
+  catalogUnary(protocol, signingKey, "catalog_transaction_rollback", {
     params: attachOpaqueDataTxnParams,
     result: emptyResultSchema,
     handler: async (params) => {
@@ -187,7 +209,7 @@ export function registerCatalogAdminMethods(protocol: Protocol, getCatalog: GetC
   });
 
   // catalog_schemas
-  protocol.unary("catalog_schemas", {
+  catalogUnary(protocol, signingKey, "catalog_schemas", {
     params: attachOpaqueDataTxnParams,
     result: RESULT_BINARY_SCHEMA,
     handler: async (params) => {
@@ -203,7 +225,7 @@ export function registerCatalogAdminMethods(protocol: Protocol, getCatalog: GetC
   });
 
   // catalog_schema_get
-  protocol.unary("catalog_schema_get", {
+  catalogUnary(protocol, signingKey, "catalog_schema_get", {
     params: attachOpaqueDataNameTxnParams,
     result: RESULT_BINARY_SCHEMA,
     handler: async (params) => {
@@ -220,7 +242,7 @@ export function registerCatalogAdminMethods(protocol: Protocol, getCatalog: GetC
   });
 
   // catalog_schema_create
-  protocol.unary("catalog_schema_create", {
+  catalogUnary(protocol, signingKey, "catalog_schema_create", {
     params: schema([
       field("attach_opaque_data", binary(), true),
       field("name", utf8(), false),
@@ -243,7 +265,7 @@ export function registerCatalogAdminMethods(protocol: Protocol, getCatalog: GetC
   });
 
   // catalog_schema_drop
-  protocol.unary("catalog_schema_drop", {
+  catalogUnary(protocol, signingKey, "catalog_schema_drop", {
     params: schema([
       field("attach_opaque_data", binary(), true),
       field("name", utf8(), false),
@@ -266,7 +288,7 @@ export function registerCatalogAdminMethods(protocol: Protocol, getCatalog: GetC
   });
 
   // catalog_schema_contents_tables
-  protocol.unary("catalog_schema_contents_tables", {
+  catalogUnary(protocol, signingKey, "catalog_schema_contents_tables", {
     params: attachOpaqueDataNameTxnParams,
     result: RESULT_BINARY_SCHEMA,
     handler: async (params) => {
@@ -283,7 +305,7 @@ export function registerCatalogAdminMethods(protocol: Protocol, getCatalog: GetC
   });
 
   // catalog_schema_contents_views
-  protocol.unary("catalog_schema_contents_views", {
+  catalogUnary(protocol, signingKey, "catalog_schema_contents_views", {
     params: attachOpaqueDataNameTxnParams,
     result: RESULT_BINARY_SCHEMA,
     handler: async (params) => {
@@ -300,7 +322,7 @@ export function registerCatalogAdminMethods(protocol: Protocol, getCatalog: GetC
   });
 
   // catalog_schema_contents_functions
-  protocol.unary("catalog_schema_contents_functions", {
+  catalogUnary(protocol, signingKey, "catalog_schema_contents_functions", {
     params: schema([
       field("attach_opaque_data", binary(), true),
       field("name", utf8(), false),

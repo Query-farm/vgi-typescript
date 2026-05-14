@@ -43,6 +43,7 @@ export function createVgiFetch(opts: VgiFetchOptions): (req: Request) => Promise
   const serverId = opts.serverId ?? "vgi-cf";
 
   const protocol: Protocol = buildVgiProtocol({
+    signingKey: opts.signingKey,
     ...opts.protocol,
     recoverExchangeState: async (opaqueData: Uint8Array) => {
       const tokenString = new TextDecoder().decode(opaqueData);

@@ -13,11 +13,12 @@ export function registerCatalogMethods(
   protocol: Protocol,
   catalog: CatalogInterface | undefined,
   _catalogName: string | undefined,
+  signingKey?: Uint8Array,
 ): void {
   const getCatalog = makeGetCatalog(catalog);
-  registerCatalogAdminMethods(protocol, getCatalog);
-  registerCatalogTableMethods(protocol, getCatalog);
-  registerCatalogViewMethods(protocol, getCatalog);
-  registerCatalogMacroMethods(protocol, getCatalog);
-  registerCatalogIndexMethods(protocol, getCatalog);
+  registerCatalogAdminMethods(protocol, getCatalog, signingKey);
+  registerCatalogTableMethods(protocol, getCatalog, signingKey);
+  registerCatalogViewMethods(protocol, getCatalog, signingKey);
+  registerCatalogMacroMethods(protocol, getCatalog, signingKey);
+  registerCatalogIndexMethods(protocol, getCatalog, signingKey);
 }

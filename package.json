@@ -40,6 +40,7 @@
   },
   "dependencies": {
     "@duckdb/node-api": "^1.5.2-r.1",
+    "@noble/ciphers": "^2.2.0",
     "@query-farm/apache-arrow": "*",
     "vgi-rpc": "file:../vgi-rpc-typescript"
   },

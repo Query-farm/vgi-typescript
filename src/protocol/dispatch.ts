@@ -25,6 +25,13 @@ export interface ProtocolConfig {
    * Returns the deserialized VGI dispatch state object (with userState field).
    */
   recoverExchangeState?: (opaqueData: Uint8Array) => any;
+  /**
+   * AEAD signing key for sealing catalog opaque-data envelopes. Pass the same
+   * 32-byte key used for HTTP state tokens. When omitted (subprocess / unix
+   * transports) attach_opaque_data / transaction_opaque_data pass through
+   * unsealed — OS process ownership already enforces identity there.
+   */
+  signingKey?: Uint8Array;
 }
 
 export function buildVgiProtocol(config: ProtocolConfig): Protocol {
@@ -35,7 +42,7 @@ export function buildVgiProtocol(config: ProtocolConfig): Protocol {
     recoverExchangeState: config.recoverExchangeState,
   });
   registerAggregateMethods(protocol, config.registry);
-  registerCatalogMethods(protocol, config.catalogInterface, config.catalogName);
+  registerCatalogMethods(protocol, config.catalogInterface, config.catalogName, config.signingKey);
 
   return protocol;
 }

@@ -262,12 +262,12 @@ describe.skipIf(skip)("VgiClient — content fidelity: comments and tags", () =>
     // early and discarded tags via the happy-path variant).
     const r = await client.catalogAttach("example");
     try {
-      // Python side sets tags={"source": "vgi-example-worker", "version": "1"}.
+      // Python side sets tags={"source": "vgi-fixture-worker", "version": "1"}.
       // Exact-match on both keys + values. Multi-entry Map was the place a
       // prior hand-written Map encoder silently produced {"0": "source,vgi-..."} —
       // this is the regression guard.
       expect(r.tags).toEqual({
-        source: "vgi-example-worker",
+        source: "vgi-fixture-worker",
         version: "1",
       });
       // Catalog-level comment must round-trip byte-exact.

@@ -14,11 +14,12 @@ import {
 } from "../shared.js";
 import {
   type GetCatalog,
+  catalogUnary,
 } from "./shared.js";
 
-export function registerCatalogIndexMethods(protocol: Protocol, getCatalog: GetCatalog): void {
+export function registerCatalogIndexMethods(protocol: Protocol, getCatalog: GetCatalog, signingKey?: Uint8Array): void {
   // catalog_schema_contents_indexes
-  protocol.unary("catalog_schema_contents_indexes", {
+  catalogUnary(protocol, signingKey, "catalog_schema_contents_indexes", {
     params: schema([
       field("attach_opaque_data", binary(), true),
       field("name", utf8(), false),
@@ -39,7 +40,7 @@ export function registerCatalogIndexMethods(protocol: Protocol, getCatalog: GetC
   });
 
   // catalog_index_get
-  protocol.unary("catalog_index_get", {
+  catalogUnary(protocol, signingKey, "catalog_index_get", {
     params: schema([
       field("attach_opaque_data", binary(), true),
       field("schema_name", utf8(), false),

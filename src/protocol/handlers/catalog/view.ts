@@ -16,11 +16,12 @@ import {
   schemaNameIgnoreNotFoundTxnParams,
   schemaNameRenameParams,
   schemaNameCommentParams,
+  catalogUnary,
 } from "./shared.js";
 
-export function registerCatalogViewMethods(protocol: Protocol, getCatalog: GetCatalog): void {
+export function registerCatalogViewMethods(protocol: Protocol, getCatalog: GetCatalog, signingKey?: Uint8Array): void {
   // catalog_view_get
-  protocol.unary("catalog_view_get", {
+  catalogUnary(protocol, signingKey, "catalog_view_get", {
     params: attachOpaqueDataSchemaNameTxnParams,
     result: RESULT_BINARY_SCHEMA,
     handler: async (params) => {
@@ -38,7 +39,7 @@ export function registerCatalogViewMethods(protocol: Protocol, getCatalog: GetCa
   });
 
   // catalog_view_create
-  protocol.unary("catalog_view_create", {
+  catalogUnary(protocol, signingKey, "catalog_view_create", {
     params: schema([
       field("attach_opaque_data", binary(), true),
       field("schema_name", utf8(), false),
@@ -63,7 +64,7 @@ export function registerCatalogViewMethods(protocol: Protocol, getCatalog: GetCa
   });
 
   // catalog_view_drop
-  protocol.unary("catalog_view_drop", {
+  catalogUnary(protocol, signingKey, "catalog_view_drop", {
     params: schemaNameIgnoreNotFoundTxnParams,
     result: emptyResultSchema,
     handler: async (params) => {
@@ -80,7 +81,7 @@ export function registerCatalogViewMethods(protocol: Protocol, getCatalog: GetCa
   });
 
   // catalog_view_rename
-  protocol.unary("catalog_view_rename", {
+  catalogUnary(protocol, signingKey, "catalog_view_rename", {
     params: schemaNameRenameParams,
     result: emptyResultSchema,
     handler: async (params) => {
@@ -98,7 +99,7 @@ export function registerCatalogViewMethods(protocol: Protocol, getCatalog: GetCa
   });
 
   // catalog_view_comment_set
-  protocol.unary("catalog_view_comment_set", {
+  catalogUnary(protocol, signingKey, "catalog_view_comment_set", {
     params: schemaNameCommentParams,
     result: emptyResultSchema,
     handler: async (params) => {

@@ -21,11 +21,12 @@ import {
   schemaNameCommentParams,
   schemaNameRenameParams,
   columnOpParams,
+  catalogUnary,
 } from "./shared.js";
 
-export function registerCatalogTableMethods(protocol: Protocol, getCatalog: GetCatalog): void {
+export function registerCatalogTableMethods(protocol: Protocol, getCatalog: GetCatalog, signingKey?: Uint8Array): void {
   // catalog_table_get
-  protocol.unary("catalog_table_get", {
+  catalogUnary(protocol, signingKey, "catalog_table_get", {
     params: schema([
       field("attach_opaque_data", binary(), true),
       field("schema_name", utf8(), false),
@@ -52,7 +53,7 @@ export function registerCatalogTableMethods(protocol: Protocol, getCatalog: GetC
   });
 
   // catalog_table_create
-  protocol.unary("catalog_table_create", {
+  catalogUnary(protocol, signingKey, "catalog_table_create", {
     params: schema([
       field("attach_opaque_data", binary(), true),
       field("schema_name", utf8(), false),
@@ -83,7 +84,7 @@ export function registerCatalogTableMethods(protocol: Protocol, getCatalog: GetC
   });
 
   // catalog_table_drop
-  protocol.unary("catalog_table_drop", {
+  catalogUnary(protocol, signingKey, "catalog_table_drop", {
     params: schema([
       field("attach_opaque_data", binary(), true),
       field("schema_name", utf8(), false),
@@ -106,7 +107,7 @@ export function registerCatalogTableMethods(protocol: Protocol, getCatalog: GetC
   });
 
   // catalog_table_column_statistics_get
-  protocol.unary("catalog_table_column_statistics_get", {
+  catalogUnary(protocol, signingKey, "catalog_table_column_statistics_get", {
     params: schema([
       field("attach_opaque_data", binary(), true),
       field("schema_name", utf8(), false),
@@ -127,7 +128,7 @@ export function registerCatalogTableMethods(protocol: Protocol, getCatalog: GetC
   });
 
   // catalog_table_scan_function_get
-  protocol.unary("catalog_table_scan_function_get", {
+  catalogUnary(protocol, signingKey, "catalog_table_scan_function_get", {
     params: schema([
       field("attach_opaque_data", binary(), true),
       field("schema_name", utf8(), false),
@@ -152,7 +153,7 @@ export function registerCatalogTableMethods(protocol: Protocol, getCatalog: GetC
   });
 
   // catalog_table_comment_set
-  protocol.unary("catalog_table_comment_set", {
+  catalogUnary(protocol, signingKey, "catalog_table_comment_set", {
     params: schemaNameCommentParams,
     result: emptyResultSchema,
     handler: async (params) => {
@@ -170,7 +171,7 @@ export function registerCatalogTableMethods(protocol: Protocol, getCatalog: GetC
   });
 
   // catalog_table_rename
-  protocol.unary("catalog_table_rename", {
+  catalogUnary(protocol, signingKey, "catalog_table_rename", {
     params: schemaNameRenameParams,
     result: emptyResultSchema,
     handler: async (params) => {
@@ -188,7 +189,7 @@ export function registerCatalogTableMethods(protocol: Protocol, getCatalog: GetC
   });
 
   // catalog_table_column_add
-  protocol.unary("catalog_table_column_add", {
+  catalogUnary(protocol, signingKey, "catalog_table_column_add", {
     params: schema([
       field("attach_opaque_data", binary(), true),
       field("schema_name", utf8(), false),
@@ -217,7 +218,7 @@ export function registerCatalogTableMethods(protocol: Protocol, getCatalog: GetC
   });
 
   // catalog_table_column_drop
-  protocol.unary("catalog_table_column_drop", {
+  catalogUnary(protocol, signingKey, "catalog_table_column_drop", {
     params: columnOpParams,
     result: emptyResultSchema,
     handler: async (params) => {
@@ -235,7 +236,7 @@ export function registerCatalogTableMethods(protocol: Protocol, getCatalog: GetC
   });
 
   // catalog_table_column_rename
-  protocol.unary("catalog_table_column_rename", {
+  catalogUnary(protocol, signingKey, "catalog_table_column_rename", {
     params: schema([
       field("attach_opaque_data", binary(), true),
       field("schema_name", utf8(), false),
@@ -262,7 +263,7 @@ export function registerCatalogTableMethods(protocol: Protocol, getCatalog: GetC
   });
 
   // catalog_table_column_default_set
-  protocol.unary("catalog_table_column_default_set", {
+  catalogUnary(protocol, signingKey, "catalog_table_column_default_set", {
     params: schema([
       field("attach_opaque_data", binary(), true),
       field("schema_name", utf8(), false),
@@ -289,7 +290,7 @@ export function registerCatalogTableMethods(protocol: Protocol, getCatalog: GetC
   });
 
   // catalog_table_column_default_drop
-  protocol.unary("catalog_table_column_default_drop", {
+  catalogUnary(protocol, signingKey, "catalog_table_column_default_drop", {
     params: columnOpParams,
     result: emptyResultSchema,
     handler: async (params) => {
@@ -307,7 +308,7 @@ export function registerCatalogTableMethods(protocol: Protocol, getCatalog: GetC
   });
 
   // catalog_table_column_type_change
-  protocol.unary("catalog_table_column_type_change", {
+  catalogUnary(protocol, signingKey, "catalog_table_column_type_change", {
     params: schema([
       field("attach_opaque_data", binary(), true),
       field("schema_name", utf8(), false),
@@ -334,7 +335,7 @@ export function registerCatalogTableMethods(protocol: Protocol, getCatalog: GetC
   });
 
   // catalog_table_not_null_set
-  protocol.unary("catalog_table_not_null_set", {
+  catalogUnary(protocol, signingKey, "catalog_table_not_null_set", {
     params: columnOpParams,
     result: emptyResultSchema,
     handler: async (params) => {
@@ -352,7 +353,7 @@ export function registerCatalogTableMethods(protocol: Protocol, getCatalog: GetC
   });
 
   // catalog_table_not_null_drop
-  protocol.unary("catalog_table_not_null_drop", {
+  catalogUnary(protocol, signingKey, "catalog_table_not_null_drop", {
     params: columnOpParams,
     result: emptyResultSchema,
     handler: async (params) => {

@@ -10,10 +10,10 @@ VGI_DIR      ?= /Users/rusty/Development/vgi
 VGI_PYTHON_DIR ?= /Users/rusty/Development/vgi-python
 TEST_TIMEOUT ?= 120
 WORKER                ?= $(CURDIR)/bin/vgi-example-worker
-HTTP_WORKER           := $(CURDIR)/bin/vgi-example-http-worker
-VERSIONED_WORKER      := $(CURDIR)/bin/vgi-example-versioned-worker
+HTTP_WORKER           := $(CURDIR)/bin/vgi-fixture-http-worker
+VERSIONED_WORKER      := $(CURDIR)/bin/vgi-fixture-versioned-worker
 VERSIONED_HTTP        := $(CURDIR)/bin/vgi-example-versioned-http-worker
-ATTACH_OPTIONS_WORKER := $(CURDIR)/bin/vgi-example-attach-options-worker
+ATTACH_OPTIONS_WORKER := $(CURDIR)/bin/vgi-fixture-attach-options-worker
 ATTACH_OPTIONS_HTTP   := $(CURDIR)/bin/vgi-example-attach-options-http-worker
 
 TEST_DIR     := $(VGI_DIR)/test/sql
@@ -278,11 +278,11 @@ test-client:
 	normal_file="$$tmpdir/normal.port"; \
 	vers_file="$$tmpdir/versioned.port"; \
 	ao_file="$$tmpdir/attach-options.port"; \
-	( cd "$(VGI_PYTHON_DIR)" && uv run vgi-example-http --port 0 --port-file "$$normal_file" ) >/dev/null 2>&1 & \
+	( cd "$(VGI_PYTHON_DIR)" && uv run vgi-fixture-http --port 0 --port-file "$$normal_file" ) >/dev/null 2>&1 & \
 	py_pid=$$!; \
-	( cd "$(VGI_PYTHON_DIR)" && uv run vgi-example-versioned-worker --http --port 0 --port-file "$$vers_file" ) >/dev/null 2>&1 & \
+	( cd "$(VGI_PYTHON_DIR)" && uv run vgi-fixture-versioned-worker --http --port 0 --port-file "$$vers_file" ) >/dev/null 2>&1 & \
 	vers_pid=$$!; \
-	( cd "$(VGI_PYTHON_DIR)" && uv run vgi-example-attach-options-worker --http --port 0 --port-file "$$ao_file" ) >/dev/null 2>&1 & \
+	( cd "$(VGI_PYTHON_DIR)" && uv run vgi-fixture-attach-options-worker --http --port 0 --port-file "$$ao_file" ) >/dev/null 2>&1 & \
 	ao_pid=$$!; \
 	cleanup() { \
 		kill $$py_pid $$vers_pid $$ao_pid 2>/dev/null; \

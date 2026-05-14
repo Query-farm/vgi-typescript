@@ -10,7 +10,7 @@
 // Skipped automatically when VGI_PYTHON_VERSIONED_HTTP_WORKER isn't set.
 
 import { describe, test, expect, beforeAll, afterAll } from "bun:test";
-import { RpcError } from "vgi-rpc";
+import { VgiClientError } from "../../index.js";
 import {
   pythonVersionedHttpWorkerAvailable,
   startPythonVersionedHttpWorker,
@@ -100,10 +100,10 @@ describe.skipIf(skip)("VgiClient — versioned attach", () => {
 
   test("attach with unsatisfiable data_version_spec rejects with actionable message", async () => {
     // Assert on the full error shape, not just a regex match:
-    //  - surface is RpcError (so callers can programmatically distinguish
+    //  - surface is VgiClientError (so callers can programmatically distinguish
     //    server-side rejection from transport errors);
     //  - errorType is Python's ValueError, propagated untouched;
-    //  - errorMessage identifies WHICH version was rejected AND lists the
+    //  - the message identifies WHICH version was rejected AND lists the
     //    supported ones — users need both to self-correct.
     let caught: unknown;
     try {
@@ -111,13 +111,13 @@ describe.skipIf(skip)("VgiClient — versioned attach", () => {
     } catch (err) {
       caught = err;
     }
-    expect(caught).toBeInstanceOf(RpcError);
-    const err = caught as RpcError;
+    expect(caught).toBeInstanceOf(VgiClientError);
+    const err = caught as VgiClientError;
     expect(err.errorType).toBe("ValueError");
-    expect(err.errorMessage).toContain("Unsupported data_version_spec");
-    expect(err.errorMessage).toContain("'9.9.9'");
+    expect(err.message).toContain("Unsupported data_version_spec");
+    expect(err.message).toContain("'9.9.9'");
     // Actionable: must mention what the worker DOES support.
-    expect(err.errorMessage).toMatch(/1\.0\.0.*1\.1\.0.*1\.2\.0/);
+    expect(err.message).toMatch(/1\.0\.0.*1\.1\.0.*1\.2\.0/);
   });
 
   test("attach with unsatisfiable implementation_version rejects with actionable message", async () => {
@@ -127,14 +127,14 @@ describe.skipIf(skip)("VgiClient — versioned attach", () => {
     } catch (err) {
       caught = err;
     }
-    expect(caught).toBeInstanceOf(RpcError);
-    const err = caught as RpcError;
+    expect(caught).toBeInstanceOf(VgiClientError);
+    const err = caught as VgiClientError;
     expect(err.errorType).toBe("ValueError");
-    expect(err.errorMessage).toContain("Unsupported implementation_version");
-    expect(err.errorMessage).toContain("'9.9.9'");
+    expect(err.message).toContain("Unsupported implementation_version");
+    expect(err.message).toContain("'9.9.9'");
     // The worker serves exactly one implementation version — the message
     // should say which one so users can downgrade their request.
-    expect(err.errorMessage).toContain("'1.0.0'");
+    expect(err.message).toContain("'1.0.0'");
   });
 
   test("when BOTH data and implementation are bad, implementation error fires first", async () => {
@@ -150,9 +150,9 @@ describe.skipIf(skip)("VgiClient — versioned attach", () => {
     } catch (err) {
       caught = err;
     }
-    expect(caught).toBeInstanceOf(RpcError);
-    expect((caught as RpcError).errorMessage).toContain("Unsupported implementation_version");
-    expect((caught as RpcError).errorMessage).not.toContain("data_version_spec");
+    expect(caught).toBeInstanceOf(VgiClientError);
+    expect((caught as VgiClientError).message).toContain("Unsupported implementation_version");
+    expect((caught as VgiClientError).message).not.toContain("data_version_spec");
   });
 
   test("version rejection errors carry a Python traceback for debuggability", async () => {
@@ -165,8 +165,8 @@ describe.skipIf(skip)("VgiClient — versioned attach", () => {
     } catch (err) {
       caught = err;
     }
-    expect(caught).toBeInstanceOf(RpcError);
-    const err = caught as RpcError;
+    expect(caught).toBeInstanceOf(VgiClientError);
+    const err = caught as VgiClientError;
     expect(err.remoteTraceback).toContain("Traceback");
     expect(err.remoteTraceback).toContain("Unsupported data_version_spec");
   });
@@ -182,9 +182,9 @@ describe.skipIf(skip)("VgiClient — versioned attach", () => {
     } catch (err) {
       caught = err;
     }
-    expect(caught).toBeInstanceOf(RpcError);
-    expect((caught as RpcError).errorMessage).toContain("Unsupported data_version_spec");
-    expect((caught as RpcError).errorMessage).toContain("''");
+    expect(caught).toBeInstanceOf(VgiClientError);
+    expect((caught as VgiClientError).message).toContain("Unsupported data_version_spec");
+    expect((caught as VgiClientError).message).toContain("''");
   });
 
   test("whitespace-only data_version_spec is rejected", async () => {
@@ -196,8 +196,8 @@ describe.skipIf(skip)("VgiClient — versioned attach", () => {
     } catch (err) {
       caught = err;
     }
-    expect(caught).toBeInstanceOf(RpcError);
-    expect((caught as RpcError).errorMessage).toContain("Unsupported data_version_spec");
+    expect(caught).toBeInstanceOf(VgiClientError);
+    expect((caught as VgiClientError).message).toContain("Unsupported data_version_spec");
   });
 
   test("data_version_spec matching is case-sensitive and exact", async () => {
@@ -211,8 +211,8 @@ describe.skipIf(skip)("VgiClient — versioned attach", () => {
       } catch (err) {
         caught = err;
       }
-      expect(caught).toBeInstanceOf(RpcError);
-      expect((caught as RpcError).errorMessage).toContain("Unsupported data_version_spec");
+      expect(caught).toBeInstanceOf(VgiClientError);
+      expect((caught as VgiClientError).message).toContain("Unsupported data_version_spec");
     }
   });
 
@@ -224,8 +224,8 @@ describe.skipIf(skip)("VgiClient — versioned attach", () => {
       } catch (err) {
         caught = err;
       }
-      expect(caught).toBeInstanceOf(RpcError);
-      expect((caught as RpcError).errorMessage).toContain("Unsupported implementation_version");
+      expect(caught).toBeInstanceOf(VgiClientError);
+      expect((caught as VgiClientError).message).toContain("Unsupported implementation_version");
     }
   });
 
@@ -236,13 +236,13 @@ describe.skipIf(skip)("VgiClient — versioned attach", () => {
     } catch (err) {
       caught = err;
     }
-    expect(caught).toBeInstanceOf(RpcError);
-    const err = caught as RpcError;
+    expect(caught).toBeInstanceOf(VgiClientError);
+    const err = caught as VgiClientError;
     // The versioned worker's catalog_attach starts with a name check that
     // raises ValueError with the requested name + the valid one.
     expect(err.errorType).toBe("ValueError");
-    expect(err.errorMessage).toContain("not-a-real-catalog");
-    expect(err.errorMessage).toContain("versioned");
+    expect(err.message).toContain("not-a-real-catalog");
+    expect(err.message).toContain("versioned");
   });
 
   test("two concurrent attach IDs are distinct", async () => {

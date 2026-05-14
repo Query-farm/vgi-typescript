@@ -20,11 +20,12 @@ import {
   type GetCatalog,
   emptyResultSchema,
   attachOpaqueDataSchemaNameTxnParams,
+  catalogUnary,
 } from "./shared.js";
 
-export function registerCatalogMacroMethods(protocol: Protocol, getCatalog: GetCatalog): void {
+export function registerCatalogMacroMethods(protocol: Protocol, getCatalog: GetCatalog, signingKey?: Uint8Array): void {
   // catalog_macro_get
-  protocol.unary("catalog_macro_get", {
+  catalogUnary(protocol, signingKey, "catalog_macro_get", {
     params: attachOpaqueDataSchemaNameTxnParams,
     result: RESULT_BINARY_SCHEMA,
     handler: async (params) => {
@@ -42,7 +43,7 @@ export function registerCatalogMacroMethods(protocol: Protocol, getCatalog: GetC
   });
 
   // catalog_macro_create
-  protocol.unary("catalog_macro_create", {
+  catalogUnary(protocol, signingKey, "catalog_macro_create", {
     params: REQUEST_PARAMS_SCHEMA,
     result: emptyResultSchema,
     handler: async (params) => {
@@ -64,7 +65,7 @@ export function registerCatalogMacroMethods(protocol: Protocol, getCatalog: GetC
   });
 
   // catalog_macro_drop
-  protocol.unary("catalog_macro_drop", {
+  catalogUnary(protocol, signingKey, "catalog_macro_drop", {
     params: schema([
       field("attach_opaque_data", binary(), true),
       field("schema_name", utf8(), false),
@@ -87,7 +88,7 @@ export function registerCatalogMacroMethods(protocol: Protocol, getCatalog: GetC
   });
 
   // catalog_schema_contents_macros
-  protocol.unary("catalog_schema_contents_macros", {
+  catalogUnary(protocol, signingKey, "catalog_schema_contents_macros", {
     params: schema([
       field("attach_opaque_data", binary(), true),
       field("name", utf8(), false),
