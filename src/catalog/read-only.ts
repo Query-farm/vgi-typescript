@@ -338,6 +338,11 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
           supported_expression_filters: meta.supportedExpressionFilters,
           order_preservation: meta.preservesOrder as any,
           max_workers: meta.maxWorkers ?? DEFAULT_MAX_WORKERS,
+          // Opt-in features the read-only catalog's functions do not use; the
+          // regenerated FunctionInfo schema requires these non-nullable
+          // fields, so default them explicitly.
+          supports_batch_index: false,
+          partition_kind: "NOT_PARTITIONED",
           order_dependent: meta.orderDependent as any,
           distinct_dependent: meta.distinctDependent as any,
           supports_window: false,

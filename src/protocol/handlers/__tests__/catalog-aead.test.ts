@@ -11,7 +11,9 @@ import type { AuthContext } from "vgi-rpc";
 import {
   CatalogInterface,
   type AttachOpaqueData,
+  type TransactionOpaqueData,
   type CatalogAttachResult,
+  type SchemaInfo,
 } from "../../../catalog/interface.js";
 import { buildVgiProtocol } from "../../dispatch.js";
 import { FunctionRegistry } from "../../../functions/registry.js";
@@ -45,6 +47,12 @@ class RecordingCatalog extends CatalogInterface {
   }
   async detach(a: AttachOpaqueData): Promise<void> {
     this.lastDetachArg = a;
+  }
+  async version(_a: AttachOpaqueData, _t?: TransactionOpaqueData): Promise<number> {
+    return 1;
+  }
+  async schemas(_a: AttachOpaqueData): Promise<SchemaInfo[]> {
+    return [];
   }
 }
 
