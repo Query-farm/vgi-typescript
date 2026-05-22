@@ -34,7 +34,6 @@
     "#arrow-impl": {
       "workerd": "./src/arrow/impl-flechette/index.ts",
       "worker": "./src/arrow/impl-flechette/index.ts",
-      "browser": "./src/arrow/impl-flechette/index.ts",
       "default": "./src/arrow/impl-arrowjs/index.ts"
     }
   },
