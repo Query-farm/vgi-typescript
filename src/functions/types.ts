@@ -58,6 +58,35 @@ export interface FunctionMeta {
    * otherwise calling FinalExecute is unsupported and crashes the C++ side.
    */
   hasFinalize?: boolean;
+  /**
+   * table_buffering: force ParallelSink=false in the C++ operator
+   * (single-thread, source-ordered ingest).
+   */
+  sinkOrderDependent?: boolean;
+  /**
+   * table_buffering: force serial Source drain in finalize_queue order
+   * (ParallelSource=false, SourceOrder=FIXED_ORDER).
+   */
+  sourceOrderDependent?: boolean;
+  /**
+   * table_buffering: thread DuckDB's per-chunk batch_index into every
+   * process() call (RequiredPartitionInfo=BatchIndex).
+   */
+  requiresInputBatchIndex?: boolean;
+  /**
+   * table (generator): the function tags every emitted Arrow batch with a
+   * per-partition `vgi_batch_index` so DuckDB's ordered sinks reassemble
+   * parallel output in partition order. Surfaces as FunctionInfo
+   * `supports_batch_index`.
+   */
+  supportsBatchIndex?: boolean;
+  /**
+   * table (generator): Hive-style partition-columns mode. Functions declare
+   * a PartitionKind and annotate bind-schema fields; emitted batches carry
+   * `vgi_partition_values#b64` metadata. Surfaces as FunctionInfo
+   * `partition_kind`.
+   */
+  partitionKind?: "NOT_PARTITIONED" | "SINGLE_VALUE_PARTITIONS" | "OVERLAPPING_PARTITIONS" | "DISJOINT_PARTITIONS";
 }
 
 export interface StreamHandlers {
@@ -88,7 +117,7 @@ export interface StreamHandlers {
  * A resolved, registered VGI function definition.
  */
 export interface VgiFunction {
-  kind: "scalar" | "table" | "table_in_out";
+  kind: "scalar" | "table" | "table_in_out" | "table_buffering";
   meta: FunctionMeta;
   argumentSpecs: ArgumentSpec[];
   /** Default output schema (for catalog registration). May be overridden at bind time. */

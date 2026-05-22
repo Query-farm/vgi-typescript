@@ -90,8 +90,40 @@ export interface FunctionStorage {
   queuePush(executionId: Uint8Array, items: Uint8Array[]): Promise<number>;
   queuePop(executionId: Uint8Array): Promise<Uint8Array | null>;
   queueClear(executionId: Uint8Array): Promise<number>;
+  // --- Namespaced key/value state (scoped by execution_id) ---
+  stateGet(scopeId: Uint8Array, ns: Uint8Array, key: Uint8Array): Promise<Uint8Array | null>;
+  statePut(scopeId: Uint8Array, ns: Uint8Array, key: Uint8Array, value: Uint8Array): Promise<void>;
+  // --- Append-only log (scoped by execution_id) ---
+  stateAppend(scopeId: Uint8Array, ns: Uint8Array, key: Uint8Array, item: Uint8Array): Promise<number>;
+  stateLogScan(
+    scopeId: Uint8Array,
+    ns: Uint8Array,
+    key: Uint8Array,
+    afterId?: number,
+    limit?: number | null,
+  ): Promise<Array<[number, Uint8Array]>>;
+  /** Wipe all state + log rows for a scope across every namespace. */
+  executionClear(scopeId: Uint8Array): Promise<number>;
   /** Optional cleanup hook. Implementations holding a connection should release it here. */
   close?(): Promise<void> | void;
+}
+
+// FrameworkNS — namespaces the framework itself uses (mirrors Python's
+// FrameworkNS enum). User code picks its own arbitrary namespace bytes.
+export const FrameworkNS = {
+  BUFFERING_INIT: textBytes("_vgi/buffering_init"),
+  STREAMING_FINALIZE: textBytes("_vgi/streaming_finalize"),
+} as const;
+
+function textBytes(s: string): Uint8Array {
+  return new TextEncoder().encode(s);
+}
+
+/** Encode an int as 8-byte little-endian, matching Python's pack_int_key. */
+export function packIntKey(i: number | bigint): Uint8Array {
+  const buf = new ArrayBuffer(8);
+  new DataView(buf).setBigInt64(0, BigInt(i), true);
+  return new Uint8Array(buf);
 }
 
 // ============================================================================
@@ -154,6 +186,26 @@ export class FunctionStorageSqlite implements FunctionStorage {
       }
     }
 
+    // function_state / function_state_log: a prior schema (e.g. the Python
+    // backend's last_attempt_id NOT NULL columns) is wire-incompatible with
+    // this leaner TS shape. The TS backend doesn't track attempt_id (no
+    // replay-detection), so drop any legacy table that has columns this
+    // backend never populates, then recreate below.
+    for (const [table, expectedCols] of [
+      ["function_state", new Set(["scope_id", "ns", "key", "value", "created_at"])],
+      ["function_state_log", new Set(["id", "scope_id", "ns", "key", "value", "created_at"])],
+    ] as const) {
+      const info = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{
+        name: string;
+      }>;
+      if (info.length === 0) continue;
+      const mismatch = info.some((row) => !expectedCols.has(row.name)) ||
+        [...expectedCols].some((c) => !info.find((row) => row.name === c));
+      if (mismatch) {
+        db.exec(`DROP TABLE IF EXISTS ${table}`);
+      }
+    }
+
     db.exec("DROP TABLE IF EXISTS init_storage");
 
     db.exec(`
@@ -190,6 +242,85 @@ export class FunctionStorageSqlite implements FunctionStorage {
         created_at REAL DEFAULT (julianday('now'))
       )
     `);
+    // Namespaced key/value state, scoped by execution_id. Mirrors Python's
+    // function_state table — used by table_buffering init metadata + user
+    // per-key state.
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS function_state (
+        scope_id BLOB NOT NULL,
+        ns BLOB NOT NULL,
+        key BLOB NOT NULL,
+        value BLOB NOT NULL,
+        created_at REAL DEFAULT (julianday('now')),
+        PRIMARY KEY (scope_id, ns, key)
+      )
+    `);
+    // Append-only log, scoped by execution_id. Globally-monotonic id (the
+    // AUTOINCREMENT column) recovers per-(scope,ns,key) append order.
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS function_state_log (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        scope_id BLOB NOT NULL,
+        ns BLOB NOT NULL,
+        key BLOB NOT NULL,
+        value BLOB NOT NULL,
+        created_at REAL DEFAULT (julianday('now'))
+      )
+    `);
+    db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_function_state_log_scope
+      ON function_state_log(scope_id, ns, key, id)
+    `);
+  }
+
+  async stateGet(scopeId: Uint8Array, ns: Uint8Array, key: Uint8Array): Promise<Uint8Array | null> {
+    const row = this._db
+      .prepare("SELECT value FROM function_state WHERE scope_id = ? AND ns = ? AND key = ?")
+      .get(bufferArg(scopeId), bufferArg(ns), bufferArg(key)) as { value: Uint8Array } | null;
+    return row ? new Uint8Array(row.value) : null;
+  }
+
+  async statePut(scopeId: Uint8Array, ns: Uint8Array, key: Uint8Array, value: Uint8Array): Promise<void> {
+    this._db
+      .prepare(
+        "INSERT OR REPLACE INTO function_state (scope_id, ns, key, value, created_at) " +
+          "VALUES (?, ?, ?, ?, julianday('now'))",
+      )
+      .run(bufferArg(scopeId), bufferArg(ns), bufferArg(key), bufferArg(value));
+  }
+
+  async stateAppend(scopeId: Uint8Array, ns: Uint8Array, key: Uint8Array, item: Uint8Array): Promise<number> {
+    const res = this._db
+      .prepare("INSERT INTO function_state_log (scope_id, ns, key, value) VALUES (?, ?, ?, ?)")
+      .run(bufferArg(scopeId), bufferArg(ns), bufferArg(key), bufferArg(item));
+    return Number(res.lastInsertRowid);
+  }
+
+  async stateLogScan(
+    scopeId: Uint8Array,
+    ns: Uint8Array,
+    key: Uint8Array,
+    afterId: number = -1,
+    limit: number | null = null,
+  ): Promise<Array<[number, Uint8Array]>> {
+    let sql =
+      "SELECT id, value FROM function_state_log " +
+      "WHERE scope_id = ? AND ns = ? AND key = ? AND id > ? ORDER BY id ASC";
+    const args: any[] = [bufferArg(scopeId), bufferArg(ns), bufferArg(key), afterId];
+    if (limit != null) {
+      sql += " LIMIT ?";
+      args.push(limit);
+    }
+    const rows = this._db.prepare(sql).all(...args) as Array<{ id: number; value: Uint8Array }>;
+    return rows.map((r) => [Number(r.id), new Uint8Array(r.value)]);
+  }
+
+  async executionClear(scopeId: Uint8Array): Promise<number> {
+    const eid = bufferArg(scopeId);
+    let total = 0;
+    total += (this._db.prepare("DELETE FROM function_state WHERE scope_id = ?").run(eid).changes as number);
+    total += (this._db.prepare("DELETE FROM function_state_log WHERE scope_id = ?").run(eid).changes as number);
+    return total;
   }
 
   async workerPut(
@@ -298,6 +429,8 @@ export class FunctionStorageSqlite implements FunctionStorage {
       "worker_state",
       "work_queue",
       "invocation_registry",
+      "function_state",
+      "function_state_log",
     ]) {
       const result = this._db
         .prepare(
@@ -345,6 +478,35 @@ export class BoundStorage {
 
   queueClear(): Promise<number> {
     return this._base.queueClear(this._executionId);
+  }
+
+  stateGet(ns: Uint8Array, key: Uint8Array): Promise<Uint8Array | null> {
+    return this._base.stateGet(this._executionId, ns, key);
+  }
+
+  statePut(ns: Uint8Array, key: Uint8Array, value: Uint8Array): Promise<void> {
+    return this._base.statePut(this._executionId, ns, key, value);
+  }
+
+  stateAppend(ns: Uint8Array, key: Uint8Array, item: Uint8Array): Promise<number> {
+    return this._base.stateAppend(this._executionId, ns, key, item);
+  }
+
+  stateLogScan(
+    ns: Uint8Array,
+    key: Uint8Array,
+    afterId: number = -1,
+    limit: number | null = null,
+  ): Promise<Array<[number, Uint8Array]>> {
+    return this._base.stateLogScan(this._executionId, ns, key, afterId, limit);
+  }
+
+  executionClear(): Promise<number> {
+    return this._base.executionClear(this._executionId);
+  }
+
+  static packIntKey(i: number | bigint): Uint8Array {
+    return packIntKey(i);
   }
 }
 

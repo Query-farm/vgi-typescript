@@ -11,6 +11,7 @@ import {
 export enum CatalogFunctionType {
   SCALAR = "SCALAR",
   TABLE = "TABLE",
+  TABLE_BUFFERING = "TABLE_BUFFERING",
   AGGREGATE = "AGGREGATE",
 }
 

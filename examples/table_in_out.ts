@@ -49,45 +49,6 @@ const echo = defineTableInOutFunction({
 });
 
 // ============================================================================
-// 2. buffer_input - Buffer all input, emit on finalize
-// ============================================================================
-
-const buffer_input = defineTableInOutFunction({
-  name: "buffer_input",
-  description: "Collects all input batches and emits during finalization",
-  maxWorkers: 1,
-  onInit: (params) => ({
-    max_workers: 1,
-    execution_id: params.executionId,
-    opaque_data: null,
-  }),
-  process: async (
-    params: TableInOutProcessParams,
-    _state: null,
-    batch: RecordBatch,
-    out: OutputCollector
-  ) => {
-    if (batch.numRows > 0) {
-      await params.storage.queuePush([serializeBatch(batch)]);
-    }
-    out.emit(emptyBatch(params.outputSchema));
-  },
-  finalize: async (params: TableInOutProcessParams, _states: null[]) => {
-    const batches: RecordBatch[] = [];
-    for (;;) {
-      const item = await params.storage.queuePop();
-      if (!item) break;
-      batches.push(deserializeBatch(item));
-    }
-    return batches;
-  },
-  examples: [
-    { sql: "SELECT * FROM buffer_input((SELECT * FROM input_table))", description: "Buffer all input and emit on finalize" },
-  ],
-  categories: ["utility", "buffer"],
-});
-
-// ============================================================================
 // 3. repeat_inputs - Duplicate batches N times
 // ============================================================================
 
@@ -166,88 +127,7 @@ function buildNumericOutputSchema(inputSchema: Schema): Schema {
   return new Schema(fields);
 }
 
-const sum_all_columns = defineTableInOutFunction<SumAllColumnsArgs, SumAllColumnsState>({
-  name: "sum_all_columns",
-  description: "Computes column-wise sums across all batches",
-  namedArgs: {
-    logging: new Bool(),
-  },
-  argDefaults: {
-    logging: false,
-  },
-  onBind: (params: TableInOutBindParams<SumAllColumnsArgs>) => {
-    if (!params.bindCall.input_schema) {
-      throw new Error("input_schema is required");
-    }
-    return { outputSchema: buildNumericOutputSchema(params.bindCall.input_schema) };
-  },
-  initialState: (params: TableInOutProcessParams<SumAllColumnsArgs>) => {
-    const sums: Record<string, bigint | number> = {};
-    for (const field of params.outputSchema.fields) {
-      if (DataType.isInt(field.type)) {
-        sums[field.name] = BigInt(0);
-      } else {
-        sums[field.name] = 0;
-      }
-    }
-    return { sums };
-  },
-  process: (
-    params: TableInOutProcessParams<SumAllColumnsArgs>,
-    state: SumAllColumnsState,
-    batch: RecordBatch,
-    out: OutputCollector
-  ) => {
-    if (params.args.logging) {
-      out.clientLog("INFO", `Processing batch with ${batch.numRows} rows`);
-    }
-
-    for (const name of Object.keys(state.sums)) {
-      const col = batch.getChild(name);
-      if (!col) continue;
-      for (let i = 0; i < col.length; i++) {
-        const v = col.get(i);
-        if (v === null || v === undefined) continue;
-        if (typeof state.sums[name] === "bigint") {
-          const bigV = typeof v === "bigint" ? v : BigInt(v);
-          state.sums[name] = (state.sums[name] as bigint) + bigV;
-        } else {
-          state.sums[name] = (state.sums[name] as number) + Number(v);
-        }
-      }
-    }
-
-    out.emit(emptyBatch(params.outputSchema));
-  },
-  finalize: (params: TableInOutProcessParams<SumAllColumnsArgs>, states: SumAllColumnsState[]) => {
-    // Merge sums from all workers (framework auto-collected from SQLite)
-    const merged: Record<string, bigint | number> = {};
-    for (const field of params.outputSchema.fields) {
-      merged[field.name] = DataType.isInt(field.type) ? BigInt(0) : 0;
-    }
-    for (const s of states) {
-      if (!s?.sums) continue;
-      for (const field of params.outputSchema.fields) {
-        const v = s.sums[field.name];
-        if (v === null || v === undefined) continue;
-        if (typeof merged[field.name] === "bigint") {
-          merged[field.name] = (merged[field.name] as bigint) + (typeof v === "bigint" ? v : BigInt(v));
-        } else {
-          merged[field.name] = (merged[field.name] as number) + Number(v);
-        }
-      }
-    }
-    const columns: Record<string, any[]> = {};
-    for (const field of params.outputSchema.fields) {
-      columns[field.name] = [merged[field.name] ?? (DataType.isInt(field.type) ? BigInt(0) : 0)];
-    }
-    return [batchFromColumns(columns, params.outputSchema)];
-  },
-  examples: [
-    { sql: "SELECT * FROM sum_all_columns((SELECT * FROM input_table))", description: "Sum all numeric columns" },
-  ],
-  categories: ["aggregation", "numeric"],
-});
+// sum_all_columns is now a TableBufferingFunction — see examples/table_buffering.ts.
 
 // ============================================================================
 // 5. exception_process - Throws on even batches
@@ -257,81 +137,8 @@ interface ExceptionProcessState {
   batchCount: number;
 }
 
-const exception_process = defineTableInOutFunction<SumAllColumnsArgs, ExceptionProcessState>({
-  name: "exception_process",
-  description: "Test function that raises exception during process",
-  namedArgs: {
-    logging: new Bool(),
-  },
-  argDefaults: {
-    logging: false,
-  },
-  onBind: (params: TableInOutBindParams<SumAllColumnsArgs>) => {
-    if (!params.bindCall.input_schema) {
-      throw new Error("input_schema is required");
-    }
-    return { outputSchema: buildNumericOutputSchema(params.bindCall.input_schema) };
-  },
-  initialState: () => ({
-    batchCount: 0,
-  }),
-  process: (
-    params: TableInOutProcessParams<SumAllColumnsArgs>,
-    state: ExceptionProcessState,
-    _batch: RecordBatch,
-    out: OutputCollector
-  ) => {
-    state.batchCount += 1;
-    if (state.batchCount % 2 === 0) {
-      throw new Error(`Intentional exception on batch ${state.batchCount}`);
-    }
-    out.emit(emptyBatch(params.outputSchema));
-  },
-  // When no exception fires (single batch under 2048 rows) finalize must
-  // still produce the canonical zero-sums row so callers can distinguish
-  // "ran cleanly, totalled to zero" from "errored, no rows".
-  finalize: (params) => {
-    const columns: Record<string, any[]> = {};
-    for (const field of params.outputSchema.fields) {
-      columns[field.name] = [DataType.isInt(field.type) ? BigInt(0) : 0];
-    }
-    return [batchFromColumns(columns, params.outputSchema)];
-  },
-  categories: ["test", "error"],
-});
-
-// ============================================================================
-// 6. exception_finalize - Throws during finalize
-// ============================================================================
-
-const exception_finalize = defineTableInOutFunction<SumAllColumnsArgs>({
-  name: "exception_finalize",
-  description: "Test function that raises exception during finalize",
-  namedArgs: {
-    logging: new Bool(),
-  },
-  argDefaults: {
-    logging: false,
-  },
-  onBind: (params: TableInOutBindParams<SumAllColumnsArgs>) => {
-    if (!params.bindCall.input_schema) {
-      throw new Error("input_schema is required");
-    }
-    return { outputSchema: buildNumericOutputSchema(params.bindCall.input_schema) };
-  },
-  process: (
-    params: TableInOutProcessParams<SumAllColumnsArgs>,
-    _state: null,
-    _batch: RecordBatch,
-    out: OutputCollector
-  ) => {
-    out.emit(emptyBatch(params.outputSchema));
-  },
-  finalize: (_params: TableInOutProcessParams<SumAllColumnsArgs>, _states: null[]) => {
-    throw new Error("Intentional exception during finalize()");
-  },
-  categories: ["test", "error"],
-});
+// exception_process and exception_finalize are now TableBufferingFunctions —
+// see examples/table_buffering.ts.
 
 // ============================================================================
 // 7. sum_all_columns_simple_distributed - Simpler distributed sum
@@ -626,15 +433,45 @@ const unnest_tensor_rows = defineTableInOutFunction({
 // Export all table-in-out functions
 // ============================================================================
 
+// ============================================================================
+// echo_witness — projection-pushdown probe. Each output row has every column
+// set to len(observed output_schema), so a SELECT of one column reveals
+// whether projection narrowed the schema reaching the worker.
+// ============================================================================
+
+const echo_witness = defineTableInOutFunction({
+  name: "echo_witness",
+  description: "Emits len(observed_output_schema) per column — projection probe",
+  projectionPushdown: true,
+  onBind: (params: TableInOutBindParams) => {
+    if (!params.bindCall.input_schema) {
+      throw new Error("echo_witness: input_schema is required");
+    }
+    return { outputSchema: params.bindCall.input_schema };
+  },
+  process: (
+    params: TableInOutProcessParams,
+    _state: null,
+    batch: RecordBatch,
+    out: OutputCollector,
+  ) => {
+    const observed = params.outputSchema.fields.length;
+    const columns: Record<string, any[]> = {};
+    for (const field of params.outputSchema.fields) {
+      const isBig = DataType.isInt(field.type) && (field.type as any).bitWidth === 64;
+      columns[field.name] = new Array(batch.numRows).fill(isBig ? BigInt(observed) : observed);
+    }
+    out.emit(batchFromColumns(columns, params.outputSchema));
+  },
+  categories: ["test", "pushdown"],
+});
+
 export const tableInOutFunctions: VgiFunction[] = [
   echo,
-  buffer_input,
   repeat_inputs,
-  sum_all_columns,
-  exception_process,
-  exception_finalize,
   sum_all_columns_simple_distributed,
   filter_by_setting,
   slow_cancellable_inout,
   unnest_tensor_rows,
+  echo_witness,
 ];

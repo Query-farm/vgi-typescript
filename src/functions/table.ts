@@ -225,6 +225,10 @@ export interface TableFunctionConfig<
   nullHandling?: NullHandling;
   orderDependent?: OrderDependence;
   distinctDependent?: DistinctDependence;
+  /** Emit per-batch `vgi_batch_index`; FunctionInfo.supports_batch_index. */
+  supportsBatchIndex?: boolean;
+  /** Hive-style partition-columns mode; FunctionInfo.partition_kind. */
+  partitionKind?: "NOT_PARTITIONED" | "SINGLE_VALUE_PARTITIONS" | "OVERLAPPING_PARTITIONS" | "DISJOINT_PARTITIONS";
 }
 
 export function defineTableFunction<
@@ -270,6 +274,8 @@ export function defineTableFunction<
     nullHandling: config.nullHandling,
     orderDependent: config.orderDependent,
     distinctDependent: config.distinctDependent,
+    supportsBatchIndex: config.supportsBatchIndex,
+    partitionKind: config.partitionKind,
   };
 
   function extractArgs(request: BindRequest): TArgs {

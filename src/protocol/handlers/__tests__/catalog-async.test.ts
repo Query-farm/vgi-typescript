@@ -21,7 +21,7 @@ class AsyncStubCatalog extends CatalogInterface {
   }
   async catalogsInfo(): Promise<CatalogInfo[]> {
     await Promise.resolve();
-    return [{ name: "stub", implementation_version: null, data_version_spec: null, attach_option_specs: [] }];
+    return [{ name: "stub", implementation_version: null, data_version_spec: null, attach_option_specs: [], releases: [] }];
   }
   async attach(name: string): Promise<CatalogAttachResult> {
     await Promise.resolve();

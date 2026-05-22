@@ -299,7 +299,7 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
         // everything through. Defensive String() coerces null/undefined.
         const t = String(type ?? "").toUpperCase();
         if (t === "SCALAR_FUNCTION") return f.kind === "scalar";
-        if (t === "TABLE_FUNCTION") return f.kind === "table" || f.kind === "table_in_out";
+        if (t === "TABLE_FUNCTION") return f.kind === "table" || f.kind === "table_in_out" || (f.kind as string) === "table_buffering";
         if (t === "AGGREGATE_FUNCTION") return (f.kind as string) === "aggregate";
         return true;
       })
@@ -323,7 +323,7 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
           tags: {},
           name: f.meta.name,
           schema_name: name,
-          function_type: meta.functionType.toUpperCase() as "SCALAR" | "TABLE" | "AGGREGATE",
+          function_type: meta.functionType.toUpperCase() as "SCALAR" | "TABLE" | "TABLE_BUFFERING" | "AGGREGATE",
           arguments: argBytes,
           output_schema: outputSchemaBytes,
           stability: meta.stability as any,
@@ -343,18 +343,34 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
           max_workers: meta.maxWorkers ?? DEFAULT_MAX_WORKERS,
           // Opt-in features the read-only catalog's functions do not use; the
           // regenerated FunctionInfo schema requires these non-nullable
-          // fields, so default them explicitly.
-          supports_batch_index: false,
-          partition_kind: "NOT_PARTITIONED",
+          // fields, so default them explicitly. table_buffering functions
+          // thread their batch_index requirement through supports_batch_index
+          // so the C++ operator declares RequiredPartitionInfo=BatchIndex.
+          supports_batch_index:
+            ((f.kind as string) === "table_buffering" && f.meta.requiresInputBatchIndex === true) ||
+            ((f.kind as string) === "table" && f.meta.supportsBatchIndex === true),
+          partition_kind:
+            (f.kind as string) === "table" && f.meta.partitionKind
+              ? f.meta.partitionKind
+              : "NOT_PARTITIONED",
           order_dependent: meta.orderDependent as any,
           distinct_dependent: meta.distinctDependent as any,
           supports_window: false,
           streaming_partitioned: false,
-          // Only table_in_out functions that wired up a finalize callback get
-          // the FINALIZE init() phase. Advertising has_finalize=true on a
-          // function without it makes DuckDB call FinalExecute and crash
-          // with 'FinalExecute not supported for project_input'.
-          has_finalize: f.kind === "table_in_out" && f.meta.hasFinalize === true,
+          // table_in_out functions with a finalize callback, AND every
+          // table_buffering function (the Source phase always runs), get the
+          // FINALIZE init() phase. Advertising has_finalize=true on a function
+          // without it makes DuckDB call FinalExecute and crash with
+          // 'FinalExecute not supported for project_input'.
+          has_finalize:
+            (f.kind === "table_in_out" && f.meta.hasFinalize === true) ||
+            (f.kind as string) === "table_buffering",
+          source_order_dependent:
+            (f.kind as string) === "table_buffering" && f.meta.sourceOrderDependent === true,
+          sink_order_dependent:
+            (f.kind as string) === "table_buffering" && f.meta.sinkOrderDependent === true,
+          requires_input_batch_index:
+            (f.kind as string) === "table_buffering" && f.meta.requiresInputBatchIndex === true,
           required_settings: meta.requiredSettings,
           required_secrets: requiredSecrets.map((s) => ({
             secret_type: s.secret_type,

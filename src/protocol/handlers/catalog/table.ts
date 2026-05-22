@@ -7,6 +7,7 @@ import { encodeTableInfo } from "../../../generated/vgi-client.js";
 import {
   CatalogTableGetResultSchema,
   ScanFunctionResultSchema,
+  ScanBranchesResultSchema,
 } from "../../../generated/vgi-protocol-schemas.js";
 import { toUint8Array } from "../../../util/bytes.js";
 import {
@@ -149,6 +150,33 @@ export function registerCatalogTableMethods(protocol: Protocol, getCatalog: GetC
         params.transaction_opaque_data ? toUint8Array(params.transaction_opaque_data) : undefined
       );
       return wrapResult(scanResult, ScanFunctionResultSchema);
+    },
+  });
+
+  // catalog_table_scan_branches_get — branches-aware variant of
+  // scan_function_get. The branches-aware C++ extension calls this for every
+  // table scan; single-source catalogs synthesise a one-branch result.
+  catalogUnary(protocol, signingKey, "catalog_table_scan_branches_get", {
+    params: schema([
+      field("attach_opaque_data", binary(), true),
+      field("schema_name", utf8(), false),
+      field("name", utf8(), false),
+      field("at_unit", utf8(), true),
+      field("at_value", utf8(), true),
+      field("transaction_opaque_data", binary(), true),
+    ]),
+    result: RESULT_BINARY_SCHEMA,
+    handler: async (params) => {
+      const cat = getCatalog();
+      const branchesResult = await cat.tableScanBranchesGet(
+        toUint8Array(params.attach_opaque_data),
+        params.schema_name,
+        params.name,
+        params.at_unit,
+        params.at_value,
+        params.transaction_opaque_data ? toUint8Array(params.transaction_opaque_data) : undefined
+      );
+      return wrapResult(branchesResult, ScanBranchesResultSchema);
     },
   });
 

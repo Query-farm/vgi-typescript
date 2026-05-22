@@ -59,6 +59,8 @@ const INIT_REQUEST_SCHEMA = makeSchema([
   // TABLESAMPLE pushdown hints from DuckDB's SamplingPushdown optimizer.
   field("tablesample_percentage", float64(), true),
   field("tablesample_seed", int64(), true),
+  // Buffered-table finalize stream identifier — C++ appends this last.
+  field("finalize_state_id", binary(), true),
 ]);
 
 const GLOBAL_INIT_RESPONSE_SCHEMA = makeSchema([
@@ -89,6 +91,7 @@ export function serializeInitRequest(req: InitRequest): VgiBatch {
     order_by_limit: req.order_by_limit ?? null,
     tablesample_percentage: req.tablesample_percentage ?? null,
     tablesample_seed: req.tablesample_seed ?? null,
+    finalize_state_id: req.finalize_state_id ?? null,
   };
   return buildSingleRowBatch(INIT_REQUEST_SCHEMA, row);
 }
@@ -129,6 +132,10 @@ export function deserializeInitRequest(
       phase = TableInOutPhase.INPUT;
     } else if (phaseStr === "FINALIZE") {
       phase = TableInOutPhase.FINALIZE;
+    } else if (phaseStr === "TABLE_BUFFERING") {
+      phase = TableInOutPhase.TABLE_BUFFERING;
+    } else if (phaseStr === "TABLE_BUFFERING_FINALIZE") {
+      phase = TableInOutPhase.TABLE_BUFFERING_FINALIZE;
     }
   }
 
@@ -163,6 +170,9 @@ export function deserializeInitRequest(
       : null,
     join_keys: joinKeys,
     phase,
+    finalize_state_id: params.finalize_state_id
+      ? toUint8Array(params.finalize_state_id)
+      : null,
     execution_id: params.execution_id
       ? toUint8Array(params.execution_id)
       : null,

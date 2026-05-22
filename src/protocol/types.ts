@@ -46,6 +46,12 @@ export interface InitRequest {
    */
   join_keys: VgiBatch[];
   phase: TableInOutPhase | null;
+  /**
+   * Buffered-table finalize stream: which finalize_state_id this stream
+   * serves. Set when phase=TABLE_BUFFERING_FINALIZE; null otherwise. Opaque
+   * bytes the worker's combine() chose.
+   */
+  finalize_state_id: Uint8Array | null;
   execution_id: Uint8Array | null;
   init_opaque_data: Uint8Array | null;
   // Order pushdown hints from DuckDB's RowGroupPruner (null when no hint).

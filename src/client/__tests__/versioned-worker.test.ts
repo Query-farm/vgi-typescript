@@ -26,6 +26,7 @@ class VersionedCatalog extends CatalogInterface {
       implementation_version: IMPLEMENTATION_VERSION,
       data_version_spec: DATA_VERSION_SPEC,
       attach_option_specs: [],
+      releases: [],
     }];
   }
   attach(

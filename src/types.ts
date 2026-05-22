@@ -40,6 +40,12 @@ export enum DistinctDependence {
 export enum TableInOutPhase {
   INPUT = "INPUT",
   FINALIZE = "FINALIZE",
+  // Sink+Source (TableBufferingFunction) init phases. TABLE_BUFFERING is the
+  // sink-side init (persist init metadata so any pool worker can serve
+  // process/combine); TABLE_BUFFERING_FINALIZE is the per-finalize_state_id
+  // Source-stream init.
+  TABLE_BUFFERING = "TABLE_BUFFERING",
+  TABLE_BUFFERING_FINALIZE = "TABLE_BUFFERING_FINALIZE",
 }
 
 // Arrow schema metadata keys (must match Python exactly - bytes in Python, strings in TS)

@@ -67,7 +67,7 @@ export class CompositeCatalogInterface extends CatalogInterface {
         all.push(...(await b.catalogsInfo()));
       } else {
         for (const name of b.catalogs()) {
-          all.push({ name, implementation_version: null, data_version_spec: null, attach_option_specs: [] });
+          all.push({ name, implementation_version: null, data_version_spec: null, attach_option_specs: [], releases: [] });
         }
       }
     }
@@ -142,6 +142,10 @@ export class CompositeCatalogInterface extends CatalogInterface {
 
   override async tableScanFunctionGet(attachOpaqueData: AttachOpaqueData, schemaName: string, name: string, atUnit?: string, atValue?: string, transactionOpaqueData?: TransactionOpaqueData): Promise<any> {
     return await this._route(attachOpaqueData).tableScanFunctionGet(attachOpaqueData, schemaName, name, atUnit, atValue, transactionOpaqueData);
+  }
+
+  override async tableScanBranchesGet(attachOpaqueData: AttachOpaqueData, schemaName: string, name: string, atUnit?: string, atValue?: string, transactionOpaqueData?: TransactionOpaqueData): Promise<any> {
+    return await this._route(attachOpaqueData).tableScanBranchesGet(attachOpaqueData, schemaName, name, atUnit, atValue, transactionOpaqueData);
   }
 
   override async tableColumnStatisticsGet(attachOpaqueData: AttachOpaqueData, schemaName: string, name: string, transactionOpaqueData?: TransactionOpaqueData): Promise<{ bytes: Uint8Array; cacheMaxAgeSeconds: number | null } | null> {

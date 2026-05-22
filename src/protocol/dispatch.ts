@@ -12,6 +12,7 @@ import type { FunctionRegistry } from "../functions/registry.js";
 import type { CatalogInterface } from "../catalog/interface.js";
 import { registerFunctionMethods } from "./handlers/function.js";
 import { registerAggregateMethods } from "./handlers/aggregate.js";
+import { registerTableBufferingMethods } from "./handlers/table-buffering.js";
 import { registerCatalogMethods } from "./handlers/catalog/index.js";
 
 export interface ProtocolConfig {
@@ -42,6 +43,7 @@ export function buildVgiProtocol(config: ProtocolConfig): Protocol {
     recoverExchangeState: config.recoverExchangeState,
   });
   registerAggregateMethods(protocol, config.registry);
+  registerTableBufferingMethods(protocol, config.registry);
   registerCatalogMethods(protocol, config.catalogInterface, config.catalogName, config.signingKey);
 
   return protocol;

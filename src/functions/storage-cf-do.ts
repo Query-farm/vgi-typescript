@@ -96,6 +96,26 @@ export class FunctionStorageCfDo implements FunctionStorage {
     return Number(data.cleared);
   }
 
+  // Namespaced state + append-log are not implemented on the CF DO side
+  // (table_buffering currently targets SQLite-backed transports). Throw
+  // rather than silently returning wrong shapes — matches the CLAUDE.md
+  // contract for unimplemented backend operations.
+  async stateGet(): Promise<Uint8Array | null> {
+    throw new Error("FunctionStorageCfDo.stateGet: not implemented");
+  }
+  async statePut(): Promise<void> {
+    throw new Error("FunctionStorageCfDo.statePut: not implemented");
+  }
+  async stateAppend(): Promise<number> {
+    throw new Error("FunctionStorageCfDo.stateAppend: not implemented");
+  }
+  async stateLogScan(): Promise<Array<[number, Uint8Array]>> {
+    throw new Error("FunctionStorageCfDo.stateLogScan: not implemented");
+  }
+  async executionClear(): Promise<number> {
+    throw new Error("FunctionStorageCfDo.executionClear: not implemented");
+  }
+
   // --- HTTP plumbing ---
 
   private async _post<T = Record<string, unknown>>(

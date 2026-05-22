@@ -71,8 +71,10 @@ export { encodeIndexInfo, decodeIndexInfo } from "../generated/vgi-client.js";
 // Mirrors vgi-python's ScanFunctionResult (catalog_interface.py:380).
 // ============================================================================
 
-import { deserializeBatch } from "../util/arrow/index.js";
+import { deserializeBatch, serializeBatch, batchFromColumns } from "../util/arrow/index.js";
+import { schema as schema_, field as field_, type VgiDataType, type VgiField } from "../arrow/index.js";
 import { toUint8Array } from "../util/bytes.js";
+import { ScanBranchSchema } from "../generated/vgi-protocol-schemas.js";
 
 /**
  * Result from `tableScanFunctionGet` — tells the VGI DuckDB extension which
@@ -129,6 +131,116 @@ export function decodeScanFunctionResult(inner: Record<string, unknown>): ScanFu
     positionalArguments,
     namedArguments,
     requiredExtensions,
+  };
+}
+
+/**
+ * Synthesise a one-branch `ScanBranchesResult` wire dict from a legacy
+ * `tableScanFunctionGet` wire result. Mirrors vgi-python's default
+ * `table_scan_branches_get` (catalog_interface.py): a single-source worker is
+ * automatically compatible with the branches-aware C++ side.
+ *
+ * Each branch is its own IPC stream carried in a `list<binary>` column. The
+ * legacy result's `arguments` field is already the nested-IPC form
+ * `ScanBranch` expects, so it passes through untouched.
+ */
+export function singleBranchResult(
+  legacy: { function_name: string; arguments: unknown; required_extensions?: string[] },
+): { branches: Uint8Array[]; required_extensions: string[] } {
+  const branchBatch = batchFromColumns(
+    {
+      function_name: [legacy.function_name],
+      arguments: [toUint8Array(legacy.arguments)],
+      branch_filter: [null],
+      writable: [false],
+    },
+    ScanBranchSchema as any,
+  );
+  return {
+    branches: [serializeBatch(branchBatch)],
+    required_extensions: legacy.required_extensions ?? [],
+  };
+}
+
+/**
+ * One physical source backing a multi-branch scan, in the shape the
+ * `buildScanBranchesResult` helper consumes. Mirrors vgi-python's
+ * `ScanBranch` (catalog_interface.py).
+ *
+ * Each scalar argument carries an explicit Arrow `type` so the nested
+ * arguments batch is built with the wire type the C++ binder expects
+ * (e.g. utf8 for file paths, int64 for counts).
+ */
+export interface ScanBranchInput {
+  /** DuckDB function to call for this branch (e.g. "sequence", "read_parquet"). */
+  functionName: string;
+  /** Positional scalar arguments, each with its Arrow type. */
+  positionalArguments?: { value: unknown; type: VgiDataType }[];
+  /** Named scalar arguments, each with its Arrow type. */
+  namedArguments?: Record<string, { value: unknown; type: VgiDataType }>;
+  /** Optional SQL filter text AND'd into every scan of this branch. */
+  branchFilter?: string | null;
+  /** Declares this branch as the INSERT target (at most one per table). */
+  writable?: boolean;
+}
+
+/**
+ * Serialize a single branch's arguments to the nested-IPC form `ScanBranch`
+ * expects: a 1-row batch with one column per argument — `arg_<index>` for
+ * positional args, the bare name for named args. Mirrors Python's
+ * `ScanBranch.to_row_dict` argument handling.
+ */
+function serializeBranchArguments(branch: ScanBranchInput): Uint8Array {
+  const fields: VgiField[] = [];
+  const values: Record<string, unknown[]> = {};
+
+  const positional = branch.positionalArguments ?? [];
+  positional.forEach((arg, index) => {
+    const name = `arg_${index}`;
+    fields.push(field_(name, arg.type, true));
+    values[name] = [arg.value];
+  });
+
+  for (const [name, arg] of Object.entries(branch.namedArguments ?? {})) {
+    fields.push(field_(name, arg.type, true));
+    values[name] = [arg.value];
+  }
+
+  const batchSchema = schema_(fields);
+  // batchFromColumns handles the zero-column case by producing a 1-row
+  // empty batch — same as Python's RecordBatch.from_pylist([{}]).
+  return serializeBatch(batchFromColumns(values, batchSchema));
+}
+
+/**
+ * Build a multi-branch `ScanBranchesResult` wire dict from explicit branch
+ * definitions. Each branch becomes its own 1-row `ScanBranchSchema` IPC
+ * stream carried in the `branches` list<binary> column. Mirrors vgi-python's
+ * `ScanBranchesResult` construction in the test fixture's
+ * `table_scan_branches_get`.
+ *
+ * An empty `branches` list is serialized verbatim — the C++ side loud-fails
+ * on it (that asymmetry is exercised by multi_branch_empty_branches.test).
+ */
+export function buildScanBranchesResult(
+  branches: ScanBranchInput[],
+  requiredExtensions: string[] = [],
+): { branches: Uint8Array[]; required_extensions: string[] } {
+  const serializedBranches = branches.map((branch) => {
+    const branchBatch = batchFromColumns(
+      {
+        function_name: [branch.functionName],
+        arguments: [serializeBranchArguments(branch)],
+        branch_filter: [branch.branchFilter ?? null],
+        writable: [branch.writable ?? false],
+      },
+      ScanBranchSchema as any,
+    );
+    return serializeBatch(branchBatch);
+  });
+  return {
+    branches: serializedBranches,
+    required_extensions: requiredExtensions,
   };
 }
 
@@ -280,6 +392,27 @@ export abstract class CatalogInterface {
     transactionOpaqueData?: TransactionOpaqueData
   ): Awaitable<any> {
     throw new CatalogReadOnlyError("table_scan_function_get");
+  }
+  /**
+   * Return the scan branches for a (possibly multi-source) table. Default
+   * delegates to `tableScanFunctionGet` and wraps the single result as a
+   * one-branch list, so every single-source catalog is compatible with the
+   * branches-aware C++ extension. Override for genuine multi-source tables.
+   */
+  tableScanBranchesGet(
+    attachOpaqueData: AttachOpaqueData,
+    schemaName: string,
+    name: string,
+    atUnit?: string,
+    atValue?: string,
+    transactionOpaqueData?: TransactionOpaqueData
+  ): Awaitable<any> {
+    const legacy = this.tableScanFunctionGet(
+      attachOpaqueData, schemaName, name, atUnit, atValue, transactionOpaqueData,
+    );
+    return isPromise(legacy)
+      ? legacy.then((r) => singleBranchResult(r))
+      : singleBranchResult(legacy);
   }
   /**
    * Return serialized column statistics for a table, or null if none are

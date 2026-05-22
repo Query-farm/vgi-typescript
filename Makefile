@@ -10,10 +10,10 @@ VGI_DIR      ?= /Users/rusty/Development/vgi
 VGI_PYTHON_DIR ?= /Users/rusty/Development/vgi-python
 TEST_TIMEOUT ?= 120
 WORKER                ?= $(CURDIR)/bin/vgi-example-worker
-HTTP_WORKER           := $(CURDIR)/bin/vgi-fixture-http-worker
-VERSIONED_WORKER      := $(CURDIR)/bin/vgi-fixture-versioned-worker
+HTTP_WORKER           := $(CURDIR)/bin/vgi-example-http-worker
+VERSIONED_WORKER      := $(CURDIR)/bin/vgi-example-versioned-worker
 VERSIONED_HTTP        := $(CURDIR)/bin/vgi-example-versioned-http-worker
-ATTACH_OPTIONS_WORKER := $(CURDIR)/bin/vgi-fixture-attach-options-worker
+ATTACH_OPTIONS_WORKER := $(CURDIR)/bin/vgi-example-attach-options-worker
 ATTACH_OPTIONS_HTTP   := $(CURDIR)/bin/vgi-example-attach-options-http-worker
 
 TEST_DIR     := $(VGI_DIR)/test/sql
@@ -89,16 +89,23 @@ TEST_PATTERNS := "test/sql/*" \
 # single producer. Reproduces with the upstream Python worker too.
 LAUNCHER_TEST_PATTERNS := $(TEST_PATTERNS) \
 	"~test/sql/vgi_worker_pool.test" \
+	"~test/sql/vgi_worker_subprocess_pool.test" \
 	"~test/sql/integration/table/filter_echo_partitioned.test" \
 	"~test/sql/integration/attach/versioned_tables_impl.test" \
 	"~test/sql/integration/table/order_preservation_modes.test"
 
 # Idle-timeout for launcher-spawned workers. The C++ launcher passes
 # --idle-timeout 300 by default; src/worker.ts honours
-# VGI_WORKER_IDLE_TIMEOUT as an override so the suite leaves no stale Bun
-# processes after it finishes. 5 s is enough that a slow second test still
-# warms onto the same worker within the per-test interval.
-LAUNCHER_IDLE_TIMEOUT ?= 5
+# VGI_WORKER_IDLE_TIMEOUT as an override.
+#
+# Under -j8 every parallel unittest process shares ONE warm Bun worker
+# (the launcher pools by argv/cwd/env). With a 5 s idle timeout that shared
+# worker would idle-exit and respawn mid-suite under bursty load; a query
+# arriving during the respawn window stalled into the C++ side's 30 s
+# catalog-RPC timeout and surfaced as flaky "VGI catalog operation timed
+# out" failures (filter_echo, column_statistics, …). 120 s keeps the worker
+# warm for the whole run; it still exits well before the next suite.
+LAUNCHER_IDLE_TIMEOUT ?= 120
 
 HTTP_TEST_PATTERNS := "test/sql/integration/*" \
 	"~test/sql/integration/writable/*" \
@@ -106,7 +113,8 @@ HTTP_TEST_PATTERNS := "test/sql/integration/*" \
 	"~test/sql/integration/table/constant_columns_types.test" \
 	"~test/sql/integration/catalog/zero_count_bypass.test" \
 	"~test/sql/integration/table/filter_echo_partitioned.test" \
-	"~test/sql/integration/table/partitioned_sequence.test"
+	"~test/sql/integration/table/partitioned_sequence.test" \
+	"~test/sql/integration/table/batch_index.test"
 
 # Default test target: launcher (`launch:`) transport.
 #
@@ -129,7 +137,7 @@ test:
 	export VGI_ATTACH_OPTIONS_WORKER="launch:$(ATTACH_OPTIONS_WORKER)"; \
 	export VGI_REQUIRE_LAUNCHER_TRANSPORT=1; \
 	export VGI_WORKER_IDLE_TIMEOUT=$(LAUNCHER_IDLE_TIMEOUT); \
-	./build/release/test/unittest -j 8 $(LAUNCHER_TEST_PATTERNS) > $(TEST_LOG) 2>&1; \
+	python3 scripts/run_tests.py -j 8 $(LAUNCHER_TEST_PATTERNS) > $(TEST_LOG) 2>&1; \
 	rc=$$?; \
 	tail -n 20 $(TEST_LOG); \
 	echo ""; \
@@ -149,7 +157,7 @@ test-subprocess:
 	export VGI_TEST_WORKER="$(WORKER)"; \
 	export VGI_VERSIONED_WORKER="$(VERSIONED_WORKER)"; \
 	export VGI_ATTACH_OPTIONS_WORKER="$(ATTACH_OPTIONS_WORKER)"; \
-	./build/release/test/unittest -j 8 $(TEST_PATTERNS) > $(TEST_LOG) 2>&1; \
+	python3 scripts/run_tests.py -j 8 $(TEST_PATTERNS) > $(TEST_LOG) 2>&1; \
 	rc=$$?; \
 	tail -n 20 $(TEST_LOG); \
 	echo ""; \
@@ -184,7 +192,7 @@ test-http:
 	export VGI_TEST_WORKER="http://localhost:$${port_line#PORT:}/vgi"; \
 	export VGI_VERSIONED_HTTP_WORKER="http://localhost:$${vport_line#PORT:}/vgi"; \
 	export VGI_ATTACH_OPTIONS_WORKER="http://localhost:$${aport_line#PORT:}/vgi"; \
-	./build/release/test/unittest -j 8 $(HTTP_TEST_PATTERNS) > $(TEST_LOG) 2>&1; \
+	python3 scripts/run_tests.py -j 8 $(HTTP_TEST_PATTERNS) > $(TEST_LOG) 2>&1; \
 	rc=$$?; \
 	tail -n 20 $(TEST_LOG); \
 	echo ""; \

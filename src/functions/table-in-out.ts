@@ -18,7 +18,7 @@ import type {
   FunctionExample,
 } from "./types.js";
 import type { ArgumentSpec } from "../arguments/argument-spec.js";
-import { batchToScalarDict, batchToSecretDict, projectSchema, emptyBatch } from "../util/arrow/index.js";
+import { batchToScalarDict, batchToSecretDict, projectSchema, projectBatch, emptyBatch } from "../util/arrow/index.js";
 import {
   buildJoinKeysLookup,
   deserializeFilters,
@@ -332,7 +332,13 @@ export function defineTableInOutFunction<
       const processFn =
         config.process ??
         ((_params: any, _state: any, batch: VgiBatch, out: OutputCollector) => {
-          out.emit(batch);
+          // Default passthrough. When DuckDB pushed a projection, the declared
+          // output schema is narrowed to `projIds`, so the emitted batch must be
+          // narrowed too — otherwise it carries columns (and their dictionaries)
+          // the stream schema doesn't declare, and the C++ reader rejects the
+          // batch (e.g. "No record of dictionary type with id 1" when the
+          // dropped columns were dictionary-encoded ENUMs).
+          out.emit(projIds ? projectBatch(projIds, batch) : batch);
         });
 
       return {

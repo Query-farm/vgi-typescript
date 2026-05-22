@@ -8,6 +8,8 @@ import {
   serializeBatch, batchFromColumns,
   ReadOnlyCatalogInterface, TableInfo,
   type AttachOpaqueData, type TransactionOpaqueData,
+  buildScanBranchesResult, type ScanBranchInput,
+  functionStorage,
 } from "../src/index.js";
 import { serializeSchema } from "../src/util/arrow/index.js";
 import { argumentSpecsToSchema } from "../src/arguments/argument-spec.js";
@@ -17,7 +19,9 @@ import {
   resolveVersionedConstraintsVersion, getVersionedConstraintsSchema,
 } from "./table.js";
 import { tableInOutFunctions } from "./table_in_out.js";
+import { tableBufferingFunctions } from "./table_buffering.js";
 import { aggregateFunctions } from "./aggregate.js";
+import { partitionTableFunctions } from "./table_partition.js";
 
 // Find functions for table-backed catalog entries
 const sequenceFunction = tableFunctions.find((f) => f.meta.name === "sequence");
@@ -83,7 +87,9 @@ const colorsScanFunction = tableFunctions.find((f) => f.meta.name === "colors_sc
 export const allFunctions = [
   ...scalarFunctions,
   ...tableFunctions,
+  ...partitionTableFunctions,
   ...tableInOutFunctions,
+  ...tableBufferingFunctions,
   ...aggregateFunctions,
 ];
 
@@ -270,6 +276,48 @@ export const catalog: CatalogDescriptor = {
           },
           statisticsCacheMaxAgeSeconds: 0,
           comment: "Numbers with volatile stats (TTL=0, always re-fetched)",
+        },
+        // ----- Multi-branch scan fixtures -----
+        // These tables declare explicit `columns` only (no `function`), so
+        // they appear as catalog tables but route through the
+        // tableScanBranchesGet override below for their scan plans.
+        {
+          name: "multi_branch_numbers",
+          columns: new Schema([new Field("n", new Int64(), true)]),
+          comment: "Multi-branch: UNION of sequence(50) + sequence(50) — used by multi_branch_scan.test",
+        },
+        {
+          name: "multi_branch_filtered_numbers",
+          columns: new Schema([new Field("n", new Int64(), true)]),
+          comment: "Multi-branch with complementary branch_filters — exercises pruning",
+        },
+        {
+          name: "multi_branch_hetero",
+          columns: new Schema([new Field("n", new Int64(), true)]),
+          comment: "Multi-branch: sequence(50) + read_parquet — used by multi_branch_heterogeneous.test",
+        },
+        {
+          name: "multi_branch_recon",
+          columns: new Schema([
+            new Field("a", new Int64(), true),
+            new Field("b", new Int64(), true),
+          ]),
+          comment: "Multi-branch: column reconciliation — used by multi_branch_reconciliation.test",
+        },
+        {
+          name: "multi_branch_nopushdown",
+          columns: new Schema([new Field("n", new Int64(), true)]),
+          comment: "Multi-branch: VGI + read_csv — used by multi_branch_pushdown_incapable.test",
+        },
+        {
+          name: "multi_branch_empty",
+          columns: new Schema([new Field("n", new Int64(), true)]),
+          comment: "Multi-branch: worker returns empty branches list — used by multi_branch_empty_branches.test",
+        },
+        {
+          name: "multi_branch_two_writable",
+          columns: new Schema([new Field("n", new Int64(), true)]),
+          comment: "Multi-branch with two writable=True arms — used by multi_branch_two_writable.test",
         },
         {
           name: "generated_sequence",
@@ -604,6 +652,17 @@ export function createExampleCatalog(base: ReadOnlyCatalogInterface): ReadOnlyCa
         cardinality_max: 0,
       };
     }
+    // Multi-branch tables: accept AT at table_get and pass it through with AT
+    // stripped, so the time-travel guard in the read-only base doesn't fire.
+    // The C++ side's B2 guard in VgiTableEntry::GetScanFunctionImpl detects
+    // branches.size() > 1 and throws BinderException with the documented
+    // message before any scan. Mirrors vgi-python's fixture table_get.
+    if (
+      schemaName.toLowerCase() === "data" &&
+      ["multi_branch_numbers", "multi_branch_filtered_numbers"].includes(name.toLowerCase())
+    ) {
+      return origTableGet(attachOpaqueData, schemaName, name, undefined, undefined, transactionOpaqueData);
+    }
     return origTableGet(attachOpaqueData, schemaName, name, atUnit, atValue, transactionOpaqueData);
   };
 
@@ -639,5 +698,109 @@ export function createExampleCatalog(base: ReadOnlyCatalogInterface): ReadOnlyCa
     return origTableScanFunctionGet(attachOpaqueData, schemaName, name, atUnit, atValue, transactionOpaqueData);
   };
 
+  // Multi-branch scan plans for the multi_branch_* fixtures. Falls through to
+  // the default-impl shim (one-branch wrap of tableScanFunctionGet) for every
+  // other table. Mirrors vgi-python's ExampleCatalog.table_scan_branches_get.
+  const origTableScanBranchesGet = base.tableScanBranchesGet.bind(base);
+  base.tableScanBranchesGet = (
+    attachOpaqueData: AttachOpaqueData,
+    schemaName: string,
+    name: string,
+    atUnit?: string,
+    atValue?: string,
+    transactionOpaqueData?: TransactionOpaqueData,
+  ): any => {
+    validateAtParams(atUnit, atValue);
+
+    const i64 = (value: number | bigint) => ({ value: BigInt(value), type: new Int64() });
+    const str = (value: string) => ({ value, type: new Utf8() });
+
+    const seq = (count: number, extra: Partial<ScanBranchInput> = {}): ScanBranchInput => ({
+      functionName: "sequence",
+      positionalArguments: [i64(count)],
+      ...extra,
+    });
+
+    if (schemaName.toLowerCase() === "data") {
+      switch (name.toLowerCase()) {
+        case "multi_branch_numbers":
+          return buildScanBranchesResult([seq(50), seq(50)]);
+        case "multi_branch_filtered_numbers":
+          return buildScanBranchesResult([
+            seq(100, { branchFilter: "n < 50" }),
+            seq(100, { branchFilter: "n >= 50" }),
+          ]);
+        case "multi_branch_hetero":
+          return buildScanBranchesResult([
+            seq(50),
+            { functionName: "read_parquet", positionalArguments: [str("/tmp/vgi_hetero_branch.parquet")] },
+          ]);
+        case "multi_branch_empty":
+          return buildScanBranchesResult([]);
+        case "multi_branch_two_writable":
+          return buildScanBranchesResult([
+            seq(10, { writable: true }),
+            seq(10, { writable: true }),
+          ]);
+        case "multi_branch_nopushdown":
+          return buildScanBranchesResult([
+            seq(50),
+            { functionName: "read_csv_auto", positionalArguments: [str("/tmp/vgi_nopushdown_branch.csv")] },
+          ]);
+        case "multi_branch_recon":
+          return buildScanBranchesResult([
+            { functionName: "read_parquet", positionalArguments: [str("/tmp/vgi_recon_a_b.parquet")] },
+            { functionName: "read_parquet", positionalArguments: [str("/tmp/vgi_recon_b_a.parquet")] },
+            { functionName: "read_parquet", positionalArguments: [str("/tmp/vgi_recon_a_only.parquet")] },
+          ]);
+      }
+    }
+
+    return origTableScanBranchesGet(attachOpaqueData, schemaName, name, atUnit, atValue, transactionOpaqueData);
+  };
+
+  // Transaction support — required by tx_cached_value (transaction_storage).
+  // attach() must advertise supports_transactions=true so the C++ extension
+  // populates BindRequest.transaction_opaque_data inside BEGIN/COMMIT blocks.
+  const origAttach = base.attach.bind(base);
+  base.attach = async (
+    name: string,
+    options?: Record<string, unknown>,
+    dataVersionSpec?: string | null,
+    implementationVersion?: string | null,
+  ) => {
+    const result = await origAttach(name, options, dataVersionSpec, implementationVersion);
+    return { ...result, supports_transactions: true };
+  };
+
+  // Each BEGIN mints a fresh random transaction token; the scope it implies
+  // (used by tx_cached_value as the FunctionStorage state scope) is therefore
+  // empty for every new transaction. commit/rollback wipe the scope so a
+  // re-used token (should one ever recur) starts clean.
+  base.transactionBegin = (): Uint8Array => {
+    const tok = new Uint8Array(16);
+    crypto.getRandomValues(tok);
+    return tok;
+  };
+  // Commit/rollback are intentionally cheap no-ops. The C++ extension wraps
+  // EVERY example-catalog statement in BEGIN/COMMIT once supports_transactions
+  // is advertised, and these handlers run on the single-threaded worker event
+  // loop that the launcher shares across all parallel unittest processes.
+  // Doing synchronous SQLite DELETEs here (executionClear) blocked that loop
+  // under -j8 load and produced "VGI catalog operation timed out" failures in
+  // filter_echo / column_statistics / constant_columns. Cleanup isn't needed
+  // for correctness: transactionBegin mints a fresh random token every time,
+  // so a transaction's storage scope is always empty at BEGIN regardless of
+  // whether the prior scope was cleared; orphaned rows are reaped by
+  // FunctionStorage.cleanupOldEntries.
+  base.transactionCommit = (): void => {};
+  base.transactionRollback = (): void => {};
+
   return base;
+}
+
+function validateAtParams(atUnit?: string, atValue?: string): void {
+  if (Boolean(atUnit) !== Boolean(atValue)) {
+    throw new Error("at_unit and at_value must both be provided or both be absent");
+  }
 }

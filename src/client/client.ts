@@ -160,6 +160,7 @@ export class VgiClient {
       pushdown_filters: opts?.pushdownFilters ?? null,
       join_keys: opts?.joinKeys ?? [],
       phase: opts?.phase ?? null,
+      finalize_state_id: null,
       order_by_column_name: ob?.columnName ?? null,
       order_by_direction: ob?.direction ?? null,
       order_by_null_order: ob?.nullOrder ?? null,
