@@ -81,6 +81,7 @@ export {
   PushdownFilters,
   FilteringOutputCollector,
   deserializeFilters,
+  buildJoinKeysLookup,
   ComparisonOp,
   type Filter,
   type ConstantFilter,
