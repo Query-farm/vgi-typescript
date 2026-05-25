@@ -28,14 +28,27 @@ import {
   overloadContext,
   recoverFinalizeState,
 } from "./shared.js";
+import { openAttach } from "./catalog/shared.js";
 
 export interface FunctionHandlerConfig {
   registry: FunctionRegistry;
   recoverExchangeState?: (opaqueData: Uint8Array) => any;
+  signingKey?: Uint8Array;
 }
 
 export function registerFunctionMethods(protocol: Protocol, config: FunctionHandlerConfig): void {
-  const { registry } = config;
+  const { registry, signingKey } = config;
+
+  // The framework mints every attach as uuid(16) || catalog_bytes (sealed on
+  // HTTP, plaintext on subprocess). Function bodies — like catalog bodies —
+  // must see the catalog's own bytes, so unseal (when keyed) and strip the
+  // framework UUID prefix before the user function reads attach_opaque_data.
+  async function stripAttach(attach: any, ctx: any): Promise<Uint8Array | null> {
+    if (attach == null) return null;
+    const env = toUint8Array(attach);
+    if (env.length === 0) return env;
+    return openAttach(env, ctx?.auth, signingKey);
+  }
 
   const initHeaderSchema = schema([
     field("execution_id", binary(), false),
@@ -59,9 +72,10 @@ export function registerFunctionMethods(protocol: Protocol, config: FunctionHand
   protocol.unary("bind", {
     params: REQUEST_PARAMS_SCHEMA,
     result: RESULT_BINARY_SCHEMA,
-    handler: async (params) => {
+    handler: async (params, ctx) => {
       const innerParams = unwrapRequest(params.request);
       const request = deserializeBindRequest(innerParams);
+      request.attach_opaque_data = await stripAttach(request.attach_opaque_data, ctx);
       const func = registry.get(request.function_name, overloadContext(request));
       const response = await func.bind(request);
       const serialized = serializeBindResponse(response);
@@ -81,6 +95,9 @@ export function registerFunctionMethods(protocol: Protocol, config: FunctionHand
       const requestIpcBytes = toUint8Array(params.request);
       const innerParams = unwrapRequest(params.request);
       const request = deserializeInitRequest(innerParams);
+      // Exchange init has no ctx; on subprocess (no signing key) openAttach is a
+      // pass-through strip that needs no auth. HTTP carries auth via the bind path.
+      request.bind_call.attach_opaque_data = await stripAttach(request.bind_call.attach_opaque_data, undefined);
       const func = registry.get(request.bind_call.function_name, overloadContext(request.bind_call));
 
       // globalInit is async — table function onInit may touch HTTP-backed

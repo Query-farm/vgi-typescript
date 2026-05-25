@@ -12,6 +12,7 @@ import {
   attachAad,
   transactionAad,
   ATTACH_ENVELOPE_VERSION,
+  ATTACH_UUID_LEN,
   TRANSACTION_ENVELOPE_VERSION,
 } from "../../../crypto.js";
 
@@ -27,24 +28,88 @@ export type GetCatalog = () => CatalogInterface;
 // the client only ever sees sealed envelopes.
 // ---------------------------------------------------------------------------
 
-/** Seal a plaintext attach value (catalog_attach output). */
+/**
+ * Mint and seal a catalog_attach value: prepend a fresh framework UUID
+ * (uuid(16) || catalog_bytes), then seal. Storage shards on the UUID — stable
+ * across re-seals and globally unique, unlike the random-nonce ciphertext or
+ * the (possibly non-unique) catalog bytes. openAttach strips the UUID back off
+ * so the catalog only ever sees its own bytes. Mirrors vgi-python/-go.
+ */
 export async function sealAttach(
   plaintext: Uint8Array,
   auth: AuthContext | undefined,
   signingKey: Uint8Array | undefined,
 ): Promise<Uint8Array> {
-  if (!signingKey) return plaintext;
-  return sealBytes(plaintext, signingKey, attachAad(auth), ATTACH_ENVELOPE_VERSION);
+  const uuid = new Uint8Array(ATTACH_UUID_LEN);
+  crypto.getRandomValues(uuid);
+  const minted = new Uint8Array(ATTACH_UUID_LEN + plaintext.length);
+  minted.set(uuid, 0);
+  minted.set(plaintext, ATTACH_UUID_LEN);
+  if (!signingKey) return minted;
+  return sealBytes(minted, signingKey, attachAad(auth), ATTACH_ENVELOPE_VERSION);
 }
 
-/** Open an attach_opaque_data envelope, returning the plaintext. */
-export async function openAttach(
+/**
+ * Open an attach envelope returning the FULL framework plaintext
+ * uuid(16) || catalog_bytes (not stripped). Storage shards on the leading UUID.
+ */
+export async function openAttachFull(
   envelope: Uint8Array,
   auth: AuthContext | undefined,
   signingKey: Uint8Array | undefined,
 ): Promise<Uint8Array> {
   if (!signingKey || envelope.length === 0) return envelope;
   return openBytes(envelope, signingKey, attachAad(auth), ATTACH_ENVELOPE_VERSION, "attach_opaque_data");
+}
+
+/**
+ * Open an attach_opaque_data envelope, returning the catalog's own bytes — the
+ * framework UUID prefix is stripped. This is what catalog/function bodies see;
+ * storage routing uses openAttachFull / deriveShardKey to reach the UUID.
+ */
+export async function openAttach(
+  envelope: Uint8Array,
+  auth: AuthContext | undefined,
+  signingKey: Uint8Array | undefined,
+): Promise<Uint8Array> {
+  const full = await openAttachFull(envelope, auth, signingKey);
+  return full.length < ATTACH_UUID_LEN ? full : full.subarray(ATTACH_UUID_LEN);
+}
+
+/** Hex of a byte array (lowercase). */
+function toHex(b: Uint8Array): string {
+  let s = "";
+  for (let i = 0; i < b.length; i++) s += b[i].toString(16).padStart(2, "0");
+  return s;
+}
+
+/**
+ * deriveShardKey returns the Cloudflare-DO routing key for an attach:
+ * "att-" + hex(the 16-byte framework UUID at the head of the unwrapped attach).
+ * One DO per logical ATTACH. Throws if the uuid is not 16 bytes (the storage
+ * path is always bound to a logical ATTACH).
+ */
+export function deriveShardKey(attachUuid: Uint8Array): string {
+  if (attachUuid.length !== ATTACH_UUID_LEN) {
+    throw new Error(`shard_key requires a ${ATTACH_UUID_LEN}-byte attach uuid, got ${attachUuid.length}`);
+  }
+  return "att-" + toHex(attachUuid);
+}
+
+/**
+ * shardKeyForAttach unwraps the sealed attach and derives its shard key. An
+ * empty/absent attach yields "" (non-sharding backends ignore the key; the
+ * CfDo backend rejects an empty key server-side, the "must not happen" case).
+ */
+export async function shardKeyForAttach(
+  sealed: Uint8Array | undefined,
+  auth: AuthContext | undefined,
+  signingKey: Uint8Array | undefined,
+): Promise<string> {
+  if (!sealed || sealed.length === 0) return "";
+  const full = await openAttachFull(sealed, auth, signingKey);
+  if (full.length < ATTACH_UUID_LEN) return "";
+  return deriveShardKey(full.subarray(0, ATTACH_UUID_LEN));
 }
 
 /**
@@ -72,23 +137,27 @@ async function unwrapParamsOpaque(
   ctx: CallContext | undefined,
   signingKey: Uint8Array | undefined,
 ): Promise<void> {
-  if (!signingKey) return;
   const auth = ctx?.auth;
   let sealedAttach: Uint8Array = new Uint8Array(0);
   if (params.attach_opaque_data != null) {
     const env = toUint8Array(params.attach_opaque_data);
     if (env.length > 0) {
       sealedAttach = env;
-      params.attach_opaque_data = await openBytes(
-        env,
-        signingKey,
-        attachAad(auth),
-        ATTACH_ENVELOPE_VERSION,
-        "attach_opaque_data",
-      );
+      // The framework mints every attach as uuid(16) || catalog_bytes —
+      // sealed on HTTP, plaintext on subprocess/unix (sealAttach prepends the
+      // UUID regardless of transport). Catalog handlers — including
+      // CompositeCatalog's route-byte at byte 0 of catalog_bytes — must see
+      // the catalog's own bytes, so open the envelope when sealed, then strip
+      // the framework UUID prefix on EVERY transport, not just HTTP.
+      const full = signingKey
+        ? await openBytes(env, signingKey, attachAad(auth), ATTACH_ENVELOPE_VERSION, "attach_opaque_data")
+        : env;
+      params.attach_opaque_data = full.length < ATTACH_UUID_LEN ? full : full.subarray(ATTACH_UUID_LEN);
     }
   }
-  if (params.transaction_opaque_data != null) {
+  // transaction_opaque_data is sealed only on HTTP (no UUID prefix); subprocess
+  // values are raw plaintext and pass through untouched.
+  if (signingKey && params.transaction_opaque_data != null) {
     const env = toUint8Array(params.transaction_opaque_data);
     if (env.length > 0) {
       params.transaction_opaque_data = await openBytes(

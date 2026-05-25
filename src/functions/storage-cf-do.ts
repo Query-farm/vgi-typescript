@@ -1,10 +1,10 @@
 // Cloudflare Durable Object storage for VGI function state.
 //
-// Port of vgi-python's vgi/function_storage_cf_do.py. Communicates with the
-// Cloudflare Worker + Durable Object in
-// vgi-python/cloudflare/vgi-storage/src/index.ts. The DO is single-threaded
-// and runs SQLite internally, so all operations are inherently atomic and
-// the wire shape matches FunctionStorageSqlite.
+// Port of vgi-python's vgi/function_storage_cf_do.py. Talks the Cloudflare
+// Worker + Durable Object's unified state_* / queue_* protocol
+// (vgi-cloudflare-durable-object-storage/src/index.ts). Every request carries
+// the per-attach `shard_key` (set via forShard); destructive ops carry a fresh
+// 32-hex `attempt_id`. The DO is single-threaded SQLite, so ops are atomic.
 //
 // Usage:
 //   Set `VGI_WORKER_SHARED_STORAGE=cloudflare-do` plus `VGI_CF_DO_URL`.
@@ -13,14 +13,21 @@
 import type { FunctionStorage } from "./storage.js";
 import { UnknownInvocationError } from "./storage.js";
 
+// Namespaces under the unified state_* table for the legacy worker/queue
+// families the DO no longer has dedicated endpoints for.
+const NS_WORKER = new TextEncoder().encode("worker");
+
 export class FunctionStorageCfDo implements FunctionStorage {
   private readonly _baseUrl: string;
   private readonly _token: string | null;
+  /** Per-attach routing key (att-<hex uuid>); "" until pinned via forShard. */
+  private readonly _shardKey: string;
 
-  constructor(opts: { url: string; token?: string | null }) {
+  constructor(opts: { url: string; token?: string | null; shardKey?: string }) {
     // Strip trailing slash so endpoint paths can be appended unconditionally.
     this._baseUrl = opts.url.replace(/\/+$/, "");
     this._token = opts.token ?? null;
+    this._shardKey = opts.shardKey ?? "";
   }
 
   /** Build an instance from environment variables. */
@@ -38,46 +45,37 @@ export class FunctionStorageCfDo implements FunctionStorage {
     });
   }
 
-  // --- Worker State ---
+  /**
+   * Return a view of this backend pinned to one shard key, so callers can route
+   * per logical ATTACH. Shares the URL/token; only the shard key differs.
+   */
+  forShard(shardKey: string): FunctionStorageCfDo {
+    return new FunctionStorageCfDo({ url: this._baseUrl, token: this._token, shardKey });
+  }
 
-  async workerPut(
-    executionId: Uint8Array,
-    workerId: number,
-    state: Uint8Array,
-  ): Promise<void> {
-    await this._post("worker_put", {
-      execution_id: bytesToB64(executionId),
-      worker_id: workerId,
-      state: bytesToB64(state),
-    });
+  // --- Worker state → ns=worker, key = int64(worker_id) ---
+
+  async workerPut(executionId: Uint8Array, workerId: number, state: Uint8Array): Promise<void> {
+    await this._statePutMany(executionId, NS_WORKER, [[int64Key(workerId), state]]);
   }
 
   async workerCollect(executionId: Uint8Array): Promise<Uint8Array[]> {
-    const data = await this._post<{ states: string[] }>("worker_collect", {
-      execution_id: bytesToB64(executionId),
-    });
-    return (data.states ?? []).map(b64ToBytes);
+    const rows = await this._statePaged("state_drain", executionId, NS_WORKER, newAttemptId());
+    return rows.map(([, v]) => v);
   }
 
-  async workerScan(
-    executionId: Uint8Array,
-  ): Promise<Array<[number, Uint8Array]>> {
-    const data = await this._post<{ rows: Array<{ worker_id: number; state: string }> }>(
-      "worker_scan",
-      { execution_id: bytesToB64(executionId) },
-    );
-    return (data.rows ?? []).map((r) => [Number(r.worker_id), b64ToBytes(r.state)]);
+  async workerScan(executionId: Uint8Array): Promise<Array<[number, Uint8Array]>> {
+    const rows = await this._statePaged("state_scan", executionId, NS_WORKER, null);
+    return rows.map(([k, v]) => [int64FromKey(k), v]);
   }
 
-  // --- Work Queue ---
+  // --- Work queue ---
 
-  async queuePush(
-    executionId: Uint8Array,
-    items: Uint8Array[],
-  ): Promise<number> {
+  async queuePush(executionId: Uint8Array, items: Uint8Array[]): Promise<number> {
     const data = await this._post<{ count: number }>("queue_push", {
       execution_id: bytesToB64(executionId),
       items: items.map(bytesToB64),
+      attempt_id: newAttemptId(),
     });
     return Number(data.count);
   }
@@ -85,6 +83,7 @@ export class FunctionStorageCfDo implements FunctionStorage {
   async queuePop(executionId: Uint8Array): Promise<Uint8Array | null> {
     const data = await this._post<{ item: string | null }>("queue_pop", {
       execution_id: bytesToB64(executionId),
+      attempt_id: newAttemptId(),
     });
     return data.item ? b64ToBytes(data.item) : null;
   }
@@ -92,28 +91,103 @@ export class FunctionStorageCfDo implements FunctionStorage {
   async queueClear(executionId: Uint8Array): Promise<number> {
     const data = await this._post<{ cleared: number }>("queue_clear", {
       execution_id: bytesToB64(executionId),
+      attempt_id: newAttemptId(),
     });
     return Number(data.cleared);
   }
 
-  // Namespaced state + append-log are not implemented on the CF DO side
-  // (table_buffering currently targets SQLite-backed transports). Throw
-  // rather than silently returning wrong shapes — matches the CLAUDE.md
-  // contract for unimplemented backend operations.
-  async stateGet(): Promise<Uint8Array | null> {
-    throw new Error("FunctionStorageCfDo.stateGet: not implemented");
+  // --- Namespaced key/value state ---
+
+  async stateGet(scopeId: Uint8Array, ns: Uint8Array, key: Uint8Array): Promise<Uint8Array | null> {
+    const data = await this._post<{ rows: Array<{ value: string } | null> }>("state_get_many", {
+      scope_id: bytesToB64(scopeId),
+      ns: bytesToB64(ns),
+      keys: [bytesToB64(key)],
+    });
+    const row = (data.rows ?? [])[0];
+    return row ? b64ToBytes(row.value) : null;
   }
-  async statePut(): Promise<void> {
-    throw new Error("FunctionStorageCfDo.statePut: not implemented");
+
+  async statePut(scopeId: Uint8Array, ns: Uint8Array, key: Uint8Array, value: Uint8Array): Promise<void> {
+    await this._statePutMany(scopeId, ns, [[key, value]]);
   }
-  async stateAppend(): Promise<number> {
-    throw new Error("FunctionStorageCfDo.stateAppend: not implemented");
+
+  // --- Append-only log ---
+
+  async stateAppend(scopeId: Uint8Array, ns: Uint8Array, key: Uint8Array, item: Uint8Array): Promise<number> {
+    const data = await this._post<{ ordinal: number }>("state_append", {
+      scope_id: bytesToB64(scopeId),
+      ns: bytesToB64(ns),
+      key: bytesToB64(key),
+      item: bytesToB64(item),
+      attempt_id: newAttemptId(),
+    });
+    return Number(data.ordinal);
   }
-  async stateLogScan(): Promise<Array<[number, Uint8Array]>> {
-    throw new Error("FunctionStorageCfDo.stateLogScan: not implemented");
+
+  async stateLogScan(
+    scopeId: Uint8Array,
+    ns: Uint8Array,
+    key: Uint8Array,
+    afterId: number = -1,
+    limit: number | null = null,
+  ): Promise<Array<[number, Uint8Array]>> {
+    const body: Record<string, unknown> = {
+      scope_id: bytesToB64(scopeId),
+      ns: bytesToB64(ns),
+      key: bytesToB64(key),
+      after_id: afterId,
+    };
+    if (limit != null && limit > 0) body.limit = limit;
+    const data = await this._post<{ rows: Array<{ id: number; value: string }> }>("state_log_scan", body);
+    return (data.rows ?? []).map((r) => [Number(r.id), b64ToBytes(r.value)]);
   }
-  async executionClear(): Promise<number> {
-    throw new Error("FunctionStorageCfDo.executionClear: not implemented");
+
+  async executionClear(scopeId: Uint8Array): Promise<number> {
+    const data = await this._post<{ deleted: number }>("execution_clear", {
+      scope_id: bytesToB64(scopeId),
+      attempt_id: newAttemptId(),
+    });
+    return Number(data.deleted);
+  }
+
+  // --- unified state_* helpers ---
+
+  private async _statePutMany(
+    scopeId: Uint8Array,
+    ns: Uint8Array,
+    items: Array<[Uint8Array, Uint8Array]>,
+  ): Promise<void> {
+    await this._post("state_put_many", {
+      scope_id: bytesToB64(scopeId),
+      ns: bytesToB64(ns),
+      items: items.map(([k, v]) => ({ key: bytesToB64(k), value: bytesToB64(v) })),
+      attempt_id: newAttemptId(),
+    });
+  }
+
+  /** Drive state_scan / state_drain across pages. attemptId is null for scan. */
+  private async _statePaged(
+    endpoint: string,
+    scopeId: Uint8Array,
+    ns: Uint8Array,
+    attemptId: string | null,
+  ): Promise<Array<[Uint8Array, Uint8Array]>> {
+    const out: Array<[Uint8Array, Uint8Array]> = [];
+    let afterKey: string | undefined;
+    for (;;) {
+      const body: Record<string, unknown> = { scope_id: bytesToB64(scopeId), ns: bytesToB64(ns) };
+      if (afterKey != null) body.after_key = afterKey;
+      if (attemptId != null) body.attempt_id = attemptId;
+      const data = await this._post<{ rows: Array<{ key: string; value: string }>; next_after?: string }>(
+        endpoint,
+        body,
+      );
+      for (const r of data.rows ?? []) out.push([b64ToBytes(r.key), b64ToBytes(r.value)]);
+      if (!data.next_after) break;
+      afterKey = data.next_after;
+    }
+    return out;
   }
 
   // --- HTTP plumbing ---
@@ -125,34 +199,27 @@ export class FunctionStorageCfDo implements FunctionStorage {
     const url = `${this._baseUrl}/${endpoint}`;
     const headers: Record<string, string> = { "Content-Type": "application/json" };
     if (this._token) headers["Authorization"] = `Bearer ${this._token}`;
+    // The Worker routes on shard_key (idFromName) and rejects requests without
+    // one — always splice it in.
+    const payload = JSON.stringify({ ...body, shard_key: this._shardKey });
 
     let lastErr: unknown;
     // One retry on transport-level failures, matching the python client.
-    // Application errors (4xx/5xx) are not retried here — they bubble up
-    // immediately.
     for (let attempt = 0; attempt < 2; attempt++) {
       let resp: Response;
       try {
-        resp = await fetch(url, {
-          method: "POST",
-          headers,
-          body: JSON.stringify(body),
-        });
+        resp = await fetch(url, { method: "POST", headers, body: payload });
       } catch (err) {
         lastErr = err;
         continue;
       }
 
-      // Cloudflare Workers always return JSON for these endpoints; parse and
-      // dispatch to a typed error if needed.
       let data: any;
       try {
         data = await resp.json();
       } catch {
         if (!resp.ok) {
-          throw new Error(
-            `CF DO storage error ${resp.status} on ${endpoint}: <non-json body>`,
-          );
+          throw new Error(`CF DO storage error ${resp.status} on ${endpoint}: <non-json body>`);
         }
         return {} as T;
       }
@@ -164,14 +231,10 @@ export class FunctionStorageCfDo implements FunctionStorage {
         );
       }
       if (resp.status === 401) {
-        throw new Error(
-          `Authentication failed: ${data?.error ?? "unauthorized"}`,
-        );
+        throw new Error(`Authentication failed: ${data?.error ?? "unauthorized"}`);
       }
       if (!resp.ok) {
-        throw new Error(
-          `CF DO storage error ${resp.status} on ${endpoint}: ${JSON.stringify(data)}`,
-        );
+        throw new Error(`CF DO storage error ${resp.status} on ${endpoint}: ${JSON.stringify(data)}`);
       }
       return data as T;
     }
@@ -179,6 +242,27 @@ export class FunctionStorageCfDo implements FunctionStorage {
       ? lastErr
       : new Error(`CF DO storage transport error on ${endpoint}: ${String(lastErr)}`);
   }
+}
+
+/** Fresh 32-char lowercase-hex idempotency token (the DO's attempt_id shape). */
+function newAttemptId(): string {
+  const b = new Uint8Array(16);
+  crypto.getRandomValues(b);
+  let s = "";
+  for (let i = 0; i < 16; i++) s += b[i].toString(16).padStart(2, "0");
+  return s;
+}
+
+/** Encode an int64 worker/group id as an 8-byte big-endian state key. */
+function int64Key(v: number): Uint8Array {
+  const b = new Uint8Array(8);
+  new DataView(b.buffer).setBigInt64(0, BigInt(v), false);
+  return b;
+}
+
+function int64FromKey(b: Uint8Array): number {
+  if (b.length !== 8) return 0;
+  return Number(new DataView(b.buffer, b.byteOffset, 8).getBigInt64(0, false));
 }
 
 function bytesToB64(buf: Uint8Array): string {

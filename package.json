@@ -9,6 +9,9 @@
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
+      "workerd": "./src/index.ts",
+      "worker": "./src/index.ts",
+      "browser": "./src/index.ts",
       "bun": "./src/index.ts",
       "import": "./dist/index.js"
     },

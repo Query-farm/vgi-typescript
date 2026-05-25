@@ -41,6 +41,7 @@ export function buildVgiProtocol(config: ProtocolConfig): Protocol {
   registerFunctionMethods(protocol, {
     registry: config.registry,
     recoverExchangeState: config.recoverExchangeState,
+    signingKey: config.signingKey,
   });
   registerAggregateMethods(protocol, config.registry);
   registerTableBufferingMethods(protocol, config.registry);

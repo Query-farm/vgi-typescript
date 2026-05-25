@@ -47,7 +47,9 @@ export function createVgiFetch(opts: VgiFetchOptions): (req: Request) => Promise
     ...opts.protocol,
     recoverExchangeState: async (opaqueData: Uint8Array) => {
       const tokenString = new TextDecoder().decode(opaqueData);
-      const unpacked = await unpackStateToken(tokenString, opts.signingKey, tokenTtl);
+      // principal binding is enforced by the HTTP handler on the request that
+      // carried this token; the recovery path itself is not principal-scoped.
+      const unpacked = await unpackStateToken(tokenString, opts.signingKey, tokenTtl, undefined);
       return arrowStateSerializer.deserialize(unpacked.stateBytes);
     },
   });
@@ -55,7 +57,7 @@ export function createVgiFetch(opts: VgiFetchOptions): (req: Request) => Promise
   const handler = createHttpHandler(protocol, {
     prefix,
     serverId,
-    signingKey: opts.signingKey,
+    tokenKey: opts.signingKey,
     tokenTtl,
     stateSerializer: arrowStateSerializer,
   });

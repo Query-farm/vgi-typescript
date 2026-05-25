@@ -146,6 +146,23 @@ function getDefaultDbPath(): string {
   return join(stateDir, "vgi_storage.db");
 }
 
+// Worker state rides the unified function_state table under a reserved
+// namespace, keyed by the worker/process id (8-byte big-endian) — exactly the
+// mapping the Cloudflare DO client uses, so both backends share one schema.
+const NS_WORKER = new TextEncoder().encode("worker");
+
+/** Encode an int64 worker id as an 8-byte big-endian state key. */
+function int64Key(v: number): Uint8Array {
+  const b = new Uint8Array(8);
+  new DataView(b.buffer).setBigInt64(0, BigInt(v), false);
+  return b;
+}
+
+function int64FromKey(b: Uint8Array): number {
+  if (b.length !== 8) return 0;
+  return Number(new DataView(b.buffer, b.byteOffset, 8).getBigInt64(0, false));
+}
+
 export class FunctionStorageSqlite implements FunctionStorage {
   readonly dbPath: string;
   private _db: Database;
@@ -172,103 +189,63 @@ export class FunctionStorageSqlite implements FunctionStorage {
 
   private _ensureTables(): void {
     const db = this._db;
-    for (const [table, requiredCol] of [
-      ["worker_state", "execution_id"],
-      ["work_queue", "execution_id"],
-      ["invocation_registry", "execution_id"],
+    // Self-heal an older on-disk DB to the unified minimal schema. The local
+    // SQLite tier carries none of the DO's HTTP idempotency machinery and no
+    // created_at, so drop any table left over with those columns; all of this
+    // is ephemeral in-progress state, so dropping + recreating is safe.
+    for (const [table, staleCol] of [
+      ["function_state", "created_at"],
+      ["function_state_log", "created_at"],
+      ["work_queue", "created_at"],
     ] as const) {
-      const info = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{
-        name: string;
-      }>;
-      const columns = new Set(info.map((row) => row.name));
-      if (columns.size > 0 && !columns.has(requiredCol)) {
+      const info = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+      if (info.some((row) => row.name === staleCol)) {
         db.exec(`DROP TABLE IF EXISTS ${table}`);
       }
     }
-
-    // function_state / function_state_log: a prior schema (e.g. the Python
-    // backend's last_attempt_id NOT NULL columns) is wire-incompatible with
-    // this leaner TS shape. The TS backend doesn't track attempt_id (no
-    // replay-detection), so drop any legacy table that has columns this
-    // backend never populates, then recreate below.
-    for (const [table, expectedCols] of [
-      ["function_state", new Set(["scope_id", "ns", "key", "value", "created_at"])],
-      ["function_state_log", new Set(["id", "scope_id", "ns", "key", "value", "created_at"])],
-    ] as const) {
-      const info = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{
-        name: string;
-      }>;
-      if (info.length === 0) continue;
-      const mismatch = info.some((row) => !expectedCols.has(row.name)) ||
-        [...expectedCols].some((c) => !info.find((row) => row.name === c));
-      if (mismatch) {
-        db.exec(`DROP TABLE IF EXISTS ${table}`);
-      }
+    // Tables eliminated by the unified schema: worker collect now rides
+    // function_state (ns=worker), and the queue carries no registration.
+    for (const dead of ["global_state_storage", "worker_state", "invocation_registry", "init_storage"]) {
+      db.exec(`DROP TABLE IF EXISTS ${dead}`);
     }
 
-    db.exec("DROP TABLE IF EXISTS init_storage");
-
-    db.exec(`
-      CREATE TABLE IF NOT EXISTS global_state_storage (
-        key BLOB PRIMARY KEY,
-        value BLOB NOT NULL,
-        created_at REAL DEFAULT (julianday('now'))
-      )
-    `);
-    db.exec(`
-      CREATE TABLE IF NOT EXISTS worker_state (
-        execution_id BLOB NOT NULL,
-        process_id INTEGER NOT NULL,
-        state_data BLOB NOT NULL,
-        created_at REAL DEFAULT (julianday('now')),
-        PRIMARY KEY (execution_id, process_id)
-      )
-    `);
+    // Unified schema — the same three tables every backend uses (the Durable
+    // Object adds an HTTP-idempotency column layer on top).
     db.exec(`
       CREATE TABLE IF NOT EXISTS work_queue (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         execution_id BLOB NOT NULL,
-        work_item BLOB NOT NULL,
-        created_at REAL DEFAULT (julianday('now'))
+        work_item BLOB NOT NULL
       )
     `);
     db.exec(`
-      CREATE INDEX IF NOT EXISTS idx_work_queue_invocation
-      ON work_queue(execution_id)
+      CREATE INDEX IF NOT EXISTS idx_work_queue_execution
+      ON work_queue(execution_id, id)
     `);
-    db.exec(`
-      CREATE TABLE IF NOT EXISTS invocation_registry (
-        execution_id BLOB PRIMARY KEY,
-        created_at REAL DEFAULT (julianday('now'))
-      )
-    `);
-    // Namespaced key/value state, scoped by execution_id. Mirrors Python's
-    // function_state table — used by table_buffering init metadata + user
-    // per-key state.
+    // Composite-key K/V over (scope_id, ns, key): the single home for
+    // per-execution / per-transaction / per-group / per-worker state.
     db.exec(`
       CREATE TABLE IF NOT EXISTS function_state (
         scope_id BLOB NOT NULL,
         ns BLOB NOT NULL,
         key BLOB NOT NULL,
         value BLOB NOT NULL,
-        created_at REAL DEFAULT (julianday('now')),
         PRIMARY KEY (scope_id, ns, key)
       )
     `);
-    // Append-only log, scoped by execution_id. Globally-monotonic id (the
-    // AUTOINCREMENT column) recovers per-(scope,ns,key) append order.
+    // Append-only log keyed by (scope, ns, key); the AUTOINCREMENT id is the
+    // globally-monotonic scan cursor.
     db.exec(`
       CREATE TABLE IF NOT EXISTS function_state_log (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         scope_id BLOB NOT NULL,
         ns BLOB NOT NULL,
         key BLOB NOT NULL,
-        value BLOB NOT NULL,
-        created_at REAL DEFAULT (julianday('now'))
+        value BLOB NOT NULL
       )
     `);
     db.exec(`
-      CREATE INDEX IF NOT EXISTS idx_function_state_log_scope
+      CREATE INDEX IF NOT EXISTS idx_function_state_log_lookup
       ON function_state_log(scope_id, ns, key, id)
     `);
   }
@@ -283,8 +260,7 @@ export class FunctionStorageSqlite implements FunctionStorage {
   async statePut(scopeId: Uint8Array, ns: Uint8Array, key: Uint8Array, value: Uint8Array): Promise<void> {
     this._db
       .prepare(
-        "INSERT OR REPLACE INTO function_state (scope_id, ns, key, value, created_at) " +
-          "VALUES (?, ?, ?, ?, julianday('now'))",
+        "INSERT OR REPLACE INTO function_state (scope_id, ns, key, value) VALUES (?, ?, ?, ?)",
       )
       .run(bufferArg(scopeId), bufferArg(ns), bufferArg(key), bufferArg(value));
   }
@@ -323,53 +299,45 @@ export class FunctionStorageSqlite implements FunctionStorage {
     return total;
   }
 
+  // Worker state rides function_state under ns=worker, keyed by worker id.
+
   async workerPut(
     executionId: Uint8Array,
     workerId: number,
     state: Uint8Array
   ): Promise<void> {
-    if (Math.random() < 0.01) {
-      this.cleanupOldEntries(1.0);
-    }
     this._db
       .prepare(
-        "INSERT OR REPLACE INTO worker_state " +
-          "(execution_id, process_id, state_data, created_at) " +
-          "VALUES (?, ?, ?, julianday('now'))"
+        "INSERT OR REPLACE INTO function_state (scope_id, ns, key, value) VALUES (?, ?, ?, ?)"
       )
-      .run(bufferArg(executionId), workerId, bufferArg(state));
+      .run(bufferArg(executionId), bufferArg(NS_WORKER), bufferArg(int64Key(workerId)), bufferArg(state));
   }
 
   async workerCollect(executionId: Uint8Array): Promise<Uint8Array[]> {
     const rows = this._db
       .prepare(
-        "DELETE FROM worker_state WHERE execution_id = ? RETURNING state_data"
+        "DELETE FROM function_state WHERE scope_id = ? AND ns = ? RETURNING value"
       )
-      .all(bufferArg(executionId)) as Array<{ state_data: Uint8Array }>;
-    return rows.map((row) => new Uint8Array(row.state_data));
+      .all(bufferArg(executionId), bufferArg(NS_WORKER)) as Array<{ value: Uint8Array }>;
+    return rows.map((row) => new Uint8Array(row.value));
   }
 
   async workerScan(executionId: Uint8Array): Promise<Array<[number, Uint8Array]>> {
     const rows = this._db
       .prepare(
-        "SELECT process_id, state_data FROM worker_state WHERE execution_id = ?"
+        "SELECT key, value FROM function_state WHERE scope_id = ? AND ns = ?"
       )
-      .all(bufferArg(executionId)) as Array<{
-      process_id: number;
-      state_data: Uint8Array;
+      .all(bufferArg(executionId), bufferArg(NS_WORKER)) as Array<{
+      key: Uint8Array;
+      value: Uint8Array;
     }>;
-    return rows.map((row) => [row.process_id, new Uint8Array(row.state_data)]);
+    return rows.map((row) => [int64FromKey(new Uint8Array(row.key)), new Uint8Array(row.value)]);
   }
 
   async queuePush(executionId: Uint8Array, items: Uint8Array[]): Promise<number> {
     const eidBuf = bufferArg(executionId);
     this._db.exec("BEGIN");
     try {
-      this._db
-        .prepare(
-          "INSERT OR IGNORE INTO invocation_registry (execution_id) VALUES (?)"
-        )
-        .run(eidBuf);
       const insert = this._db.prepare(
         "INSERT INTO work_queue (execution_id, work_item) VALUES (?, ?)"
       );
@@ -385,61 +353,23 @@ export class FunctionStorageSqlite implements FunctionStorage {
   }
 
   async queuePop(executionId: Uint8Array): Promise<Uint8Array | null> {
-    const eidBuf = bufferArg(executionId);
-    const reg = this._db
-      .prepare("SELECT 1 FROM invocation_registry WHERE execution_id = ?")
-      .get(eidBuf);
-    if (reg == null) {
-      throw new UnknownInvocationError(executionId);
-    }
-
+    // No registration: an empty or never-pushed queue both return null,
+    // matching the Durable Object.
     const row = this._db
       .prepare(
         "DELETE FROM work_queue WHERE id = (" +
           "  SELECT id FROM work_queue WHERE execution_id = ? ORDER BY id ASC LIMIT 1" +
           ") RETURNING work_item"
       )
-      .get(eidBuf) as { work_item: Uint8Array } | null;
+      .get(bufferArg(executionId)) as { work_item: Uint8Array } | null;
 
     return row ? new Uint8Array(row.work_item) : null;
   }
 
   async queueClear(executionId: Uint8Array): Promise<number> {
-    const eidBuf = bufferArg(executionId);
-    this._db.exec("BEGIN");
-    try {
-      const result = this._db
-        .prepare("DELETE FROM work_queue WHERE execution_id = ?")
-        .run(eidBuf);
-      this._db
-        .prepare("DELETE FROM invocation_registry WHERE execution_id = ?")
-        .run(eidBuf);
-      this._db.exec("COMMIT");
-      return result.changes;
-    } catch (e) {
-      this._db.exec("ROLLBACK");
-      throw e;
-    }
-  }
-
-  cleanupOldEntries(maxAgeDays: number = 1.0): number {
-    let total = 0;
-    for (const table of [
-      "global_state_storage",
-      "worker_state",
-      "work_queue",
-      "invocation_registry",
-      "function_state",
-      "function_state_log",
-    ]) {
-      const result = this._db
-        .prepare(
-          `DELETE FROM ${table} WHERE julianday('now') - created_at > ?`
-        )
-        .run(maxAgeDays);
-      total += result.changes;
-    }
-    return total;
+    return this._db
+      .prepare("DELETE FROM work_queue WHERE execution_id = ?")
+      .run(bufferArg(executionId)).changes;
   }
 }
 
@@ -520,6 +450,9 @@ export class BoundStorage {
  * Mirrors vgi-python's `_resolve_storage` in `vgi/function.py`.
  *
  * `VGI_WORKER_SHARED_STORAGE` selects the backend (default: `sqlite`):
+ *   - `memory`        — `FunctionStorageSqlite` at `:memory:`. Process-local
+ *                       with no cross-process coordination — single-process
+ *                       deployments only. Ignores `VGI_WORKER_SQLITE_PATH`.
  *   - `sqlite`        — `FunctionStorageSqlite`. Honors `VGI_WORKER_SQLITE_PATH`
  *                       (including `:memory:`).
  *   - `cloudflare-do` — `FunctionStorageCfDo`. Requires `VGI_CF_DO_URL`;
@@ -527,6 +460,9 @@ export class BoundStorage {
  */
 export function resolveStorageFromEnv(): FunctionStorage {
   const backend = (process.env.VGI_WORKER_SHARED_STORAGE ?? "sqlite").toLowerCase();
+  if (backend === "memory") {
+    return new FunctionStorageSqlite(":memory:");
+  }
   if (backend === "sqlite") {
     return new FunctionStorageSqlite();
   }
@@ -536,7 +472,7 @@ export function resolveStorageFromEnv(): FunctionStorage {
     return FunctionStorageCfDo.fromEnv();
   }
   throw new Error(
-    `Unknown VGI_WORKER_SHARED_STORAGE backend: '${backend}'. Supported: 'sqlite', 'cloudflare-do'.`,
+    `Unknown VGI_WORKER_SHARED_STORAGE backend: '${backend}'. Supported: 'memory', 'sqlite', 'cloudflare-do'.`,
   );
 }
 

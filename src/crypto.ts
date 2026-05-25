@@ -22,8 +22,14 @@ import type { AuthContext } from "vgi-rpc";
 
 const _UTF8 = new TextEncoder();
 
-export const ATTACH_ENVELOPE_VERSION = 1;
+// v2: the inner attach plaintext is uuid(16) || catalog_bytes — catalog_attach
+// prepends a framework-minted 16-byte UUID that storage shards on. Bumped from
+// 1 so a stale v1 token (no uuid prefix) is cleanly rejected at open.
+export const ATTACH_ENVELOPE_VERSION = 2;
 export const TRANSACTION_ENVELOPE_VERSION = 2;
+
+/** Width of the framework UUID prepended to every attach plaintext. */
+export const ATTACH_UUID_LEN = 16;
 
 const NONCE_LEN = 24; // XChaCha20-Poly1305 nonce
 const TAG_LEN = 16; // Poly1305 tag

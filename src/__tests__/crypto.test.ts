@@ -72,7 +72,7 @@ describe("crypto: AEAD opaque-data envelopes", () => {
     await expect(
       openBytes(new TextEncoder().encode("garbage"), KEY, aad, ATTACH_ENVELOPE_VERSION),
     ).rejects.toBeInstanceOf(OpaqueDataRejectedError);
-    await expect(openBytes(token, KEY, aad, TRANSACTION_ENVELOPE_VERSION)).rejects.toBeInstanceOf(
+    await expect(openBytes(token, KEY, aad, ATTACH_ENVELOPE_VERSION + 1)).rejects.toBeInstanceOf(
       OpaqueDataRejectedError,
     );
   });
