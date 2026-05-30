@@ -139,9 +139,10 @@ export {
   BoundStorage,
   UnknownInvocationError,
   resolveStorageFromEnv,
+  setStorage,
   storage as functionStorage,
 } from "./functions/storage.js";
-export { FunctionStorageCfDo } from "./functions/storage-cf-do.js";
+export { FunctionStorageCfDo, type FetchLike } from "./functions/storage-cf-do.js";
 
 // Client
 export { VgiClient, VgiClientError } from "./client/client.js";

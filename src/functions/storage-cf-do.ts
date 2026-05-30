@@ -13,6 +13,13 @@
 import type { FunctionStorage } from "./storage.js";
 import { UnknownInvocationError } from "./storage.js";
 
+/** Minimal fetch signature satisfied by both the global `fetch` and a
+ *  Cloudflare service-binding Fetcher (`env.<BINDING>`). */
+export type FetchLike = (
+  input: string,
+  init?: { method?: string; headers?: Record<string, string>; body?: string },
+) => Promise<Response>;
+
 // Namespaces under the unified state_* table for the legacy worker/queue
 // families the DO no longer has dedicated endpoints for.
 const NS_WORKER = new TextEncoder().encode("worker");
@@ -22,12 +29,23 @@ export class FunctionStorageCfDo implements FunctionStorage {
   private readonly _token: string | null;
   /** Per-attach routing key (att-<hex uuid>); "" until pinned via forShard. */
   private readonly _shardKey: string;
+  /** Fetch implementation. Defaults to the global `fetch`; pass a Cloudflare
+   *  service-binding Fetcher (env.<BINDING>) when the storage worker lives on
+   *  the same account/zone — a same-zone public-URL fetch is rejected (CF
+   *  error 1042), but a service binding routes worker-to-worker directly. */
+  private readonly _fetch: FetchLike;
 
-  constructor(opts: { url: string; token?: string | null; shardKey?: string }) {
+  constructor(opts: {
+    url: string;
+    token?: string | null;
+    shardKey?: string;
+    fetch?: FetchLike;
+  }) {
     // Strip trailing slash so endpoint paths can be appended unconditionally.
     this._baseUrl = opts.url.replace(/\/+$/, "");
     this._token = opts.token ?? null;
     this._shardKey = opts.shardKey ?? "";
+    this._fetch = opts.fetch ?? ((input, init) => fetch(input as any, init));
   }
 
   /** Build an instance from environment variables. */
@@ -50,7 +68,12 @@ export class FunctionStorageCfDo implements FunctionStorage {
    * per logical ATTACH. Shares the URL/token; only the shard key differs.
    */
   forShard(shardKey: string): FunctionStorageCfDo {
-    return new FunctionStorageCfDo({ url: this._baseUrl, token: this._token, shardKey });
+    return new FunctionStorageCfDo({
+      url: this._baseUrl,
+      token: this._token,
+      shardKey,
+      fetch: this._fetch,
+    });
   }
 
   // --- Worker state → ns=worker, key = int64(worker_id) ---
@@ -208,7 +231,7 @@ export class FunctionStorageCfDo implements FunctionStorage {
     for (let attempt = 0; attempt < 2; attempt++) {
       let resp: Response;
       try {
-        resp = await fetch(url, { method: "POST", headers, body: payload });
+        resp = await this._fetch(url, { method: "POST", headers, body: payload });
       } catch (err) {
         lastErr = err;
         continue;

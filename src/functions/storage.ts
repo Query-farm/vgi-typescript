@@ -486,6 +486,18 @@ function getDefaultStorage(): FunctionStorage {
   return _resolved;
 }
 
+/**
+ * Override the default backend used by the `storage` singleton. Call once at
+ * worker startup to inject a pre-built backend that env-driven selection can't
+ * construct — notably a `FunctionStorageCfDo` wired to a Cloudflare
+ * service-binding Fetcher (the binding lives on `env`, not `process.env`, and a
+ * same-zone public-URL fetch is rejected with CF error 1042). Takes precedence
+ * over `VGI_WORKER_SHARED_STORAGE`.
+ */
+export function setStorage(impl: FunctionStorage): void {
+  _resolved = impl;
+}
+
 /** Default FunctionStorage instance. Backend is selected via env on first access. */
 export const storage: FunctionStorage = new Proxy(
   {} as FunctionStorage,

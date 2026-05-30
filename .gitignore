@@ -7,3 +7,4 @@ duckdb_unittest_tempdir/
 test_*.ts
 .playwright-mcp/
 browser-test-*.png
+__pycache__/
