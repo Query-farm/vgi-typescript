@@ -73,6 +73,15 @@ export interface ViewDescriptor {
   name: string;
   definition: string;
   comment?: string;
+  /**
+   * Per-column comments keyed by the view's output column name. Unlike tables
+   * (whose column comments ride along as Arrow field metadata), a view ships
+   * only its SQL `definition`, so column comments need their own channel. The
+   * C++ extension aligns these by name against the bound output columns and
+   * feeds them into `CreateViewInfo.column_comments_map`; names that don't
+   * match a bound column are ignored.
+   */
+  columnComments?: Record<string, string>;
   tags?: Record<string, string>;
 }
 

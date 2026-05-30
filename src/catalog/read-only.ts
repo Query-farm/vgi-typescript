@@ -280,6 +280,7 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
       name: v.name,
       schema_name: name,
       definition: v.definition,
+      column_comments: v.columnComments ?? {},
     }));
   }
 
@@ -338,6 +339,10 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
           projection_pushdown: meta.projectionPushdown,
           filter_pushdown: meta.filterPushdown,
           sampling_pushdown: meta.samplingPushdown,
+          // Mirror Python: None for scalars, the meta flag for table functions.
+          // The C++ extension only honours this for rowid-bearing tables.
+          late_materialization:
+            (f.kind as string) === "table" && f.meta.lateMaterialization === true ? true : null,
           supported_expression_filters: meta.supportedExpressionFilters,
           order_preservation: meta.preservesOrder as any,
           max_workers: meta.maxWorkers ?? DEFAULT_MAX_WORKERS,

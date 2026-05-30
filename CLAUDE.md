@@ -179,6 +179,14 @@ self-contained in the state token that round-trips through the client. If someth
 can't be serialized, rearchitect the approach rather than falling back to in-memory
 storage.
 
+### TableBuffering is worker-only — not in the client
+
+vgi-python's standalone client grew a `table_buffering_function()` driver (so a Python
+caller can invoke a buffering function directly, without DuckDB). The TypeScript client
+(`src/client/`) intentionally does **not** mirror this. TableBuffering is fully supported
+on the worker/extension path (the integration tests exercise it end-to-end); the client
+driver is out of scope. Do not add a TableBuffering method to `src/client/client.ts`.
+
 ## Storage backends
 
 `FunctionStorage` (`src/functions/storage.ts`) provides shared state across worker

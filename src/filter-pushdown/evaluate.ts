@@ -475,4 +475,80 @@ export class PushdownFilters {
     }
     return batchFromColumns(columns, batch.schema);
   }
+
+  /**
+   * Discrete values a column could take, from equality (`=`) or `IN` filters.
+   * Useful for partition pruning (resolve the key set up front, fetch only
+   * those keys). Returns null when the predicate is not enumerable — no
+   * filter, a bare range, or an OR with a non-discrete branch.
+   *
+   * Mirrors vgi-python's `PushdownFilters.get_column_values`: descends one
+   * level into an AndFilter (DuckDB pushes `col IN (...) AND col>=min AND
+   * col<=max` as a single AndFilter from a semi-join), and unions OR branches
+   * only when every branch pins the column to discrete values.
+   */
+  getColumnValues(columnName: string): any[] | null {
+    for (const f of this.collectColumnFilters(columnName)) {
+      if (f.type === "constant" && f.op === ComparisonOp.EQ) {
+        return [f.value];
+      } else if (f.type === "in") {
+        return Array.from(f.values);
+      } else if (f.type === "or") {
+        const union = this.orDiscreteValues(f, columnName);
+        if (union !== null) return union;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Union of discrete values for `columnName` across all OR branches, iff every
+   * child constrains it to discrete values (`=` or `IN`); otherwise null (the
+   * column could take any value through a non-discrete branch). Returning one
+   * branch's values would be an unsafe subset.
+   */
+  private orDiscreteValues(orFilter: OrFilter, columnName: string): any[] | null {
+    const values: any[] = [];
+    for (const child of orFilter.children) {
+      if (child.columnName !== columnName) return null;
+      if (child.type === "constant" && child.op === ComparisonOp.EQ) {
+        values.push(child.value);
+      } else if (child.type === "in") {
+        for (const v of child.values) values.push(v);
+      } else {
+        return null;
+      }
+    }
+    if (values.length === 0) return null;
+    // Deduplicate, preserving first-seen order for stable output.
+    const seen = new Set<any>();
+    const deduped: any[] = [];
+    for (const v of values) {
+      if (!seen.has(v)) {
+        seen.add(v);
+        deduped.push(v);
+      }
+    }
+    return deduped;
+  }
+
+  /**
+   * Collect filters for a column from the top level and direct AND children
+   * (one level of descent, consistent with the Python accessor). Deeply nested
+   * AND/AND is not traversed.
+   */
+  private collectColumnFilters(columnName: string): Filter[] {
+    const result: Filter[] = [];
+    for (const f of this.filters) {
+      if (f.columnName !== columnName) continue;
+      if (f.type === "and") {
+        for (const c of f.children) {
+          if (c.columnName === columnName) result.push(c);
+        }
+      } else {
+        result.push(f);
+      }
+    }
+    return result;
+  }
 }

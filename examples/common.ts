@@ -26,6 +26,7 @@ import { partitionTableFunctions } from "./table_partition.js";
 // Find functions for table-backed catalog entries
 const sequenceFunction = tableFunctions.find((f) => f.meta.name === "sequence");
 const rowIdSequenceFunction = tableFunctions.find((f) => f.meta.name === "rowid_sequence");
+const lateMaterializationFunction = tableFunctions.find((f) => f.meta.name === "late_materialization");
 const tenThousandFunction = tableFunctions.find((f) => f.meta.name === "ten_thousand");
 
 // Precompute stats for tables whose data is known at worker startup. The
@@ -145,6 +146,8 @@ export const catalog: CatalogDescriptor = {
           name: "first_ten",
           definition: "SELECT * FROM sequence(10)",
           comment: "First 10 integers",
+          columnComments: { n: "Sequence index 0..9" },
+          tags: { layer: "demo", origin: "sequence" },
         },
         {
           name: "even_numbers",
@@ -389,6 +392,50 @@ export const catalog: CatalogDescriptor = {
           arguments: new Arguments([20], new Map<string, any>([["layout", "first"], ["row_id_type", "struct"]])),
           comment: "Table with struct row_id",
         },
+        // ----- Late-materialization tables (rowid + scrambled ord) -----
+        // Backed by the late_materialization scan function, which advertises
+        // lateMaterialization. row_id is the row index (unique/deterministic/
+        // snapshot-stable); ord is scrambled so a Top-N on ord yields scattered
+        // survivor rowids. pushed echoes the rowid filter the worker received.
+        // 1000 rows so LIMIT k << count makes the rewrite a real win and
+        // LIMIT 200 exceeds dynamic_or_filter_threshold (50). See
+        // late_materialization.test.
+        {
+          name: "late_mat",
+          columns: new Schema([
+            new Field("row_id", new Int64(), true, new Map([["is_row_id", ""]])),
+            new Field("ord", new Int64(), true),
+            new Field("payload", new Utf8(), true),
+            new Field("pushed", new Utf8(), true),
+          ]),
+          function: lateMaterializationFunction,
+          arguments: new Arguments([1000], new Map<string, any>()),
+          comment: "Late-materialization table (1000 rows, unique rowid)",
+        },
+        {
+          name: "late_mat_dup",
+          columns: new Schema([
+            new Field("row_id", new Int64(), true, new Map([["is_row_id", ""]])),
+            new Field("ord", new Int64(), true),
+            new Field("payload", new Utf8(), true),
+            new Field("pushed", new Utf8(), true),
+          ]),
+          function: lateMaterializationFunction,
+          arguments: new Arguments([1000], new Map<string, any>([["dup_row_id", true]])),
+          comment: "Late-materialization table with deliberately non-unique rowid (contract violation)",
+        },
+        {
+          name: "late_mat_nulls",
+          columns: new Schema([
+            new Field("row_id", new Int64(), true, new Map([["is_row_id", ""]])),
+            new Field("ord", new Int64(), true),
+            new Field("payload", new Utf8(), true),
+            new Field("pushed", new Utf8(), true),
+          ]),
+          function: lateMaterializationFunction,
+          arguments: new Arguments([1000], new Map<string, any>([["null_ord_stride", 7]])),
+          comment: "Late-materialization table with NULLs in the ord column",
+        },
         // ----- Constraint example tables -----
         {
           name: "departments",
@@ -522,6 +569,7 @@ export const catalog: CatalogDescriptor = {
           name: "small_numbers",
           definition: "SELECT value FROM numbers WHERE value < 10",
           comment: "Numbers less than 10",
+          columnComments: { value: "Single-digit value 0..9" },
         },
       ],
       indexes: [

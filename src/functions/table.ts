@@ -210,6 +210,9 @@ export interface TableFunctionConfig<
   projectionPushdown?: boolean;
   filterPushdown?: boolean;
   samplingPushdown?: boolean;
+  /** Opt in to DuckDB's late-materialization SEMI-join rewrite; requires a
+   *  UNIQUE, snapshot-stable rowid column. FunctionInfo.late_materialization. */
+  lateMaterialization?: boolean;
   supportedExpressionFilters?: string[];
   autoApplyFilters?: boolean;
   stability?: FunctionStability;
@@ -262,6 +265,7 @@ export function defineTableFunction<
     projectionPushdown: config.projectionPushdown,
     filterPushdown: config.filterPushdown,
     samplingPushdown: config.samplingPushdown,
+    lateMaterialization: config.lateMaterialization,
     supportedExpressionFilters: config.supportedExpressionFilters,
     autoApplyFilters: config.autoApplyFilters,
     examples: config.examples,

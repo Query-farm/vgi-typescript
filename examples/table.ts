@@ -4,12 +4,14 @@
 import {
   Schema,
   Field,
+  Int8,
   Int64,
   Float64,
   Bool,
   Utf8,
   Null,
   DataType,
+  Dictionary,
   Struct,
   List,
   Decimal,
@@ -25,10 +27,13 @@ import {
   DEFAULT_MAX_WORKERS,
   ArgumentValidationError,
   OrderPreservation,
+  ComparisonOp,
   type TableBindParams,
   type TableProcessParams,
   type TableCardinality,
   type BoundStorage,
+  type Filter,
+  type PushdownFilters,
 } from "../src/index.js";
 import type { OutputCollector } from "vgi-rpc";
 import type { VgiFunction } from "../src/index.js";
@@ -2038,6 +2043,351 @@ const rowid_sequence = defineTableFunction<RowIdSequenceArgs, CountdownState>({
 });
 
 // ============================================================================
+// 20. late_materialization - rowid generator participating in DuckDB's
+// late-materialization optimizer. Port of vgi-python's
+// _test_fixtures/table/late_materialization.py.
+//
+// Schema (row_id int64 [is_row_id], ord int64, payload utf8, pushed utf8):
+//   * row_id == row index — unique/deterministic/snapshot-stable, satisfying
+//     the late-mat worker contract (so the narrow ordering scan and the wide
+//     re-fetch scan resolve the same logical row, even across processes).
+//   * ord is a scrambled function of the index so a Top-N on ord scatters the
+//     survivor rowids — exercising the exact IN-list pushdown path.
+//   * payload is the wide column the rewrite avoids materializing.
+//   * pushed is the witness: it echoes, per row, the rowid filter the worker
+//     received (in=<n> join keys, rng=<lo>..<hi> bounds). The rewrite's output
+//     columns come from the wide scan, so selecting `pushed` reports exactly
+//     what was pushed there — over both subprocess and HTTP transports.
+// ============================================================================
+
+interface LateMatArgs {
+  count: number;
+  batch_size: number;
+  dup_row_id: boolean;
+  null_ord_stride: number;
+}
+
+interface LateMatState {
+  remaining: number;
+  currentIndex: number;
+  // Serialized (not transient) so the HTTP rehydrate path — which deserializes
+  // user state without re-running initialState — preserves the observed filter.
+  witness: string;
+}
+
+const LATE_MAT_ROWID = "row_id";
+// Scramble multiplier (odd) used to turn the monotonic index into a scattered
+// ordering key, matching the Python fixture.
+const LATE_MAT_SCRAMBLE = 2654435761n;
+const LATE_MAT_NO_WITNESS = "rid:in=0;rng=none";
+
+function lateMatScrambleOrd(index: number): bigint {
+  return (BigInt(index) * LATE_MAT_SCRAMBLE) % 1_000_000_007n;
+}
+
+// Summarize the rowid filter the worker received as a stable string:
+//   in=<n>            — total number of rowid IN-list (join-key) values
+//   rng=<lo>..<hi>    — min/max rowid range bounds, or `none` if absent
+function rowidPushdownWitness(filters: PushdownFilters | undefined): string {
+  if (!filters) return LATE_MAT_NO_WITNESS;
+  let inCount = 0;
+  let lo: bigint | null = null;
+  let hi: bigint | null = null;
+  const toBig = (v: any): bigint => (typeof v === "bigint" ? v : BigInt(v));
+  const walk = (f: Filter): void => {
+    if (f.type === "and" || f.type === "or") {
+      for (const child of f.children) walk(child);
+    } else if (f.type === "in" && f.columnName === LATE_MAT_ROWID) {
+      inCount += f.values.size;
+    } else if (f.type === "constant" && f.columnName === LATE_MAT_ROWID) {
+      const v = toBig(f.value);
+      switch (f.op) {
+        case ComparisonOp.GT:
+        case ComparisonOp.GE:
+          lo = lo === null || v < lo ? v : lo;
+          break;
+        case ComparisonOp.LT:
+        case ComparisonOp.LE:
+          hi = hi === null || v > hi ? v : hi;
+          break;
+        case ComparisonOp.EQ:
+          lo = v;
+          hi = v;
+          break;
+      }
+    }
+  };
+  for (const f of filters.filters) walk(f);
+  const rng = lo !== null || hi !== null ? `${lo}..${hi}` : "none";
+  return `rid:in=${inCount};rng=${rng}`;
+}
+
+const LATE_MAT_SCHEMA = new Schema([
+  new Field("row_id", new Int64(), true, new Map([["is_row_id", ""]])),
+  new Field("ord", new Int64(), true),
+  new Field("payload", new Utf8(), true),
+  new Field("pushed", new Utf8(), true),
+]);
+
+const late_materialization = defineTableFunction<LateMatArgs, LateMatState>({
+  name: "late_materialization",
+  description: "Rowid generator that participates in late materialization",
+  args: {
+    count: new Int64(),
+    batch_size: new Int64(),
+    dup_row_id: new Bool(),
+    null_ord_stride: new Int64(),
+  },
+  argDefaults: {
+    batch_size: 2048,
+    dup_row_id: false,
+    null_ord_stride: 0,
+  },
+  projectionPushdown: true,
+  filterPushdown: true,
+  autoApplyFilters: true,
+  lateMaterialization: true,
+  onBind: () => ({ outputSchema: LATE_MAT_SCHEMA }),
+  cardinality: (params: TableBindParams<LateMatArgs>) => ({
+    estimate: params.args.count,
+    max: params.args.count,
+  }),
+  // For the wide probe scan, the SEMI join's build side completes before the
+  // scan inits, so the surviving rowid filter arrives on the init-time
+  // pushdownFilters (already populated on processParams here). process()
+  // additionally latches anything that shows up per-tick.
+  initialState: (params: TableProcessParams<LateMatArgs>) => ({
+    remaining: params.args.count,
+    currentIndex: 0,
+    witness: rowidPushdownWitness(params.pushdownFilters),
+  }),
+  process: (params: TableProcessParams<LateMatArgs>, state: LateMatState, out: OutputCollector) => {
+    // Refresh the witness from the per-tick dynamic filters. Once a rowid
+    // filter is present, latch it (guard against a transient empty tick
+    // clobbering it).
+    const tickWitness = rowidPushdownWitness(params.pushdownFilters);
+    if (tickWitness !== LATE_MAT_NO_WITNESS || state.witness === LATE_MAT_NO_WITNESS) {
+      state.witness = tickWitness;
+    }
+
+    if (state.remaining <= 0) {
+      out.finish();
+      return;
+    }
+
+    const size = Math.min(state.remaining, params.args.batch_size);
+    const start = state.currentIndex;
+    const stride = params.args.null_ord_stride;
+
+    const columns: Record<string, any[]> = {};
+    for (const f of params.outputSchema.fields) {
+      if (f.name === "row_id") {
+        columns.row_id = Array.from({ length: size }, (_, j) => {
+          const i = start + j;
+          return params.args.dup_row_id ? BigInt(Math.floor(i / 2)) : BigInt(i);
+        });
+      } else if (f.name === "ord") {
+        columns.ord = Array.from({ length: size }, (_, j) => {
+          const i = start + j;
+          return stride > 0 && i % stride === 0 ? null : lateMatScrambleOrd(i);
+        });
+      } else if (f.name === "payload") {
+        columns.payload = Array.from({ length: size }, (_, j) => `payload_${start + j}`);
+      } else if (f.name === "pushed") {
+        columns.pushed = new Array(size).fill(state.witness);
+      }
+    }
+
+    out.emit(batchFromColumns(columns, params.outputSchema));
+    state.currentIndex += size;
+    state.remaining -= size;
+  },
+  examples: [
+    {
+      sql: "SELECT row_id, payload FROM late_materialization(100000) ORDER BY ord LIMIT 10",
+      description: "Top-N is late-materialized: payload fetched only for survivors",
+    },
+  ],
+  categories: ["generator", "diagnostic"],
+});
+
+// ============================================================================
+// 21. value_prune - exercises PushdownFilters.getColumnValues('n'), the
+// partition-pruning accessor. Resolves the discrete value set for `n` up front
+// and echoes it in the `resolved` column ("(scan)" when not enumerable), so the
+// accessor's AND-descent / OR-union behaviour is directly observable. Port of
+// vgi-python's ValuePruneFunction. See value_prune.test.
+// ============================================================================
+
+interface ValuePruneArgs {
+  count: number;
+  batch_size: number;
+}
+
+interface ValuePruneState {
+  values: number[];
+  resolved: string;
+  cursor: number;
+}
+
+const VALUE_PRUNE_SCHEMA = new Schema([
+  new Field("n", new Int64(), true),
+  new Field("resolved", new Utf8(), true),
+]);
+
+const value_prune = defineTableFunction<ValuePruneArgs, ValuePruneState>({
+  name: "value_prune",
+  description: "Prunes the key set via getColumnValues('n'); echoes the resolved discrete values",
+  args: {
+    count: new Int64(),
+    batch_size: new Int64(),
+  },
+  argDefaults: {
+    batch_size: 2048,
+  },
+  filterPushdown: true,
+  autoApplyFilters: true,
+  projectionPushdown: true,
+  onBind: () => ({ outputSchema: VALUE_PRUNE_SCHEMA }),
+  cardinality: (params: TableBindParams<ValuePruneArgs>) => ({
+    estimate: params.args.count,
+    max: params.args.count,
+  }),
+  // Resolve the discrete key set for `n` from the init-time pushdown filters
+  // (already populated on processParams here). Serialized into state so the
+  // HTTP rehydrate path preserves the resolution across a token round-trip.
+  initialState: (params: TableProcessParams<ValuePruneArgs>) => {
+    const count = params.args.count;
+    const discrete = params.pushdownFilters
+      ? params.pushdownFilters.getColumnValues("n")
+      : null;
+    if (discrete !== null) {
+      const nums = discrete
+        .filter((v) => v !== null && v !== undefined)
+        .map((v) => Number(v))
+        .sort((a, b) => a - b);
+      const resolved = nums.join(",");
+      const emit = nums.filter((v) => v >= 0 && v < count);
+      return { values: emit, resolved, cursor: 0 };
+    }
+    return {
+      values: Array.from({ length: count }, (_, i) => i),
+      resolved: "(scan)",
+      cursor: 0,
+    };
+  },
+  process: (params: TableProcessParams<ValuePruneArgs>, state: ValuePruneState, out: OutputCollector) => {
+    if (state.cursor >= state.values.length) {
+      out.finish();
+      return;
+    }
+    const size = Math.min(state.values.length - state.cursor, params.args.batch_size);
+    const chunk = state.values.slice(state.cursor, state.cursor + size);
+    const columns: Record<string, any[]> = {};
+    for (const f of params.outputSchema.fields) {
+      if (f.name === "n") {
+        columns.n = chunk.map((v) => BigInt(v));
+      } else if (f.name === "resolved") {
+        columns.resolved = new Array(chunk.length).fill(state.resolved);
+      }
+    }
+    out.emit(batchFromColumns(columns, params.outputSchema));
+    state.cursor += size;
+  },
+  examples: [
+    {
+      sql: "SELECT DISTINCT resolved FROM value_prune(100) WHERE n IN (5, 50, 95)",
+      description: "Resolve a discrete key set from an IN predicate",
+    },
+  ],
+  categories: ["generator", "diagnostic"],
+});
+
+// ============================================================================
+// 22. dict_filter_echo - emits a dictionary<int8, utf8> column with no ENUM
+// metadata, so DuckDB types it as plain VARCHAR and pushes VARCHAR (string)
+// literals down. The auto-applied filter must compare (dictionary column,
+// string literal) without throwing — the evaluator reads the column through
+// the dictionary-decoding cell accessor, so a string<->string comparison
+// results. Port of vgi-python's DictFilterEchoFunction. See
+// dictionary_varchar.test.
+// ============================================================================
+
+const DICT_FILTER_VALUES = ["red", "green", "blue"];
+
+const DICT_FILTER_ECHO_SCHEMA = new Schema([
+  new Field("n", new Int64(), true),
+  new Field("s", new Dictionary(new Utf8(), new Int8()), true),
+]);
+
+interface DictFilterEchoArgs {
+  count: number;
+  batch_size: number;
+}
+
+interface DictFilterEchoState {
+  remaining: number;
+  currentIndex: number;
+}
+
+const dict_filter_echo = defineTableFunction<DictFilterEchoArgs, DictFilterEchoState>({
+  name: "dict_filter_echo",
+  description: "Emits a dictionary-encoded VARCHAR column for filter-pushdown testing",
+  args: {
+    count: new Int64(),
+    batch_size: new Int64(),
+  },
+  argDefaults: {
+    batch_size: 2048,
+  },
+  filterPushdown: true,
+  autoApplyFilters: true,
+  projectionPushdown: true,
+  onBind: () => ({ outputSchema: DICT_FILTER_ECHO_SCHEMA }),
+  cardinality: (params: TableBindParams<DictFilterEchoArgs>) => ({
+    estimate: params.args.count,
+    max: params.args.count,
+  }),
+  initialState: (params: TableProcessParams<DictFilterEchoArgs>) => ({
+    remaining: params.args.count,
+    currentIndex: 0,
+  }),
+  process: (params: TableProcessParams<DictFilterEchoArgs>, state: DictFilterEchoState, out: OutputCollector) => {
+    if (state.remaining <= 0) {
+      out.finish();
+      return;
+    }
+    const size = Math.min(state.remaining, params.args.batch_size);
+    const start = state.currentIndex;
+    const columns: Record<string, any[]> = {};
+    for (const f of params.outputSchema.fields) {
+      if (f.name === "n") {
+        columns.n = Array.from({ length: size }, (_, j) => BigInt(start + j));
+      } else if (f.name === "s") {
+        columns.s = Array.from(
+          { length: size },
+          (_, j) => DICT_FILTER_VALUES[(start + j) % DICT_FILTER_VALUES.length],
+        );
+      }
+    }
+    out.emit(batchFromColumns(columns, params.outputSchema));
+    state.currentIndex += size;
+    state.remaining -= size;
+  },
+  examples: [
+    {
+      sql: "SELECT * FROM dict_filter_echo(6) WHERE s = 'green'",
+      description: "Filter a dictionary-encoded column by an equality predicate",
+    },
+    {
+      sql: "SELECT * FROM dict_filter_echo(6) WHERE s IN ('red', 'blue')",
+      description: "Filter a dictionary-encoded column by an IN predicate",
+    },
+  ],
+  categories: ["generator", "diagnostic", "testing"],
+});
+
+// ============================================================================
 // versioned_data_scan — time travel with schema evolution
 // ============================================================================
 
@@ -2775,6 +3125,9 @@ export const tableFunctions: VgiFunction[] = [
   repeat_value_int,
   repeat_value_str,
   rowid_sequence,
+  late_materialization,
+  value_prune,
+  dict_filter_echo,
   versioned_data_scan,
   departments_scan,
   employees_scan,

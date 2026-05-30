@@ -97,10 +97,12 @@ describe("ASD codec", () => {
       name: "v1",
       schema_name: "s1",
       definition: "SELECT 1",
+      column_comments: { n: "the only column" },
     };
     const bytes = encodeASD(ViewInfoSchema, v);
     const back = decodeASD<ViewInfo>(ViewInfoSchema, bytes);
     expect(back.definition).toBe("SELECT 1");
     expect(back.tags).toEqual({ x: "y" });
+    expect(back.column_comments).toEqual({ n: "the only column" });
   });
 });

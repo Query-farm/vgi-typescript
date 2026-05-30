@@ -44,6 +44,15 @@ export interface FunctionMeta {
   projectionPushdown?: boolean;
   filterPushdown?: boolean;
   samplingPushdown?: boolean;
+  /**
+   * table (generator): opt in to DuckDB's late-materialization rewrite. A
+   * TOP_N/LIMIT/SAMPLE over a rowid-bearing table is rewritten into a SEMI
+   * join — a narrow ordering scan selects survivors, then the wide scan
+   * re-fetches their columns with the surviving rowids pushed down. Surfaces
+   * as FunctionInfo `late_materialization`. Only honoured by the C++ extension
+   * for tables whose worker also guarantees a UNIQUE, snapshot-stable rowid.
+   */
+  lateMaterialization?: boolean;
   supportedExpressionFilters?: string[];
   autoApplyFilters?: boolean;
   preservesOrder?: OrderPreservation;
