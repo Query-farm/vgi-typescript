@@ -2569,6 +2569,93 @@ const projects_scan = defineStaticScanFunction(
   },
 );
 
+// ============================================================================
+// required_field_filter_paths fixtures (rff_*)
+//
+// Back the Tables exercised by
+// ~/Development/vgi/test/sql/integration/table/required_field_filter_paths_*.test
+// — the C++ optimizer extension that enforces Table.required_field_filter_paths.
+// Mirrors vgi-python's vgi/_test_fixtures/table/required_filters.py.
+// ============================================================================
+
+export const RFF_SIMPLE_SCHEMA = new Schema([
+  new Field("a", new Int64(), true),
+  new Field("b", new Int64(), true),
+]);
+
+const rff_simple_scan = defineStaticScanFunction(
+  "rff_simple_scan",
+  "rff_simple — flat columns (a, b) for required_field_filter_paths tests",
+  RFF_SIMPLE_SCHEMA, {
+    a: [1n, 2n, 3n],
+    b: [10n, 20n, 30n],
+  },
+);
+
+export const RFF_STRUCT_SCHEMA = new Schema([
+  new Field("s", new Struct([
+    new Field("a", new Int64(), true),
+    new Field("b", new Int64(), true),
+  ]), true),
+  new Field("other", new Int64(), true),
+]);
+
+const rff_struct_scan = defineStaticScanFunction(
+  "rff_struct_scan",
+  "rff_struct — STRUCT(s.a, s.b) + other for required_field_filter_paths tests",
+  RFF_STRUCT_SCHEMA, {
+    s: [{ a: 1n, b: 10n }, { a: 2n, b: 20n }, { a: 3n, b: 30n }],
+    other: [100n, 200n, 300n],
+  },
+);
+
+export const RFF_NESTED_SCHEMA = new Schema([
+  new Field("wrapper", new Struct([
+    new Field("mid", new Struct([
+      new Field("leaf", new Int64(), true),
+    ]), true),
+  ]), true),
+]);
+
+const rff_nested_scan = defineStaticScanFunction(
+  "rff_nested_scan",
+  "rff_nested — nested STRUCT(wrapper.mid.leaf) for required_field_filter_paths tests",
+  RFF_NESTED_SCHEMA, {
+    wrapper: [{ mid: { leaf: 1n } }, { mid: { leaf: 2n } }, { mid: { leaf: 3n } }],
+  },
+);
+
+export const RFF_MULTI_SCHEMA = new Schema([
+  new Field("s", new Struct([
+    new Field("a", new Int64(), true),
+    new Field("b", new Int64(), true),
+  ]), true),
+  new Field("top", new Int64(), true),
+]);
+
+const rff_multi_scan = defineStaticScanFunction(
+  "rff_multi_scan",
+  "rff_multi — top-level + struct subfield required paths",
+  RFF_MULTI_SCHEMA, {
+    s: [{ a: 1n, b: 10n }, { a: 2n, b: 20n }],
+    top: [100n, 200n],
+  },
+);
+
+export const RFF_NONE_SCHEMA = new Schema([
+  new Field("a", new Int64(), true),
+  new Field("b", new Int64(), true),
+]);
+
+const rff_none_scan = defineStaticScanFunction(
+  "rff_none_scan",
+  "rff_none — control table with no required_field_filter_paths",
+  RFF_NONE_SCHEMA, {
+    a: [1n, 2n, 3n],
+    b: [10n, 20n, 30n],
+  },
+);
+
 const COLORS_SCAN_SCHEMA = new Schema([
   new Field("id", new Int64(), true),
   new Field("color", new Utf8(), true),
@@ -3134,6 +3221,11 @@ export const tableFunctions: VgiFunction[] = [
   products_scan,
   projects_scan,
   colors_scan,
+  rff_simple_scan,
+  rff_struct_scan,
+  rff_nested_scan,
+  rff_multi_scan,
+  rff_none_scan,
   versioned_constraints_scan,
   order_echo,
   sample_echo,

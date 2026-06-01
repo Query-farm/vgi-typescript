@@ -17,6 +17,7 @@ import { scalarFunctions } from "./scalar.js";
 import {
   tableFunctions, resolveVersion, getVersionedSchema,
   resolveVersionedConstraintsVersion, getVersionedConstraintsSchema,
+  RFF_SIMPLE_SCHEMA, RFF_STRUCT_SCHEMA, RFF_NESTED_SCHEMA, RFF_MULTI_SCHEMA, RFF_NONE_SCHEMA,
 } from "./table.js";
 import { tableInOutFunctions } from "./table_in_out.js";
 import { tableBufferingFunctions } from "./table_buffering.js";
@@ -544,6 +545,39 @@ export const catalog: CatalogDescriptor = {
           }],
           comment: "Projects with composite PK and FK to departments",
         },
+        // ----- required_field_filter_paths fixtures -----
+        // Exercised by ~/Development/vgi/test/sql/integration/table/
+        // required_field_filter_paths_*.test to verify the C++ optimizer
+        // extension that enforces Table.requiredFieldFilterPaths.
+        {
+          name: "rff_simple",
+          columns: RFF_SIMPLE_SCHEMA,
+          requiredFieldFilterPaths: ["a"],
+          comment: "rff_simple — requires a filter referencing column 'a'.",
+        },
+        {
+          name: "rff_struct",
+          columns: RFF_STRUCT_SCHEMA,
+          requiredFieldFilterPaths: ["s.a", "s.b"],
+          comment: "rff_struct — requires filters on both struct subfields s.a and s.b.",
+        },
+        {
+          name: "rff_nested",
+          columns: RFF_NESTED_SCHEMA,
+          requiredFieldFilterPaths: ["wrapper.mid.leaf"],
+          comment: "rff_nested — requires a filter on the 3-deep nested path wrapper.mid.leaf.",
+        },
+        {
+          name: "rff_multi",
+          columns: RFF_MULTI_SCHEMA,
+          requiredFieldFilterPaths: ["top", "s.a"],
+          comment: "rff_multi — mixed top-level + struct subfield requirements.",
+        },
+        {
+          name: "rff_none",
+          columns: RFF_NONE_SCHEMA,
+          comment: "rff_none — control table with no required_field_filter_paths (opt-out fast path).",
+        },
         {
           name: "versioned_constraints",
           columns: new Schema([
@@ -656,6 +690,7 @@ export function createExampleCatalog(base: ReadOnlyCatalogInterface): ReadOnlyCa
         delete_function: new Uint8Array(0),
         cardinality_estimate: 0,
         cardinality_max: 0,
+        required_field_filter_paths: [],
       };
     }
     if (schemaName.toLowerCase() === "data" && name.toLowerCase() === "versioned_constraints" && atUnit) {
@@ -698,6 +733,7 @@ export function createExampleCatalog(base: ReadOnlyCatalogInterface): ReadOnlyCa
         delete_function: new Uint8Array(0),
         cardinality_estimate: 0,
         cardinality_max: 0,
+        required_field_filter_paths: [],
       };
     }
     // Multi-branch tables: accept AT at table_get and pass it through with AT
@@ -738,6 +774,11 @@ export function createExampleCatalog(base: ReadOnlyCatalogInterface): ReadOnlyCa
       employees: "employees_scan",
       products: "products_scan",
       projects: "projects_scan",
+      rff_simple: "rff_simple_scan",
+      rff_struct: "rff_struct_scan",
+      rff_nested: "rff_nested_scan",
+      rff_multi: "rff_multi_scan",
+      rff_none: "rff_none_scan",
     };
     if (schemaName.toLowerCase() === "data" && name.toLowerCase() in staticTables) {
       return { function_name: staticTables[name.toLowerCase()], arguments: serializeBatch(batchFromColumns({}, new Schema([]))), required_extensions: [] };

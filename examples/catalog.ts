@@ -188,7 +188,8 @@ export class InMemoryCatalog extends CatalogInterface {
       delete_function: new Uint8Array(0),
       cardinality_estimate: 0,
       cardinality_max: 0,
-    }));
+      required_field_filter_paths: [],
+    })));
   }
 
   override schemaContentsViews(
@@ -243,6 +244,7 @@ export class InMemoryCatalog extends CatalogInterface {
       delete_function: new Uint8Array(0),
       cardinality_estimate: 0,
       cardinality_max: 0,
+      required_field_filter_paths: [],
     };
   }
 

@@ -77,6 +77,7 @@ describe("ASD codec", () => {
       supports_delete: true,
       supports_returning: false,
       supports_column_statistics: false,
+      required_field_filter_paths: [],
     };
     const bytes = encodeASD(TableInfoSchema, v);
     const back = decodeASD<TableInfo>(TableInfoSchema, bytes);

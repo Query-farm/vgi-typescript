@@ -70,6 +70,11 @@ TEST_LOG := /tmp/vgi-typescript-test.log
 #                                        in batch_received logs under threads=4. The
 #                                        C++ HTTP transport's parallel-scan connection
 #                                        accounting is what's tested, not the worker.
+#   order_preservation_modes           — its FIXED_ORDER -> distinct-conn assertion
+#                                        relies on VGI batch_received logs, which don't
+#                                        stream over HTTP (0 log rows). Meaningful only
+#                                        on subprocess transport; already excluded from
+#                                        the launcher patterns for the same reason.
 TEST_PATTERNS := "test/sql/*" \
 	"~test/sql/integration/writable/*" \
 	"~test/sql/integration/schema_reconcile.test" \
@@ -114,7 +119,8 @@ HTTP_TEST_PATTERNS := "test/sql/integration/*" \
 	"~test/sql/integration/catalog/zero_count_bypass.test" \
 	"~test/sql/integration/table/filter_echo_partitioned.test" \
 	"~test/sql/integration/table/partitioned_sequence.test" \
-	"~test/sql/integration/table/batch_index.test"
+	"~test/sql/integration/table/batch_index.test" \
+	"~test/sql/integration/table/order_preservation_modes.test"
 
 # Default test target: launcher (`launch:`) transport.
 #
