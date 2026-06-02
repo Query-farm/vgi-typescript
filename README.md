@@ -47,41 +47,67 @@ lets VGI run in the browser and on Cloudflare Workers — see
 
 ### 1. Define a scalar function and run a worker
 
-Types are plain aliases (`str`, `int`, `float`, `bool`, `bytes`, …) and you read a
-batch as ordinary row objects with `iterRows` — no manual Arrow vector wrangling:
+Types are plain aliases (`str`, `int`, `float`, `bool`, `bytes`, …) and the input
+arrives as a columnar Arrow batch:
 
 ```ts
 // worker.ts
-import { Worker, defineScalarFunction, iterRows, str } from "@query-farm/vgi";
+import { Worker, defineScalarFunction, str, int } from "@query-farm/vgi";
 
 const upperCase = defineScalarFunction({
   name: "upper_case",                        // SQL name → demo.upper_case(...)
   description: "Convert a string to uppercase",
 
-  // Columnar inputs, declared by name. Type aliases: str, int, int32, float,
-  // float32, bool, bytes — or any Arrow DataType (e.g. `new Decimal(18, 2)`).
+  // Declares the argument types *and order*. DuckDB calls scalar functions
+  // positionally, so the keys are just parameter names (for docs/metadata) —
+  // inside compute you read the input columns by position, not by this name.
+  // Type aliases: str, int, int32, float, float32, bool, bytes — or any Arrow
+  // DataType (e.g. `new Decimal(18, 2)`).
   params: { value: str },
 
   // Static output type. For a type that depends on the input, omit `returns`
   // and use `outputType: (bind) => <DataType>` (may be async).
   returns: str,
 
-  // compute runs once per input batch. `iterRows` yields each row as a plain
-  // object keyed by param name; return one output value per row (null is ok).
+  // compute runs once per input batch. Read each argument as a column by
+  // position (column 0 = first arg); return one output value per row (null ok).
   // Full signature: compute(batch, consts, info) where
   //   consts → values of any `constParams` (literals folded at bind time)
   //   info   → { settings, secrets, auth } — session settings, secrets, caller
-  compute: (batch) =>
-    Array.from(iterRows(batch), (row) =>
-      row.value == null ? null : String(row.value).toUpperCase(),
-    ),
+  compute: (batch) => {
+    const values = batch.getChildAt(0)!;     // first positional argument
+    return Array.from(values, (v) =>
+      v == null ? null : String(v).toUpperCase(),
+    );
+  },
 
   // Other optional fields: constParams, nullHandling, stability (volatility),
   // examples, categories, tags, requiredSettings, requiredSecrets, maxWorkers.
 });
 
-// All WorkerConfig fields are optional — a functions-only worker is valid.
-new Worker({ functions: [upperCase] }).run();
+// A two-argument scalar — the args are positional, so column 0 is the first
+// argument and column 1 is the second (the param keys are just names).
+const multiply = defineScalarFunction({
+  name: "multiply",
+  description: "Multiply two numbers",
+  params: { a: int, b: int },                // two positional arguments
+  returns: int,                              // int = Int64 → values are bigint
+  compute: (batch) => {
+    const a = batch.getChildAt(0)!;          // first argument
+    const b = batch.getChildAt(1)!;          // second argument
+    return Array.from({ length: batch.numRows }, (_, i) => {
+      const x = a.get(i);
+      const y = b.get(i);
+      return x == null || y == null ? null : x * y; // NULL in → NULL out
+    });
+  },
+});
+
+// Functions are served through a catalog — that's what DuckDB ATTACHes to.
+// `name` is the catalog DuckDB sees (matches the ATTACH target below).
+new Worker({
+  catalog: { name: "demo", schemas: [{ name: "main", functions: [upperCase, multiply] }] },
+}).run();
 ```
 
 A worker speaks Arrow IPC over stdin/stdout (or AF_UNIX / HTTP — see
@@ -133,7 +159,10 @@ const sequence = defineTableFunction({
   //   partitionKind, preservesOrder, lateMaterialization, samplingPushdown, …
 });
 
-new Worker({ functions: [upperCase, sequence] }).run();
+// Serve every function from the same catalog.
+new Worker({
+  catalog: { name: "demo", schemas: [{ name: "main", functions: [upperCase, multiply, sequence] }] },
+}).run();
 ```
 
 ### 3. Attach it from DuckDB
@@ -145,6 +174,7 @@ LOAD vgi;
 ATTACH 'demo' AS demo (TYPE vgi, LOCATION 'bun run /abs/path/to/worker.ts');
 
 SELECT demo.upper_case('hello');   -- HELLO
+SELECT demo.multiply(6, 7);        -- 42
 SELECT * FROM demo.sequence(5);    -- 0,1,2,3,4
 ```
 
