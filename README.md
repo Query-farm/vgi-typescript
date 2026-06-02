@@ -27,27 +27,24 @@ Requires **Node.js ≥ 22.15** or **Bun**. Using VGI from DuckDB also requires t
 
 ## Quick start
 
-### 1. Define functions and run a worker
+### 1. Define a scalar function and run a worker
+
+Types are plain aliases (`str`, `int`, `float`, `bool`, `bytes`, …) and you read a
+batch as ordinary row objects with `iterRows` — no manual Arrow vector wrangling:
 
 ```ts
 // worker.ts
-import { Worker, defineScalarFunction } from "@query-farm/vgi";
-import { Utf8, type RecordBatch } from "@query-farm/apache-arrow";
+import { Worker, defineScalarFunction, iterRows, str } from "@query-farm/vgi";
 
 const upperCase = defineScalarFunction({
   name: "upper_case",
   description: "Convert a string to uppercase",
-  params: { value: new Utf8() },
-  returns: new Utf8(),
-  compute: (batch: RecordBatch) => {
-    const col = batch.getChildAt(0)!;
-    const out: (string | null)[] = [];
-    for (let i = 0; i < col.length; i++) {
-      const v = col.get(i);
-      out.push(v == null ? null : String(v).toUpperCase());
-    }
-    return out;
-  },
+  params: { value: str },
+  returns: str,
+  compute: (batch) =>
+    Array.from(iterRows(batch), (row) =>
+      row.value == null ? null : String(row.value).toUpperCase(),
+    ),
 });
 
 // All WorkerConfig fields are optional — a functions-only worker is valid.
@@ -57,35 +54,46 @@ new Worker({ functions: [upperCase] }).run();
 A worker speaks Arrow IPC over stdin/stdout (or AF_UNIX / HTTP — see
 [Transports](#transports)). It is **not** interactive; DuckDB drives it.
 
-### 2. Attach it from DuckDB
+### 2. Stream rows from a table function
+
+Table functions are incremental producers: build a schema with `toSchema`, keep your
+own `state`, and `emit` batches until you `finish`. DuckDB pulls lazily, so this
+streams without materializing everything up front:
+
+```ts
+import { Worker, defineTableFunction, batchFromColumns, toSchema, int } from "@query-farm/vgi";
+
+const schema = toSchema({ n: int });
+
+const sequence = defineTableFunction({
+  name: "sequence",
+  description: "Emit integers 0..n-1, streamed in batches of 1000",
+  args: { n: int },
+  onBind: () => ({ outputSchema: schema }),
+  initialState: ({ args }) => ({ i: 0, n: Number(args.n) }),
+  process: (_params, state, out) => {
+    if (state.i >= state.n) return out.finish();
+    const end = Math.min(state.i + 1000, state.n);
+    const ns: bigint[] = [];
+    for (let k = state.i; k < end; k++) ns.push(BigInt(k));
+    out.emit(batchFromColumns({ n: ns }, schema));
+    state.i = end;
+  },
+});
+
+new Worker({ functions: [upperCase, sequence] }).run();
+```
+
+### 3. Attach it from DuckDB
 
 The `LOCATION` is a shell command DuckDB runs to spawn the worker. For Bun:
 
 ```sql
 LOAD vgi;
 ATTACH 'demo' AS demo (TYPE vgi, LOCATION 'bun run /abs/path/to/worker.ts');
+
 SELECT demo.upper_case('hello');   -- HELLO
-```
-
-### 3. (Optional) call a worker from TypeScript
-
-You can drive a worker directly from TypeScript — without DuckDB — using the client:
-
-```ts
-import { VgiClient, Arguments, batchFromRows } from "@query-farm/vgi";
-import { subprocessConnect } from "@query-farm/vgi-rpc";
-import { Schema, Field, Utf8 } from "@query-farm/apache-arrow";
-
-const rpc = subprocessConnect(["bun", "run", "/abs/path/to/worker.ts"]);
-const client = new VgiClient(rpc);
-
-const schema = new Schema([new Field("value", new Utf8(), true)]);
-const input = batchFromRows([{ value: "hello" }, { value: "world" }], schema);
-
-for await (const rows of client.scalarFunctionRows({ functionName: "upper_case", input: [input] })) {
-  for (const row of rows) console.log(row);
-}
-client.close();
+SELECT * FROM demo.sequence(5);    -- 0,1,2,3,4
 ```
 
 ## Function types
