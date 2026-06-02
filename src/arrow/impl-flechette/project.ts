@@ -1,3 +1,4 @@
+// Copyright 2025, 2026 Query Farm LLC - https://query.farm
 // Schema/batch projection by column index for the flechette backend.
 
 import { tableFromColumns } from "@uwdata/flechette";

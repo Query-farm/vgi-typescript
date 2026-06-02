@@ -1,5 +1,5 @@
-// © Copyright 2025, 2026 Query Farm LLC - https://query.farm
-// SPDX-License-Identifier: Apache-2.0
+// Copyright 2025, 2026 Query Farm LLC - https://query.farm
+// SPDX-License-Identifier: LicenseRef-QueryFarm-Source-Available-1.0
 
 // End-to-end test of FunctionStorageCfDo against a REAL Cloudflare Worker +
 // Durable Object over HTTP (a local `wrangler dev` or a deployed instance) —

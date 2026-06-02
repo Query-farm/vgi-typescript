@@ -1,3 +1,4 @@
+// Copyright 2025, 2026 Query Farm LLC - https://query.farm
 // ArgumentSpec: converts function argument definitions to Arrow schema with VGI metadata keys.
 // Must produce byte-identical schemas to Python's argument_specs_to_schema().
 

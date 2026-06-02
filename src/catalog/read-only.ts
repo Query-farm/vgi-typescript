@@ -1,3 +1,4 @@
+// Copyright 2025, 2026 Query Farm LLC - https://query.farm
 // ReadOnlyCatalogInterface: derives catalog from registered functions + descriptors.
 
 import { type VgiSchema, schema as schema_, type VgiField, field, type VgiDataType, int64, utf8, binary, bool, nullType, list, isInt } from "../arrow/index.js";

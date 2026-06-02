@@ -1,3 +1,4 @@
+// Copyright 2025, 2026 Query Farm LLC - https://query.farm
 // Example aggregate function implementations.
 // Ports vgi_count, vgi_sum, vgi_avg from vgi-python/vgi/examples/aggregate.py.
 

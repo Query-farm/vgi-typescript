@@ -1,3 +1,4 @@
+// Copyright 2025, 2026 Query Farm LLC - https://query.farm
 // Minimal CF-Workers-shaped module. Builds with `bun build --target=browser`
 // and is inspected for Node-only imports. Exercises the same flechette APIs
 // the production code would touch (decode IPC, encode IPC, per-row read).

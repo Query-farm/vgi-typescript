@@ -1,3 +1,4 @@
+// Copyright 2025, 2026 Query Farm LLC - https://query.farm
 // Example table-in/table-out function implementations.
 // Ports all 7 table-in-out functions from vgi-python/vgi/examples/table_in_out.py.
 
@@ -21,7 +22,7 @@ import {
   type TableInOutBindParams,
   type TableInOutProcessParams,
 } from "../src/index.js";
-import type { OutputCollector } from "vgi-rpc";
+import type { OutputCollector } from "@query-farm/vgi-rpc";
 import type { VgiFunction } from "../src/index.js";
 
 // ============================================================================

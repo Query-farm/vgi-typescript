@@ -1,3 +1,4 @@
+// Copyright 2025, 2026 Query Farm LLC - https://query.farm
 // Minimal Arrow Message-envelope reader.
 //
 // flechette's IPC parser ignores the Message-level `custom_metadata` field

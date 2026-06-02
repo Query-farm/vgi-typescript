@@ -1,3 +1,4 @@
+// Copyright 2025, 2026 Query Farm LLC - https://query.farm
 // Empty (0-row) Arrow batch construction. Handles complex types (List, Map,
 // Struct) that need child data to round-trip through Arrow IPC serialization.
 

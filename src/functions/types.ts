@@ -1,7 +1,8 @@
+// Copyright 2025, 2026 Query Farm LLC - https://query.farm
 // Function config interfaces and VgiFunction base type.
 
 import type { VgiSchema, VgiBatch, VgiDataType } from "../arrow/index.js";
-import type { OutputCollector } from "vgi-rpc";
+import type { OutputCollector } from "@query-farm/vgi-rpc";
 import type {
   FunctionStability,
   NullHandling,

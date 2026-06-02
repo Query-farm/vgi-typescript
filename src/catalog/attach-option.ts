@@ -1,5 +1,5 @@
-// © Copyright 2025-2026, Query.Farm LLC - https://query.farm
-// SPDX-License-Identifier: Apache-2.0
+// Copyright 2025, 2026 Query Farm LLC - https://query.farm
+// SPDX-License-Identifier: LicenseRef-QueryFarm-Source-Available-1.0
 
 // Attach-time option descriptors for declarative worker option discovery.
 // Mirrors `vgi.catalog.attach_option` on the Python side — same Arrow IPC

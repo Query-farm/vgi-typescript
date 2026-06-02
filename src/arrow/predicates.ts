@@ -1,3 +1,4 @@
+// Copyright 2025, 2026 Query Farm LLC - https://query.farm
 // Backend-agnostic Arrow type predicates. Both arrow-js and flechette
 // expose `typeId` on every DataType with identical numeric values, so a
 // single `t.typeId === N` check works regardless of the active backend.

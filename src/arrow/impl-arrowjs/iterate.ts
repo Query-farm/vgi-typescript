@@ -1,3 +1,4 @@
+// Copyright 2025, 2026 Query Farm LLC - https://query.farm
 // Read data out of Arrow batches as plain JS values.
 
 import { RecordBatch, DataType } from "@query-farm/apache-arrow";

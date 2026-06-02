@@ -1,6 +1,7 @@
+// Copyright 2025, 2026 Query Farm LLC - https://query.farm
 // VGI Worker: main entry point for running a VGI function server.
 
-import { VgiRpcServer, serveUnix } from "vgi-rpc";
+import { VgiRpcServer, serveUnix } from "@query-farm/vgi-rpc";
 import { FunctionRegistry } from "./functions/registry.js";
 import type { VgiFunction } from "./functions/types.js";
 import { buildVgiProtocol } from "./protocol/dispatch.js";

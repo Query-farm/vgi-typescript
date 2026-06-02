@@ -1,9 +1,10 @@
+// Copyright 2025, 2026 Query Farm LLC - https://query.farm
 // Table In-Out function implementation.
 // Two-phase: INPUT phase receives and transforms batches,
 // FINALIZE phase emits final results.
 
 import { type VgiSchema, schema, type VgiField, type VgiDataType, type VgiBatch, nullType } from "../arrow/index.js";
-import type { OutputCollector } from "vgi-rpc";
+import type { OutputCollector } from "@query-farm/vgi-rpc";
 import { DEFAULT_MAX_WORKERS, TableInOutPhase } from "../types.js";
 import type {
   BindRequest,

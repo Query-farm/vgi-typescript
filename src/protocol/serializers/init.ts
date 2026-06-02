@@ -1,3 +1,4 @@
+// Copyright 2025, 2026 Query Farm LLC - https://query.farm
 // InitRequest / GlobalInitResponse wire serialization. Schema mirrors
 // vgi-python's InitRequest dataclass — outer wire shape:
 //   bind_call: binary (nested IPC of BindRequest)

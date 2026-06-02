@@ -1,3 +1,4 @@
+// Copyright 2025, 2026 Query Farm LLC - https://query.farm
 // Example worker entry point.
 // Registers ALL example functions and the catalog, matching the Python vgi-example-worker.
 //

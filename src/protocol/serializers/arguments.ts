@@ -1,3 +1,4 @@
+// Copyright 2025, 2026 Query Farm LLC - https://query.farm
 // Arguments wire format — single-row Arrow batch with one "args" Struct
 // column whose children are named `positional_<i>` / `named_<name>`.
 // Matches Python's Arguments.serialize_to_bytes().

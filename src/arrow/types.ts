@@ -1,3 +1,4 @@
+// Copyright 2025, 2026 Query Farm LLC - https://query.farm
 // Backend-agnostic Arrow type surface used throughout vgi-typescript.
 //
 // The interfaces below are the *structural contract* every Arrow backend

@@ -1,3 +1,4 @@
+// Copyright 2025, 2026 Query Farm LLC - https://query.farm
 // arrow-js backend for the vgi-typescript Arrow facade.
 // Default backend (Bun worker, Node) — selected via `#arrow-impl` resolution
 // when no `worker`/`workerd`/`browser` condition is active.

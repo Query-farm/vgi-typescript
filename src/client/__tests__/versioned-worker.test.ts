@@ -1,5 +1,5 @@
-// © Copyright 2025-2026, Query.Farm LLC - https://query.farm
-// SPDX-License-Identifier: Apache-2.0
+// Copyright 2025, 2026 Query Farm LLC - https://query.farm
+// SPDX-License-Identifier: LicenseRef-QueryFarm-Source-Available-1.0
 
 // Unit-level test of the VersionedCatalog attach/catalogs semantics. We
 // exercise the CatalogInterface directly rather than through a real

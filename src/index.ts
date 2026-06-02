@@ -1,3 +1,4 @@
+// Copyright 2025, 2026 Query Farm LLC - https://query.farm
 // VGI TypeScript - Public API
 
 // Function factories (primary API)
@@ -158,6 +159,6 @@ export type {
 } from "./client/types.js";
 
 // Re-export from vgi-rpc for convenience
-export { str, bytes, int, int32, float, float32, bool, toSchema, OutputCollector, AuthContext } from "vgi-rpc";
-export { subprocessConnect, httpConnect } from "vgi-rpc";
-export type { RpcClient, StreamSession, LogMessage } from "vgi-rpc";
+export { str, bytes, int, int32, float, float32, bool, toSchema, OutputCollector, AuthContext } from "@query-farm/vgi-rpc";
+export { subprocessConnect, httpConnect } from "@query-farm/vgi-rpc";
+export type { RpcClient, StreamSession, LogMessage } from "@query-farm/vgi-rpc";

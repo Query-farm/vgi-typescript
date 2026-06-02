@@ -1,3 +1,4 @@
+// Copyright 2025, 2026 Query Farm LLC - https://query.farm
 // Conformance test: catalog dispatch handlers must `await` async overrides.
 //
 // Until the recent async-catalog patch, the catalog handlers in

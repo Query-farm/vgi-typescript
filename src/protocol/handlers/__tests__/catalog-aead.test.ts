@@ -1,5 +1,5 @@
-// © Copyright 2025-2026, Query.Farm LLC - https://query.farm
-// SPDX-License-Identifier: Apache-2.0
+// Copyright 2025, 2026 Query Farm LLC - https://query.farm
+// SPDX-License-Identifier: LicenseRef-QueryFarm-Source-Available-1.0
 
 // Worker-path test for catalog opaque-data AEAD sealing. Confirms that when a
 // signing key is configured, the catalogUnary wrapper unwraps the
@@ -7,7 +7,7 @@
 // envelope sealed for a different principal.
 
 import { describe, test, expect } from "bun:test";
-import type { AuthContext } from "vgi-rpc";
+import type { AuthContext } from "@query-farm/vgi-rpc";
 import {
   CatalogInterface,
   type AttachOpaqueData,

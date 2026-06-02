@@ -1,8 +1,9 @@
+// Copyright 2025, 2026 Query Farm LLC - https://query.farm
 // Example: Catalog introspection via VgiClient.
 // Demonstrates listing catalogs, schemas, and functions.
 
 import { resolve } from "path";
-import { subprocessConnect } from "vgi-rpc";
+import { subprocessConnect } from "@query-farm/vgi-rpc";
 import { VgiClient } from "../src/index.js";
 
 const WORKER = [resolve(import.meta.dirname!, "../bin/vgi-example-worker")];

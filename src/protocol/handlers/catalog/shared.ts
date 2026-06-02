@@ -1,7 +1,8 @@
+// Copyright 2025, 2026 Query Farm LLC - https://query.farm
 // Shared param schemas and helpers for catalog protocol handlers.
 
 import { type VgiSchema, schema, type VgiField, field, type VgiDataType, binary, utf8, bool } from "../../../arrow/index.js";
-import { Protocol, type AuthContext, type CallContext } from "vgi-rpc";
+import { Protocol, type AuthContext, type CallContext } from "@query-farm/vgi-rpc";
 import type { CatalogInterface } from "../../../catalog/interface.js";
 import { NoCatalogError } from "../../../errors.js";
 import { deserializeBatch } from "../../../util/arrow/index.js";

@@ -1,3 +1,4 @@
+// Copyright 2025, 2026 Query Farm LLC - https://query.farm
 // Shared byte-conversion utility. Browser-safe (no bare Buffer.isBuffer).
 
 /** Convert any binary-ish value to a Uint8Array. Returns empty array for null/undefined. */

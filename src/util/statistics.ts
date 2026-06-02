@@ -1,3 +1,4 @@
+// Copyright 2025, 2026 Query Farm LLC - https://query.farm
 // Column statistics: types and sparse-union wire serialization.
 // Mirrors vgi-python's serialize_column_statistics in catalog_interface.py.
 //

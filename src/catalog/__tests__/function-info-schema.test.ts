@@ -1,5 +1,5 @@
-// © Copyright 2025-2026, Query.Farm LLC - https://query.farm
-// SPDX-License-Identifier: Apache-2.0
+// Copyright 2025, 2026 Query Farm LLC - https://query.farm
+// SPDX-License-Identifier: LicenseRef-QueryFarm-Source-Available-1.0
 
 // Regression test: the FunctionInfo objects ReadOnlyCatalogInterface emits
 // must populate every non-nullable field of the generated FunctionInfoSchema.

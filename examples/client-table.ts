@@ -1,8 +1,9 @@
+// Copyright 2025, 2026 Query Farm LLC - https://query.farm
 // Example: Table function calls via VgiClient.
 // Demonstrates calling sequence() and named_params_echo() table functions.
 
 import { resolve } from "path";
-import { subprocessConnect } from "vgi-rpc";
+import { subprocessConnect } from "@query-farm/vgi-rpc";
 import { VgiClient, Arguments } from "../src/index.js";
 
 const WORKER = [resolve(import.meta.dirname!, "../bin/vgi-example-worker")];

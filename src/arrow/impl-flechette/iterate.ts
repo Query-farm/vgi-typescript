@@ -1,3 +1,4 @@
+// Copyright 2025, 2026 Query Farm LLC - https://query.farm
 // Read data out of flechette tables as plain JS values.
 
 import type { VgiBatch } from "../types.js";

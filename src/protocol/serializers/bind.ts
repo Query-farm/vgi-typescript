@@ -1,3 +1,4 @@
+// Copyright 2025, 2026 Query Farm LLC - https://query.farm
 // BindRequest / BindResponse wire serialization. Schemas mirror Python's
 // ArrowSerializableDataclass field declaration order so the format is
 // positional-compatible with the Python reader.

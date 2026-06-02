@@ -1,3 +1,4 @@
+// Copyright 2025, 2026 Query Farm LLC - https://query.farm
 // Conformance test: defineTableFunction.onBind may return a Promise.
 //
 // Until the recent async-bind patch, `onBind` was strictly synchronous —

@@ -1,0 +1,11 @@
+# Tests ship inside src/ via the package "files" allowlist — exclude them.
+**/__tests__/
+**/*.test.ts
+**/*.test.d.ts
+**/*.spec.ts
+
+# Source maps for the raw TS source dirs (dist/*.map are kept).
+src/**/*.map
+
+# Editor / OS cruft
+.DS_Store

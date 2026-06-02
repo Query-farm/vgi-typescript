@@ -1,7 +1,8 @@
+// Copyright 2025, 2026 Query Farm LLC - https://query.farm
 // Catalog view handlers: view_get/create/drop/rename/comment_set.
 
 import { type VgiSchema, schema, type VgiField, field, type VgiDataType, binary, utf8 } from "../../../arrow/index.js";
-import { Protocol } from "vgi-rpc";
+import { Protocol } from "@query-farm/vgi-rpc";
 import { encodeViewInfo } from "../../../generated/vgi-client.js";
 import { CatalogViewGetResultSchema } from "../../../generated/vgi-protocol-schemas.js";
 import { toUint8Array } from "../../../util/bytes.js";

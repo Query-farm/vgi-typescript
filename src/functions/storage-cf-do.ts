@@ -1,3 +1,4 @@
+// Copyright 2025, 2026 Query Farm LLC - https://query.farm
 // Cloudflare Durable Object storage for VGI function state.
 //
 // Port of vgi-python's vgi/function_storage_cf_do.py. Talks the Cloudflare

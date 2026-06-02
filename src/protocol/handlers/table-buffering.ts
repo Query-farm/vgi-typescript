@@ -1,3 +1,4 @@
+// Copyright 2025, 2026 Query Farm LLC - https://query.farm
 // Unary handlers for the table_buffering (Sink+Source) lifecycle:
 //   table_buffering_process    — sink one input batch, return state_id
 //   table_buffering_combine    — group/merge state_ids -> finalize_state_ids
@@ -9,7 +10,7 @@
 // vgi-python's worker._load_table_buffering_params.
 
 import { deserializeBatch } from "../../arrow/index.js";
-import { Protocol } from "vgi-rpc";
+import { Protocol } from "@query-farm/vgi-rpc";
 import type { FunctionRegistry } from "../../functions/registry.js";
 import { toUint8Array } from "../../util/bytes.js";
 import { batchToScalarDict, batchToSecretDict } from "../../util/arrow/index.js";

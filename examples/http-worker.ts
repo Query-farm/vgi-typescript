@@ -1,8 +1,9 @@
+// Copyright 2025, 2026 Query Farm LLC - https://query.farm
 // Example HTTP worker entry point.
 // Serves the same functions as worker.ts over HTTP transport.
 // Prints PORT:<n> to stdout for test discovery.
 
-import { createHttpHandler, unpackStateToken } from "vgi-rpc";
+import { createHttpHandler, unpackStateToken } from "@query-farm/vgi-rpc";
 import { arrowStateSerializer } from "../src/protocol/state-serializer.js";
 import { FunctionRegistry } from "../src/functions/registry.js";
 import { buildVgiProtocol } from "../src/protocol/dispatch.js";

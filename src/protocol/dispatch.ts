@@ -1,8 +1,9 @@
+// Copyright 2025, 2026 Query Farm LLC - https://query.farm
 // Build VGI protocol from worker implementation.
 // Orchestrator that registers function, aggregate, and catalog handlers
 // against vgi-rpc Protocol. The handler implementations live in handlers/.
 
-import { Protocol } from "vgi-rpc";
+import { Protocol } from "@query-farm/vgi-rpc";
 
 // NOTE: We must NOT use vgi-rpc's str/bytes/int/etc. singletons in Schema objects
 // because Bun loads apache-arrow as separate module instances for our code vs vgi-rpc's

@@ -1,3 +1,4 @@
+// Copyright 2025, 2026 Query Farm LLC - https://query.farm
 import { describe, test, expect } from "bun:test";
 import { inferFieldType, arrowStateSerializer } from "../state-serializer.js";
 import { type VgiDataType } from "../../arrow/index.js";

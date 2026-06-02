@@ -1,3 +1,4 @@
+// Copyright 2025, 2026 Query Farm LLC - https://query.farm
 // Browser test: VgiClient over HTTP against the live trains service.
 
 // Import httpConnect directly from vgi-rpc client source to avoid bundling

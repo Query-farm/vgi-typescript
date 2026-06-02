@@ -1,3 +1,4 @@
+// Copyright 2025, 2026 Query Farm LLC - https://query.farm
 // InMemoryCatalog: full read-write CatalogInterface implementation.
 // Matches Python vgi/examples/catalog.py
 

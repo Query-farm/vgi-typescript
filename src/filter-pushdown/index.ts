@@ -1,3 +1,4 @@
+// Copyright 2025, 2026 Query Farm LLC - https://query.farm
 // Filter pushdown — types, deserialization from the wire format, evaluation
 // against Arrow batches, and an OutputCollector wrapper that applies filters
 // transparently. Ported from vgi-python/vgi/table_filter_pushdown.py.

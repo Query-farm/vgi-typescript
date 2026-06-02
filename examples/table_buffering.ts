@@ -1,3 +1,4 @@
+// Copyright 2025, 2026 Query Farm LLC - https://query.farm
 // Example table_buffering (Sink+Source) function implementations.
 // Ports the TableBufferingFunction fixtures from
 // vgi-python/vgi/_test_fixtures/table_in_out.py.
@@ -26,7 +27,7 @@ import {
   type TableBufferingParams,
   type VgiFunction,
 } from "../src/index.js";
-import type { OutputCollector } from "vgi-rpc";
+import type { OutputCollector } from "@query-farm/vgi-rpc";
 
 const TE = new TextEncoder();
 const ns = (s: string) => TE.encode(s);

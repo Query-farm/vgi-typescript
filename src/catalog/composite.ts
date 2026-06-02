@@ -1,3 +1,4 @@
+// Copyright 2025, 2026 Query Farm LLC - https://query.farm
 // CompositeCatalogInterface — fan one worker out across multiple
 // ReadOnlyCatalogInterface instances, picking which one handles each call by
 // the `name` passed at attach time, then by the `attachOpaqueData` returned for all

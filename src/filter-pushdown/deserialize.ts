@@ -1,3 +1,4 @@
+// Copyright 2025, 2026 Query Farm LLC - https://query.farm
 // Deserialize pushdown filters from the wire format (Arrow RecordBatch with
 // JSON specs in column 0 and value-ref scalars in columns 1+).
 

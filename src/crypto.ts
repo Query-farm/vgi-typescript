@@ -1,5 +1,5 @@
-// © Copyright 2025-2026, Query.Farm LLC - https://query.farm
-// SPDX-License-Identifier: Apache-2.0
+// Copyright 2025, 2026 Query Farm LLC - https://query.farm
+// SPDX-License-Identifier: LicenseRef-QueryFarm-Source-Available-1.0
 
 // Catalog opaque-data AEAD envelopes.
 //
@@ -18,7 +18,7 @@
 // Matches vgi-python's vgi_rpc.crypto / vgi.worker and vgi-go's vgi/crypto.go.
 
 import { xchacha20poly1305 } from "@noble/ciphers/chacha.js";
-import type { AuthContext } from "vgi-rpc";
+import type { AuthContext } from "@query-farm/vgi-rpc";
 
 const _UTF8 = new TextEncoder();
 

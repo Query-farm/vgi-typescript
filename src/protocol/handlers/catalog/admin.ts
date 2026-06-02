@@ -1,8 +1,9 @@
+// Copyright 2025, 2026 Query Farm LLC - https://query.farm
 // Catalog admin handlers: attach/detach/create/drop, version, transactions,
 // schemas (list, get, create, drop), schema contents listings.
 
 import { type VgiSchema, schema, type VgiField, field, type VgiDataType, binary, utf8, bool } from "../../../arrow/index.js";
-import { Protocol, type CallContext } from "vgi-rpc";
+import { Protocol, type CallContext } from "@query-farm/vgi-rpc";
 import { encodeSchemaInfo, encodeTableInfo, encodeViewInfo, encodeFunctionInfo, encodeCatalogInfo } from "../../../generated/vgi-client.js";
 import {
   CatalogCatalogsResultSchema,

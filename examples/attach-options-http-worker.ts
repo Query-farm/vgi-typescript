@@ -1,10 +1,11 @@
+// Copyright 2025, 2026 Query Farm LLC - https://query.farm
 // HTTP variant of the attach-options example worker. Same semantics as
 // examples/attach-options-worker.ts (subprocess), just fronted by an HTTP
 // server for integration tests over the HTTP transport.
 // Prints PORT:<n> to stdout for test discovery.
 
-import { createHttpHandler, unpackStateToken } from "vgi-rpc";
-import type { OutputCollector } from "vgi-rpc";
+import { createHttpHandler, unpackStateToken } from "@query-farm/vgi-rpc";
+import type { OutputCollector } from "@query-farm/vgi-rpc";
 import { arrowStateSerializer } from "../src/protocol/state-serializer.js";
 import { FunctionRegistry } from "../src/functions/registry.js";
 import { buildVgiProtocol } from "../src/protocol/dispatch.js";

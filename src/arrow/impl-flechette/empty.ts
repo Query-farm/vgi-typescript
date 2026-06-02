@@ -1,3 +1,4 @@
+// Copyright 2025, 2026 Query Farm LLC - https://query.farm
 // Empty (0-row) batch construction for the flechette backend.
 
 import { columnFromArray, tableFromColumns } from "@uwdata/flechette";

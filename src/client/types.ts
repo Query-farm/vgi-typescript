@@ -1,3 +1,4 @@
+// Copyright 2025, 2026 Query Farm LLC - https://query.farm
 // Client option types for VgiClient.
 
 import type { VgiBatch } from "../arrow/index.js";

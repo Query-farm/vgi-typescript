@@ -1,3 +1,4 @@
+// Copyright 2025, 2026 Query Farm LLC - https://query.farm
 // Table function implementation.
 // Table functions produce output batches from arguments (no streaming input).
 
@@ -10,7 +11,7 @@ import {
   nullType,
   deserializeBatch,
 } from "../arrow/index.js";
-import type { OutputCollector } from "vgi-rpc";
+import type { OutputCollector } from "@query-farm/vgi-rpc";
 import { DEFAULT_MAX_WORKERS } from "../types.js";
 import type {
   BindRequest,

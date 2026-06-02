@@ -1,5 +1,5 @@
-// © Copyright 2025-2026, Query.Farm LLC - https://query.farm
-// SPDX-License-Identifier: Apache-2.0
+// Copyright 2025, 2026 Query Farm LLC - https://query.farm
+// SPDX-License-Identifier: LicenseRef-QueryFarm-Source-Available-1.0
 
 // Connects a VgiClient to a pre-started vgi-python `vgi-example-http`
 // worker. The worker URL is read from $VGI_PYTHON_HTTP_WORKER — tests are
@@ -12,7 +12,7 @@
 // issue with Bun.spawn earlier). Starting the worker from `make` sidesteps
 // that entirely.
 
-import { httpConnect } from "vgi-rpc";
+import { httpConnect } from "@query-farm/vgi-rpc";
 import { VgiClient } from "../../../index.js";
 
 export function pythonHttpWorkerAvailable(): boolean {

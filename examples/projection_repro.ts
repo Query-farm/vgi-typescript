@@ -1,3 +1,4 @@
+// Copyright 2025, 2026 Query Farm LLC - https://query.farm
 // projection_repro fixture worker — TypeScript port of
 // vgi-python/vgi/_test_fixtures/projection_repro/worker.py.
 //
@@ -30,7 +31,7 @@ import {
   type CatalogDescriptor,
   type TableProcessParams,
 } from "../src/index.js";
-import type { OutputCollector } from "vgi-rpc";
+import type { OutputCollector } from "@query-farm/vgi-rpc";
 import type { VgiFunction } from "../src/index.js";
 
 const HEADERS_TYPE = new List(new Field("item", new Struct([

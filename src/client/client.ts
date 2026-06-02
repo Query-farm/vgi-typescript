@@ -1,8 +1,9 @@
+// Copyright 2025, 2026 Query Farm LLC - https://query.farm
 // VgiClient — high-level client for calling VGI worker functions and catalog API.
 // Works with any RpcClient (subprocess or HTTP transport).
 
 import { type VgiSchema, schema as schema_, type VgiField, field, type VgiBatch, type VgiDataType, utf8, binary, list } from "../arrow/index.js";
-import { type RpcClient, type StreamSession } from "vgi-rpc";
+import { type RpcClient, type StreamSession } from "@query-farm/vgi-rpc";
 import {
   serializeBindRequest,
   deserializeBindResponse,
@@ -68,7 +69,7 @@ import type {
  *
  * Works with any RpcClient transport (subprocess or HTTP):
  * ```ts
- * import { subprocessConnect } from "vgi-rpc";
+ * import { subprocessConnect } from "@query-farm/vgi-rpc";
  * import { VgiClient, Arguments } from "vgi";
  *
  * const rpc = subprocessConnect(["./my-worker"]);

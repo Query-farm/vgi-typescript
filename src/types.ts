@@ -1,3 +1,4 @@
+// Copyright 2025, 2026 Query Farm LLC - https://query.farm
 // VGI core types - enums and constants matching Python wire format exactly.
 
 export enum FunctionType {

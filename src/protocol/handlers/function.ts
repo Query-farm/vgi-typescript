@@ -1,9 +1,10 @@
+// Copyright 2025, 2026 Query Farm LLC - https://query.farm
 // Handlers for the per-function lifecycle: bind, init (exchange), cardinality,
 // statistics. Generic over scalar/table/table-in-out — each function kind
 // implements VgiFunction.bind/globalInit/createStreamHandlers.
 
 import { type VgiSchema, schema, type VgiField, field, type VgiDataType, binary, int64 } from "../../arrow/index.js";
-import { Protocol } from "vgi-rpc";
+import { Protocol } from "@query-farm/vgi-rpc";
 import type { FunctionRegistry } from "../../functions/registry.js";
 import type { StreamHandlers, HandlerState } from "../../functions/types.js";
 import {

@@ -1,9 +1,10 @@
+// Copyright 2025, 2026 Query Farm LLC - https://query.farm
 // FilteringOutputCollector — wraps an OutputCollector and applies pushdown
 // filters to every emitted batch — plus human-readable formatters used in
 // debug logs.
 
 import { type VgiBatch, type VgiSchema, isBatch } from "../arrow/index.js";
-import type { OutputCollector } from "vgi-rpc";
+import type { OutputCollector } from "@query-farm/vgi-rpc";
 import { batchFromColumns } from "../util/arrow/index.js";
 import { ComparisonOp, type ExprNode, type Filter } from "./types.js";
 import { PushdownFilters } from "./evaluate.js";

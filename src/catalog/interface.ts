@@ -1,3 +1,4 @@
+// Copyright 2025, 2026 Query Farm LLC - https://query.farm
 // CatalogInterface abstract class with ~35 methods.
 // Matching Python's vgi/catalog/catalog_interface.py
 

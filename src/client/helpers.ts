@@ -1,3 +1,4 @@
+// Copyright 2025, 2026 Query Farm LLC - https://query.farm
 // Internal helpers shared by VgiClient methods.
 
 import { toUint8Array } from "../util/bytes.js";

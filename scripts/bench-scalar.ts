@@ -1,3 +1,4 @@
+// Copyright 2025, 2026 Query Farm LLC - https://query.farm
 // Microbenchmarks for scalar function compute paths.
 //
 // Establishes the baseline cost of the existing untyped `compute` path

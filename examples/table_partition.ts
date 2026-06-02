@@ -1,3 +1,4 @@
+// Copyright 2025, 2026 Query Farm LLC - https://query.farm
 // batch_index + partition_columns + transaction_storage table fixtures.
 // Ports vgi-python/vgi/_test_fixtures/table/{batch_index,batch_index_broken,
 // partition_columns,partition_columns_broken,transaction_storage}.py.
@@ -13,7 +14,7 @@ import {
   type TableBindParams,
   type TableProcessParams,
 } from "../src/index.js";
-import type { OutputCollector } from "vgi-rpc";
+import type { OutputCollector } from "@query-farm/vgi-rpc";
 import type { VgiFunction } from "../src/index.js";
 
 const CHUNK_SIZE = 1000;

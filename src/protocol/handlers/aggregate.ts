@@ -1,3 +1,4 @@
+// Copyright 2025, 2026 Query Farm LLC - https://query.farm
 // Handlers for the aggregate function lifecycle: bind allocates execution_id
 // and output schema, update folds rows into per-group state, combine merges
 // states across workers, finalize emits one result row per group, destructor
@@ -13,7 +14,7 @@ import {
   serializeBatch,
   deserializeBatch,
 } from "../../arrow/index.js";
-import { Protocol } from "vgi-rpc";
+import { Protocol } from "@query-farm/vgi-rpc";
 import type { FunctionRegistry } from "../../functions/registry.js";
 import { deserializeArguments } from "../serialize.js";
 import { deserializeSchema, serializeSchema } from "../../util/arrow/index.js";

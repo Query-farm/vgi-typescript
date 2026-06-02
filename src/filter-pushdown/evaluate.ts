@@ -1,3 +1,4 @@
+// Copyright 2025, 2026 Query Farm LLC - https://query.farm
 // Filter pushdown evaluation: row-by-row predicate evaluation against
 // Arrow RecordBatches, plus the PushdownFilters class that owns a parsed
 // filter set and applies it to batches.

@@ -1,3 +1,4 @@
+// Copyright 2025, 2026 Query Farm LLC - https://query.farm
 // Shared function and catalog registration for example workers.
 // Used by both the IPC worker (worker.ts) and HTTP worker (http-worker.ts).
 

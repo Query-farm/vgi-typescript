@@ -1,3 +1,4 @@
+// Copyright 2025, 2026 Query Farm LLC - https://query.farm
 // Versioned VGI example worker — TS port of vgi-python/vgi/examples/versioned.py.
 //
 // Advertises per-catalog implementation_version + data_version_spec via

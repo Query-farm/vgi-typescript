@@ -1,3 +1,4 @@
+// Copyright 2025, 2026 Query Farm LLC - https://query.farm
 // Public facade. Internal vgi-typescript code imports Arrow operations
 // from here; the active backend is selected at module-resolution time
 // via the `#arrow-impl` subpath in package.json's `imports` field.

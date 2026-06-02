@@ -1,3 +1,4 @@
+// Copyright 2025, 2026 Query Farm LLC - https://query.farm
 // Flechette feasibility spike: round-trip every type case from cases.ts
 // through both directions of arrow-js <-> flechette IPC, and report what
 // works versus what flechette can't produce/consume.

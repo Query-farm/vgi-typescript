@@ -1,3 +1,4 @@
+// Copyright 2025, 2026 Query Farm LLC - https://query.farm
 // Arrow serialization/deserialization for VGI protocol types.
 // Barrel re-export — implementations live in serializers/. The wire format
 // must match Python's ArrowSerializableDataclass output (identical field

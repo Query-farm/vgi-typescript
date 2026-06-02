@@ -1,3 +1,4 @@
+// Copyright 2025, 2026 Query Farm LLC - https://query.farm
 // arrow-js impl of column-statistics serialization. Builds a sparse-union
 // column manually with `makeData` + `typeIds` buffer + per-type children.
 // This is the only spot in vgi-typescript that touches makeData directly,

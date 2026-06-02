@@ -1,7 +1,8 @@
+// Copyright 2025, 2026 Query Farm LLC - https://query.farm
 // Catalog index handlers: index_get, schema_contents_indexes.
 
 import { type VgiSchema, schema, type VgiField, field, type VgiDataType, binary, utf8 } from "../../../arrow/index.js";
-import { Protocol } from "vgi-rpc";
+import { Protocol } from "@query-farm/vgi-rpc";
 import { encodeIndexInfo } from "../../../generated/vgi-client.js";
 import {
   CatalogIndexGetResultSchema,

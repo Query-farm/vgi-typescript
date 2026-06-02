@@ -1,3 +1,4 @@
+// Copyright 2025, 2026 Query Farm LLC - https://query.farm
 // Storage for VGI function state.
 // Provides shared state across worker processes for distributed execution.
 // Port of vgi-python's vgi/function_storage.py.

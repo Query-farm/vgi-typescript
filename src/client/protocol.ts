@@ -1,3 +1,4 @@
+// Copyright 2025, 2026 Query Farm LLC - https://query.farm
 // Wrap/unwrap helpers for the VGI double-wrapping protocol.
 // Mirrors the server's dispatch.ts:64-84 (unwrapRequest/wrapResult).
 

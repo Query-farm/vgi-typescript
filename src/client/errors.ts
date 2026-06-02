@@ -1,7 +1,8 @@
+// Copyright 2025, 2026 Query Farm LLC - https://query.farm
 // VgiClient error class + RpcClient wrapper that translates RpcError into
 // VgiClientError, preserving the worker's remote traceback.
 
-import { RpcError, type RpcClient } from "vgi-rpc";
+import { RpcError, type RpcClient } from "@query-farm/vgi-rpc";
 
 /** Error thrown by VgiClient when an RPC call fails or returns unexpected data. */
 export class VgiClientError extends Error {

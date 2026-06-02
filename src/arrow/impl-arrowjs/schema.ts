@@ -1,3 +1,4 @@
+// Copyright 2025, 2026 Query Farm LLC - https://query.farm
 // Factory-style constructors for arrow-js Schema/Field/DataType values.
 // Mirrors flechette's API so internal code can call the same factory
 // regardless of the active backend.

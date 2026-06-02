@@ -1,9 +1,10 @@
+// Copyright 2025, 2026 Query Farm LLC - https://query.farm
 // Example: Scalar function calls via VgiClient.
 // Demonstrates calling upper_case() and multiply() scalar functions.
 
 import { resolve } from "path";
 import { Schema, Field, Utf8, Int64, RecordBatch } from "@query-farm/apache-arrow";
-import { subprocessConnect } from "vgi-rpc";
+import { subprocessConnect } from "@query-farm/vgi-rpc";
 import { VgiClient, Arguments, batchFromRows } from "../src/index.js";
 
 const WORKER = [resolve(import.meta.dirname!, "../bin/vgi-example-worker")];

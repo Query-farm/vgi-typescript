@@ -1,3 +1,4 @@
+// Copyright 2025, 2026 Query Farm LLC - https://query.farm
 // Extract ColumnStatistics by running queries against an in-process DuckDB.
 //
 // This mirrors vgi-python's catalog.duckdb_statistics.statistics_from_duckdb

@@ -1,10 +1,10 @@
-// © Copyright 2025-2026, Query.Farm LLC - https://query.farm
-// SPDX-License-Identifier: Apache-2.0
+// Copyright 2025, 2026 Query Farm LLC - https://query.farm
+// SPDX-License-Identifier: LicenseRef-QueryFarm-Source-Available-1.0
 
 // Tests for the AEAD opaque-data envelope primitive (src/crypto.ts).
 
 import { describe, test, expect } from "bun:test";
-import type { AuthContext } from "vgi-rpc";
+import type { AuthContext } from "@query-farm/vgi-rpc";
 import {
   sealBytes,
   openBytes,

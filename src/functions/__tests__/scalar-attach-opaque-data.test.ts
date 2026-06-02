@@ -1,3 +1,4 @@
+// Copyright 2025, 2026 Query Farm LLC - https://query.farm
 // Conformance test: scalar function outputType callback sees the bind
 // request's attach_opaque_data and transaction_opaque_data via params.bindCall. When a scalar
 // is invoked through an ATTACHed catalog the C++ extension forwards those

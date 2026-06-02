@@ -1,3 +1,4 @@
+// Copyright 2025, 2026 Query Farm LLC - https://query.farm
 // Example scalar function implementations.
 // Ports all 22 scalar function groups from vgi-python/vgi/examples/scalar.py.
 

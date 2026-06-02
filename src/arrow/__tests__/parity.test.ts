@@ -1,3 +1,4 @@
+// Copyright 2025, 2026 Query Farm LLC - https://query.farm
 // Backend-parity smoke test for the Arrow facade.
 //
 // Exercises the facade's schema/factory/IPC/iterate surface so the same

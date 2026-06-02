@@ -1,3 +1,4 @@
+// Copyright 2025, 2026 Query Farm LLC - https://query.farm
 // Scalar function implementation.
 // Scalar functions receive columnar input and produce a single output column
 // with 1:1 row mapping.
@@ -13,7 +14,7 @@ import {
   isNull,
   isBatch,
 } from "../arrow/index.js";
-import type { OutputCollector, AuthContext } from "vgi-rpc";
+import type { OutputCollector, AuthContext } from "@query-farm/vgi-rpc";
 import {
   FunctionType,
   FunctionStability,

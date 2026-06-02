@@ -1,3 +1,4 @@
+// Copyright 2025, 2026 Query Farm LLC - https://query.farm
 // Shared schemas and helpers used by every protocol handler.
 
 import { type VgiSchema, schema, type VgiField, field, type VgiDataType, binary } from "../../arrow/index.js";

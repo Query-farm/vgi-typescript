@@ -1,3 +1,4 @@
+// Copyright 2025, 2026 Query Farm LLC - https://query.farm
 // Function registry: name -> VgiFunction lookup with overload resolution.
 
 import { type VgiDataType, isBinary, isBool, isDecimal, isFloat, isInt, isNull, isUtf8 } from "../arrow/index.js";

@@ -1,3 +1,4 @@
+// Copyright 2025, 2026 Query Farm LLC - https://query.farm
 // TS port of vgi-python/vgi/examples/attach_options.py — a worker that
 // declares attach-time options of many Arrow types and echoes them back
 // via a table function. Exercises the attach-time options pipeline
@@ -49,7 +50,7 @@ import {
   type TableProcessParams,
 } from "../src/index.js";
 import { FunctionRegistry } from "../src/functions/registry.js";
-import type { OutputCollector } from "vgi-rpc";
+import type { OutputCollector } from "@query-farm/vgi-rpc";
 import {
   type AttachOptionSpec,
   serializeAttachOptionSpecs,

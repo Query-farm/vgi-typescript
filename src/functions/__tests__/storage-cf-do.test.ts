@@ -1,5 +1,5 @@
-// © Copyright 2025, 2026 Query Farm LLC - https://query.farm
-// SPDX-License-Identifier: Apache-2.0
+// Copyright 2025, 2026 Query Farm LLC - https://query.farm
+// SPDX-License-Identifier: LicenseRef-QueryFarm-Source-Available-1.0
 
 // Tests for the Cloudflare Durable Object storage client: it must speak the
 // DO's unified state_* / queue_* protocol, carry a valid shard_key on every

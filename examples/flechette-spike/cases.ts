@@ -1,3 +1,4 @@
+// Copyright 2025, 2026 Query Farm LLC - https://query.farm
 // Type fixtures for the flechette feasibility spike. Each case represents one
 // of the gnarly type paths in src/util/arrow/build.ts that currently bypasses
 // arrow-js's Builder API.

@@ -1,3 +1,4 @@
+// Copyright 2025, 2026 Query Farm LLC - https://query.farm
 // Declarative catalog descriptor types.
 
 import type { VgiSchema, VgiDataType } from "../arrow/index.js";

@@ -1,3 +1,4 @@
+// Copyright 2025, 2026 Query Farm LLC - https://query.farm
 // Mask-based row filtering for flechette tables.
 
 import type { VgiBatch } from "../types.js";

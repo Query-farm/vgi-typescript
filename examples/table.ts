@@ -1,3 +1,4 @@
+// Copyright 2025, 2026 Query Farm LLC - https://query.farm
 // Example table function implementations.
 // Ports all 18 table function groups from vgi-python/vgi/examples/table.py.
 
@@ -35,7 +36,7 @@ import {
   type Filter,
   type PushdownFilters,
 } from "../src/index.js";
-import type { OutputCollector } from "vgi-rpc";
+import type { OutputCollector } from "@query-farm/vgi-rpc";
 import type { VgiFunction } from "../src/index.js";
 
 // ============================================================================

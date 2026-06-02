@@ -1,3 +1,4 @@
+// Copyright 2025, 2026 Query Farm LLC - https://query.farm
 // VGI Client — browser-safe entry point.
 //
 // Import from "vgi/client" instead of "vgi" when targeting browsers, Deno,
@@ -7,7 +8,7 @@
 //
 // Usage:
 //   import { VgiClient, Arguments } from "vgi/client";
-//   import { httpConnect } from "vgi-rpc";      // or your own RpcClient
+//   import { httpConnect } from "@query-farm/vgi-rpc";      // or your own RpcClient
 //
 //   const rpc = httpConnect("https://my-vgi-server/");
 //   const client = new VgiClient(rpc);
@@ -107,5 +108,5 @@ export { toUint8Array } from "./util/bytes.js";
 
 // Re-export transport types from vgi-rpc (type-only — zero runtime cost).
 // Users import the actual connect functions (httpConnect, pipeConnect) from
-// "vgi-rpc" directly so their bundler can tree-shake the server-side code.
-export type { RpcClient, StreamSession, LogMessage } from "vgi-rpc";
+// "@query-farm/vgi-rpc" directly so their bundler can tree-shake the server-side code.
+export type { RpcClient, StreamSession, LogMessage } from "@query-farm/vgi-rpc";

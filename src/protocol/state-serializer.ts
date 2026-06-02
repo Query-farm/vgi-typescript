@@ -1,3 +1,4 @@
+// Copyright 2025, 2026 Query Farm LLC - https://query.farm
 // Arrow IPC state serializer for HTTP transport.
 // Replaces JSON serialization with Arrow IPC for the exchange state token,
 // avoiding base64/hex overhead and staying consistent with the rest of the protocol.
@@ -20,7 +21,7 @@ import {
   deserializeBatch,
   batchFromColumns,
 } from "../arrow/index.js";
-import type { StateSerializer } from "vgi-rpc";
+import type { StateSerializer } from "@query-farm/vgi-rpc";
 import { toUint8Array } from "../util/bytes.js";
 
 /** Schema for the exchange state carried in HTTP state tokens. */

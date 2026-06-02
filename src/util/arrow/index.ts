@@ -1,3 +1,4 @@
+// Copyright 2025, 2026 Query Farm LLC - https://query.farm
 // Back-compat shim. Arrow utilities have moved to src/arrow/ (the backend
 // facade). This file is kept so existing imports of `../util/arrow/index.js`
 // continue to work during step 2 of the facade migration. Once all callers

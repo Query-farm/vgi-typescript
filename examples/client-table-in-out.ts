@@ -1,9 +1,10 @@
+// Copyright 2025, 2026 Query Farm LLC - https://query.farm
 // Example: Table-in-out function calls via VgiClient.
 // Demonstrates calling echo() and buffer_input() table-in-out functions.
 
 import { resolve } from "path";
 import { Schema, Field, Int64, Utf8 } from "@query-farm/apache-arrow";
-import { subprocessConnect } from "vgi-rpc";
+import { subprocessConnect } from "@query-farm/vgi-rpc";
 import { VgiClient, batchFromRows } from "../src/index.js";
 
 const WORKER = [resolve(import.meta.dirname!, "../bin/vgi-example-worker")];

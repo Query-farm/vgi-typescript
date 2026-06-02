@@ -1,3 +1,4 @@
+// Copyright 2025, 2026 Query Farm LLC - https://query.farm
 // Aggregate function framework — mirrors vgi-python's vgi/aggregate_function.py
 // protocol at the wire level. Per-execution state lives in an in-memory store
 // keyed by (execution_id, group_id); fine for subprocess workers and for

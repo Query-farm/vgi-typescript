@@ -1,3 +1,4 @@
+// Copyright 2025, 2026 Query Farm LLC - https://query.farm
 // Factory-style constructors for flechette Schema/Field/DataType values.
 // flechette already exposes these as factory functions, so most of this
 // file is direct re-exports. The few wrapper functions handle ergonomic

@@ -1,3 +1,4 @@
+// Copyright 2025, 2026 Query Farm LLC - https://query.farm
 // Table sink+source ("table_buffering") function implementation.
 //
 // Three phases, mirroring the C++ PhysicalVgiTableBuffering Sink+Source
@@ -22,7 +23,7 @@ import {
   type VgiBatch,
   nullType,
 } from "../arrow/index.js";
-import type { OutputCollector } from "vgi-rpc";
+import type { OutputCollector } from "@query-farm/vgi-rpc";
 import { DEFAULT_MAX_WORKERS, TableInOutPhase } from "../types.js";
 import type {
   BindRequest,

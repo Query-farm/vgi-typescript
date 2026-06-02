@@ -1,3 +1,4 @@
+// Copyright 2025, 2026 Query Farm LLC - https://query.farm
 // VGI-specific error classes.
 
 export class VgiError extends Error {

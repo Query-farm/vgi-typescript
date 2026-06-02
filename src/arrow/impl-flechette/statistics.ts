@@ -1,3 +1,4 @@
+// Copyright 2025, 2026 Query Farm LLC - https://query.farm
 // flechette impl of column-statistics serialization.
 //
 // Non-empty stats (with real per-column min/max) require a sparse_union

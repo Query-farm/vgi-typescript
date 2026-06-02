@@ -1,3 +1,4 @@
+// Copyright 2025, 2026 Query Farm LLC - https://query.farm
 // Arrow IPC stream serialization/deserialization for the flechette backend.
 //
 // flechette's `tableFromIPC` accepts either Uint8Array or Uint8Array[] (the

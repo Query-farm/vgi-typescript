@@ -1,3 +1,4 @@
+// Copyright 2025, 2026 Query Farm LLC - https://query.farm
 // Example: VgiClient over HTTP transport.
 //
 // This demonstrates using VgiClient with httpConnect, which works in any
@@ -9,7 +10,7 @@
 // avoid pulling in server-side code:
 //
 //   import { VgiClient, Arguments } from "vgi/client";
-//   import { httpConnect } from "vgi-rpc";
+//   import { httpConnect } from "@query-farm/vgi-rpc";
 //
 // NOTE: Streaming function calls (tableFunction, scalarFunction, etc.) require
 // the HTTP server to support the VGI streaming protocol. This example shows
@@ -17,7 +18,7 @@
 // any HTTP transport.
 
 import { resolve } from "path";
-import { httpConnect } from "vgi-rpc";
+import { httpConnect } from "@query-farm/vgi-rpc";
 import { VgiClient } from "../src/client-entry.js";
 
 async function main() {

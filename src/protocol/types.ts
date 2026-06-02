@@ -1,3 +1,4 @@
+// Copyright 2025, 2026 Query Farm LLC - https://query.farm
 // Protocol-level types for the VGI worker. Snake_case to match the Python
 // side and the generated vgi-client.ts wire interfaces. These are the
 // *deserialized* shapes handlers see — fields that cross the wire as `binary`

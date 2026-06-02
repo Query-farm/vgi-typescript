@@ -1,3 +1,4 @@
+// Copyright 2025, 2026 Query Farm LLC - https://query.farm
 // Metadata -> Arrow batch serialization.
 // Must produce batches matching Python's _METADATA_SCHEMA exactly.
 

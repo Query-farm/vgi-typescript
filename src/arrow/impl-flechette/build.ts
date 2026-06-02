@@ -1,3 +1,4 @@
+// Copyright 2025, 2026 Query Farm LLC - https://query.farm
 // Build batches from row objects or column arrays for the flechette backend.
 //
 // flechette's `columnFromArray(values, type)` handles all the complex cases

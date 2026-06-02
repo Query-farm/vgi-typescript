@@ -1,5 +1,5 @@
-// © Copyright 2025, 2026 Query Farm LLC - https://query.farm
-// SPDX-License-Identifier: Apache-2.0
+// Copyright 2025, 2026 Query Farm LLC - https://query.farm
+// SPDX-License-Identifier: LicenseRef-QueryFarm-Source-Available-1.0
 
 // Conformance for the default in-process backend, FunctionStorageSqlite — the
 // state mechanism every non-cloudflare worker uses. Exercises worker state,

@@ -1,3 +1,4 @@
+// Copyright 2025, 2026 Query Farm LLC - https://query.farm
 // flechette backend for the vgi-typescript Arrow facade.
 // Selected via `#arrow-impl` resolution under the workerd / worker / browser
 // conditions. The Bun worker keeps using the arrow-js backend (default).

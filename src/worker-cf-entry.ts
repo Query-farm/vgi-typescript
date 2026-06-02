@@ -1,3 +1,4 @@
+// Copyright 2025, 2026 Query Farm LLC - https://query.farm
 // Cloudflare Workers entrypoint for the VGI worker.
 //
 // Imports the same building blocks as the Bun HTTP worker (Protocol, registry,
@@ -12,7 +13,7 @@
 // `createVgiFetch` rather than a hard-coded singleton, so a CF Worker module
 // can compose multiple registries the same way the Bun worker does.
 
-import { createHttpHandler, unpackStateToken, type Protocol } from "vgi-rpc";
+import { createHttpHandler, unpackStateToken, type Protocol } from "@query-farm/vgi-rpc";
 import { arrowStateSerializer } from "./protocol/state-serializer.js";
 import { buildVgiProtocol, type ProtocolConfig } from "./protocol/dispatch.js";
 
@@ -168,5 +169,5 @@ export type {
 export { arrowStateSerializer, EXCHANGE_STATE_SCHEMA } from "./protocol/state-serializer.js";
 
 // Re-export from vgi-rpc for convenience.
-export { OutputCollector, AuthContext } from "vgi-rpc";
-export type { LogMessage } from "vgi-rpc";
+export { OutputCollector, AuthContext } from "@query-farm/vgi-rpc";
+export type { LogMessage } from "@query-farm/vgi-rpc";

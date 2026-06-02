@@ -1,6 +1,7 @@
+// Copyright 2025, 2026 Query Farm LLC - https://query.farm
 // Catalog handler orchestrator: registers all catalog_* RPC methods.
 
-import { Protocol } from "vgi-rpc";
+import { Protocol } from "@query-farm/vgi-rpc";
 import type { CatalogInterface } from "../../../catalog/interface.js";
 import { makeGetCatalog } from "./shared.js";
 import { registerCatalogAdminMethods } from "./admin.js";

@@ -1,3 +1,4 @@
+// Copyright 2025, 2026 Query Farm LLC - https://query.farm
 // Build Arrow RecordBatches from row objects or column arrays. Handles
 // complex types (List, Map, Struct, Decimal, BigInt-backed Timestamp/Duration)
 // that vectorFromArray can't construct directly.

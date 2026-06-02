@@ -1,3 +1,4 @@
+// Copyright 2025, 2026 Query Farm LLC - https://query.farm
 // Arguments container for VGI function invocations.
 // Holds positional and named scalar values from DuckDB.
 
