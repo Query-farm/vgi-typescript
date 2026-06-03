@@ -87,6 +87,10 @@ export async function statisticsFromDuckDB(
 
   try {
     for (const ext of options?.loadExtensions ?? []) {
+      // INSTALL (autoinstall) then LOAD so the extension is available even on a
+      // fresh machine (e.g. CI) where it isn't pre-installed. INSTALL is a fast
+      // no-op once cached in the duckdb extension dir.
+      await conn.run(`INSTALL ${ext}`);
       await conn.run(`LOAD ${ext}`);
     }
     await setup({
