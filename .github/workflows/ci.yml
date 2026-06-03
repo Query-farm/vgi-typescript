@@ -55,7 +55,7 @@ jobs:
         run: make test-facade-parity
 
   integration:
-    name: Integration (sqllogictest — subprocess + HTTP)
+    name: Integration (sqllogictest — HTTP: arrow-js + flechette)
     runs-on: ubuntu-latest
     env:
       # Make `require vgi` resolve in the generic haybarn-unittest binary:
@@ -100,9 +100,10 @@ jobs:
             > vgi/build/release/test/unittest
           chmod +x vgi/build/release/test/unittest
 
-      - name: Integration tests — subprocess transport
-        run: make -j8 test-subprocess VGI_DIR="$GITHUB_WORKSPACE/vgi"
-
+      # HTTP transport uses one long-lived worker, avoiding the per-test bun
+      # cold-start that makes the subprocess transport (172 spawns) thrash and
+      # time out on CI's 2-core runners. Both Arrow backends are covered here;
+      # flechette is HTTP-only anyway (no stdio incremental streaming).
       - name: Integration tests — HTTP transport (arrow-js backend)
         run: make -j8 test-http VGI_DIR="$GITHUB_WORKSPACE/vgi"
 
