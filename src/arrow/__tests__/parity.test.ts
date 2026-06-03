@@ -62,6 +62,35 @@ describe(`facade (backend=${backend.name})`, () => {
     expect(rows[0].big).toBe(10n);
   });
 
+  test("accepts foreign (arrow-js) fixed-width DataType instances", async () => {
+    // Real worker code (e.g. examples/common.ts) builds schemas with concrete
+    // arrow-js types — `new Int64()` from @query-farm/apache-arrow — NOT the
+    // facade constructors above. The flechette backend must accept these
+    // "foreign" Arrow type objects; a stale flechette dist regressed exactly
+    // this for Int64 (BigInt → "Conversion from 'BigInt' to 'number'"). The
+    // other tests use facade-native types, so they missed it.
+    const arrow: any = await import("@query-farm/apache-arrow");
+    const sch: any = new arrow.Schema([
+      new arrow.Field("lo", new arrow.Int64(), true),
+      new arrow.Field("hi", new arrow.Int64(), true),
+    ]);
+    const batch = batchFromColumns({ lo: [0n], hi: [100n] }, sch);
+    const rows = [...iterRows(deserializeBatch(serializeBatch(batch)))];
+    expect(rows[0].lo).toBe(0n);
+    expect(rows[0].hi).toBe(100n);
+  });
+
+  // KNOWN GAP: foreign arrow-js *variable-width* types (Utf8, and likely
+  // List/Struct) corrupt through the flechette serialize roundtrip — e.g. a
+  // `new Utf8()` column round-trips to ["", "xy\0\0…"] on BOTH flechette src
+  // and dist. flechette's columnFromArray only *tolerates* foreign types for
+  // values; the resulting Column.type isn't writer-safe. Fix belongs in
+  // impl-flechette/build.ts (normalize arrow-js DataTypes → flechette-native
+  // before building/serializing). Surfaces against the C++ extension as
+  // "Invalid Error: basic_string", which is why the flechette worker can't run
+  // the integration suite yet.
+  test.todo("foreign (arrow-js) variable-width types round-trip under flechette");
+
   test("decimal128 BigInt round-trip", () => {
     const sch = schema([field("price", decimal128(38, 4), true)]);
     const batch = batchFromColumns(
