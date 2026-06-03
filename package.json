@@ -72,7 +72,7 @@
   "dependencies": {
     "@noble/ciphers": "^2.2.0",
     "@query-farm/apache-arrow": "^21.1.1",
-    "@query-farm/vgi-rpc": "github:Query-farm/vgi-rpc-typescript#a83245f",
+    "@query-farm/vgi-rpc": "github:Query-farm/vgi-rpc-typescript#325d891",
     "@uwdata/flechette": "github:Query-farm/flechette#fix/timestamp-bigint-encode"
   },
   "devDependencies": {
