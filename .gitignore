@@ -1,6 +1,5 @@
 node_modules/
 dist/
-coverage/
 duckdb_unittest_tempdir/
 *.db
 *.db-wal

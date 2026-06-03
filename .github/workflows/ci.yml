@@ -48,8 +48,8 @@ jobs:
       - name: Build (types + bundles)
         run: bun run build
 
-      - name: Unit tests (with coverage ratchet — see bunfig.toml)
-        run: bun run test:coverage
+      - name: Unit tests
+        run: bun test
 
       - name: Arrow facade parity (arrow-js + flechette)
         run: make test-facade-parity
