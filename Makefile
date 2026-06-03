@@ -126,7 +126,16 @@ HTTP_TEST_PATTERNS := "test/sql/integration/*" \
 	"~test/sql/integration/table/filter_echo_partitioned.test" \
 	"~test/sql/integration/table/partitioned_sequence.test" \
 	"~test/sql/integration/table/batch_index.test" \
-	"~test/sql/integration/table/order_preservation_modes.test"
+	"~test/sql/integration/table/order_preservation_modes.test" \
+	$(EXTRA_HTTP_EXCLUDES)
+
+# Parallelism for the per-test runner. Default 8 locally; CI sets JOBS=1 to
+# avoid an `INSTALL vgi` race when fresh unittest processes autoinstall the
+# community extension into a cold cache simultaneously.
+JOBS ?= 8
+# Extra `~`-exclusions appended to HTTP_TEST_PATTERNS (set in CI to skip tests
+# that are version-skewed against the prebuilt community extension).
+EXTRA_HTTP_EXCLUDES ?=
 
 # Default test target: launcher (`launch:`) transport.
 #
@@ -150,7 +159,7 @@ test:
 	export VGI_ATTACH_OPTIONS_WORKER="launch:$(ATTACH_OPTIONS_WORKER)"; \
 	export VGI_REQUIRE_LAUNCHER_TRANSPORT=1; \
 	export VGI_WORKER_IDLE_TIMEOUT=$(LAUNCHER_IDLE_TIMEOUT); \
-	python3 scripts/run_tests.py -j 8 $(LAUNCHER_TEST_PATTERNS) > $(TEST_LOG) 2>&1; \
+	python3 scripts/run_tests.py -j $(JOBS) $(LAUNCHER_TEST_PATTERNS) > $(TEST_LOG) 2>&1; \
 	rc=$$?; \
 	tail -n 20 $(TEST_LOG); \
 	echo ""; \
@@ -171,7 +180,7 @@ test-subprocess:
 	export VGI_VERSIONED_WORKER="$(VERSIONED_WORKER)"; \
 	export VGI_VERSIONED_TABLES_WORKER="$(VERSIONED_TABLES_WORKER)"; \
 	export VGI_ATTACH_OPTIONS_WORKER="$(ATTACH_OPTIONS_WORKER)"; \
-	python3 scripts/run_tests.py -j 8 $(TEST_PATTERNS) > $(TEST_LOG) 2>&1; \
+	python3 scripts/run_tests.py -j $(JOBS) $(TEST_PATTERNS) > $(TEST_LOG) 2>&1; \
 	rc=$$?; \
 	tail -n 20 $(TEST_LOG); \
 	echo ""; \
@@ -210,7 +219,7 @@ test-http:
 	export VGI_VERSIONED_HTTP_WORKER="http://localhost:$${vport_line#PORT:}/vgi"; \
 	export VGI_ATTACH_OPTIONS_WORKER="http://localhost:$${aport_line#PORT:}/vgi"; \
 	export VGI_VERSIONED_TABLES_HTTP_WORKER="http://localhost:$${tport_line#PORT:}/vgi"; \
-	python3 scripts/run_tests.py -j 8 $(HTTP_TEST_PATTERNS) > $(TEST_LOG) 2>&1; \
+	python3 scripts/run_tests.py -j $(JOBS) $(HTTP_TEST_PATTERNS) > $(TEST_LOG) 2>&1; \
 	rc=$$?; \
 	tail -n 20 $(TEST_LOG); \
 	echo ""; \
