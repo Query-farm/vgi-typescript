@@ -139,3 +139,10 @@ jobs:
         run: >-
           make test-http VGI_DIR="$GITHUB_WORKSPACE/vgi" JOBS=1
           EXTRA_HTTP_EXCLUDES="$SKEW"
+
+      - name: Dump test log (on failure)
+        if: failure()
+        run: |
+          echo "===== per-test failures ====="
+          grep -nE "FAILED|Wrong result|Expected result|Actual result|Error|require |Skipped" /tmp/vgi-typescript-test.log | head -80 || true
+          echo "===== tail ====="; tail -n 40 /tmp/vgi-typescript-test.log || true
