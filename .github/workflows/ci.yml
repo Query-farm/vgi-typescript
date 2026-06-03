@@ -103,5 +103,14 @@ jobs:
       - name: Integration tests — subprocess transport
         run: make -j8 test-subprocess VGI_DIR="$GITHUB_WORKSPACE/vgi"
 
-      - name: Integration tests — HTTP transport
+      - name: Integration tests — HTTP transport (arrow-js backend)
+        run: make -j8 test-http VGI_DIR="$GITHUB_WORKSPACE/vgi"
+
+      # flechette is the workerd/browser/CF backend — HTTP transport only (it
+      # does not support stdio incremental streaming). VGI_BUN_CONDITIONS=worker
+      # makes the HTTP example workers resolve the flechette Arrow backend, so
+      # this exercises the same suite over the flechette serialization path.
+      - name: Integration tests — HTTP transport (flechette backend)
+        env:
+          VGI_BUN_CONDITIONS: worker
         run: make -j8 test-http VGI_DIR="$GITHUB_WORKSPACE/vgi"
