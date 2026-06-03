@@ -1,2 +1,3 @@
 #!/usr/bin/env bash
-exec bun run "$(dirname "$0")/../examples/versioned-worker.ts" "$@"
+# VGI_BUN_CONDITIONS (e.g. "worker") selects the flechette Arrow backend.
+exec bun ${VGI_BUN_CONDITIONS:+--conditions "$VGI_BUN_CONDITIONS"} run "$(dirname "$0")/../examples/versioned-worker.ts" "$@"

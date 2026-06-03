@@ -14,6 +14,7 @@ import {
 } from "@uwdata/flechette";
 import type { VgiSchema, VgiBatch, VgiDataType, VgiColumnData } from "../types.js";
 import { emptyBatch } from "./empty.js";
+import { toFlechetteType } from "./normalize-type.js";
 
 /**
  * Build an opaque column-data handle from a JS array. Mirrors the
@@ -61,6 +62,12 @@ export function batchFromColumns(
   const childCols: Column<any>[] = [];
   const fields: any[] = [];
   for (const f of schema.fields) {
+    // Normalize a (possibly foreign arrow-js) field type to flechette-native.
+    // flechette's columnFromArray tolerates foreign type objects when reading
+    // values, but the resulting Column.type would not be writer-safe (Utf8
+    // corrupts, stale-dist Int64 throws). Reconstructing yields a native type
+    // so both the column build and the serialized schema are correct.
+    const ftype = toFlechetteType(f.type);
     let col: Column<any>;
     const values = columns[f.name];
     if (values) {
@@ -70,14 +77,14 @@ export function batchFromColumns(
       // for Map-typed fields so producer code that worked under arrow-js
       // continues to work here.
       const coerced = isMapType(f.type) ? values.map(coerceToMap) : values;
-      col = f_columnFromArray(coerced, f.type as any, {
+      col = f_columnFromArray(coerced, ftype, {
         useBigInt: true,
         useBigIntTimestamp: true,
         useDecimalInt: true,
       });
     } else {
       const rowCount = inferRowCount(columns, schema);
-      col = f_columnFromArray(new Array(rowCount).fill(null), f.type as any);
+      col = f_columnFromArray(new Array(rowCount).fill(null), ftype);
     }
     childCols.push(col);
     // f.nullable on a VgiSchema field defaults to true if not specified.
