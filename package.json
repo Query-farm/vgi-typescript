@@ -87,6 +87,7 @@
     "build:js": "bun build ./src/index.ts --outdir dist --target node --format esm --sourcemap=external --external @query-farm/apache-arrow --external @query-farm/vgi-rpc && bun build ./src/client-entry.ts --outdir dist --target browser --format esm --sourcemap=external --external @query-farm/apache-arrow --external @query-farm/vgi-rpc && bun build ./src/worker-cf-entry.ts --outdir dist --target node --format esm --sourcemap=external --external @query-farm/apache-arrow --external @query-farm/vgi-rpc",
     "postinstall": "node scripts/postinstall.cjs",
     "build:browser-test": "bun build examples/browser/main.ts --outdir examples/browser/dist --target browser --format esm --sourcemap=external",
-    "test": "bun test"
+    "test": "bun test",
+    "test:coverage": "bun test --coverage"
   }
 }
