@@ -2,6 +2,10 @@
 # Build and test targets for vgi-typescript.
 # Tests are independent targets — use `make -j8 test` for parallel execution.
 
+# Recipes use bash features (`read -t`, functions, `${VAR:+...}`). On Ubuntu the
+# default recipe shell is /bin/sh (dash), which lacks `read -t` — force bash.
+SHELL := /bin/bash
+
 .PHONY: build build\:types build\:js install clean test test-subprocess test-http test-all test-client
 
 # --- Configuration (all overridable) ---
