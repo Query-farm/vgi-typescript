@@ -56,7 +56,11 @@ jobs:
 
   integration:
     name: "Integration (sqllogictest — HTTP: arrow-js + flechette)"
-    runs-on: ubuntu-latest
+    # macOS, not ubuntu: the linux haybarn-unittest@1.5.3-rc6 / linux community
+    # vgi extension SIGSEGV on every test (exit=-11). The darwin build runs the
+    # full suite cleanly (verified locally: 172/172 with the skew exclusions).
+    # Switch back to ubuntu once the linux prebuilt binaries are fixed.
+    runs-on: macos-latest
     env:
       # Make `require vgi` resolve in the generic haybarn-unittest binary:
       # autoloading=available lets the runner INSTALL+LOAD a non-statically-
