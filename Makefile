@@ -13,6 +13,8 @@ WORKER                ?= $(CURDIR)/bin/vgi-example-worker
 HTTP_WORKER           := $(CURDIR)/bin/vgi-example-http-worker
 VERSIONED_WORKER      := $(CURDIR)/bin/vgi-example-versioned-worker
 VERSIONED_HTTP        := $(CURDIR)/bin/vgi-example-versioned-http-worker
+VERSIONED_TABLES_WORKER := $(CURDIR)/bin/vgi-example-versioned-tables-worker
+VERSIONED_TABLES_HTTP   := $(CURDIR)/bin/vgi-example-versioned-tables-http-worker
 ATTACH_OPTIONS_WORKER := $(CURDIR)/bin/vgi-example-attach-options-worker
 ATTACH_OPTIONS_HTTP   := $(CURDIR)/bin/vgi-example-attach-options-http-worker
 
@@ -140,6 +142,7 @@ test:
 	@cd $(VGI_DIR) && \
 	export VGI_TEST_WORKER="launch:$(WORKER)"; \
 	export VGI_VERSIONED_WORKER="launch:$(VERSIONED_WORKER)"; \
+	export VGI_VERSIONED_TABLES_WORKER="launch:$(VERSIONED_TABLES_WORKER)"; \
 	export VGI_ATTACH_OPTIONS_WORKER="launch:$(ATTACH_OPTIONS_WORKER)"; \
 	export VGI_REQUIRE_LAUNCHER_TRANSPORT=1; \
 	export VGI_WORKER_IDLE_TIMEOUT=$(LAUNCHER_IDLE_TIMEOUT); \
@@ -162,6 +165,7 @@ test-subprocess:
 	@cd $(VGI_DIR) && \
 	export VGI_TEST_WORKER="$(WORKER)"; \
 	export VGI_VERSIONED_WORKER="$(VERSIONED_WORKER)"; \
+	export VGI_VERSIONED_TABLES_WORKER="$(VERSIONED_TABLES_WORKER)"; \
 	export VGI_ATTACH_OPTIONS_WORKER="$(ATTACH_OPTIONS_WORKER)"; \
 	python3 scripts/run_tests.py -j 8 $(TEST_PATTERNS) > $(TEST_LOG) 2>&1; \
 	rc=$$?; \
@@ -186,18 +190,22 @@ test-http:
 	$(VERSIONED_HTTP) > "$$vport_fifo" 2>/dev/null & vhttp_pid=$$!; \
 	aport_fifo=$$(mktemp -u); mkfifo "$$aport_fifo"; \
 	$(ATTACH_OPTIONS_HTTP) > "$$aport_fifo" 2>/dev/null & ahttp_pid=$$!; \
+	tport_fifo=$$(mktemp -u); mkfifo "$$tport_fifo"; \
+	$(VERSIONED_TABLES_HTTP) > "$$tport_fifo" 2>/dev/null & thttp_pid=$$!; \
 	cleanup() { \
-		kill $$http_pid $$vhttp_pid $$ahttp_pid 2>/dev/null; \
-		wait $$http_pid $$vhttp_pid $$ahttp_pid 2>/dev/null; \
-		rm -f "$$port_fifo" "$$vport_fifo" "$$aport_fifo"; \
+		kill $$http_pid $$vhttp_pid $$ahttp_pid $$thttp_pid 2>/dev/null; \
+		wait $$http_pid $$vhttp_pid $$ahttp_pid $$thttp_pid 2>/dev/null; \
+		rm -f "$$port_fifo" "$$vport_fifo" "$$aport_fifo" "$$tport_fifo"; \
 	}; \
 	trap cleanup EXIT; \
 	read -t 10 port_line < "$$port_fifo" || { echo "ERROR: HTTP worker timeout"; exit 1; }; \
 	read -t 10 vport_line < "$$vport_fifo" || { echo "ERROR: versioned HTTP worker timeout"; exit 1; }; \
 	read -t 10 aport_line < "$$aport_fifo" || { echo "ERROR: attach-options HTTP worker timeout"; exit 1; }; \
+	read -t 10 tport_line < "$$tport_fifo" || { echo "ERROR: versioned-tables HTTP worker timeout"; exit 1; }; \
 	export VGI_TEST_WORKER="http://localhost:$${port_line#PORT:}/vgi"; \
 	export VGI_VERSIONED_HTTP_WORKER="http://localhost:$${vport_line#PORT:}/vgi"; \
 	export VGI_ATTACH_OPTIONS_WORKER="http://localhost:$${aport_line#PORT:}/vgi"; \
+	export VGI_VERSIONED_TABLES_HTTP_WORKER="http://localhost:$${tport_line#PORT:}/vgi"; \
 	python3 scripts/run_tests.py -j 8 $(HTTP_TEST_PATTERNS) > $(TEST_LOG) 2>&1; \
 	rc=$$?; \
 	tail -n 20 $(TEST_LOG); \
@@ -233,6 +241,7 @@ test/%:
 	fi; \
 	export VGI_TEST_WORKER="launch:$(WORKER)"; \
 	export VGI_VERSIONED_WORKER="launch:$(VERSIONED_WORKER)"; \
+	export VGI_VERSIONED_TABLES_WORKER="launch:$(VERSIONED_TABLES_WORKER)"; \
 	export VGI_ATTACH_OPTIONS_WORKER="launch:$(ATTACH_OPTIONS_WORKER)"; \
 	export VGI_REQUIRE_LAUNCHER_TRANSPORT=1; \
 	export VGI_WORKER_IDLE_TIMEOUT=$(LAUNCHER_IDLE_TIMEOUT); \
@@ -249,6 +258,7 @@ test-subprocess/%:
 	fi; \
 	export VGI_TEST_WORKER="$(WORKER)"; \
 	export VGI_VERSIONED_WORKER="$(VERSIONED_WORKER)"; \
+	export VGI_VERSIONED_TABLES_WORKER="$(VERSIONED_TABLES_WORKER)"; \
 	export VGI_ATTACH_OPTIONS_WORKER="$(ATTACH_OPTIONS_WORKER)"; \
 	cd $(VGI_DIR) && ./build/release/test/unittest -s "$$test_file"
 
@@ -266,18 +276,22 @@ test-http/%:
 	$(VERSIONED_HTTP) > "$$vport_fifo" 2>/dev/null & vhttp_pid=$$!; \
 	aport_fifo=$$(mktemp -u); mkfifo "$$aport_fifo"; \
 	$(ATTACH_OPTIONS_HTTP) > "$$aport_fifo" 2>/dev/null & ahttp_pid=$$!; \
+	tport_fifo=$$(mktemp -u); mkfifo "$$tport_fifo"; \
+	$(VERSIONED_TABLES_HTTP) > "$$tport_fifo" 2>/dev/null & thttp_pid=$$!; \
 	cleanup() { \
-		kill $$http_pid $$vhttp_pid $$ahttp_pid 2>/dev/null; \
-		wait $$http_pid $$vhttp_pid $$ahttp_pid 2>/dev/null; \
-		rm -f "$$port_fifo" "$$vport_fifo" "$$aport_fifo"; \
+		kill $$http_pid $$vhttp_pid $$ahttp_pid $$thttp_pid 2>/dev/null; \
+		wait $$http_pid $$vhttp_pid $$ahttp_pid $$thttp_pid 2>/dev/null; \
+		rm -f "$$port_fifo" "$$vport_fifo" "$$aport_fifo" "$$tport_fifo"; \
 	}; \
 	trap cleanup EXIT; \
 	read -t 10 port_line < "$$port_fifo" || { echo "ERROR: HTTP worker timeout"; exit 1; }; \
 	read -t 10 vport_line < "$$vport_fifo" || { echo "ERROR: versioned HTTP worker timeout"; exit 1; }; \
 	read -t 10 aport_line < "$$aport_fifo" || { echo "ERROR: attach-options HTTP worker timeout"; exit 1; }; \
+	read -t 10 tport_line < "$$tport_fifo" || { echo "ERROR: versioned-tables HTTP worker timeout"; exit 1; }; \
 	export VGI_TEST_WORKER="http://localhost:$${port_line#PORT:}/vgi"; \
 	export VGI_VERSIONED_HTTP_WORKER="http://localhost:$${vport_line#PORT:}/vgi"; \
 	export VGI_ATTACH_OPTIONS_WORKER="http://localhost:$${aport_line#PORT:}/vgi"; \
+	export VGI_VERSIONED_TABLES_HTTP_WORKER="http://localhost:$${tport_line#PORT:}/vgi"; \
 	cd $(VGI_DIR) && ./build/release/test/unittest -s "$$test_file"
 
 # VgiClient end-to-end tests against vgi-python's HTTP workers.

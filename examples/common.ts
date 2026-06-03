@@ -2,7 +2,7 @@
 // Shared function and catalog registration for example workers.
 // Used by both the IPC worker (worker.ts) and HTTP worker (http-worker.ts).
 
-import { Schema, Field, Int32, Int64, Float64, Bool, Utf8, Struct } from "@query-farm/apache-arrow";
+import { Schema, Field, Int32, Int64, Float64, Float32, Bool, Utf8, Struct } from "@query-farm/apache-arrow";
 import { List } from "@query-farm/apache-arrow";
 import {
   type CatalogDescriptor, type MacroDescriptor, Arguments,
@@ -18,7 +18,7 @@ import { scalarFunctions } from "./scalar.js";
 import {
   tableFunctions, resolveVersion, getVersionedSchema,
   resolveVersionedConstraintsVersion, getVersionedConstraintsSchema,
-  RFF_SIMPLE_SCHEMA, RFF_STRUCT_SCHEMA, RFF_NESTED_SCHEMA, RFF_MULTI_SCHEMA, RFF_NONE_SCHEMA,
+  RFF_SIMPLE_SCHEMA, RFF_STRUCT_SCHEMA, RFF_NESTED_SCHEMA, RFF_MULTI_SCHEMA, RFF_NONE_SCHEMA, RFF_ROWID_SCHEMA,
 } from "./table.js";
 import { tableInOutFunctions } from "./table_in_out.js";
 import { tableBufferingFunctions } from "./table_buffering.js";
@@ -580,6 +580,73 @@ export const catalog: CatalogDescriptor = {
           comment: "rff_none — control table with no required_field_filter_paths (opt-out fast path).",
         },
         {
+          name: "rff_rowid",
+          columns: RFF_ROWID_SCHEMA,
+          requiredFieldFilterPaths: ["bbox.xmin", "bbox.xmax", "bbox.ymin", "bbox.ymax"],
+          comment: "rff_rowid — row_id virtual column + required bbox.* filters.",
+        },
+        // Native read_parquet delegation (scan dispatched in tableScanFunctionGet
+        // below). The *.test writes the parquet/hive files to /tmp first.
+        {
+          name: "rff_parquet",
+          columns: new Schema([
+            new Field("bbox", new Struct([
+              new Field("xmin", new Float32(), true),
+              new Field("ymin", new Float32(), true),
+              new Field("xmax", new Float32(), true),
+              new Field("ymax", new Float32(), true),
+            ]), true),
+            new Field("other", new Int64(), true),
+          ]),
+          requiredFieldFilterPaths: ["bbox.xmin", "bbox.xmax", "bbox.ymin", "bbox.ymax"],
+          comment: "rff_parquet — native read_parquet delegation with bbox.* required filters.",
+        },
+        {
+          name: "rff_hive",
+          columns: new Schema([
+            new Field("id", new Utf8(), true),
+            new Field("bbox", new Struct([
+              new Field("xmin", new Float32(), true),
+              new Field("ymin", new Float32(), true),
+              new Field("xmax", new Float32(), true),
+              new Field("ymax", new Float32(), true),
+            ]), true),
+            new Field("name", new Utf8(), true),
+            new Field("num", new Int64(), true),
+            new Field("theme", new Utf8(), true),
+            new Field("type", new Utf8(), true),
+          ]),
+          requiredFieldFilterPaths: ["bbox.xmin", "bbox.xmax", "bbox.ymin", "bbox.ymax"],
+          comment: "rff_hive — native read_parquet over Hive glob with bbox.* required filters.",
+        },
+        {
+          name: "rff_hive_mixed",
+          columns: new Schema([
+            new Field("id", new Utf8(), true),
+            new Field("bbox", new Struct([
+              new Field("xmin", new Float32(), true),
+              new Field("ymin", new Float32(), true),
+              new Field("xmax", new Float32(), true),
+              new Field("ymax", new Float32(), true),
+            ]), true),
+            new Field("name", new Utf8(), true),
+            new Field("num", new Int64(), true),
+            new Field("theme", new Utf8(), true),
+            new Field("type", new Utf8(), true),
+          ]),
+          requiredFieldFilterPaths: ["id", "bbox.xmin", "bbox.xmax", "bbox.ymin", "bbox.ymax"],
+          comment: "rff_hive_mixed — native read_parquet, top-level 'id' + bbox.* required filters.",
+        },
+        {
+          name: "filter_echo_table",
+          columns: new Schema([
+            new Field("n", new Int64(), true),
+            new Field("s", new Utf8(), true),
+            new Field("pushed_filters", new Utf8(), true),
+          ]),
+          comment: "Catalog table echoing pushed-down filters (filter-pushdown-through-view tests).",
+        },
+        {
           name: "versioned_constraints",
           columns: new Schema([
             new Field("id", new Int64(), true),
@@ -769,6 +836,23 @@ export function createExampleCatalog(base: ReadOnlyCatalogInterface): ReadOnlyCa
       return { function_name: "versioned_constraints_scan", arguments: buildVersionArgBytes(version), required_extensions: [] };
     }
 
+    // rff_parquet — single-file native read_parquet delegation.
+    if (schemaName.toLowerCase() === "data" && name.toLowerCase() === "rff_parquet") {
+      const args = serializeBatch(batchFromColumns(
+        { arg_0: ["/tmp/rff_seg.parquet"] },
+        new Schema([new Field("arg_0", new Utf8(), true)]),
+      ));
+      return { function_name: "read_parquet", arguments: args, required_extensions: [] };
+    }
+    // rff_hive / rff_hive_mixed — native read_parquet over a Hive glob.
+    if (schemaName.toLowerCase() === "data" && ["rff_hive", "rff_hive_mixed"].includes(name.toLowerCase())) {
+      const args = serializeBatch(batchFromColumns(
+        { arg_0: ["/tmp/rff_hive/*/*/*.parquet"], hive_partitioning: [true] },
+        new Schema([new Field("arg_0", new Utf8(), true), new Field("hive_partitioning", new Bool(), true)]),
+      ));
+      return { function_name: "read_parquet", arguments: args, required_extensions: [] };
+    }
+
     // Static constraint tables
     const staticTables: Record<string, string> = {
       departments: "departments_scan",
@@ -780,6 +864,8 @@ export function createExampleCatalog(base: ReadOnlyCatalogInterface): ReadOnlyCa
       rff_nested: "rff_nested_scan",
       rff_multi: "rff_multi_scan",
       rff_none: "rff_none_scan",
+      rff_rowid: "rff_rowid_scan",
+      filter_echo_table: "filter_echo_table_scan",
     };
     if (schemaName.toLowerCase() === "data" && name.toLowerCase() in staticTables) {
       return { function_name: staticTables[name.toLowerCase()], arguments: serializeBatch(batchFromColumns({}, new Schema([]))), required_extensions: [] };

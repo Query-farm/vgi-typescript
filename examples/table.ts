@@ -8,6 +8,7 @@ import {
   Int8,
   Int64,
   Float64,
+  Float32,
   Bool,
   Utf8,
   Null,
@@ -1366,6 +1367,41 @@ const filter_echo = defineTableFunction<FilterEchoArgs, FilterEchoState>({
   categories: ["generator", "diagnostic"],
 });
 
+// filter_echo_table_scan — no-arg *table* scan backing example.data.filter_echo_table.
+// Same pushed_filters echo as filter_echo, but opts into expression-filter
+// pushdown so `LIKE 'prefix%'` predicates are observable (and through a VIEW).
+// Mirrors vgi-python FilterEchoTableScanFunction; backs filter_pushdown_through_view.test.
+const FILTER_ECHO_TABLE_SCHEMA = new Schema([
+  new Field("n", new Int64(), true),
+  new Field("s", new Utf8(), true),
+  new Field("pushed_filters", new Utf8(), true),
+]);
+
+const filter_echo_table_scan = defineTableFunction<Record<string, never>, { done: boolean; filterStr: string }>({
+  name: "filter_echo_table_scan",
+  description: "Catalog-table scan echoing pushed-down filters (backs example.data.filter_echo_table)",
+  projectionPushdown: true,
+  filterPushdown: true,
+  autoApplyFilters: true,
+  supportedExpressionFilters: ["prefix", "starts_with"],
+  onBind: () => ({ outputSchema: FILTER_ECHO_TABLE_SCHEMA }),
+  initialState: (params) => ({ done: false, filterStr: formatPushedFilters(params.pushdownFilters) }),
+  process: (params, state, out) => {
+    if (state.done) return out.finish();
+    state.done = true;
+    const ns = Array.from({ length: 100 }, (_, i) => i);
+    const full: Record<string, any[]> = {
+      n: ns.map((i) => BigInt(i)),
+      s: ns.map((i) => `row_${i}`),
+      pushed_filters: ns.map(() => state.filterStr),
+    };
+    const columns: Record<string, any[]> = {};
+    for (const f of params.outputSchema.fields) columns[f.name] = full[f.name];
+    out.emit(batchFromColumns(columns, params.outputSchema));
+  },
+  categories: ["generator", "diagnostic", "testing"],
+});
+
 // ============================================================================
 // 15b. filter_echo_partitioned — same shape as filter_echo, but advertises
 //      maxWorkers > 1 so DuckDB can partition the producer across parallel
@@ -2657,6 +2693,45 @@ const rff_none_scan = defineStaticScanFunction(
   },
 );
 
+// rff_rowid — a virtual row_id column (hidden from SELECT *) alongside a bbox
+// STRUCT whose corners are the required_field_filter_paths. Needs projection +
+// filter pushdown: under projection the emitted batch must match the projected
+// output schema, so build only the requested columns. Mirrors vgi-python's
+// RffRowidScanFunction.
+export const RFF_ROWID_SCHEMA = new Schema([
+  new Field("row_id", new Int64(), true, new Map([["is_row_id", ""]])),
+  new Field("bbox", new Struct([
+    new Field("xmin", new Float32(), true),
+    new Field("ymin", new Float32(), true),
+    new Field("xmax", new Float32(), true),
+    new Field("ymax", new Float32(), true),
+  ]), true),
+  new Field("other", new Int64(), true),
+]);
+
+const rff_rowid_scan = defineTableFunction<Record<string, never>, { done: boolean }>({
+  name: "rff_rowid_scan",
+  description: "rff_rowid — row_id virtual column + bbox.* required filters",
+  projectionPushdown: true,
+  filterPushdown: true,
+  autoApplyFilters: true,
+  onBind: () => ({ outputSchema: RFF_ROWID_SCHEMA }),
+  initialState: () => ({ done: false }),
+  process: (params, state, out) => {
+    if (state.done) return out.finish();
+    state.done = true;
+    const full: Record<string, any[]> = {
+      row_id: Array.from({ length: 10 }, (_, i) => BigInt(i)),
+      bbox: Array.from({ length: 10 }, (_, i) => ({ xmin: i, ymin: 2.0, xmax: 3.0, ymax: 4.0 })),
+      other: Array.from({ length: 10 }, (_, i) => BigInt(i * 10)),
+    };
+    // Emit only the projected columns, in the output schema's order.
+    const columns: Record<string, any[]> = {};
+    for (const f of params.outputSchema.fields) columns[f.name] = full[f.name];
+    out.emit(batchFromColumns(columns, params.outputSchema));
+  },
+});
+
 const COLORS_SCAN_SCHEMA = new Schema([
   new Field("id", new Int64(), true),
   new Field("color", new Utf8(), true),
@@ -3227,6 +3302,8 @@ export const tableFunctions: VgiFunction[] = [
   rff_nested_scan,
   rff_multi_scan,
   rff_none_scan,
+  rff_rowid_scan,
+  filter_echo_table_scan,
   versioned_constraints_scan,
   order_echo,
   sample_echo,

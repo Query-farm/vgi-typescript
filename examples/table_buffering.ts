@@ -520,11 +520,47 @@ const slow_cancellable_buffering = defineTableBufferingFunction<SlowBufferingArg
 });
 
 // ============================================================================
+// buffer_emit_wide — emit ONE finalize batch of N rows (vector-size repro).
+// Tests whether the buffering Source path supports output batches larger than
+// DuckDB's standard 2048-row vector size. Mirrors vgi-python BufferEmitWideFunction.
+// Call: buffer_emit_wide(<rows>, <table>) — rows is positional arg 0.
+// ============================================================================
+
+const BUFFER_EMIT_WIDE_SCHEMA = new Schema([new Field("n", new Int64(), true)]);
+
+const buffer_emit_wide = defineTableBufferingFunction<{ rows: number }, { emitted: boolean }>({
+  name: "buffer_emit_wide",
+  description: "Emit a single finalize batch of N rows (vector-size repro)",
+  args: { rows: new Int64() },
+  onBind: () => ({ outputSchema: BUFFER_EMIT_WIDE_SCHEMA }),
+  process: async (_batch, params) => params.executionId,
+  combine: async (_stateIds, params) => [params.executionId],
+  initialFinalizeState: () => ({ emitted: false }),
+  finalize: (params, _fid, state, out) => {
+    if (state.emitted) {
+      out.finish();
+      return;
+    }
+    state.emitted = true;
+    const n = Number(params.args.rows);
+    out.emit(batchFromColumns(
+      { n: Array.from({ length: n }, (_, i) => BigInt(i)) },
+      BUFFER_EMIT_WIDE_SCHEMA,
+    ));
+  },
+  examples: [
+    { sql: "SELECT count(*) FROM buffer_emit_wide(10000, (SELECT 1))", description: "Emit a single 10000-row batch from the Source phase" },
+  ],
+  categories: ["test", "buffer"],
+});
+
+// ============================================================================
 // Export
 // ============================================================================
 
 export const tableBufferingFunctions: VgiFunction[] = [
   buffer_input,
+  buffer_emit_wide,
   echo_buffering,
   sum_all_columns,
   exception_process,
