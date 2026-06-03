@@ -55,7 +55,7 @@ jobs:
         run: make test-facade-parity
 
   integration:
-    name: Integration (sqllogictest — HTTP: arrow-js + flechette)
+    name: "Integration (sqllogictest — HTTP: arrow-js + flechette)"
     runs-on: ubuntu-latest
     env:
       # Make `require vgi` resolve in the generic haybarn-unittest binary:
