@@ -18,6 +18,7 @@ import { scalarFunctions } from "./scalar.js";
 import {
   tableFunctions, resolveVersion, getVersionedSchema,
   resolveVersionedConstraintsVersion, getVersionedConstraintsSchema,
+  resolveTtVersion, TT_SCHEMA,
   RFF_SIMPLE_SCHEMA, RFF_STRUCT_SCHEMA, RFF_NESTED_SCHEMA, RFF_MULTI_SCHEMA, RFF_NONE_SCHEMA, RFF_ROWID_SCHEMA,
 } from "./table.js";
 import { tableInOutFunctions } from "./table_in_out.js";
@@ -30,6 +31,7 @@ const sequenceFunction = tableFunctions.find((f) => f.meta.name === "sequence");
 const rowIdSequenceFunction = tableFunctions.find((f) => f.meta.name === "rowid_sequence");
 const lateMaterializationFunction = tableFunctions.find((f) => f.meta.name === "late_materialization");
 const tenThousandFunction = tableFunctions.find((f) => f.meta.name === "ten_thousand");
+const ttPushdownScanFunction = tableFunctions.find((f) => f.meta.name === "tt_pushdown_scan");
 
 // Precompute stats for tables whose data is known at worker startup. The
 // statisticsFromDuckDB helper spins up an in-process DuckDB, builds the demo
@@ -219,6 +221,21 @@ export const catalog: CatalogDescriptor = {
           ]),
           supportsTimeTravel: true,
           comment: "Versioned data table demonstrating time travel with schema evolution",
+        },
+        // Time travel + filter pushdown together. tt_pushdown_fn is
+        // function-backed (reads AT at init); tt_pushdown_cols is columns-based
+        // (AT -> version arg via tableScanFunctionGet). Back time_travel_pushdown.test.
+        {
+          name: "tt_pushdown_fn",
+          function: ttPushdownScanFunction,
+          supportsTimeTravel: true,
+          comment: "Function-backed: prunes by filter AND time-travels (AT read at init).",
+        },
+        {
+          name: "tt_pushdown_cols",
+          columns: TT_SCHEMA,
+          supportsTimeTravel: true,
+          comment: "Columns-based: prunes by filter AND time-travels (AT → version arg).",
         },
         {
           name: "numbers",
@@ -834,6 +851,12 @@ export function createExampleCatalog(base: ReadOnlyCatalogInterface): ReadOnlyCa
     if (schemaName.toLowerCase() === "data" && name.toLowerCase() === "versioned_constraints") {
       const version = resolveVersionedConstraintsVersion(atUnit, atValue);
       return { function_name: "versioned_constraints_scan", arguments: buildVersionArgBytes(version), required_extensions: [] };
+    }
+    // Columns-based time-travel + pushdown: resolve AT -> version and pass it as
+    // a scan-function argument (the native columns-based AT mechanism).
+    if (schemaName.toLowerCase() === "data" && name.toLowerCase() === "tt_pushdown_cols") {
+      const version = resolveTtVersion(atUnit, atValue);
+      return { function_name: "tt_pushdown_cols_scan", arguments: buildVersionArgBytes(version), required_extensions: [] };
     }
 
     // rff_parquet — single-file native read_parquet delegation.

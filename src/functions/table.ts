@@ -131,6 +131,15 @@ export interface TableProcessParams<TArgs = Record<string, any>> {
   secrets: Record<string, Record<string, any>>;
   pushdownFilters?: PushdownFilters;
   storage?: BoundStorage;
+  /**
+   * AT (TIMESTAMP|VERSION) clause for this scan, or `undefined` when the scan
+   * has no AT clause. Carried on the per-scan bind embedded in the init request
+   * (`initCall.bind_call.at_unit` / `.at_value`), so function-backed tables can
+   * read time travel at init alongside their pushdown filters. Mirrors
+   * vgi-python's `ProcessParams.at_unit` / `.at_value`. See `BindRequest.at_unit`.
+   */
+  atUnit?: string;
+  atValue?: string;
 }
 
 // ============================================================================
@@ -394,6 +403,8 @@ export function defineTableFunction<
         secrets,
         pushdownFilters,
         storage: boundStorage,
+        atUnit: request.bind_call.at_unit ?? undefined,
+        atValue: request.bind_call.at_value ?? undefined,
       };
 
       const state = config.initialState

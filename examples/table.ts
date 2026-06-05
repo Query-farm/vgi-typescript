@@ -2519,6 +2519,122 @@ const versioned_data_scan = defineTableFunction<VersionedDataArgs, VersionedData
 });
 
 // ============================================================================
+// tt_pushdown — time travel (AT) + filter pushdown together.
+//
+// Ports vgi-python/vgi/_test_fixtures/table/tt_pushdown.py. Backs
+// integration/table/time_travel_pushdown.test. Two flavors, declared both ways:
+//   - tt_pushdown_scan (function-backed): reads the AT clause at init via
+//     params.atUnit / params.atValue (init_call.bind_call.at_*). Proves the
+//     framework now threads AT onto the per-scan bind embedded in init.
+//   - tt_pushdown_cols_scan (columns-based): gets the resolved version as a
+//     scan-function argument (AT -> version resolved in the catalog's
+//     tableScanFunctionGet — the native columns-based mechanism).
+// Both echo seen_version + pushed_filters so one query asserts both signals.
+// ============================================================================
+
+// Output schema is version-INDEPENDENT (no schema evolution): only the row data
+// changes per version, so the function-backed table stays inline-bound.
+export const TT_SCHEMA = new Schema([
+  new Field("id", new Int64(), true),
+  new Field("val", new Int64(), true),
+  new Field("seen_version", new Int64(), true),
+  new Field("pushed_filters", new Utf8(), true),
+]);
+
+// Per-version row ids (val = id * 10). v2 is a strict superset of v1 so a
+// row-count delta cleanly proves which version was scanned.
+const TT_VERSION_IDS: Record<number, number[]> = {
+  1: [1, 2, 3, 4, 5],
+  2: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+};
+const TT_CURRENT_VERSION = 2; // default when there is no AT clause
+
+export function resolveTtVersion(atUnit?: string | null, atValue?: string | null): number {
+  if (!atUnit) return TT_CURRENT_VERSION;
+  const unit = atUnit.toUpperCase();
+  if (unit === "VERSION") {
+    const version = parseInt(String(atValue), 10);
+    if (!(version in TT_VERSION_IDS)) {
+      throw new Error(`Unknown version ${version}; valid: ${Object.keys(TT_VERSION_IDS).map(Number).sort()}`);
+    }
+    return version;
+  }
+  if (unit === "TIMESTAMP") {
+    const year = parseInt(String(atValue).slice(0, 4), 10);
+    return year <= 2020 ? 1 : 2;
+  }
+  throw new Error(`Unsupported at_unit: '${atUnit}'`);
+}
+
+interface TtState {
+  seenVersion: number;
+  pushedFilters: string;
+  done: boolean;
+}
+
+// Emit one batch for state.seenVersion, projected to the bound output schema.
+function ttEmit(params: TableProcessParams<any>, state: TtState, out: OutputCollector): void {
+  if (state.done) {
+    out.finish();
+    return;
+  }
+  state.done = true;
+  const ids = TT_VERSION_IDS[state.seenVersion];
+  const full: Record<string, any[]> = {
+    id: ids.map((i) => BigInt(i)),
+    val: ids.map((i) => BigInt(i * 10)),
+    seen_version: ids.map(() => BigInt(state.seenVersion)),
+    pushed_filters: ids.map(() => state.pushedFilters),
+  };
+  // projectionPushdown=true: emit only the requested columns.
+  const columns: Record<string, any[]> = {};
+  for (const f of params.outputSchema.fields) columns[f.name] = full[f.name];
+  out.emit(batchFromColumns(columns, params.outputSchema));
+}
+
+// Function-backed: version comes from AT (read at init), not from an argument.
+const tt_pushdown_scan = defineTableFunction<Record<string, never>, TtState>({
+  name: "tt_pushdown_scan",
+  description: "Function-backed time-travel + filter-pushdown scan (reads AT at init).",
+  categories: ["generator", "diagnostic", "testing"],
+  filterPushdown: true,
+  autoApplyFilters: true,
+  projectionPushdown: true,
+  maxWorkers: 1,
+  onBind: () => ({ outputSchema: TT_SCHEMA }),
+  initialState: (params: TableProcessParams<Record<string, never>>): TtState => ({
+    seenVersion: resolveTtVersion(params.atUnit, params.atValue),
+    pushedFilters: formatPushedFilters(params.pushdownFilters),
+    done: false,
+  }),
+  process: ttEmit,
+});
+
+interface TtColsArgs {
+  version: number;
+}
+
+// Columns-based: receives the resolved version as a scan-function argument.
+const tt_pushdown_cols_scan = defineTableFunction<TtColsArgs, TtState>({
+  name: "tt_pushdown_cols_scan",
+  description: "Columns-based time-travel + filter-pushdown scan (version via arg).",
+  args: { version: new Int64() },
+  argDefaults: { version: TT_CURRENT_VERSION },
+  categories: ["generator", "diagnostic", "testing"],
+  filterPushdown: true,
+  autoApplyFilters: true,
+  projectionPushdown: true,
+  maxWorkers: 1,
+  onBind: () => ({ outputSchema: TT_SCHEMA }),
+  initialState: (params: TableProcessParams<TtColsArgs>): TtState => ({
+    seenVersion: params.args.version,
+    pushedFilters: formatPushedFilters(params.pushdownFilters),
+    done: false,
+  }),
+  process: ttEmit,
+});
+
+// ============================================================================
 // Static scan function helper (equivalent to Python _static_scan_function)
 // ============================================================================
 
@@ -3292,6 +3408,8 @@ export const tableFunctions: VgiFunction[] = [
   value_prune,
   dict_filter_echo,
   versioned_data_scan,
+  tt_pushdown_scan,
+  tt_pushdown_cols_scan,
   departments_scan,
   employees_scan,
   products_scan,

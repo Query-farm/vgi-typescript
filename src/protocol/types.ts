@@ -24,6 +24,16 @@ export interface BindRequest {
   attach_opaque_data: Uint8Array | null;
   transaction_opaque_data: Uint8Array | null;
   resolved_secrets_provided: boolean;
+  /**
+   * Time travel: the AT (TIMESTAMP|VERSION ...) clause for this scan, threaded
+   * from DuckDB's per-reference bind. Both `null` when the scan has no AT clause.
+   * For inline-bound (function-backed) tables the actual on_bind RPC runs once at
+   * attach with no AT, so the per-scan AT is carried on the bind request embedded
+   * in each InitRequest — read it at init via `init_call.bind_call.at_unit` (or
+   * `TableProcessParams.atUnit`). Mirrors vgi-python's `BindRequest.at_unit`.
+   */
+  at_unit?: string | null;
+  at_value?: string | null;
 }
 
 export interface BindResponse {

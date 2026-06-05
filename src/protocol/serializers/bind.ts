@@ -26,6 +26,10 @@ const BIND_REQUEST_SCHEMA = schema([
   field("attach_opaque_data", binary(), true),
   field("transaction_opaque_data", binary(), true),
   field("resolved_secrets_provided", bool(), false),
+  // Time travel AT clause (additive, nullable, name-keyed -> wire-compatible).
+  // Both null when the scan has no AT clause. See BindRequest.at_unit.
+  field("at_unit", utf8(), true),
+  field("at_value", utf8(), true),
 ]);
 
 const BIND_RESPONSE_SCHEMA = schema([
@@ -47,6 +51,8 @@ export function serializeBindRequest(req: BindRequest): VgiBatch {
     attach_opaque_data: req.attach_opaque_data ?? null,
     transaction_opaque_data: req.transaction_opaque_data ?? null,
     resolved_secrets_provided: req.resolved_secrets_provided ?? false,
+    at_unit: req.at_unit ?? null,
+    at_value: req.at_value ?? null,
   };
   return buildSingleRowBatch(BIND_REQUEST_SCHEMA, row);
 }
@@ -91,6 +97,9 @@ export function deserializeBindRequest(
       ? toUint8Array(params.transaction_opaque_data)
       : null,
     resolved_secrets_provided: params.resolved_secrets_provided ?? false,
+    // Empty string -> null (matches the C++ BuildBindRequest convention).
+    at_unit: params.at_unit ? String(params.at_unit) : null,
+    at_value: params.at_value ? String(params.at_value) : null,
   };
 }
 
