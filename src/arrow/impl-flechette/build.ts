@@ -76,7 +76,9 @@ export function batchFromColumns(
       // up with "value is not iterable". Coerce plain objects to Map per row
       // for Map-typed fields so producer code that worked under arrow-js
       // continues to work here.
-      const coerced = isMapType(f.type) ? values.map(coerceToMap) : values;
+      const coerced = isMapType(f.type) ? values.map(coerceToMap)
+        : isDateType(f.type) ? values.map((v) => coerceToDate(v, f.type))
+        : values;
       col = f_columnFromArray(coerced, ftype, {
         useBigInt: true,
         useBigIntTimestamp: true,
@@ -113,6 +115,26 @@ function coerceToMap(v: any): Map<any, any> | null {
   if (Array.isArray(v)) return new Map(v);
   if (typeof v === "object") return new Map(Object.entries(v));
   return v;
+}
+
+function isDateType(t: VgiDataType): boolean {
+  // Arrow Type enum: Date = 8. flechette's columnFromArray only stores Date
+  // columns correctly when fed JS `Date` objects — raw unit values
+  // (day-numbers for date32, epoch-ms for date64, which is what the wire and
+  // the arrow-js backend use) are silently written as zeros.
+  return (t as any)?.typeId === 8;
+}
+
+const MS_PER_DAY = 86_400_000;
+
+function coerceToDate(v: any, t: VgiDataType): Date | null {
+  if (v == null) return null;
+  if (v instanceof Date) return v;
+  if (typeof v !== "number" && typeof v !== "bigint") return v;
+  const n = typeof v === "bigint" ? Number(v) : v;
+  // DateUnit: DAY = 0 (date32, day-numbers) → ms; MILLISECOND = 1 (date64).
+  const unit = (t as any)?.unit;
+  return new Date(unit === 0 ? n * MS_PER_DAY : n);
 }
 
 function inferRowCount(

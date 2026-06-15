@@ -14,7 +14,7 @@
 import { describe, test, expect } from "bun:test";
 import {
   schema, field, utf8, int32, int64, struct, list, dictionary, decimal128,
-  timestamp, TimeUnit,
+  timestamp, TimeUnit, dateDay,
   isList, isStruct, isDecimal, isDictionary, isTimestamp,
   TypeId,
   batchFromColumns, serializeBatch, deserializeBatch, iterRows,
@@ -60,6 +60,35 @@ describe(`facade (backend=${backend.name})`, () => {
     expect(rows[1].name).toBe(null);
     expect(rows[2].v).toBe(null);
     expect(rows[0].big).toBe(10n);
+  });
+
+  test("date32 columns store raw day-numbers (non-null and null)", () => {
+    // Regression: the arrow-js backend used to route non-null date32 columns
+    // through vectorFromArray, which silently zeroed raw day-number inputs — so
+    // `easter_date(2025)` came back as 1970-01-01. Day-numbers must round-trip
+    // for both the all-non-null case and the null-propagation case.
+    const sch = schema([
+      field("d", dateDay(), true),
+      field("dn", dateDay(), true),
+    ]);
+    // 20198 = 2025-04-20; 0 = 1970-01-01.
+    const batch = batchFromColumns(
+      { d: [20198, 0, 19813], dn: [20198, null, 19813] },
+      sch,
+    );
+    const round = deserializeBatch(serializeBatch(batch));
+    const rows = [...iterRows(round)];
+    // date32 reads come back as a Date, a day-number, or epoch-ms depending on
+    // backend — normalize all three to a day-number. (Magnitude disambiguates a
+    // raw day-number ~2e4 from epoch-ms ~1.7e12.)
+    const dayNum = (v: any) => {
+      if (v == null) return null;
+      if (v instanceof Date) return Math.round(v.getTime() / 86_400_000);
+      const n = typeof v === "bigint" ? Number(v) : (v as number);
+      return Math.abs(n) >= 1e6 ? Math.round(n / 86_400_000) : n;
+    };
+    expect(rows.map((r) => dayNum(r.d))).toEqual([20198, 0, 19813]);
+    expect(rows.map((r) => dayNum(r.dn))).toEqual([20198, null, 19813]);
   });
 
   test("accepts foreign (arrow-js) DataType instances incl. variable-width", async () => {

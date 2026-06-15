@@ -10,6 +10,7 @@ import {
   Struct,
   List,
   DataType,
+  DateUnit,
   makeData,
   vectorFromArray,
   Map_,
@@ -129,36 +130,61 @@ function buildColumnData(values: any[], field: Field): any {
     return buildBigIntData(values, type);
   }
 
-  // Time/Date/Timestamp/Duration: arrow-js vectorFromArray chokes on nulls
-  // (setTimeMicrosecond et al. do ToBigInt without checking validity).
-  // Build manually when any value is null.
-  if ((DataType.isTime(type) || DataType.isDate(type) ||
-       DataType.isTimestamp(type) || DataType.isDuration(type)) &&
-      values.some((v: any) => v === null || v === undefined)) {
-    const bitWidth = (type as any).bitWidth ?? 64;
-    if (bitWidth === 64) {
-      return buildBigIntData(values, type);
+  // Time/Date/Timestamp/Duration. Two arrow-js `vectorFromArray` hazards force
+  // a manual build:
+  //  1. Nulls: setTimeMicrosecond et al. do ToBigInt without checking validity,
+  //     so a null in the array throws — for any bit width.
+  //  2. 32-bit Date/Time fed *raw unit* values (day-numbers for date32, micros
+  //     for time32, etc. — what Arrow column `.get()` returns, what the
+  //     flechette backend uses, and what crosses the wire) are silently written
+  //     as all-zeros. vectorFromArray only stores 32-bit Date/Time correctly
+  //     when fed JS `Date` objects.
+  // So build manually whenever a value is null, or for 32-bit Date/Time whose
+  // values are raw units (number/bigint). Date-object inputs and 64-bit
+  // non-null inputs keep falling through to vectorFromArray, which handles them.
+  if (DataType.isTime(type) || DataType.isDate(type) ||
+      DataType.isTimestamp(type) || DataType.isDuration(type)) {
+    const bitWidth = dateTimeBitWidth(type);
+    const hasNull = values.some((v: any) => v === null || v === undefined);
+    const sample = values.find((v: any) => v !== null && v !== undefined);
+    const rawUnits32 = bitWidth === 32 &&
+      (typeof sample === "number" || typeof sample === "bigint");
+    if (hasNull || rawUnits32) {
+      if (bitWidth === 64) {
+        return buildBigIntData(values, type);
+      }
+      // 32-bit Time/Date: build as Int32 with null bitmap
+      const length = values.length;
+      const buf = new Int32Array(length);
+      const nullBitmap = new Uint8Array(Math.ceil(length / 8));
+      let nullCount = 0;
+      for (let i = 0; i < length; i++) {
+        const v = values[i];
+        if (v === null || v === undefined) { nullCount++; continue; }
+        nullBitmap[i >> 3] |= 1 << (i & 7);
+        buf[i] = Number(v);
+      }
+      return makeData({
+        type, length,
+        nullBitmap: nullCount > 0 ? nullBitmap : undefined,
+        data: buf, nullCount,
+      } as any);
     }
-    // 32-bit Time/Date: build as Int32 with null bitmap
-    const length = values.length;
-    const buf = new Int32Array(length);
-    const nullBitmap = new Uint8Array(Math.ceil(length / 8));
-    let nullCount = 0;
-    for (let i = 0; i < length; i++) {
-      const v = values[i];
-      if (v === null || v === undefined) { nullCount++; continue; }
-      nullBitmap[i >> 3] |= 1 << (i & 7);
-      buf[i] = typeof v === "bigint" ? Number(v) : Number(v);
-    }
-    return makeData({
-      type, length,
-      nullBitmap: nullCount > 0 ? nullBitmap : undefined,
-      data: buf, nullCount,
-    } as any);
   }
 
   // Default: use vectorFromArray
   return vectorFromArray(values, type).data[0];
+}
+
+/**
+ * Storage bit width for a temporal type. arrow-js Date types expose `unit`
+ * (DAY = date32, MILLISECOND = date64), NOT `bitWidth`; Time types expose
+ * `bitWidth` (32 or 64); Timestamp/Duration are always 64-bit.
+ */
+function dateTimeBitWidth(type: any): number {
+  if (DataType.isDate(type)) return type.unit === DateUnit.DAY ? 32 : 64;
+  if (DataType.isTime(type)) return type.bitWidth ?? 32;
+  return 64;
 }
 
 /**
