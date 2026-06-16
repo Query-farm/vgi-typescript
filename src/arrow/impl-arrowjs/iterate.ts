@@ -1,7 +1,7 @@
 // Copyright 2025, 2026 Query Farm LLC - https://query.farm
 // Read data out of Arrow batches as plain JS values.
 
-import { RecordBatch, DataType } from "@query-farm/apache-arrow";
+import { RecordBatch } from "@query-farm/apache-arrow";
 import type { VgiBatch, VgiDataType } from "../types.js";
 import { codecFor } from "../codec/registry.js";
 import { readCanonicalValue } from "./canonical.js";
@@ -32,7 +32,11 @@ export function* iterRows(
 }
 
 /**
- * Extract single-row batch to a scalar dict.
+ * Extract single-row batch to a scalar dict, in the RICH representation. Routes
+ * through the canonical reader + codec (same as iterRows) so a temporal/decimal
+ * setting is represented identically to column data and across backends, and so
+ * Dictionary-encoded columns (DuckDB sends these for enum-shaped fields like
+ * SchemaObjectType) are decoded — readCanonicalValue handles dictionary decode.
  */
 export function batchToScalarDict(
   batch: RecordBatch | VgiBatch | null
@@ -44,30 +48,12 @@ export function batchToScalarDict(
   for (const field of a.schema.fields) {
     const col = a.getChild(field.name);
     if (col) {
-      result[field.name] = readCellValue(col, 0, field.type);
+      const type = field.type as unknown as VgiDataType;
+      const canonical = readCanonicalValue(type, col, 0);
+      result[field.name] = codecFor(type).canonicalToRich(canonical);
     }
   }
   return result;
-}
-
-/**
- * Read a cell value, decoding Dictionary-encoded columns to their underlying
- * value. Without this, IPC batches that arrived with a dictionary batch (as
- * DuckDB sends for enum-shaped fields like SchemaObjectType) come back as raw
- * Data objects rather than the decoded string. Plain Vector.get() on the
- * fork's apache-arrow doesn't auto-decode in this path.
- */
-function readCellValue(col: any, index: number, type: DataType): any {
-  if (DataType.isDictionary(type)) {
-    if (typeof col.isValid === "function" && !col.isValid(index)) return null;
-    const data = col.data?.[0];
-    if (data && data.dictionary && data.values) {
-      const idx = Number(data.values[index]);
-      const dictVec = data.dictionary;
-      return typeof dictVec.get === "function" ? dictVec.get(idx) : null;
-    }
-  }
-  return col.get(index);
 }
 
 /**
@@ -117,7 +103,11 @@ export function batchToSecretDict(
   for (const field of a.schema.fields) {
     const col = a.getChild(field.name);
     if (col) {
-      const val = col.get(0);
+      // Read in RICH form via the canonical reader + codec — a secret column is
+      // a struct scalar, which surfaces as a plain { field: value } object
+      // (same path as iterRows), so no Arrow-scalar toJSON() shimming is needed.
+      const type = field.type as unknown as VgiDataType;
+      const val = codecFor(type).canonicalToRich(readCanonicalValue(type, col, 0));
 
       // Determine the key: for scoped secrets (secret_N), use secret_type from metadata
       let key = field.name;
@@ -131,13 +121,8 @@ export function batchToSecretDict(
       }
 
       if (val && typeof val === "object" && !ArrayBuffer.isView(val)) {
-        // Struct scalar -> convert to plain object
-        const dict: Record<string, any> = {};
-        if (val.toJSON) {
-          Object.assign(dict, val.toJSON());
-        } else {
-          Object.assign(dict, val);
-        }
+        // Struct scalar -> already a plain object from the canonical reader.
+        const dict: Record<string, any> = { ...(val as Record<string, any>) };
         if (key in result) {
           throw new Error(
             `batchToSecretDict: duplicate secret_type '${key}' (scope=${scope ?? "none"}). ` +

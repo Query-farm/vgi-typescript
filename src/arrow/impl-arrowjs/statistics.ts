@@ -9,7 +9,6 @@ import {
   Field,
   Null,
   makeData,
-  vectorFromArray,
   RecordBatch,
   Struct,
   SparseUnion,
@@ -24,6 +23,8 @@ import type {
   VgiBatch,
   VgiDataType,
 } from "../types.js";
+import { codecFor } from "../codec/registry.js";
+import { writeCanonicalColumn } from "./canonical.js";
 
 export interface ColumnStatistics {
   columnName: string;
@@ -37,22 +38,37 @@ export interface ColumnStatistics {
   maxStringLength: bigint | number | null;
 }
 
+// Stable, backend-agnostic type key. Dispatch on the structural fields
+// (typeId + unit + bitWidth + precision/scale + byteWidth) rather than
+// `.toString()`, so the union-child grouping matches the flechette backend
+// exactly and never collapses distinct types into one child.
 function typeKey(t: VgiDataType): string {
-  return (t as any).toString?.() ?? String(t.typeId);
+  const a = t as any;
+  return [
+    t.typeId,
+    a.unit ?? "",
+    a.bitWidth ?? "",
+    a.precision ?? "",
+    a.scale ?? "",
+    a.byteWidth ?? "",
+  ].join(":");
 }
 
+/**
+ * Build an arrow-js column `Data` node for `type` from RICH values, routed
+ * through the codec (rich -> canonical) and the canonical writer — the same
+ * path the public column-build uses. This guarantees a date/timestamp/decimal
+ * min/max is represented identically to ordinary column data and identically
+ * across both backends.
+ */
 function buildTypedColumnData(values: any[], type: VgiDataType): any {
   const a = type as DataType;
   if (a.typeId === 1 /* Null */) {
     return makeData({ type: a, length: values.length, nullCount: values.length });
   }
-  if (a.typeId === 2 /* Int */ && (a as any).bitWidth === 64) {
-    const coerced = values.map((v) =>
-      v == null ? null : typeof v === "bigint" ? v : BigInt(v),
-    );
-    return vectorFromArray(coerced, a).data[0];
-  }
-  return vectorFromArray(values, a).data[0];
+  const codec = codecFor(type);
+  const canonical = values.map((v) => codec.richToCanonical(v));
+  return writeCanonicalColumn(type, canonical);
 }
 
 export function buildStatisticsBatch(stats: ColumnStatistics[]): VgiBatch {

@@ -40,6 +40,7 @@ export {
 } from "./iterate.js";
 export { filterBatch } from "./filter.js";
 export { projectSchema, projectBatch } from "./project.js";
+export { readCanonicalValue } from "./canonical.js";
 
 // IPC
 export {
@@ -49,5 +50,5 @@ export {
   deserializeBatch,
 } from "./ipc.js";
 
-// Column statistics — flechette stub throws on use.
+// Column statistics — sparse-union min/max via the codec/canonical path.
 export { buildStatisticsBatch, type ColumnStatistics } from "./statistics.js";

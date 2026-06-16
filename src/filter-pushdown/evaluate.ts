@@ -3,8 +3,15 @@
 // Arrow RecordBatches, plus the PushdownFilters class that owns a parsed
 // filter set and applies it to batches.
 
-import { type VgiBatch, type VgiSchema, schema } from "../arrow/index.js";
-import { batchFromColumns, emptyBatch } from "../util/arrow/index.js";
+import {
+  type VgiBatch,
+  type VgiSchema,
+  type VgiDataType,
+  schema,
+  readCanonicalValue,
+} from "../arrow/index.js";
+import { batchFromColumns, filterBatch } from "../util/arrow/index.js";
+import { codecFor } from "../arrow/codec/registry.js";
 import {
   ComparisonOp,
   type AndFilter,
@@ -32,6 +39,22 @@ function compare(a: any, b: any, op: ComparisonOp): boolean {
     case ComparisonOp.LT: return a < b;
     case ComparisonOp.LE: return a <= b;
   }
+}
+
+/**
+ * Read a column cell at `index` in CANONICAL form (the same representation the
+ * filter literals are deserialized into — see deserialize.ts `getValue`). Going
+ * through the per-backend canonical reader makes this work on BOTH Arrow
+ * backends (arrow-js's `col.get` and flechette's `col.at` are not interchange-
+ * able) and guarantees temporal/decimal cells and literals compare like-for-
+ * like (e.g. timestamp -> bigint on both sides). `colIndex` resolves the field
+ * type from the batch schema.
+ */
+function readCell(batch: VgiBatch, colIndex: number, index: number): any {
+  const col = batch.getChildAt(colIndex);
+  if (!col) return null;
+  const type = batch.schema.fields[colIndex].type as unknown as VgiDataType;
+  return readCanonicalValue(type, col, index);
 }
 
 // ============================================================================
@@ -84,10 +107,8 @@ function evaluateExpr(
   colRefToBatchIndex: (index: number) => number,
 ): any {
   switch (node.expr_type) {
-    case "column_ref": {
-      const col = batch.getChildAt(colRefToBatchIndex(node.index));
-      return col ? col.get(rowIndex) : null;
-    }
+    case "column_ref":
+      return readCell(batch, colRefToBatchIndex(node.index), rowIndex);
     case "constant":
       return node.value;
     case "function":
@@ -231,14 +252,14 @@ function evaluateConstant(
   batch: VgiBatch,
   mask: Uint8Array,
 ): void {
-  const col = batch.getChildAt(filter.columnIndex)!;
   const n = batch.numRows;
   for (let i = 0; i < n; i++) {
     if (!mask[i]) continue;
-    if (!(col.get(i) !== null)) {
+    const cell = readCell(batch, filter.columnIndex, i);
+    if (cell === null) {
       mask[i] = 0;
     } else {
-      mask[i] = compare(col.get(i), filter.value, filter.op) ? 1 : 0;
+      mask[i] = compare(cell, filter.value, filter.op) ? 1 : 0;
     }
   }
 }
@@ -248,11 +269,10 @@ function evaluateIsNull(
   batch: VgiBatch,
   mask: Uint8Array,
 ): void {
-  const col = batch.getChildAt(filter.columnIndex)!;
   const n = batch.numRows;
   for (let i = 0; i < n; i++) {
     if (!mask[i]) continue;
-    mask[i] = (col.get(i) !== null) ? 0 : 1;
+    mask[i] = (readCell(batch, filter.columnIndex, i) !== null) ? 0 : 1;
   }
 }
 
@@ -261,11 +281,10 @@ function evaluateIsNotNull(
   batch: VgiBatch,
   mask: Uint8Array,
 ): void {
-  const col = batch.getChildAt(filter.columnIndex)!;
   const n = batch.numRows;
   for (let i = 0; i < n; i++) {
     if (!mask[i]) continue;
-    mask[i] = (col.get(i) !== null) ? 1 : 0;
+    mask[i] = (readCell(batch, filter.columnIndex, i) !== null) ? 1 : 0;
   }
 }
 
@@ -274,14 +293,14 @@ function evaluateIn(
   batch: VgiBatch,
   mask: Uint8Array,
 ): void {
-  const col = batch.getChildAt(filter.columnIndex)!;
   const n = batch.numRows;
   for (let i = 0; i < n; i++) {
     if (!mask[i]) continue;
-    if (!(col.get(i) !== null)) {
+    const cell = readCell(batch, filter.columnIndex, i);
+    if (cell === null) {
       mask[i] = 0;
     } else {
-      mask[i] = filter.values.has(col.get(i)) ? 1 : 0;
+      mask[i] = filter.values.has(cell) ? 1 : 0;
     }
   }
 }
@@ -333,23 +352,33 @@ function evaluateStruct(
   batch: VgiBatch,
   mask: Uint8Array,
 ): void {
-  // Extract the struct column's child field
-  const structCol = batch.getChildAt(filter.columnIndex)!;
-  const childCol = (structCol as any).getChildAt(filter.childIndex);
-  if (!childCol) {
+  const structType = batch.schema.fields[filter.columnIndex].type as unknown as VgiDataType;
+  const childField = (structType as any).children?.[filter.childIndex];
+  if (!childField) {
     // Child field not found — fail all rows
     mask.fill(0);
     return;
   }
+  const childType = childField.type as VgiDataType;
 
-  // Build a minimal wrapper that looks like a single-column batch to evaluateFilter.
-  // We create a fake batch with just the child column so the child filter (with
-  // columnIndex remapped to 0) can evaluate against it.
+  // Read the struct column in canonical form (backend-agnostic), pull out the
+  // target child's canonical value per row, and rebuild a single-column child
+  // batch via batchFromColumns (which re-runs canonical writes). Filter literals
+  // are compared in canonical form too (see deserialize.ts), so the child column
+  // cells and literals stay in matching representations across both backends.
+  const childCanonical = Array.from({ length: batch.numRows }, (_, i) => {
+    const structVal = readCell(batch, filter.columnIndex, i) as Record<string, unknown> | null;
+    return structVal == null ? null : (structVal[childField.name] ?? null);
+  });
+  // batchFromColumns expects RICH values; map canonical -> rich for the child.
+  const childCodec = codecFor(childType);
+  const childRich = childCanonical.map((v) => childCodec.canonicalToRich(v));
+
   const childSchema = schema([
-    (batch.schema.fields[filter.columnIndex].type as any).children[filter.childIndex],
+    (structType as any).children[filter.childIndex],
   ]);
   const childBatch = batchFromColumns(
-    { [filter.childName]: Array.from({ length: batch.numRows }, (_, i) => childCol.get(i)) },
+    { [filter.childName]: childRich },
     childSchema,
   );
 
@@ -452,29 +481,9 @@ export class PushdownFilters {
     if (batch.numRows === 0 || this.filters.length === 0) return batch;
 
     const mask = this.evaluate(batch);
-
-    // Fast paths
-    let passCount = 0;
-    for (let i = 0; i < mask.length; i++) {
-      if (mask[i]) passCount++;
-    }
-
-    if (passCount === batch.numRows) return batch;
-    if (passCount === 0) return emptyBatch(batch.schema);
-
-    // Collect passing indices
-    const indices: number[] = [];
-    for (let i = 0; i < mask.length; i++) {
-      if (mask[i]) indices.push(i);
-    }
-
-    // Rebuild batch with only passing rows
-    const columns: Record<string, any[]> = {};
-    for (const field of batch.schema.fields) {
-      const col = batch.getChild(field.name)!;
-      columns[field.name] = indices.map((i) => col.get(i));
-    }
-    return batchFromColumns(columns, batch.schema);
+    // filterBatch rebuilds via the codec/canonical path (backend-agnostic,
+    // lossless), including its own all-pass / all-fail fast paths.
+    return filterBatch(batch, mask);
   }
 
   /**

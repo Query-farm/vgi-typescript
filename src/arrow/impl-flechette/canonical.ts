@@ -88,7 +88,7 @@ export function writeCanonicalBatch(
  * canonical Array<[k,v]> -> Map. Struct/List recurse. Everything else passes
  * through.
  */
-function prepareForFlechette(type: VgiDataType, values: unknown[]): unknown[] {
+export function prepareForFlechette(type: VgiDataType, values: unknown[]): unknown[] {
   const tid = type.typeId;
   if (tid === 8) {
     const isDay = (type as any).unit === 0;

@@ -283,11 +283,8 @@ export function registerFunctionMethods(protocol: Protocol, config: FunctionHand
       const innerParams = unwrapRequest(params.request);
       const bindCallBytes = toUint8Array(innerParams.bind_call);
       const bindCallBatch = deserializeBatch(bindCallBytes);
-      const bindParams: Record<string, any> = {};
-      for (const field of bindCallBatch.schema.fields) {
-        const col = bindCallBatch.getChild(field.name);
-        bindParams[field.name] = col ? col.get(0) : null;
-      }
+      // Single-row bind_call batch -> dict via the codec/canonical path.
+      const bindParams = batchToScalarDict(bindCallBatch);
       const bindCall = deserializeBindRequest(bindParams);
       const globalExecutionId = toUint8Array(innerParams.global_execution_id);
       const bindOpaqueData = innerParams.bind_opaque_data

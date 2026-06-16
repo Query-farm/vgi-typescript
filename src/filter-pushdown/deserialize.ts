@@ -2,7 +2,7 @@
 // Deserialize pushdown filters from the wire format (Arrow RecordBatch with
 // JSON specs in column 0 and value-ref scalars in columns 1+).
 
-import { type VgiBatch } from "../arrow/index.js";
+import { type VgiBatch, type VgiDataType, readCanonicalValue } from "../arrow/index.js";
 import { ComparisonOp, type ExprNode, type Filter } from "./types.js";
 import { PushdownFilters } from "./evaluate.js";
 
@@ -124,9 +124,12 @@ export function buildJoinKeysLookup(
     for (const field of batch.schema.fields) {
       const col = batch.getChild(field.name);
       if (!col) continue;
+      const type = field.type as unknown as VgiDataType;
       const values: any[] = [];
       for (let i = 0; i < batch.numRows; i++) {
-        values.push(col.get(i));
+        // Canonical read so join keys match the column cells they filter
+        // against (built via readCanonicalValue in evaluate.ts).
+        values.push(readCanonicalValue(type, col, i));
       }
       index.set(field.name, values);
     }
@@ -230,13 +233,17 @@ export function deserializeFilters(
     throw new Error(`Failed to parse filter JSON: ${e}`);
   }
 
-  // Value resolver: value_ref N → column N+1, row 0
+  // Value resolver: value_ref N → column N+1, row 0. Read through the canonical
+  // reader so filter literals land in the SAME representation as the column
+  // cells they're compared against (e.g. timestamp -> bigint on both backends),
+  // and so it works on flechette (no arrow-js `.get()`).
   const getValue = (ref: number): any => {
     const col = batch.getChildAt(ref + 1);
     if (!col) {
       throw new Error(`Filter value_ref ${ref} references non-existent column ${ref + 1}`);
     }
-    return col.get(0);
+    const type = batch.schema.fields[ref + 1].type as unknown as VgiDataType;
+    return readCanonicalValue(type, col, 0);
   };
 
   const filters = specs

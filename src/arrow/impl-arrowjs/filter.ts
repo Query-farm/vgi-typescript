@@ -2,13 +2,19 @@
 // Mask-based row filtering for Arrow RecordBatches.
 
 import { RecordBatch } from "@query-farm/apache-arrow";
-import type { VgiBatch } from "../types.js";
+import type { VgiBatch, VgiDataType } from "../types.js";
 import { emptyBatch } from "./empty.js";
 import { batchFromColumns } from "./build.js";
+import { codecFor } from "../codec/registry.js";
+import { readCanonicalValue } from "./canonical.js";
 
 /**
  * Filter a RecordBatch using a Uint8Array mask (0=exclude, nonzero=include).
  * Returns a new batch containing only the rows where mask[i] is nonzero.
+ *
+ * Rows are read in canonical form then mapped back to RICH so the rebuild goes
+ * through the same codec/canonical path as every other column build — lossless
+ * and identical across backends (never the lossy/raw `Vector.get`).
  */
 export function filterBatch(
   batch: RecordBatch | VgiBatch,
@@ -33,11 +39,15 @@ export function filterBatch(
     if (mask[i]) indices.push(i);
   }
 
-  // Rebuild batch with only passing rows
+  // Rebuild batch with only passing rows (canonical read -> rich -> rebuild).
   const columns: Record<string, any[]> = {};
   for (const field of a.schema.fields) {
     const col = a.getChild(field.name)!;
-    columns[field.name] = indices.map((i) => col.get(i));
+    const type = field.type as unknown as VgiDataType;
+    const codec = codecFor(type);
+    columns[field.name] = indices.map((i) =>
+      codec.canonicalToRich(readCanonicalValue(type, col, i)),
+    );
   }
   return batchFromColumns(columns, a.schema);
 }

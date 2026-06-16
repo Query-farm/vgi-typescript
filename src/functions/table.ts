@@ -10,7 +10,9 @@ import {
   isNull,
   nullType,
   deserializeBatch,
+  readCanonicalValue,
 } from "../arrow/index.js";
+import { codecFor } from "../arrow/codec/registry.js";
 import type { OutputCollector } from "@query-farm/vgi-rpc";
 import { DEFAULT_MAX_WORKERS } from "../types.js";
 import type {
@@ -83,8 +85,14 @@ function makeProjectingCollector(inner: OutputCollector, targetSchema: VgiSchema
     for (const f of targetSchema.fields) {
       const src = batch.getChild(f.name);
       if (src) {
+        // Canonical read -> rich so the rebuild goes through the codec path
+        // (backend-agnostic, lossless) rather than the raw `.get(i)`.
+        const type = f.type as VgiDataType;
+        const codec = codecFor(type);
         const arr: any[] = [];
-        for (let i = 0; i < batch.numRows; i++) arr.push(src.get(i));
+        for (let i = 0; i < batch.numRows; i++) {
+          arr.push(codec.canonicalToRich(readCanonicalValue(type, src, i)));
+        }
         cols[f.name] = arr;
       } else {
         cols[f.name] = new Array(batch.numRows).fill(null);

@@ -41,7 +41,8 @@ import type {
 } from "./types.js";
 import type { ArgumentSpec } from "../arguments/argument-spec.js";
 import { batchToScalarDict, batchToSecretDict, projectSchema } from "../util/arrow/index.js";
-import { batchFromColumns } from "../arrow/index.js";
+import { batchFromColumns, readCanonicalValue } from "../arrow/index.js";
+import { codecFor } from "../arrow/codec/registry.js";
 import {
   buildJoinKeysLookup,
   deserializeFilters,
@@ -411,8 +412,14 @@ function makeProjectingCollector(
     for (const f of targetSchema.fields) {
       const src = batch.getChild(f.name);
       if (src) {
+        // Canonical read -> rich so the rebuild goes through the codec path
+        // (backend-agnostic, lossless) rather than the raw `.get(i)`.
+        const type = f.type as VgiDataType;
+        const codec = codecFor(type);
         const arr: any[] = [];
-        for (let i = 0; i < batch.numRows; i++) arr.push(src.get(i));
+        for (let i = 0; i < batch.numRows; i++) {
+          arr.push(codec.canonicalToRich(readCanonicalValue(type, src, i)));
+        }
         cols[f.name] = arr;
       } else {
         cols[f.name] = new Array(batch.numRows).fill(null);

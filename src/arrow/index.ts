@@ -67,6 +67,8 @@ export {
   emptyBatch, batchFromRows, batchFromColumns, columnFromArray,
   iterRows, batchToScalarDict, batchToSecretDict, safeNumber, decodeDictValue,
   filterBatch, projectSchema, projectBatch,
+  // canonical single-value read (backend-agnostic, lossless)
+  readCanonicalValue,
   // IPC
   serializeSchema, deserializeSchema, serializeBatch, deserializeBatch,
   // Column statistics

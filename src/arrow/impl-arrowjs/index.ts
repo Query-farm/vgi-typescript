@@ -40,6 +40,7 @@ export {
 } from "./iterate.js";
 export { filterBatch } from "./filter.js";
 export { projectSchema, projectBatch } from "./project.js";
+export { readCanonicalValue } from "./canonical.js";
 
 // IPC
 export {

@@ -3,7 +3,7 @@
 
 import { type VgiSchema, schema, type VgiField, field, type VgiDataType, binary, int64 } from "../../arrow/index.js";
 import type { TableFunctionCardinalityRequest, TableCardinality } from "../types.js";
-import { deserializeBatch } from "../../util/arrow/index.js";
+import { deserializeBatch, batchToScalarDict } from "../../util/arrow/index.js";
 import { toUint8Array } from "./shared.js";
 import { deserializeBindRequest } from "./bind.js";
 
@@ -22,11 +22,7 @@ export function deserializeCardinalityRequest(
 ): TableFunctionCardinalityRequest {
   const bindCallBytes = toUint8Array(params.bind_call);
   const bindCallBatch = deserializeBatch(bindCallBytes);
-  const bindParams: Record<string, any> = {};
-  for (const field of bindCallBatch.schema.fields) {
-    const col = bindCallBatch.getChild(field.name);
-    bindParams[field.name] = col ? col.get(0) : null;
-  }
+  const bindParams = batchToScalarDict(bindCallBatch);
   const bindCall = deserializeBindRequest(bindParams);
 
   return {

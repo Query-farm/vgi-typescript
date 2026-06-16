@@ -18,7 +18,9 @@ import {
   batchFromColumns,
   serializeBatch,
   deserializeBatch,
+  readCanonicalValue,
 } from "../../arrow/index.js";
+import { codecFor } from "../../arrow/codec/registry.js";
 import { Arguments } from "../../arguments/arguments.js";
 
 export function serializeArguments(args: Arguments): Uint8Array {
@@ -96,12 +98,14 @@ export function deserializeArguments(bytes: Uint8Array): Arguments {
       ? makeSchema(argsStructType.children)
       : batch.schema;
 
-    const structVal = argsCol.get(0) as any;
+    // Read the args struct via the codec/canonical path (backend-agnostic,
+    // lossless, RICH) — surfaces as a plain { field: value } object.
+    const structType = argsCol.type as unknown as VgiDataType;
+    const structVal = codecFor(structType).canonicalToRich(
+      readCanonicalValue(structType, argsCol, 0),
+    ) as any;
     if (structVal && typeof structVal === "object") {
-      // Convert struct scalar to a plain object
-      const dict: Record<string, any> = structVal.toJSON
-        ? structVal.toJSON()
-        : Object.assign({}, structVal);
+      const dict: Record<string, any> = structVal;
       for (const [key, value] of Object.entries(dict)) {
         if (key.startsWith("positional_")) {
           const idx = parseInt(key.slice("positional_".length), 10);
@@ -124,7 +128,10 @@ export function deserializeArguments(bytes: Uint8Array): Arguments {
 
   for (const f of sch.fields) {
     const col = batch.getChild(f.name);
-    const val = col ? col.get(0) : null;
+    const ftype = f.type as unknown as VgiDataType;
+    const val = col
+      ? codecFor(ftype).canonicalToRich(readCanonicalValue(ftype, col, 0))
+      : null;
 
     if (f.name.startsWith("positional_")) {
       const idx = parseInt(f.name.slice("positional_".length), 10);

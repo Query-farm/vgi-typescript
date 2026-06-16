@@ -29,7 +29,10 @@ export function* iterRows(batch: VgiBatch): Generator<Record<string, any>> {
 }
 
 /**
- * Extract a single-row batch as a flat dict { col: value }.
+ * Extract a single-row batch as a flat dict { col: value }, in the RICH
+ * representation. Routes through the canonical reader + codec (same as iterRows)
+ * so a temporal/decimal setting is represented identically to column data and
+ * identically to the arrow-js backend.
  */
 export function batchToScalarDict(
   batch: VgiBatch | null,
@@ -40,7 +43,9 @@ export function batchToScalarDict(
   const result: Record<string, any> = {};
   for (const f of t.schema.fields) {
     const col = t.getChild(f.name);
-    if (col) result[f.name] = col.at(0);
+    if (!col) continue;
+    const type = f.type as VgiDataType;
+    result[f.name] = codecFor(type).canonicalToRich(readCanonicalValue(type, col, 0));
   }
   return result;
 }
@@ -67,7 +72,11 @@ export function batchToSecretDict(
   for (const f of t.schema.fields) {
     const col = t.getChild(f.name);
     if (!col) continue;
-    const val = col.at(0);
+    // Read in RICH form via the canonical reader + codec — a secret column is a
+    // struct scalar, surfacing as a plain { field: value } object (same path as
+    // iterRows), identical to the arrow-js backend.
+    const type = f.type as VgiDataType;
+    const val = codecFor(type).canonicalToRich(readCanonicalValue(type, col, 0));
 
     let key = f.name;
     let scope: string | undefined;
@@ -80,8 +89,7 @@ export function batchToSecretDict(
     }
 
     if (val && typeof val === "object" && !ArrayBuffer.isView(val)) {
-      const dict: Record<string, any> = {};
-      Object.assign(dict, val);
+      const dict: Record<string, any> = { ...(val as Record<string, any>) };
       if (key in result) {
         throw new Error(
           `batchToSecretDict: duplicate secret_type '${key}' (scope=${scope ?? "none"}).`,

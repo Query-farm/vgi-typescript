@@ -37,6 +37,7 @@ import {
   deserializeSchema,
   serializeBatch,
   deserializeBatch,
+  batchToScalarDict,
 } from "../../util/arrow/index.js";
 import { toUint8Array, buildSingleRowBatch } from "./shared.js";
 import { serializeBindRequest, deserializeBindRequest } from "./bind.js";
@@ -102,12 +103,8 @@ export function deserializeInitRequest(
 ): InitRequest {
   const bindCallBytes = toUint8Array(params.bind_call);
   const bindCallBatch = deserializeBatch(bindCallBytes);
-  // Extract the single row as params
-  const bindParams: Record<string, any> = {};
-  for (const field of bindCallBatch.schema.fields) {
-    const col = bindCallBatch.getChild(field.name);
-    bindParams[field.name] = col ? col.get(0) : null;
-  }
+  // Extract the single row as params via the codec/canonical path.
+  const bindParams = batchToScalarDict(bindCallBatch);
 
   const bindCall = deserializeBindRequest(bindParams);
 
