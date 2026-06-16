@@ -110,16 +110,11 @@ function extractTypedValue(col: any, index: number, type: VgiDataType): any {
   if (val === null || val === undefined) return null;
 
   if (isStruct(type)) {
-    const result: Record<string, any> = {};
-    const children = (type as any).children as VgiField[];
-    for (let i = 0; i < children.length; i++) {
-      const childField = children[i];
-      const childVec = col.getChildAt ? col.getChildAt(i) : null;
-      result[childField.name] = childVec
-        ? extractTypedValue(childVec, index, childField.type)
-        : null;
-    }
-    return result;
+    // Read from the struct *value* (the object/StructRow returned by `get`)
+    // rather than descending child vectors via `getChildAt`: that method is
+    // arrow-js-only (undefined on the flechette backend), which silently
+    // nulled every nested-struct field on flechette.
+    return extractStructValue(val, type);
   }
 
   if (isBinary(type)) {
@@ -127,6 +122,32 @@ function extractTypedValue(col: any, index: number, type: VgiDataType): any {
   }
 
   return val;
+}
+
+/**
+ * Coerce a struct value (a plain object on flechette, a StructRow on arrow-js —
+ * both support `obj[name]` access) into a plain JS object, applying the same
+ * type-aware coercion as {@link extractTypedValue}: Uint8Array for Binary,
+ * recursion for nested Structs, and the backend's decoded value (e.g. BigInt
+ * for Int64) otherwise. Backend-agnostic — no `getChildAt`.
+ */
+function extractStructValue(value: any, type: VgiDataType): any {
+  if (value === null || value === undefined) return null;
+  const result: Record<string, any> = {};
+  const children = (type as any).children as VgiField[];
+  for (const childField of children) {
+    const child = value[childField.name];
+    if (child === null || child === undefined) {
+      result[childField.name] = null;
+    } else if (isStruct(childField.type)) {
+      result[childField.name] = extractStructValue(child, childField.type);
+    } else if (isBinary(childField.type)) {
+      result[childField.name] = toUint8Array(child);
+    } else {
+      result[childField.name] = child;
+    }
+  }
+  return result;
 }
 
 /**
