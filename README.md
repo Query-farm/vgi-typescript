@@ -236,6 +236,167 @@ Workers can also expose a **catalog** (schemas, tables, views, macros, secrets) 
 `ReadOnlyCatalogInterface` / `CompositeCatalogInterface`, so an `ATTACH`ed worker
 presents browsable database objects, not just functions.
 
+## Type representations
+
+Every value DuckDB exchanges with a worker has an Arrow type, and each Arrow type
+maps to exactly one JS value shape. A single **codec** layer is the only authority
+for that mapping: it converts between the JS value you read/write and an internal
+*canonical* pivot (the raw Arrow wire unit), identically across both Arrow backends.
+
+There are two author-facing representations, selected per scalar function with
+`repr`:
+
+- **`rich`** (the default) — the ergonomic shape. Identical to the canonical wire
+  unit for every type **except** `date32` / `date64`, which surface as a JS `Date`.
+  Sub-second temporal types (`time`, `timestamp`, `duration`) stay numeric/`bigint`,
+  because `Date` cannot hold microsecond/nanosecond precision losslessly.
+- **`raw`** (opt-in) — the canonical wire unit with a **branded** TypeScript type that
+  carries the unit (e.g. `TimestampMicros`, `Date32`, `UnscaledDecimal`). At runtime a
+  branded value *is* the underlying `number`/`bigint`; the brand exists only at compile
+  time so a wrong-unit mix-up is a type error.
+
+### Per-type mapping
+
+| Arrow type | `rich` JS value | `raw` branded type |
+|---|---|---|
+| `bool` | `boolean` | `boolean` |
+| `int8` / `int16` / `int32` | `number` | `number` |
+| `uint8` / `uint16` / `uint32` | `number` | `number` |
+| `int64` | `bigint` | `Int64` |
+| `uint64` | `bigint` | `Uint64` (exported as `Uint64Raw`) |
+| `float16` / `float32` / `float64` | `number` | `number` |
+| `utf8` / `largeUtf8` | `string` | `string` |
+| `binary` / `largeBinary` / `fixedSizeBinary` | `Uint8Array` | `Uint8Array` |
+| **`date32`** | **`Date`** | `Date32` (days since epoch, `number`) |
+| **`date64`** | **`Date`** | `Date64Ms` (ms since epoch, `bigint`) |
+| `time32[s]` / `time32[ms]` | `number` (raw unit) | `Time32S` / `Time32Ms` |
+| `time64[us]` / `time64[ns]` | `bigint` (raw unit) | `Time64Us` / `Time64Ns` |
+| `timestamp[s/ms/us/ns]` | `bigint` (raw unit) | `TimestampSeconds` / `TimestampMillis` / `TimestampMicros` / `TimestampNanos` |
+| `duration[s/ms/us/ns]` | `bigint` (raw unit) | `DurationSeconds` / `DurationMillis` / `DurationMicros` / `DurationNanos` |
+| `decimal128` / `decimal256` | `bigint` (UNSCALED integer) | `UnscaledDecimal` |
+| `struct` | `{ field: richValue }` | `{ field: rawValue }` |
+| `list` / `largeList` / `fixedSizeList` | `Array<richValue \| null>` | `Array<rawValue \| null>` |
+| `map` | `Array<[richKey, richValue]>` | `Array<[rawKey, rawValue]>` |
+| `dictionary` | the decoded value's `rich` | the decoded value's `raw` |
+
+`date32` / `date64` are the **only** types where `rich` differs from the canonical
+wire unit. Everywhere else, `rich` *is* the canonical value and `raw` is the same
+value with a branded type. `null` / `undefined` pass through as `null` in every type.
+
+Notes:
+
+- **Decimals are unscaled.** A `decimal128(18, 2)` value of `123.45` is the bigint
+  `12345n`; apply the scale yourself (`Number(v) / 100`). The declared
+  precision/scale travel with the column type, not the value.
+- **Temporal units are lossless `bigint`.** A `timestamp[us]` round-trips as the
+  exact microsecond count — no `Date` narrowing, no precision loss.
+
+### Symmetry, round-tripping, and validation
+
+Reads and writes are symmetric: a value read from a column rebuilds into the same
+column. `build(read(x))` round-trips, in either representation —
+`iterRows(batch)` (and scalar inputs) return `rich` values, and a `rich` value fed
+back through `batchFromColumns`/a scalar `compute` return rebuilds the original
+column (pass `"raw"` / `repr: 'raw'` on both ends for the branded form).
+
+The codec **validates and throws** on invalid or lossy input: a non-integer where an
+integer is required, a `bigint` that overflows the declared width or the safe-integer
+range when narrowing to `number`, an out-of-range `Date`, the wrong number of bytes
+for a `fixedSizeBinary`, etc. You get a clear `codec[<type>]: …` `TypeError` at build
+time rather than silently corrupt data on the wire.
+
+### Typed author API
+
+Declare `params` and `returns` (or `args`) with the typed factories and `compute` is
+statically typed end to end — the input columns and the return value are checked
+against the declared Arrow types and the chosen representation:
+
+```ts
+import { Worker, defineScalarFunction, timestampMicros, int64 } from "@query-farm/vgi";
+
+// rich (default): timestamp values are plain bigint microsecond counts.
+const addHour = defineScalarFunction({
+  name: "add_hour",
+  params: { ts: timestampMicros },          // input column: bigint (us)
+  returns: timestampMicros,                  // output: bigint (us)
+  compute: (batch) => {
+    const ts = batch.getChildAt(0)!;
+    return Array.from(ts, (v: bigint | null) =>
+      v == null ? null : v + 3_600_000_000n, // +1h in microseconds
+    );                                        // returning a Date here is a COMPILE error
+  },
+});
+```
+
+```ts
+import {
+  Worker, defineScalarFunction, timestampMicros,
+  asTimestampMicros, type TimestampMicros,
+} from "@query-farm/vgi";
+
+// raw mode: outputs are branded units, constructed with `asTimestampMicros`.
+const epoch = defineScalarFunction({
+  name: "epoch_us",
+  params: { ts: timestampMicros },
+  returns: timestampMicros,
+  repr: "raw",                               // opt in to branded raw units
+  compute: (batch) => {
+    const ts = batch.getChildAt(0)!;
+    return Array.from(ts, (v: TimestampMicros | null) =>
+      v == null ? null : asTimestampMicros(v + 1n), // branded in, branded out
+    );
+  },
+});
+```
+
+For manual conversions outside a function, `codecFor(type)` returns the codec with
+`richToCanonical` / `canonicalToRich` / `rawToCanonical` / `canonicalToRaw`.
+
+### Factory name note
+
+The typed Arrow type factories `int`, `int32`, `float32`, and `bool` are **not**
+re-exported from the package root, because `@query-farm/vgi` already re-exports
+vgi-rpc argument builders of the same names. Import those four from the arrow facade
+(they ship as the typed factories there); the rest of the typed factory set
+(`int8`/`int16`/`int64`, `uint*`, `float16`/`float64`, `decimal*`, `dateDay`,
+`timestampMicros`, `struct`, `list`, `map`, …) is exported from the package root as
+usual.
+
+## Migration: the type-handling break
+
+This is a pre-1.0 breaking change to how columnar values are represented in and out
+of functions. The contract is now uniform across both Arrow backends and both
+directions (read and write). For consumers upgrading:
+
+- **`date32` / `date64` columns are now JS `Date` in *and* out by default.**
+  Previously dates were inconsistent — a day-number went *in* but a `Date` came back
+  *out*. Both directions are now `Date` under the default `rich` representation.
+- **Reads return rich values.** `iterRows`, scalar inputs, and setting/secret reads
+  all surface the `rich` value for their type.
+- **Non-date temporal types are lossless `bigint` raw units.** `time64`, `timestamp`,
+  and `duration` are the exact `bigint` count in their declared unit (us, ns, …) — no
+  `Date`, no precision loss.
+- **Decimals are unscaled `bigint`.** A `decimal(18,2)` of `123.45` is `12345n`.
+- **Opt into `repr: 'raw'`** for branded, unit-tagged raw units everywhere (including
+  `date32`/`date64` as plain day-number / ms-`bigint` rather than `Date`).
+
+Before / after for the common date case:
+
+```ts
+// BEFORE (old, inconsistent): wrote a day-number, read back a Date.
+returns: dateDay,
+compute: () => [20000],                 // 20000 days since epoch
+
+// AFTER (rich, default): write a Date, read a Date — symmetric.
+returns: dateDay,
+compute: () => [new Date("2024-10-19")],
+
+// AFTER (raw): opt in to the branded day-number.
+returns: dateDay,
+repr: "raw",
+compute: () => [asDate32(20000)],       // branded number, not a Date
+```
+
 ## Transports
 
 A worker serves the same functions over any of:

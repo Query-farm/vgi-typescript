@@ -290,17 +290,55 @@ backend can't implement something, throw `not implemented` on that backend
 rather than silently returning a wrong shape — the parity test then encodes
 the asymmetry as `expect(...).toThrow()`.
 
-### Flechette fork
+### Flechette
 
-We depend on `github:Query-farm/flechette#fix/timestamp-bigint-encode`
-(devDependency only — flechette is bundled into the `worker-cf` output, not
-shipped as a runtime dep). The fork adds `tablesToIPC`/`concatTables` for
-multi-batch IPC streams and fixes timestamp BigInt encoding. If a missing
-flechette feature blocks a migration, prefer adding it to the fork over
-keeping the arrow-js path.
+We depend on the published Query-farm flechette fork (`@query-farm/flechette` on
+npm). It adds `tablesToIPC`/`concatTables` for multi-batch IPC streams and fixes
+timestamp BigInt encoding. If a missing flechette feature blocks a migration, prefer
+adding it upstream over keeping the arrow-js path.
+
+## Type representation codec architecture
+
+`src/arrow/codec/` is the single source of truth for how each Arrow type maps to a JS
+value. The pipeline is **JS value ⇄ canonical ⇄ backend column**, with one converter
+per stage:
+
+- **The canonical value is the single source of truth.** Canonical = the raw Arrow
+  wire unit for the type (day-number for date32, ms-bigint for date64, raw-unit bigint
+  for time64/timestamp/duration, unscaled bigint for decimals, see the header of
+  `codec/registry.ts`). It is byte-for-byte identical across both backends — that's
+  what keeps arrow-js and flechette in agreement.
+- **`codecFor(type)` is the only conversion authority.** It returns a `Codec` with
+  `richToCanonical` / `canonicalToRich` / `rawToCanonical` / `canonicalToRaw`. Nothing
+  outside the codec module should hand-roll a `Date`↔day-number, decimal-byte, or
+  bigint-unit conversion — route it through `codecFor`. The `rich` representation
+  differs from canonical ONLY for date32/date64 (→ JS `Date`); `raw` is canonical with
+  a branded type (`codec/branded.ts`, mapped at the type level in `codec/repr.ts` +
+  `codec/type-descriptors.ts`).
+- **Per-backend specifics live ONLY in `impl-{arrowjs,flechette}/canonical.ts`.**
+  `writeCanonicalColumn(type, canonical[])` and `readCanonicalValue(type, col, i)` are
+  the *only* places that know backend-native build/read details (manual Int32/BigInt64
+  buffer building, decimal byte layout, list/map/struct offset handling). Everything
+  else (`batchFromColumns`, `iterRows`, scalar I/O, statistics, filter pushdown,
+  settings/secret reads) goes value → codec → canonical → `canonical.ts`.
+
+### Adding a new Arrow type
+
+1. Add a codec entry in `codec/registry.ts` (`codecFor` dispatch + the codec's four
+   convert methods, validating/throwing on bad input).
+2. Add canonical read/write handling in **both** `impl-arrowjs/canonical.ts` and
+   `impl-flechette/canonical.ts` (same canonical unit on each side).
+3. If it has a branded raw form, add the alias + `as…` constructor in
+   `codec/branded.ts`, the descriptor in `codec/type-descriptors.ts`, and the
+   `RichValue`/`RawValue` arms in `codec/repr.ts`.
+4. Add a parity / round-trip test (`src/arrow/__tests__/parity.test.ts`,
+   `codec.test.ts`, `raw-mode.test.ts`) covering both backends.
 
 ## Dependencies
 
-- `apache-arrow`: Query-farm fork (`github:Query-farm/arrow-js#feat_query_farm_1`)
-- `@query-farm/flechette`: published Query-farm fork (`@query-farm/flechette` on npm), runtime dep — bundled into worker-cf
-- `vgi-rpc`: Local package (`../vgi-rpc-typescript`) - provides Protocol, Server, IPC transport. Has its own parallel facade under `src/arrow/` selected via `#vgi-rpc-arrow`.
+- `@query-farm/apache-arrow` (`^21.1.1`): published Query-farm arrow-js fork. Default
+  (Node/Bun) backend; kept external from the bundle.
+- `@query-farm/flechette` (`^2.4.0`): published Query-farm fork, runtime dep — bundled
+  into the `worker-cf` output (workerd/browser backend).
+- `@query-farm/vgi-rpc`: provides Protocol, Server, IPC transport. Has its own
+  parallel facade under `src/arrow/` selected via `#vgi-rpc-arrow`.
