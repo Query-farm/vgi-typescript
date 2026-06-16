@@ -88,33 +88,61 @@ jobs:
       - name: Install dependencies
         run: bun install
 
-      - name: Install the haybarn unittest runner
-        # Pin alongside the community vgi extension build. `latest` currently
-        # resolves to the rc; pinning keeps the engine/extension hashes aligned.
-        run: npm i -g haybarn-unittest@1.5.3-rc6
-
-      - name: Wire haybarn-unittest where run_tests.py expects the binary
+      # Resolve the latest haybarn release so the unittest host matches the
+      # rebuilt community vgi extension's DuckDB ABI. The old npm pin
+      # (haybarn-unittest@1.5.3-rc6) is older than the extension's build
+      # (haybarn-v1.5.3-rc10) and SIGSEGVs loading it; the GitHub release tracks
+      # head. Mirrors the worker-SDK example repos' integration jobs.
+      - name: Resolve latest haybarn release
+        id: haybarn
         run: |
+          REL=$(gh release view --repo Query-farm-haybarn/haybarn --json tagName --jq .tagName)
+          echo "release=$REL" >> "$GITHUB_OUTPUT"
+          echo "Latest haybarn release: $REL"
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Download haybarn-unittest and wire it where run_tests.py expects it
+        run: |
+          gh release download "$HAYBARN_RELEASE" \
+            --repo Query-farm-haybarn/haybarn \
+            --pattern 'haybarn_unittest-linux-amd64.zip' \
+            --output haybarn-unittest.zip --clobber
+          mkdir -p hb && unzip -o -q haybarn-unittest.zip -d hb
+          UNITTEST="$PWD/$(find hb -name 'haybarn-unittest' -type f | head -1)"
+          chmod +x "$UNITTEST"
+          # run_tests.py invokes <root>/build/release/test/unittest with paths
+          # relative to the vgi checkout; shim it to the downloaded binary.
           mkdir -p vgi/build/release/test
-          printf '#!/usr/bin/env bash\nexec haybarn-unittest "$@"\n' \
+          printf '#!/usr/bin/env bash\nexec "%s" "$@"\n' "$UNITTEST" \
             > vgi/build/release/test/unittest
           chmod +x vgi/build/release/test/unittest
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HAYBARN_RELEASE: ${{ steps.haybarn.outputs.release }}
 
       # Force a fresh download of the (rebuilt) community vgi extension so the
-      # suite never runs against a stale cached copy. FROM the same community
-      # repo the per-test `require vgi` autoload uses (LOCAL_EXTENSION_REPO).
-      # Non-fatal: a hiccup here is only a warning — the per-test autoload still
+      # suite never runs against a stale cached copy, plus httpfs from core.
+      # FROM the same community repo the per-test `require vgi` autoload uses
+      # (LOCAL_EXTENSION_REPO). The runner matches tests by a path relative to
+      # the vgi checkout, so write the warm test there and run from it.
+      # Non-fatal: a hiccup here is only a warning — per-test autoload still
       # gates each file.
       - name: Force-install the rebuilt community vgi extension
         run: |
-          cat > "$RUNNER_TEMP/warm_vgi.test" <<'EOF'
-          # name: warm_vgi.test
-          # group: [warm]
-          statement ok
-          FORCE INSTALL vgi FROM '${LOCAL_EXTENSION_REPO}';
-          EOF
-          haybarn-unittest "$RUNNER_TEMP/warm_vgi.test" \
+          mkdir -p vgi/test
+          printf '%s\n' \
+            '# name: test/_warm.test' \
+            '# group: [warm]' \
+            'statement ok' \
+            'INSTALL httpfs FROM core;' \
+            '' \
+            'statement ok' \
+            "FORCE INSTALL vgi FROM '${LOCAL_EXTENSION_REPO}';" \
+            > vgi/test/_warm.test
+          ( cd vgi && build/release/test/unittest test/_warm.test ) \
             || echo "::warning::vgi force-install warm step did not fully succeed (per-test autoload still applies)"
+          rm -f vgi/test/_warm.test
 
       # HTTP transport uses one long-lived worker, avoiding the per-test bun
       # cold-start that makes the subprocess transport (172 spawns) thrash and
