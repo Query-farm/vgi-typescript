@@ -45,7 +45,7 @@ export function buildVgiProtocol(config: ProtocolConfig): Protocol {
     signingKey: config.signingKey,
   });
   registerAggregateMethods(protocol, config.registry);
-  registerTableBufferingMethods(protocol, config.registry);
+  registerTableBufferingMethods(protocol, config.registry, config.signingKey);
   registerCatalogMethods(protocol, config.catalogInterface, config.catalogName, config.signingKey);
 
   return protocol;

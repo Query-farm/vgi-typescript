@@ -11,16 +11,18 @@ import { ReadOnlyCatalogInterface } from "../src/catalog/read-only.js";
 import { CompositeCatalogInterface } from "../src/catalog/composite.js";
 import { allFunctions, catalog, createExampleCatalog } from "./common.js";
 import { projectionReproCatalog, projectionReproFunctions } from "./projection_repro.js";
+import { accumulateFunctions, createAccumulateCatalog } from "./accumulate.js";
 
 const registry = new FunctionRegistry();
-for (const func of [...allFunctions, ...projectionReproFunctions]) {
+for (const func of [...allFunctions, ...projectionReproFunctions, ...accumulateFunctions]) {
   registry.register(func);
 }
 
 const exampleBase = new ReadOnlyCatalogInterface(catalog, registry);
 const exampleCatalog = createExampleCatalog(exampleBase);
 const projectionRepro = new ReadOnlyCatalogInterface(projectionReproCatalog, registry);
-const catalogInterface = new CompositeCatalogInterface([exampleCatalog, projectionRepro]);
+const accumulate = createAccumulateCatalog(registry);
+const catalogInterface = new CompositeCatalogInterface([exampleCatalog, projectionRepro, accumulate]);
 
 // Shared signing key so buildVgiProtocol can decode state tokens created by createHttpHandler
 const signingKey = crypto.getRandomValues(new Uint8Array(32));

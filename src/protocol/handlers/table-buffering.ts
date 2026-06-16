@@ -25,6 +25,7 @@ import {
   unwrapRequest,
   wrapResult,
 } from "./shared.js";
+import { openAttach } from "./catalog/shared.js";
 import {
   BoundStorage,
   storage as defaultStorage,
@@ -40,6 +41,7 @@ import { Arguments } from "../../arguments/arguments.js";
 export function registerTableBufferingMethods(
   protocol: Protocol,
   registry: FunctionRegistry,
+  signingKey?: Uint8Array,
 ): void {
   function resolveBuffering(name: string): TableBufferingVgiFunction {
     const func = registry.get(name, {
@@ -57,10 +59,20 @@ export function registerTableBufferingMethods(
   async function loadParams(
     inner: Record<string, any>,
     clientLog: (level: string, message: string) => void,
+    ctx: any,
   ): Promise<{ func: TableBufferingVgiFunction; params: TableBufferingParams<any> }> {
     const functionName: string = inner.function_name;
     const executionId = toUint8Array(inner.execution_id);
-    const attach = inner.attach_opaque_data ? toUint8Array(inner.attach_opaque_data) : null;
+    // Unseal attach_opaque_data so combine()/process() see the SAME plaintext,
+    // attach-scoped bytes that bind()/init() and plain table functions see.
+    // Without this, on HTTP transport the buffering RPCs would scope persistent
+    // BoundStorage by the *sealed* envelope while reads scope by the plaintext,
+    // so attach-scoped state written in combine() is invisible to later reads.
+    const rawAttach = inner.attach_opaque_data ? toUint8Array(inner.attach_opaque_data) : null;
+    const attach =
+      rawAttach && rawAttach.length > 0
+        ? await openAttach(rawAttach, ctx?.auth, signingKey)
+        : rawAttach;
     const transactionId = inner.transaction_id ? toUint8Array(inner.transaction_id) : null;
 
     const func = resolveBuffering(functionName);
@@ -106,7 +118,7 @@ export function registerTableBufferingMethods(
     handler: async (rpcParams, ctx?: any) => {
       const inner = unwrapRequest(rpcParams.request);
       const clientLog = makeClientLog(ctx);
-      const { func, params } = await loadParams(inner, clientLog);
+      const { func, params } = await loadParams(inner, clientLog, ctx);
       if (inner.batch_index != null) {
         params.batchIndex = Number(inner.batch_index);
       }
@@ -130,7 +142,7 @@ export function registerTableBufferingMethods(
     handler: async (rpcParams, ctx?: any) => {
       const inner = unwrapRequest(rpcParams.request);
       const clientLog = makeClientLog(ctx);
-      const { func, params } = await loadParams(inner, clientLog);
+      const { func, params } = await loadParams(inner, clientLog, ctx);
       const stateIds = decodeBytesList(inner.state_ids);
       const finalizeStateIds = await func.bufferingConfig.combine(stateIds, params);
       const out = finalizeStateIds.map((fid, i) => {

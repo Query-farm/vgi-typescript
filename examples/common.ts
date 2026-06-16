@@ -334,7 +334,7 @@ export const catalog: CatalogDescriptor = {
         {
           name: "multi_branch_empty",
           columns: new Schema([new Field("n", new Int64(), true)]),
-          comment: "Multi-branch: worker returns empty branches list — used by multi_branch_empty_branches.test",
+          comment: "Multi-branch: empty branches list — used by multi_branch_empty_branches.test",
         },
         {
           name: "multi_branch_two_writable",
