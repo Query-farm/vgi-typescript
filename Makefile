@@ -100,7 +100,6 @@ TEST_PATTERNS := "test/sql/*" \
 # single producer. Reproduces with the upstream Python worker too.
 LAUNCHER_TEST_PATTERNS := $(TEST_PATTERNS) \
 	"~test/sql/vgi_worker_pool.test" \
-	"~test/sql/vgi_worker_subprocess_pool.test" \
 	"~test/sql/integration/table/filter_echo_partitioned.test" \
 	"~test/sql/integration/attach/versioned_tables_impl.test" \
 	"~test/sql/integration/table/order_preservation_modes.test"

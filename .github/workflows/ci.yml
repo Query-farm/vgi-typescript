@@ -100,6 +100,22 @@ jobs:
             > vgi/build/release/test/unittest
           chmod +x vgi/build/release/test/unittest
 
+      # Force a fresh download of the (rebuilt) community vgi extension so the
+      # suite never runs against a stale cached copy. FROM the same community
+      # repo the per-test `require vgi` autoload uses (LOCAL_EXTENSION_REPO).
+      # Non-fatal: a hiccup here is only a warning — the per-test autoload still
+      # gates each file.
+      - name: Force-install the rebuilt community vgi extension
+        run: |
+          cat > "$RUNNER_TEMP/warm_vgi.test" <<'EOF'
+          # name: warm_vgi.test
+          # group: [warm]
+          statement ok
+          FORCE INSTALL vgi FROM '${LOCAL_EXTENSION_REPO}';
+          EOF
+          haybarn-unittest "$RUNNER_TEMP/warm_vgi.test" \
+            || echo "::warning::vgi force-install warm step did not fully succeed (per-test autoload still applies)"
+
       # HTTP transport uses one long-lived worker, avoiding the per-test bun
       # cold-start that makes the subprocess transport (172 spawns) thrash and
       # time out on CI's 2-core runners. Both Arrow backends are covered here;
