@@ -14,7 +14,8 @@ import { readCanonicalValue } from "./canonical.js";
  * `RecordBatch` or facade `VgiBatch`.
  */
 export function* iterRows(
-  batch: RecordBatch | VgiBatch
+  batch: RecordBatch | VgiBatch,
+  repr: "rich" | "raw" = "rich",
 ): Generator<Record<string, any>> {
   const a = batch as RecordBatch;
   const codecs = a.schema.fields.map((f) => codecFor(f.type as unknown as VgiDataType));
@@ -25,7 +26,10 @@ export function* iterRows(
       const col = a.getChild(field.name);
       if (!col) { row[field.name] = null; continue; }
       const canonical = readCanonicalValue(field.type as unknown as VgiDataType, col, i);
-      row[field.name] = codecs[fi].canonicalToRich(canonical);
+      const codec = codecs[fi];
+      row[field.name] = repr === "raw"
+        ? codec.canonicalToRaw(canonical)
+        : codec.canonicalToRich(canonical);
     }
     yield row;
   }

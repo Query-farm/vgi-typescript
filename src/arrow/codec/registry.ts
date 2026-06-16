@@ -62,6 +62,14 @@ export interface Codec {
   richToCanonical(value: unknown): unknown;
   /** canonical pivot -> rich author value. */
   canonicalToRich(value: unknown): unknown;
+  /** branded raw author value -> canonical pivot. Largely identity on the
+   *  underlying number/bigint (raw === canonical for every type), but validates
+   *  and unbrands. Date32/Date64 raw values are plain day-number / ms-bigint,
+   *  so this differs from richToCanonical only in NOT accepting a JS Date. */
+  rawToCanonical(value: unknown): unknown;
+  /** canonical pivot -> branded raw author value. Validates and brands
+   *  (identity at runtime). */
+  canonicalToRaw(value: unknown): unknown;
 }
 
 function isNullish(v: unknown): boolean {
@@ -87,20 +95,19 @@ function err(label: string, msg: string, value: unknown): never {
 // Scalar codec builders
 // ---------------------------------------------------------------------------
 
-/** Identity codec: rich === canonical. Validates with `check`. */
+/** Identity codec: rich === canonical === raw. Validates with `check`. */
 function identity(label: string, check: (v: unknown) => void): Codec {
+  const conv = (value: unknown): unknown => {
+    if (isNullish(value)) return null;
+    check(value);
+    return value;
+  };
   return {
     label,
-    richToCanonical(value) {
-      if (isNullish(value)) return null;
-      check(value);
-      return value;
-    },
-    canonicalToRich(value) {
-      if (isNullish(value)) return null;
-      check(value);
-      return value;
-    },
+    richToCanonical: conv,
+    canonicalToRich: conv,
+    rawToCanonical: conv,
+    canonicalToRaw: conv,
   };
 }
 
@@ -214,6 +221,30 @@ function dateDayCodec(): Codec {
       if (Number.isNaN(d.getTime())) err(label, "day-number produces an invalid Date", value);
       return d;
     },
+    // raw date32 IS the day-number (no Date involved).
+    rawToCanonical(value) {
+      if (isNullish(value)) return null;
+      if (typeof value === "number") {
+        if (!Number.isInteger(value)) err(label, "raw day-number must be an integer", value);
+        return value;
+      }
+      if (typeof value === "bigint") return bigIntToSafeNumber(label, value);
+      return err(label, "expected branded Date32 (day-number)", value);
+    },
+    canonicalToRaw(value) {
+      if (isNullish(value)) return null;
+      if (typeof value === "number") {
+        if (!Number.isInteger(value)) err(label, "canonical day-number must be an integer", value);
+        return value;
+      }
+      if (typeof value === "bigint") return bigIntToSafeNumber(label, value);
+      if (value instanceof Date) {
+        const ms = value.getTime();
+        if (Number.isNaN(ms)) err(label, "invalid Date", value);
+        return Math.floor(ms / MS_PER_DAY);
+      }
+      return err(label, "expected number (days) canonical", value);
+    },
   };
 }
 
@@ -245,6 +276,17 @@ function dateMillisCodec(): Codec {
       if (Number.isNaN(d.getTime())) err(label, "ms value produces an invalid Date", value);
       return d;
     },
+    // raw date64 IS the ms-bigint (no Date involved).
+    rawToCanonical(value) {
+      if (isNullish(value)) return null;
+      if (value instanceof Date) return err(label, "raw Date64Ms must be a bigint (ms), not a Date", value);
+      return toBigIntStrict(label, value);
+    },
+    canonicalToRaw(value) {
+      if (isNullish(value)) return null;
+      if (value instanceof Date) return BigInt(value.getTime());
+      return toBigIntStrict(label, value);
+    },
   };
 }
 
@@ -252,41 +294,45 @@ function dateMillisCodec(): Codec {
 // Temporal codecs where rich == canonical (no Date — would be lossy)
 // ---------------------------------------------------------------------------
 
-/** time32: canonical/rich = number (raw unit). */
+/** time32: canonical/rich/raw = number (raw unit). */
 function time32Codec(): Codec {
   const label = "time32";
+  const toCanon = (value: unknown): unknown => {
+    if (isNullish(value)) return null;
+    if (typeof value === "number") {
+      if (!Number.isInteger(value)) err(label, "time32 value must be an integer", value);
+      return value;
+    }
+    if (typeof value === "bigint") return bigIntToSafeNumber(label, value);
+    return err(label, "expected number (raw time unit)", value);
+  };
+  const fromCanon = (value: unknown): unknown => {
+    if (isNullish(value)) return null;
+    if (typeof value === "number") return value;
+    if (typeof value === "bigint") return bigIntToSafeNumber(label, value);
+    return err(label, "expected number canonical", value);
+  };
   return {
     label,
-    richToCanonical(value) {
-      if (isNullish(value)) return null;
-      if (typeof value === "number") {
-        if (!Number.isInteger(value)) err(label, "time32 value must be an integer", value);
-        return value;
-      }
-      if (typeof value === "bigint") return bigIntToSafeNumber(label, value);
-      return err(label, "expected number (raw time unit)", value);
-    },
-    canonicalToRich(value) {
-      if (isNullish(value)) return null;
-      if (typeof value === "number") return value;
-      if (typeof value === "bigint") return bigIntToSafeNumber(label, value);
-      return err(label, "expected number canonical", value);
-    },
+    richToCanonical: toCanon,
+    canonicalToRich: fromCanon,
+    rawToCanonical: toCanon,
+    canonicalToRaw: fromCanon,
   };
 }
 
-/** time64/timestamp/duration: canonical/rich = bigint (raw unit). */
+/** time64/timestamp/duration: canonical/rich/raw = bigint (raw unit). */
 function bigIntUnitCodec(label: string): Codec {
+  const conv = (value: unknown): unknown => {
+    if (isNullish(value)) return null;
+    return toBigIntStrict(label, value);
+  };
   return {
     label,
-    richToCanonical(value) {
-      if (isNullish(value)) return null;
-      return toBigIntStrict(label, value);
-    },
-    canonicalToRich(value) {
-      if (isNullish(value)) return null;
-      return toBigIntStrict(label, value);
-    },
+    richToCanonical: conv,
+    canonicalToRich: conv,
+    rawToCanonical: conv,
+    canonicalToRaw: conv,
   };
 }
 
@@ -311,13 +357,16 @@ function decimalCodec(): Codec {
     if (ArrayBuffer.isView(value)) return decimalViewToBigInt(value as ArrayBufferView);
     return err(label, "expected bigint, number, or decimal byte view", value);
   };
+  const fromCanon = (value: unknown): unknown => {
+    if (isNullish(value)) return null;
+    return toCanon(value);
+  };
   return {
     label,
     richToCanonical: toCanon,
-    canonicalToRich(value) {
-      if (isNullish(value)) return null;
-      return toCanon(value);
-    },
+    canonicalToRich: fromCanon,
+    rawToCanonical: toCanon,
+    canonicalToRaw: fromCanon,
   };
 }
 
@@ -351,6 +400,26 @@ function structCodec(type: VgiDataType): Codec {
       }
       return out;
     },
+    rawToCanonical(value) {
+      if (isNullish(value)) return null;
+      if (typeof value !== "object") err(label, "expected an object", value);
+      const obj = value as any;
+      const out: Record<string, unknown> = {};
+      for (const { name, codec } of childCodecs) {
+        out[name] = codec.rawToCanonical(obj[name] ?? null);
+      }
+      return out;
+    },
+    canonicalToRaw(value) {
+      if (isNullish(value)) return null;
+      if (typeof value !== "object") err(label, "expected an object", value);
+      const obj = value as any;
+      const out: Record<string, unknown> = {};
+      for (const { name, codec } of childCodecs) {
+        out[name] = codec.canonicalToRaw(obj[name] ?? null);
+      }
+      return out;
+    },
   };
 }
 
@@ -375,6 +444,14 @@ function listCodec(type: VgiDataType): Codec {
     canonicalToRich(value) {
       if (isNullish(value)) return null;
       return toArray(value).map((v) => child.canonicalToRich(v));
+    },
+    rawToCanonical(value) {
+      if (isNullish(value)) return null;
+      return toArray(value).map((v) => child.rawToCanonical(v));
+    },
+    canonicalToRaw(value) {
+      if (isNullish(value)) return null;
+      return toArray(value).map((v) => child.canonicalToRaw(v));
     },
   };
 }
@@ -417,6 +494,20 @@ function mapCodec(type: VgiDataType): Codec {
         valueCodec.canonicalToRich(v),
       ]);
     },
+    rawToCanonical(value) {
+      if (isNullish(value)) return null;
+      return toPairs(value).map(([k, v]) => [
+        keyCodec.rawToCanonical(k),
+        valueCodec.rawToCanonical(v),
+      ]);
+    },
+    canonicalToRaw(value) {
+      if (isNullish(value)) return null;
+      return toPairs(value).map(([k, v]) => [
+        keyCodec.canonicalToRaw(k),
+        valueCodec.canonicalToRaw(v),
+      ]);
+    },
   };
 }
 
@@ -431,6 +522,8 @@ function dictionaryCodec(type: VgiDataType): Codec {
     label: `dictionary<${inner.label}>`,
     richToCanonical: (v) => inner.richToCanonical(v),
     canonicalToRich: (v) => inner.canonicalToRich(v),
+    rawToCanonical: (v) => inner.rawToCanonical(v),
+    canonicalToRaw: (v) => inner.canonicalToRaw(v),
   };
 }
 
@@ -463,6 +556,15 @@ const UTF8: Codec = {
     checkString("utf8")(value);
     return value;
   },
+  rawToCanonical(value) {
+    if (isNullish(value)) return null;
+    return typeof value === "string" ? value : String(value);
+  },
+  canonicalToRaw(value) {
+    if (isNullish(value)) return null;
+    checkString("utf8")(value);
+    return value;
+  },
 };
 
 /** Normalize any ArrayBuffer view to a Uint8Array over the same bytes. */
@@ -484,7 +586,13 @@ function toCanonBytes(label: string, fixedWidth?: number) {
 
 function bytesCodec(label: string, fixedWidth?: number): Codec {
   const conv = toCanonBytes(label, fixedWidth);
-  return { label, richToCanonical: conv, canonicalToRich: conv };
+  return {
+    label,
+    richToCanonical: conv,
+    canonicalToRich: conv,
+    rawToCanonical: conv,
+    canonicalToRaw: conv,
+  };
 }
 
 const BINARY = bytesCodec("binary");
@@ -492,6 +600,8 @@ const NULL_CODEC: Codec = {
   label: "null",
   richToCanonical: () => null,
   canonicalToRich: () => null,
+  rawToCanonical: () => null,
+  canonicalToRaw: () => null,
 };
 
 /**

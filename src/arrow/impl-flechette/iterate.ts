@@ -11,7 +11,10 @@ import { readCanonicalValue } from "./canonical.js";
  * per-backend canonical reader then maps canonical -> rich through the codec —
  * symmetric with the build path and identical to the arrow-js backend.
  */
-export function* iterRows(batch: VgiBatch): Generator<Record<string, any>> {
+export function* iterRows(
+  batch: VgiBatch,
+  repr: "rich" | "raw" = "rich",
+): Generator<Record<string, any>> {
   const t = batch as any;
   const fields = t.schema.fields;
   const codecs = fields.map((f: any) => codecFor(f.type as VgiDataType));
@@ -22,7 +25,10 @@ export function* iterRows(batch: VgiBatch): Generator<Record<string, any>> {
       const col = t.getChild(f.name);
       if (!col) { row[f.name] = null; continue; }
       const canonical = readCanonicalValue(f.type as VgiDataType, col, i);
-      row[f.name] = codecs[fi].canonicalToRich(canonical);
+      const codec = codecs[fi];
+      row[f.name] = repr === "raw"
+        ? codec.canonicalToRaw(canonical)
+        : codec.canonicalToRich(canonical);
     }
     yield row;
   }

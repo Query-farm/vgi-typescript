@@ -145,7 +145,12 @@ export function decimal(
   scale: number,
   bitWidth: 32 | 64 | 128 | 256 = 128,
 ): VgiDataType {
-  return new A_Decimal(precision, scale, bitWidth) as unknown as VgiDataType;
+  // arrow-js's Decimal constructor signature is (scale, precision, bitWidth) —
+  // the OPPOSITE order of our facade (precision, scale). Passing them in facade
+  // order made arrow-js report `.precision`/`.scale` swapped versus flechette.
+  // Swap here so a facade-built decimal reports identical precision/scale on
+  // both backends.
+  return new A_Decimal(scale, precision, bitWidth) as unknown as VgiDataType;
 }
 export const decimal128 = (precision: number, scale: number): VgiDataType =>
   decimal(precision, scale, 128);

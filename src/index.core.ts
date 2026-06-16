@@ -136,6 +136,79 @@ export {
   deserializeBatch,
 } from "./util/arrow/index.js";
 
+// Arrow type system (phase 3): typed factories, precise descriptors, the
+// rich/raw value mapping, the codec registry, and branded raw scalar types
+// with their validating constructors. This is the statically-typed author API.
+// NOTE: the arrow factory names `int`, `int32`, `float32`, `bool` are NOT
+// re-exported here because the package root already exports vgi-rpc argument
+// builders of the same names. Authors needing those specific arrow factories
+// (and the full typed factory set) import them from the arrow facade module
+// (`@query-farm/vgi` -> "./src/arrow/index.js"). The non-colliding and
+// unit-precise factories below cover the common phase-3 typed/raw-mode cases.
+export {
+  // typed type factories (non-colliding subset)
+  schema, field,
+  nullType,
+  int8, int16, int64,
+  uint8, uint16, uint32, uint64,
+  float16, float64,
+  utf8, binary, fixedSizeBinary,
+  decimal, decimal128, decimal256,
+  date, dateDay, dateMillisecond,
+  time, timeSecond, timeMillisecond, timeMicrosecond, timeNanosecond,
+  timestamp, duration, interval,
+  timestampSeconds, timestampMillis, timestampMicros, timestampNanos,
+  durationSeconds, durationMillis, durationMicros, durationNanos,
+  list, fixedSizeList, struct, map,
+  dictionary, union, sparseUnion, denseUnion,
+  TimeUnit, DateUnit, IntervalUnit, UnionMode,
+  // codec registry
+  codecFor,
+  // branded raw constructors / unwrappers
+  asDate32, asDate64Ms,
+  asTime32S, asTime32Ms, asTime64Us, asTime64Ns,
+  asTimestampSeconds, asTimestampMillis, asTimestampMicros, asTimestampNanos,
+  asDurationSeconds, asDurationMillis, asDurationMicros, asDurationNanos,
+  asUnscaledDecimal, asInt64, asUint64,
+  fromBranded, fromBrandedNumber, fromBrandedBigInt,
+  // backend-agnostic predicates + ids
+  TypeId,
+  isNull, isInt, isFloat, isBinary, isUtf8, isBool, isDecimal, isDate,
+  isTime, isTimestamp, isInterval, isList, isStruct, isUnion,
+  isFixedSizeBinary, isFixedSizeList, isMap, isDuration, isDictionary, isBatch,
+  readCanonicalValue, columnFromArray, decodeDictValue, backend,
+} from "./arrow/index.js";
+
+export type {
+  // backend-agnostic Arrow types
+  VgiTypeId, VgiDataType, VgiField, VgiSchema, VgiColumn, VgiColumnData,
+  VgiBatch, VgiBackendInfo,
+  // precise nominal descriptors
+  NullDescriptor, BoolType,
+  IntType, Int8Type, Int16Type, Int32Type, Int64Type,
+  Uint8Type, Uint16Type, Uint32Type, Uint64Type,
+  FloatType, Utf8Type, LargeUtf8Type, BinaryType, LargeBinaryType,
+  FixedSizeBinaryType, DecimalType,
+  Date32Type, Date64Type, Time32Type, Time64Type,
+  TimestampType, DurationType, IntervalType,
+  ListType, FixedSizeListType, StructType, MapType, DictionaryType, UnionType,
+  TypedField, TUnit,
+  // rich/raw mapping
+  RichValue, RawValue, ValueFor, Repr,
+  // codec
+  Codec,
+  // branded scalar aliases
+  Branded,
+  Date32, Date64Ms,
+  Time32S, Time32Ms, Time64Us, Time64Ns,
+  TimestampSeconds, TimestampMillis, TimestampMicros, TimestampNanos,
+  DurationSeconds, DurationMillis, DurationMicros, DurationNanos,
+  UnscaledDecimal, Int64Raw, Uint64Raw,
+} from "./arrow/index.js";
+
+// Typed scalar compute helper types (phase 3).
+export type { ScalarComputeRow, ScalarOutputValue, ScalarComputeResult } from "./functions/scalar.js";
+
 // Storage
 export {
   type FunctionStorage,

@@ -8,6 +8,8 @@ import {
   type VgiField,
   type VgiBatch,
   type VgiDataType,
+  type ValueFor,
+  type Repr,
   schema as makeSchema,
   field,
   nullType,
@@ -69,11 +71,42 @@ export interface ScalarParameterDef {
   varargs?: boolean;
 }
 
-export interface ScalarFunctionConfig {
+/**
+ * The typed compute row for a scalar function: one property per declared
+ * columnar param, valued in the representation (`rich` / `raw`) selected by the
+ * function's `repr`. (Provided as a convenience type for authors who build rows
+ * out of the input batch.)
+ */
+export type ScalarComputeRow<
+  P extends Record<string, VgiDataType>,
+  M extends Repr,
+> = { [K in keyof P]: ValueFor<P[K], M> | null };
+
+/** A single output value for a scalar function under representation `M`. */
+export type ScalarOutputValue<R extends VgiDataType, M extends Repr> =
+  ValueFor<R, M> | null;
+
+/**
+ * Accepted compute return shapes: an array (or iterable) of output values in
+ * the declared representation, or a pre-built VgiBatch. The representation is
+ * enforced statically — returning a `Date` under `repr: 'raw'` (which expects a
+ * branded `Date32`/`Date64Ms`), or a branded value under `repr: 'rich'` (which
+ * expects a `Date`), is a COMPILE error.
+ */
+export type ScalarComputeResult<R extends VgiDataType, M extends Repr> =
+  | Array<ScalarOutputValue<R, M>>
+  | Iterable<ScalarOutputValue<R, M>>
+  | VgiBatch;
+
+export interface ScalarFunctionConfig<
+  P extends Record<string, VgiDataType> = Record<string, VgiDataType>,
+  R extends VgiDataType = VgiDataType,
+  M extends Repr = "rich",
+> {
   name: string;
   description?: string;
   /** Columnar params (receive Arrow arrays at process time) */
-  params?: Record<string, VgiDataType>;
+  params?: P;
   /** Constant params (receive scalar values resolved at bind time) */
   constParams?: Record<string, VgiDataType>;
   /**
@@ -82,10 +115,22 @@ export interface ScalarFunctionConfig {
    */
   parameters?: ScalarParameterDef[];
   /** Output type (static) */
-  returns?: VgiDataType;
+  returns?: R;
   /** Dynamic output type at bind time */
   outputType?: (params: ScalarBindParameters) => VgiDataType | Promise<VgiDataType>;
-  /** Process: receives columnar batch + const values, returns output array or values */
+  /**
+   * Value representation for compute I/O. `'rich'` (default) uses JS `Date` for
+   * date32/date64 and plain number/bigint elsewhere. `'raw'` uses the branded
+   * unit-carrying aliases (Date32, TimestampMicros, UnscaledDecimal, …). The
+   * choice flows into compute()'s statically-checked return type and selects
+   * the runtime converter used to build the output column.
+   */
+  repr?: M;
+  /**
+   * Process: receives the columnar input batch + const values, returns the
+   * output column as an array/iterable of values (statically typed from
+   * `returns` and `repr`) or a pre-built VgiBatch.
+   */
   compute: (
     batch: VgiBatch,
     consts: Record<string, any>,
@@ -94,7 +139,9 @@ export interface ScalarFunctionConfig {
       secrets: Record<string, Record<string, any>>;
       auth: AuthContext;
     }
-  ) => any;
+    // NoInfer pins R/M from `returns`/`repr` so the compute return type is
+    // CHECKED against them rather than widening them to fit a wrong value.
+  ) => ScalarComputeResult<NoInfer<R>, NoInfer<M>>;
   // Metadata
   stability?: FunctionStability;
   nullHandling?: NullHandling;
@@ -106,7 +153,12 @@ export interface ScalarFunctionConfig {
   requiredSecrets?: string[];
 }
 
-export function defineScalarFunction(config: ScalarFunctionConfig): VgiFunction {
+export function defineScalarFunction<
+  P extends Record<string, VgiDataType> = Record<string, VgiDataType>,
+  R extends VgiDataType = VgiDataType,
+  M extends Repr = "rich",
+>(config: ScalarFunctionConfig<P, R, M>): VgiFunction {
+  const repr: Repr = config.repr ?? "rich";
   // Build argument specs
   const specs: ArgumentSpec[] = [];
 
@@ -264,15 +316,16 @@ export function defineScalarFunction(config: ScalarFunctionConfig): VgiFunction 
           } else if (Array.isArray(result)) {
             // Array of values -> single column. Route through batchFromColumns
             // so complex types (Decimal, BigInt-backed Timestamp/Duration,
-            // List, Map, Struct) are built via our buildColumnData.
+            // List, Map, Struct) are built via our buildColumnData. The `repr`
+            // selects raw<->canonical (branded) vs rich<->canonical conversion.
             const fieldName = outputSchema.fields[0].name;
-            outputBatch = batchFromColumns({ [fieldName]: result }, outputSchema);
+            outputBatch = batchFromColumns({ [fieldName]: result }, outputSchema, repr);
           } else {
             // User returned an Arrow Vector / typed-array-shaped column. Iterate
             // it into a JS array and re-route through batchFromColumns. Adds an
             // O(n) copy but matches both backends' contract.
             const fieldName = outputSchema.fields[0].name;
-            outputBatch = batchFromColumns({ [fieldName]: [...(result as Iterable<any>)] }, outputSchema);
+            outputBatch = batchFromColumns({ [fieldName]: [...(result as Iterable<any>)] }, outputSchema, repr);
           }
 
           // Validate row count

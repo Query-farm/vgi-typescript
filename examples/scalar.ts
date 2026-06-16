@@ -34,6 +34,12 @@ import {
   ArgumentValidationError,
 } from "../src/index.js";
 import type { VgiFunction } from "../src/index.js";
+// Typed facade factories + branded raw helpers (phase 3).
+import {
+  timestampMicros as f_timestampMicros,
+  asTimestampMicros,
+} from "../src/index.js";
+import type { TimestampMicros } from "../src/index.js";
 
 // ============================================================================
 // Helper: type promotion for addition (matches Python _promote_for_addition)
@@ -1275,6 +1281,45 @@ const unnest_tensor = defineScalarFunction({
 });
 
 // ============================================================================
+// 24. shift_timestamp_us — phase-3 RAW MODE end-to-end demo.
+//
+// Uses the typed facade factory `timestampMicros()` and `repr: 'raw'`, so the
+// compute() output is statically typed as a BRANDED `TimestampMicros` (raw us).
+// Returning a plain bigint or a Date here would be a COMPILE error. The runtime
+// builds the output column through the raw<->canonical codec path.
+// ============================================================================
+
+const ONE_HOUR_US = 3_600_000_000n;
+
+const shift_timestamp_us = defineScalarFunction({
+  name: "shift_timestamp_us",
+  description: "Shift a timestamp[us] forward by one hour (raw-mode branded demo)",
+  params: { ts: f_timestampMicros() },
+  returns: f_timestampMicros(),
+  repr: "raw",
+  compute: (batch) => {
+    const col = batch.getChildAt(0);
+    const out: (TimestampMicros | null)[] = [];
+    for (let i = 0; i < batch.numRows; i++) {
+      const v = col ? col.get(i) : null;
+      if (v === null || v === undefined) { out.push(null); continue; }
+      const raw = typeof v === "bigint" ? v : BigInt(v as any);
+      // asTimestampMicros validates + brands; the static return type enforces it.
+      out.push(asTimestampMicros(raw + ONE_HOUR_US));
+    }
+    return out;
+  },
+  examples: [
+    { sql: "SELECT shift_timestamp_us(ts) FROM events", description: "Add one hour to each timestamp" },
+  ],
+});
+
+// Demonstrate (compile-time only) that the wrong representation is rejected.
+// Uncommenting the body below would be a COMPILE error because raw mode expects
+// a branded TimestampMicros, not a plain bigint:
+//   compute: () => [42n],   // ts-error: bigint not assignable to TimestampMicros
+
+// ============================================================================
 // Export all scalar functions
 // ============================================================================
 
@@ -1319,3 +1364,12 @@ export const scalarFunctions: VgiFunction[] = [
   whoami,
   unnest_tensor,
 ];
+
+// `shift_timestamp_us` (above) demonstrates the phase-3 typed `repr: 'raw'`
+// author API end-to-end. It is intentionally NOT added to `scalarFunctions`:
+// the example worker's registered inventory is asserted byte-for-byte by the
+// C++ extension's `function_registration` golden test, and the raw-mode build +
+// read round-trip is already covered on both backends by
+// src/arrow/__tests__/raw-mode.test.ts. Reference it so it is still
+// type-checked / tree-shake-retained as a usage example.
+export const rawModeScalarExample: VgiFunction = shift_timestamp_us;

@@ -47,6 +47,7 @@ export function batchFromRows(
 export function batchFromColumns(
   columns: Record<string, any[]>,
   schema: VgiSchema,
+  repr: "rich" | "raw" = "rich",
 ): VgiBatch {
   let numRows = 0;
   for (const f of schema.fields) {
@@ -57,7 +58,8 @@ export function batchFromColumns(
     const values = columns[f.name];
     if (!values) continue;
     const codec = codecFor(f.type as VgiDataType);
-    canonicalColumns[f.name] = values.map((v) => codec.richToCanonical(v));
+    const toCanon = repr === "raw" ? codec.rawToCanonical : codec.richToCanonical;
+    canonicalColumns[f.name] = values.map((v) => toCanon.call(codec, v));
   }
   return writeCanonicalBatch(canonicalColumns, schema, numRows);
 }
