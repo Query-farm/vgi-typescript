@@ -253,7 +253,7 @@ package.json `imports` conditional resolution:
 
 `#arrow-impl` (in this repo) and `#vgi-rpc-arrow` (in vgi-rpc-typescript) are
 the resolution keys — see each `package.json`'s `imports` field. **Never import
-`@query-farm/apache-arrow` or `@uwdata/flechette` directly from app code.**
+`@query-farm/apache-arrow` or `@query-farm/flechette` directly from app code.**
 Always go through `src/arrow/index.ts` so the same source compiles into either
 bundle.
 
@@ -302,5 +302,5 @@ keeping the arrow-js path.
 ## Dependencies
 
 - `apache-arrow`: Query-farm fork (`github:Query-farm/arrow-js#feat_query_farm_1`)
-- `@uwdata/flechette`: Query-farm fork (`github:Query-farm/flechette#fix/timestamp-bigint-encode`), devDep — bundled into worker-cf
+- `@query-farm/flechette`: published Query-farm fork (`@query-farm/flechette` on npm), runtime dep — bundled into worker-cf
 - `vgi-rpc`: Local package (`../vgi-rpc-typescript`) - provides Protocol, Server, IPC transport. Has its own parallel facade under `src/arrow/` selected via `#vgi-rpc-arrow`.

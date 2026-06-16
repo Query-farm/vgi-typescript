@@ -1,7 +1,7 @@
 // Copyright 2025, 2026 Query Farm LLC - https://query.farm
 // Schema/batch projection by column index for the flechette backend.
 
-import { tableFromColumns } from "@uwdata/flechette";
+import { tableFromColumns } from "@query-farm/flechette";
 import type { VgiSchema, VgiBatch } from "../types.js";
 
 function validateProjectionIds(

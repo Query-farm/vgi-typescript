@@ -9,7 +9,7 @@
 // wired into `make test` via VGI_VERSIONED_WORKER).
 
 import { describe, test, expect } from "bun:test";
-import { CatalogInterface, type CatalogInfo, type CatalogAttachResult, type AttachOpaqueData, type TransactionOpaqueData, type SchemaInfo } from "../../index.js";
+import { CatalogInterface, type CatalogInfo, type CatalogAttachResult, type AttachOpaqueData, type TransactionOpaqueData, type SchemaInfo } from "../../index.core.js";
 
 const IMPLEMENTATION_VERSION = "1.0.0";
 const DATA_VERSION_SPEC = ">=1.0.0,<2.0.0";

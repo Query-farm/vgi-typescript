@@ -13,7 +13,7 @@
 // that entirely.
 
 import { httpConnect } from "@query-farm/vgi-rpc";
-import { VgiClient } from "../../../index.js";
+import { VgiClient } from "../../../index.core.js";
 
 export function pythonHttpWorkerAvailable(): boolean {
   return Boolean(process.env.VGI_PYTHON_HTTP_WORKER);

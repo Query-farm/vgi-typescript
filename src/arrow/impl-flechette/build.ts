@@ -11,7 +11,7 @@ import {
   field as f_field,
   Table,
   type Column,
-} from "@uwdata/flechette";
+} from "@query-farm/flechette";
 import type { VgiSchema, VgiBatch, VgiDataType, VgiColumnData } from "../types.js";
 import { emptyBatch } from "./empty.js";
 import { toFlechetteType } from "./normalize-type.js";

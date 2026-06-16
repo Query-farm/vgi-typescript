@@ -77,7 +77,6 @@ export {
   ReadOnlyCatalogInterface,
   CompositeCatalogInterface,
   CatalogInterface,
-  Worker,
   Arguments,
   FunctionType,
   serializeAttachOptionSpec,
@@ -85,7 +84,7 @@ export {
   serializeColumnStatistics,
   BindResultSchema,
   ScanFunctionResultSchema,
-} from "./index.js";
+} from "./index.core.js";
 
 export type {
   AttachOptionSpec,
@@ -99,7 +98,7 @@ export type {
   SchemaInfo,
   VgiFunction,
   TableProcessParams,
-} from "./index.js";
+} from "./index.core.js";
 
 export type { ProtocolConfig } from "./protocol/dispatch.js";
 

@@ -17,7 +17,7 @@ import {
   startPythonHttpWorker,
   type PythonHttpWorkerHandle,
 } from "./helpers/python-http-worker.js";
-import { VgiClient } from "../../index.js";
+import { VgiClient } from "../../index.core.js";
 
 const skip = !pythonHttpWorkerAvailable();
 

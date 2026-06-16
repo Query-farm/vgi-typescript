@@ -13,7 +13,7 @@ import {
   columnFromArray,
   field as f_field,
   Table,
-} from "@uwdata/flechette";
+} from "@query-farm/flechette";
 
 import type { VgiSchema, VgiBatch } from "../types.js";
 import { readFirstRecordBatchMeta } from "./message-meta.js";

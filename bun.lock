@@ -7,8 +7,8 @@
       "dependencies": {
         "@noble/ciphers": "^2.2.0",
         "@query-farm/apache-arrow": "^21.1.1",
-        "@query-farm/vgi-rpc": "github:Query-farm/vgi-rpc-typescript#325d891",
-        "@uwdata/flechette": "github:Query-farm/flechette#fix/timestamp-bigint-encode",
+        "@query-farm/flechette": "^2.4.0",
+        "@query-farm/vgi-rpc": "^0.7.5",
       },
       "devDependencies": {
         "@duckdb/node-api": "^1.5.2-r.1",
@@ -38,7 +38,9 @@
 
     "@query-farm/apache-arrow": ["@query-farm/apache-arrow@21.1.1", "", { "dependencies": { "@swc/helpers": "^0.5.11", "@types/command-line-args": "^5.2.3", "@types/command-line-usage": "^5.0.4", "@types/node": "^25.2.0", "command-line-args": "^6.0.1", "command-line-usage": "^7.0.1", "flatbuffers": "^25.1.24", "json-with-bigint": "^3.5.3", "tslib": "^2.6.2" }, "bin": { "arrow2csv": "bin/arrow2csv.js" } }, "sha512-MDACnRrvC4aGes+rGZ/UsNidtW+WX0UN4wqijQ3vsGlKSVvee1kkXjGci8RQqzF4WXY0nJfteGRVqkrGIEXSbw=="],
 
-    "@query-farm/vgi-rpc": ["@query-farm/vgi-rpc@github:Query-farm/vgi-rpc-typescript#325d891", { "dependencies": { "@noble/ciphers": "^2.2.0", "@query-farm/apache-arrow": "^21.1.1", "@uwdata/flechette": "github:Query-farm/flechette#fix/timestamp-bigint-encode", "fzstd": "^0.1.1", "oauth4webapi": "^3.8.6" }, "peerDependencies": { "@aws-sdk/client-s3": ">=3.0.0", "@aws-sdk/s3-request-presigner": ">=3.0.0", "@google-cloud/storage": ">=7.0.0", "@opentelemetry/api": ">=1.4.0" }, "optionalPeers": ["@aws-sdk/client-s3", "@aws-sdk/s3-request-presigner", "@google-cloud/storage", "@opentelemetry/api"] }, "Query-farm-vgi-rpc-typescript-325d891"],
+    "@query-farm/flechette": ["@query-farm/flechette@2.4.0", "", {}, "sha512-1dQTJZYsGdrE6isTHPVGb8WBI8GttY4vTsC3Rh1C+OZAdZbR8+Gg4Ds/RgXbBK+3Eeiaph9aR8Vx67ieEhtMhw=="],
+
+    "@query-farm/vgi-rpc": ["@query-farm/vgi-rpc@0.7.5", "", { "dependencies": { "@noble/ciphers": "^2.2.0", "@query-farm/apache-arrow": "^21.1.1", "@query-farm/flechette": "^2.4.0", "fzstd": "^0.1.1", "oauth4webapi": "^3.8.6" }, "peerDependencies": { "@aws-sdk/client-s3": ">=3.0.0", "@aws-sdk/s3-request-presigner": ">=3.0.0", "@google-cloud/storage": ">=7.0.0", "@opentelemetry/api": ">=1.4.0" }, "optionalPeers": ["@aws-sdk/client-s3", "@aws-sdk/s3-request-presigner", "@google-cloud/storage", "@opentelemetry/api"] }, "sha512-GDUzCaBFQkWv11YzfXgHSz1pKA/xNocaLd7s4GEpQE4oHI5jaQunAWZA5koVAPqX/iZScIlWHHgeVPYtptgWVA=="],
 
     "@swc/helpers": ["@swc/helpers@0.5.21", "", { "dependencies": { "tslib": "^2.8.0" } }, "sha512-jI/VAmtdjB/RnI8GTnokyX7Ug8c+g+ffD6QRLa6XQewtnGyukKkKSk3wLTM3b5cjt1jNh9x0jfVlagdN2gDKQg=="],
 
@@ -49,8 +51,6 @@
     "@types/command-line-usage": ["@types/command-line-usage@5.0.4", "", {}, "sha512-BwR5KP3Es/CSht0xqBcUXS3qCAUVXwpRKsV2+arxeb65atasuXG9LykC9Ab10Cw3s2raH92ZqOeILaQbsB2ACg=="],
 
     "@types/node": ["@types/node@25.6.0", "", { "dependencies": { "undici-types": "~7.19.0" } }, "sha512-+qIYRKdNYJwY3vRCZMdJbPLJAtGjQBudzZzdzwQYkEPQd+PJGixUL5QfvCLDaULoLv+RhT3LDkwEfKaAkgSmNQ=="],
-
-    "@uwdata/flechette": ["@uwdata/flechette@github:Query-farm/flechette#324a13e", {}, "Query-farm-flechette-324a13e"],
 
     "ansi-styles": ["ansi-styles@4.3.0", "", { "dependencies": { "color-convert": "^2.0.1" } }, "sha512-zbB9rCJAT1rbjiVDb2hqKFHNYLxgtk8NURxZ3IZwD3F6NtxbXZQCnnSi1Lkx+IDohdPlFp222wVALIheZJQSEg=="],
 
@@ -97,7 +97,5 @@
     "undici-types": ["undici-types@7.19.2", "", {}, "sha512-qYVnV5OEm2AW8cJMCpdV20CDyaN3g0AjDlOGf1OW4iaDEx8MwdtChUp4zu4H0VP3nDRF/8RKWH+IPp9uW0YGZg=="],
 
     "wordwrapjs": ["wordwrapjs@5.1.1", "", {}, "sha512-0yweIbkINJodk27gX9LBGMzyQdBDan3s/dEAiwBOj+Mf0PPyWL6/rikalkv8EeD0E8jm4o5RXEOrFTP3NXbhJg=="],
-
-    "@query-farm/vgi-rpc/@uwdata/flechette": ["@uwdata/flechette@github:Query-farm/flechette#324a13e", {}, "Query-farm-flechette-324a13e"],
   }
 }

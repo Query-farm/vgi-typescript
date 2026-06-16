@@ -72,8 +72,8 @@
   "dependencies": {
     "@noble/ciphers": "^2.2.0",
     "@query-farm/apache-arrow": "^21.1.1",
-    "@query-farm/vgi-rpc": "github:Query-farm/vgi-rpc-typescript#325d891",
-    "@uwdata/flechette": "github:Query-farm/flechette#fix/timestamp-bigint-encode"
+    "@query-farm/flechette": "^2.4.0",
+    "@query-farm/vgi-rpc": "^0.7.5"
   },
   "devDependencies": {
     "@duckdb/node-api": "^1.5.2-r.1",

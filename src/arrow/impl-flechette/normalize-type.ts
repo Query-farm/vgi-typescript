@@ -21,7 +21,7 @@ import {
   nullType, bool, int, float, utf8, binary, fixedSizeBinary,
   decimal, date, time, timestamp, duration, interval,
   list, largeList, fixedSizeList, struct, map, dictionary, union,
-} from "@uwdata/flechette";
+} from "@query-farm/flechette";
 
 function fField(f: any): any {
   return f_field(f.name, toFlechetteType(f.type), f.nullable ?? true, f.metadata ?? null);

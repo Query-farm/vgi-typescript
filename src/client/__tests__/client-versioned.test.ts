@@ -10,13 +10,13 @@
 // Skipped automatically when VGI_PYTHON_VERSIONED_HTTP_WORKER isn't set.
 
 import { describe, test, expect, beforeAll, afterAll } from "bun:test";
-import { VgiClientError } from "../../index.js";
+import { VgiClientError } from "../../index.core.js";
 import {
   pythonVersionedHttpWorkerAvailable,
   startPythonVersionedHttpWorker,
   type PythonHttpWorkerHandle,
 } from "./helpers/python-http-worker.js";
-import type { VgiClient } from "../../index.js";
+import type { VgiClient } from "../../index.core.js";
 
 const skip = !pythonVersionedHttpWorkerAvailable();
 

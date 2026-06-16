@@ -19,7 +19,7 @@ import {
   startPythonAttachOptionsHttpWorker,
   type PythonHttpWorkerHandle,
 } from "./helpers/python-http-worker.js";
-import type { VgiClient } from "../../index.js";
+import type { VgiClient } from "../../index.core.js";
 
 const skip = !pythonAttachOptionsHttpWorkerAvailable();
 

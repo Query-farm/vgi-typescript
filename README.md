@@ -256,7 +256,7 @@ browsers:
 | Runtime | Arrow backend |
 | --- | --- |
 | Node.js / Bun | [`@query-farm/apache-arrow`](https://www.npmjs.com/package/@query-farm/apache-arrow) (arrow-js) |
-| Cloudflare Workers (`workerd`) / browser | [`@uwdata/flechette`](https://github.com/uwdata/flechette) |
+| Cloudflare Workers (`workerd`) / browser | [`@query-farm/flechette`](https://www.npmjs.com/package/@query-farm/flechette) |
 
 Subpath exports:
 

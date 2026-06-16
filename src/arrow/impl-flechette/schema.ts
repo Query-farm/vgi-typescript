@@ -49,7 +49,7 @@ import {
   DateUnit as F_DateUnit,
   IntervalUnit as F_IntervalUnit,
   UnionMode as F_UnionMode,
-} from "@uwdata/flechette";
+} from "@query-farm/flechette";
 
 import type { VgiField, VgiSchema, VgiDataType } from "../types.js";
 
