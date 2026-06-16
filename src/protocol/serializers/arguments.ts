@@ -66,7 +66,7 @@ function inferScalarType(val: any): VgiDataType {
   if (typeof val === "number") return int64();
   if (typeof val === "bigint") return int64();
   if (val instanceof Uint8Array || val instanceof ArrayBuffer) return binary();
-  return utf8(); // fallback
+  return utf8(); // fallback (e.g. an Int32Array INTERVAL quad -> stringified)
 }
 
 export function deserializeArguments(bytes: Uint8Array): Arguments {

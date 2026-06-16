@@ -1,20 +1,28 @@
 // Copyright 2025, 2026 Query Farm LLC - https://query.farm
 // Read data out of flechette tables as plain JS values.
 
-import type { VgiBatch } from "../types.js";
+import type { VgiBatch, VgiDataType } from "../types.js";
+import { codecFor } from "../codec/registry.js";
+import { readCanonicalValue } from "./canonical.js";
 
 /**
- * Iterate rows of a batch (flechette Table) as plain objects. Mirrors
- * impl-arrowjs/iterate.ts so callers see identical row shapes regardless
- * of backend.
+ * Iterate rows of a batch (flechette Table) as plain objects, in the RICH
+ * representation (Date for date32/date64; canonical otherwise). Reads via the
+ * per-backend canonical reader then maps canonical -> rich through the codec —
+ * symmetric with the build path and identical to the arrow-js backend.
  */
 export function* iterRows(batch: VgiBatch): Generator<Record<string, any>> {
   const t = batch as any;
+  const fields = t.schema.fields;
+  const codecs = fields.map((f: any) => codecFor(f.type as VgiDataType));
   for (let i = 0; i < t.numRows; i++) {
     const row: Record<string, any> = {};
-    for (const f of t.schema.fields) {
+    for (let fi = 0; fi < fields.length; fi++) {
+      const f = fields[fi];
       const col = t.getChild(f.name);
-      row[f.name] = col ? col.at(i) : null;
+      if (!col) { row[f.name] = null; continue; }
+      const canonical = readCanonicalValue(f.type as VgiDataType, col, i);
+      row[f.name] = codecs[fi].canonicalToRich(canonical);
     }
     yield row;
   }

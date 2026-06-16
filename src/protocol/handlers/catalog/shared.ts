@@ -1,7 +1,7 @@
 // Copyright 2025, 2026 Query Farm LLC - https://query.farm
 // Shared param schemas and helpers for catalog protocol handlers.
 
-import { type VgiSchema, schema, type VgiField, field, type VgiDataType, binary, utf8, bool, isDate, DateUnit } from "../../../arrow/index.js";
+import { type VgiSchema, schema, type VgiField, field, type VgiDataType, binary, utf8, bool, iterRows } from "../../../arrow/index.js";
 import { Protocol, type AuthContext, type CallContext } from "@query-farm/vgi-rpc";
 import type { CatalogInterface } from "../../../catalog/interface.js";
 import { NoCatalogError } from "../../../errors.js";
@@ -219,22 +219,12 @@ export function decodeOptionsBatch(bytes: any): Record<string, unknown> {
   if (buf.byteLength === 0) return {};
   const batch = deserializeBatch(buf);
   if (batch.numRows === 0) return {};
-  const out: Record<string, unknown> = {};
-  for (const field of batch.schema.fields) {
-    const col = batch.getChild(field.name);
-    let v: unknown = col ? col.get(0) : null;
-    // date32 (Date DAY) columns: both Arrow backends' `.get()` return the value
-    // as epoch MILLISECONDS, but the SDK's canonical date32 representation —
-    // what `batchFromColumns` stores and what crosses the wire — is the raw
-    // day-number. Normalize here so attach-option consumers receive the same
-    // representation they must feed back into a date32 column.
-    if (v != null && isDate(field.type) && (field.type as any).unit === DateUnit.DAY) {
-      const ms = v instanceof Date ? v.getTime() : Number(v);
-      v = Math.floor(ms / 86_400_000);
-    }
-    out[field.name] = v;
-  }
-  return out;
+  // Decode the single row through the codec path (iterRows yields RICH values):
+  // date columns come back as JS Date, temporal types as bigint, etc. — the
+  // same representation a producer would feed back into batchFromColumns. The
+  // old `Math.floor(ms / 86_400_000)` date32 hack is gone; the codec owns it.
+  const row = iterRows(batch).next().value as Record<string, unknown> | undefined;
+  return row ?? {};
 }
 
 // ---------------------------------------------------------------------------

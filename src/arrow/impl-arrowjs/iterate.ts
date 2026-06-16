@@ -2,21 +2,30 @@
 // Read data out of Arrow batches as plain JS values.
 
 import { RecordBatch, DataType } from "@query-farm/apache-arrow";
-import type { VgiBatch } from "../types.js";
+import type { VgiBatch, VgiDataType } from "../types.js";
+import { codecFor } from "../codec/registry.js";
+import { readCanonicalValue } from "./canonical.js";
 
 /**
- * Iterate rows of a RecordBatch as plain objects. Accepts arrow-js
+ * Iterate rows of a RecordBatch as plain objects, in the RICH representation
+ * (Date for date32/date64; canonical otherwise). Reads via the per-backend
+ * canonical reader (lossless, backend-agnostic) then maps canonical -> rich
+ * through the codec — symmetric with the build path. Accepts arrow-js
  * `RecordBatch` or facade `VgiBatch`.
  */
 export function* iterRows(
   batch: RecordBatch | VgiBatch
 ): Generator<Record<string, any>> {
   const a = batch as RecordBatch;
+  const codecs = a.schema.fields.map((f) => codecFor(f.type as unknown as VgiDataType));
   for (let i = 0; i < a.numRows; i++) {
     const row: Record<string, any> = {};
-    for (const field of a.schema.fields) {
+    for (let fi = 0; fi < a.schema.fields.length; fi++) {
+      const field = a.schema.fields[fi];
       const col = a.getChild(field.name);
-      row[field.name] = col ? readCellValue(col, i, field.type) : null;
+      if (!col) { row[field.name] = null; continue; }
+      const canonical = readCanonicalValue(field.type as unknown as VgiDataType, col, i);
+      row[field.name] = codecs[fi].canonicalToRich(canonical);
     }
     yield row;
   }
