@@ -24,6 +24,19 @@ npm install @query-farm/vgi
 
 Requires **Node.js ≥ 22.15** or **Bun**.
 
+> **Peer dependencies (since 0.3.0).** `@query-farm/apache-arrow` (`^21.1.1`) and
+> `@query-farm/vgi-rpc` (`^0.7.5`) are **peerDependencies** — install them directly
+> alongside `@query-farm/vgi`:
+>
+> ```bash
+> npm install @query-farm/vgi @query-farm/apache-arrow @query-farm/vgi-rpc
+> ```
+>
+> The SDK bundles both as external, so a single shared instance avoids
+> duplicate-type errors — notably the `vgi-rpc` `Protocol` clash you hit when you
+> also import `createHttpHandler` (or any `vgi-rpc` type) directly and two copies
+> get installed. See [`MIGRATION.md`](./MIGRATION.md#020--030--peer-dependencies).
+
 Using VGI from DuckDB also requires the **`vgi` DuckDB extension**. The easiest way to
 get it is via [**Haybarn**](https://haybarn.query.farm) — Query Farm's distribution of
 DuckDB — which publishes the extension (and a DuckDB-Wasm engine) as prebuilt npm
@@ -284,6 +297,26 @@ wire unit. Everywhere else, `rich` *is* the canonical value and `raw` is the sam
 value with a branded type. `null` / `undefined` pass through as `null` in every type.
 
 Notes:
+
+- **Discriminate Arrow types by `typeId` / predicates, never `constructor.name`.**
+  The factories return Arrow *type instances*, not classes named after the factory.
+  `dateDay()` returns an arrow-js `Date_` instance with `typeId === Type.Date` and
+  `unit === DateUnit.DAY` — there is **no** class named `DateDay`, so a check like
+  `type.constructor.name === "DateDay"` will always fail (and is brittle across the
+  two Arrow backends and minified builds). Use the exported `isDate(type)` predicate,
+  or compare `type.typeId` (to `Type.Date` / the backend-agnostic `TypeId.Date`) and
+  `type.unit` (to `DateUnit.DAY` / `DateUnit.MILLISECOND`) to distinguish day vs.
+  millisecond dates:
+
+  ```ts
+  import { dateDay, isDate, DateUnit, TypeId } from "@query-farm/vgi";
+
+  const t = dateDay();
+  isDate(t);                       // ✓ true   — backend-agnostic predicate
+  t.typeId === TypeId.Date;        // ✓ true
+  t.unit === DateUnit.DAY;         // ✓ true   — day-resolution date32
+  t.constructor.name === "DateDay" // ✗ NEVER — no such class; this is always false
+  ```
 
 - **Decimals are unscaled.** A `decimal128(18, 2)` value of `123.45` is the bigint
   `12345n`; apply the scale yourself (`Number(v) / 100`). The declared

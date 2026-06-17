@@ -1,5 +1,41 @@
 # Migration guide
 
+## 0.2.0 → 0.3.0 — peer dependencies
+
+`@query-farm/apache-arrow` and `@query-farm/vgi-rpc` moved from regular
+`dependencies` to **`peerDependencies`**. The SDK already bundles both as
+`--external` (consumer-provided) in its build, so they were never meant to ship a
+second, SDK-private copy.
+
+### What changed for consumers
+
+- **Install both peers directly**, at these ranges:
+
+  ```bash
+  npm install @query-farm/apache-arrow@^21.1.1 @query-farm/vgi-rpc@^0.7.5
+  # or: bun add @query-farm/apache-arrow @query-farm/vgi-rpc
+  ```
+
+  (Plus `@query-farm/vgi` itself.) Most consumers already depend on these
+  transitively; making them peers just makes the requirement explicit and
+  guarantees a **single shared instance** of each.
+
+- **Why this matters — the `vgi-rpc` `Protocol` clash.** When the SDK carried its
+  own copy of `@query-farm/vgi-rpc` and a consumer *also* imported the package
+  directly — e.g. calling `createHttpHandler` from their own HTTP entry — npm/bun
+  could install two copies. That yields two separate `Protocol` type declarations,
+  and TypeScript treats the two as incompatible, producing confusing "type X is not
+  assignable to type X" compile errors at the boundary. A single peer-provided
+  instance eliminates the duplicate-type error.
+
+- **Action:** if you see duplicate-type errors around `Protocol`,
+  `createHttpHandler`, or Arrow types after upgrading, dedupe — ensure exactly one
+  copy of each peer is installed (`npm ls @query-farm/vgi-rpc @query-farm/apache-arrow`
+  / `bun pm ls`).
+
+This release has **no API or type-representation changes** — only the dependency
+shape.
+
 ## 0.1.x → 0.2.0 — the type-handling break
 
 A pre-1.0 breaking change standardizes how columnar values are represented as JS
