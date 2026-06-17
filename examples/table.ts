@@ -7,6 +7,7 @@ import {
   Field,
   Int8,
   Int64,
+  Uint64,
   Float64,
   Float32,
   Bool,
@@ -19,6 +20,9 @@ import {
   Decimal,
   FixedSizeBinary,
   Binary,
+  Timestamp,
+  Duration,
+  TimeUnit,
 } from "@query-farm/apache-arrow";
 import {
   defineTableFunction,
@@ -3368,6 +3372,306 @@ const expression_filter_test = defineTableFunction<ExprFilterArgs, ExprFilterSta
 });
 
 // ============================================================================
+// typed_probe — typed const-argument binding + typed column emit.
+// Echoes less-common scalar const args (TIMESTAMPTZ, INTERVAL, BLOB, UBIGINT,
+// DOUBLE) into uint64/int64/blob/double columns, in normalized integer/byte
+// form so this fixture and its cross-language counterparts produce
+// byte-identical output. Ports vgi-python TypedProbeFunction.
+//
+// Defaults (no named args): ts=2026-01-02T03:04:05Z (1767323045000000us),
+// iv=1500ms (1.5e9 ns), blob='vgi', ub=9, f=2.5. The `f` column is f + idx
+// (absolute row index), so it varies per row. See table/typed_probe.test.
+// ============================================================================
+
+interface TypedProbeArgs {
+  n: number;
+  ts: number; // timestamp[us] arrives as micros-since-epoch (rich mode)
+  iv: number; // duration[ns] arrives as nanoseconds (rich mode)
+  blob: Uint8Array;
+  ub: number; // uint64
+  f: number; // double
+}
+
+interface TypedProbeState {
+  n: number;
+  ts_us: bigint;
+  iv_ms: bigint;
+  payload: Uint8Array;
+  ub: bigint;
+  f: number;
+  offset: number;
+}
+
+const TYPED_PROBE_SCHEMA = new Schema([
+  new Field("idx", new Uint64(), true),
+  new Field("ts_us", new Int64(), true),
+  new Field("iv_ms", new Int64(), true),
+  new Field("payload", new Binary(), true),
+  new Field("ub", new Uint64(), true),
+  new Field("f", new Float64(), true),
+]);
+
+// Default const values in normalized form. Timestamp default is micros since
+// epoch for 2026-01-02T03:04:05Z; interval default is 1500ms in nanoseconds.
+const TYPED_PROBE_DEFAULT_TS_US = 1767323045000000; // 2026-01-02T03:04:05Z
+const TYPED_PROBE_DEFAULT_IV_NS = 1500000000; // 1500ms in ns
+
+function typedProbeToBig(v: any): bigint {
+  if (v === null || v === undefined) return 0n;
+  if (typeof v === "bigint") return v;
+  if (typeof v === "number") return BigInt(Math.trunc(v));
+  if (typeof v.valueOf === "function") {
+    const inner = v.valueOf();
+    if (typeof inner === "bigint") return inner;
+    if (typeof inner === "number") return BigInt(Math.trunc(inner));
+  }
+  return BigInt(Math.trunc(Number(v)));
+}
+
+const MS_PER_DAY = 24n * 3600n * 1000n;
+
+// Collapse an interval/duration const to whole milliseconds, mirroring vgi-go's
+// GetScalarDuration / vgi-python's _iv_to_ms (months→30d, days→24h).
+//
+//  - A declared default arrives as nanoseconds (number/bigint), since the arg is
+//    declared as duration[ns]: ms = ns / 1_000_000.
+//  - A SQL INTERVAL literal arrives as a MonthDayNano value: an Int32Array of 4
+//    words [months, days, nanos_lo, nanos_hi] (nanoseconds is a little-endian
+//    int64): ms = months*30*86_400_000 + days*86_400_000 + nanos/1_000_000.
+function typedProbeIvToMs(v: any): bigint {
+  if (v === null || v === undefined) return 0n;
+  // MonthDayNano interval: ArrayBufferView of 4 int32 words.
+  if (typeof v === "object" && ("subarray" in v || Array.isArray(v)) && (v as any).length === 4) {
+    const w = v as ArrayLike<number>;
+    const months = BigInt(w[0] | 0);
+    const days = BigInt(w[1] | 0);
+    // nanoseconds is the int64 spanning words [2] (low) and [3] (high), LE.
+    const lo = BigInt((w[2] >>> 0) >>> 0);
+    const hi = BigInt(w[3] | 0);
+    const nanos = (hi << 32n) | lo;
+    return months * 30n * MS_PER_DAY + days * MS_PER_DAY + nanos / 1000000n;
+  }
+  // Otherwise a duration[ns] scalar (number/bigint): ns -> ms.
+  return typedProbeToBig(v) / 1000000n;
+}
+
+const typed_probe = defineTableFunction<TypedProbeArgs, TypedProbeState>({
+  name: "typed_probe",
+  description: "Echoes typed const args (timestamp/interval/blob/ubigint) into typed columns",
+  args: {
+    n: new Int64(),
+    ts: new Timestamp(TimeUnit.MICROSECOND, "UTC"),
+    iv: new Duration(TimeUnit.NANOSECOND),
+    blob: new Binary(),
+    ub: new Uint64(),
+    f: new Float64(),
+  },
+  argDefaults: {
+    ts: TYPED_PROBE_DEFAULT_TS_US,
+    iv: TYPED_PROBE_DEFAULT_IV_NS,
+    blob: new TextEncoder().encode("vgi"),
+    ub: 9,
+    f: 2.5,
+  },
+  onBind: () => ({ outputSchema: TYPED_PROBE_SCHEMA }),
+  cardinality: (params: TableBindParams<TypedProbeArgs>) => ({
+    estimate: params.args.n,
+    max: params.args.n,
+  }),
+  initialState: (params: TableProcessParams<TypedProbeArgs>) => {
+    const a = params.args;
+    const blob =
+      a.blob instanceof Uint8Array
+        ? a.blob
+        : a.blob != null
+          ? new Uint8Array(a.blob as any)
+          : new Uint8Array(0);
+    return {
+      n: a.n,
+      ts_us: typedProbeToBig(a.ts),
+      iv_ms: typedProbeIvToMs(a.iv),
+      payload: blob,
+      ub: typedProbeToBig(a.ub),
+      f: typeof a.f === "number" ? a.f : Number(a.f),
+      offset: 0,
+    };
+  },
+  process: (params: TableProcessParams<TypedProbeArgs>, state: TypedProbeState, out: OutputCollector) => {
+    if (state.offset >= state.n) {
+      out.finish();
+      return;
+    }
+    const rows: number[] = [];
+    for (let i = state.offset; i < state.n; i++) rows.push(i);
+    state.offset = state.n;
+    const columns: Record<string, any[]> = {};
+    for (const field of params.outputSchema.fields) {
+      switch (field.name) {
+        case "idx":
+          columns.idx = rows.map((i) => BigInt(i));
+          break;
+        case "ts_us":
+          columns.ts_us = rows.map(() => state.ts_us);
+          break;
+        case "iv_ms":
+          columns.iv_ms = rows.map(() => state.iv_ms);
+          break;
+        case "payload":
+          columns.payload = rows.map(() => state.payload);
+          break;
+        case "ub":
+          columns.ub = rows.map(() => state.ub);
+          break;
+        case "f":
+          columns.f = rows.map((i) => state.f + i);
+          break;
+      }
+    }
+    out.emit(batchFromColumns(columns, params.outputSchema));
+  },
+  examples: [
+    { sql: "SELECT * FROM typed_probe(2)", description: "Echo typed const args with defaults" },
+  ],
+  categories: ["generator", "testing"],
+});
+
+// ============================================================================
+// filtered_columns_echo — pushed-filter column introspection. Reports, per
+// query, which columns the pushed-down filters reference (filtered_cols),
+// whether a given column is filtered (has_n / has_tag), and the discrete value
+// set resolved for the string column `tag` via getColumnValues (tag_values).
+// auto_apply_filters lets the framework apply the residual predicate to the
+// emitted rows. Ports vgi-python/go/rust FilteredColumnsEchoFunction.
+// See table/filtered_columns_pushdown.test.
+// ============================================================================
+
+interface FilteredColumnsEchoArgs {
+  count: number;
+  batch_size: number;
+}
+
+interface FilteredColumnsEchoState {
+  remaining: number;
+  currentIndex: number;
+  filteredCols: string;
+  hasN: boolean;
+  hasTag: boolean;
+  tagValues: string;
+}
+
+const FILTERED_COLUMNS_ECHO_SCHEMA = new Schema([
+  new Field("n", new Int64(), true),
+  new Field("tag", new Utf8(), true),
+  new Field("filtered_cols", new Utf8(), true),
+  new Field("has_n", new Bool(), true),
+  new Field("has_tag", new Bool(), true),
+  new Field("tag_values", new Utf8(), true),
+]);
+
+function resolveFilteredColumnsEcho(filters: PushdownFilters | undefined): {
+  filteredCols: string;
+  hasN: boolean;
+  hasTag: boolean;
+  tagValues: string;
+} {
+  if (!filters || filters.filters.length === 0) {
+    return { filteredCols: "", hasN: false, hasTag: false, tagValues: "(none)" };
+  }
+  const filteredCols = filters.filteredColumns().join(",");
+  const hasN = filters.hasFilterForColumn("n");
+  const hasTag = filters.hasFilterForColumn("tag");
+  const discrete = filters.getColumnValues("tag");
+  let tagValues = "(none)";
+  if (discrete !== null) {
+    const rendered = discrete
+      .filter((v) => v !== null && v !== undefined)
+      .map((v) => String(v))
+      .sort();
+    tagValues = rendered.join(",");
+  }
+  return { filteredCols, hasN, hasTag, tagValues };
+}
+
+const filtered_columns_echo = defineTableFunction<FilteredColumnsEchoArgs, FilteredColumnsEchoState>({
+  name: "filtered_columns_echo",
+  description: "Echoes pushed-filter column introspection (filtered_columns, has_filter_for_column, get_column_values)",
+  args: {
+    count: new Int64(),
+    batch_size: new Int64(),
+  },
+  argDefaults: {
+    batch_size: 2048,
+  },
+  projectionPushdown: true,
+  filterPushdown: true,
+  autoApplyFilters: true,
+  onBind: () => ({ outputSchema: FILTERED_COLUMNS_ECHO_SCHEMA }),
+  cardinality: (params: TableBindParams<FilteredColumnsEchoArgs>) => ({
+    estimate: params.args.count,
+    max: params.args.count,
+  }),
+  initialState: (params: TableProcessParams<FilteredColumnsEchoArgs>) => {
+    const resolved = resolveFilteredColumnsEcho(params.pushdownFilters);
+    return {
+      remaining: Math.max(0, params.args.count),
+      currentIndex: 0,
+      ...resolved,
+    };
+  },
+  process: (
+    params: TableProcessParams<FilteredColumnsEchoArgs>,
+    state: FilteredColumnsEchoState,
+    out: OutputCollector
+  ) => {
+    if (state.remaining <= 0) {
+      out.finish();
+      return;
+    }
+    const size = Math.min(state.remaining, params.args.batch_size);
+    const ns: bigint[] = [];
+    const tags: string[] = [];
+    for (let i = 0; i < size; i++) {
+      const idx = state.currentIndex + i;
+      ns.push(BigInt(idx));
+      tags.push(`t${idx}`);
+    }
+    const columns: Record<string, any[]> = {};
+    for (const field of params.outputSchema.fields) {
+      switch (field.name) {
+        case "n":
+          columns.n = ns;
+          break;
+        case "tag":
+          columns.tag = tags;
+          break;
+        case "filtered_cols":
+          columns.filtered_cols = new Array(size).fill(state.filteredCols);
+          break;
+        case "has_n":
+          columns.has_n = new Array(size).fill(state.hasN);
+          break;
+        case "has_tag":
+          columns.has_tag = new Array(size).fill(state.hasTag);
+          break;
+        case "tag_values":
+          columns.tag_values = new Array(size).fill(state.tagValues);
+          break;
+      }
+    }
+    out.emit(batchFromColumns(columns, params.outputSchema));
+    state.currentIndex += size;
+    state.remaining -= size;
+  },
+  examples: [
+    {
+      sql: "SELECT DISTINCT filtered_cols, tag_values FROM filtered_columns_echo(5) WHERE tag IN ('t1','t3')",
+      description: "Introspect which columns are filtered and their resolved value set",
+    },
+  ],
+  categories: ["generator", "diagnostic", "testing"],
+});
+
+// ============================================================================
 // Export all table functions
 // ============================================================================
 
@@ -3428,4 +3732,6 @@ export const tableFunctions: VgiFunction[] = [
   dynamic_filter_echo,
   spatial_filter_example,
   expression_filter_test,
+  typed_probe,
+  filtered_columns_echo,
 ];

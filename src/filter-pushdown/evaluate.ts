@@ -487,6 +487,33 @@ export class PushdownFilters {
   }
 
   /**
+   * The set of column names referenced by the pushed-down filters, sorted
+   * ascending. Descends one level into AndFilter children (DuckDB pushes
+   * `col IN (...) AND col>=min` as a single AndFilter), consistent with
+   * `getColumnValues` / `hasFilterForColumn`. Mirrors the cross-language
+   * `filtered_columns` accessor (vgi-python / vgi-go / vgi-rust).
+   */
+  filteredColumns(): string[] {
+    const cols = new Set<string>();
+    for (const f of this.filters) {
+      if (f.type === "and") {
+        for (const c of f.children) cols.add(c.columnName);
+      } else {
+        cols.add(f.columnName);
+      }
+    }
+    return Array.from(cols).sort();
+  }
+
+  /**
+   * Whether any pushed-down filter references `columnName`. Mirrors the
+   * cross-language `has_filter_for_column` accessor.
+   */
+  hasFilterForColumn(columnName: string): boolean {
+    return this.collectColumnFilters(columnName).length > 0;
+  }
+
+  /**
    * Discrete values a column could take, from equality (`=`) or `IN` filters.
    * Useful for partition pruning (resolve the key set up front, fetch only
    * those keys). Returns null when the predicate is not enumerable — no

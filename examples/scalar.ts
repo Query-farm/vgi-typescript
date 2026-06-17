@@ -23,6 +23,7 @@ import {
   Struct,
   List,
   FixedSizeList,
+  Decimal,
   RecordBatch,
 } from "@query-farm/apache-arrow";
 import {
@@ -80,7 +81,14 @@ function promoteForAddition(dtype: DataType): DataType {
     }
   }
   if (DataType.isDecimal(dtype)) {
-    return dtype;
+    // Decimal gains one digit of precision (capped at 38), scale unchanged —
+    // matches vgi-go/rust/python promote_for_addition. NOTE: arrow-js's Decimal
+    // constructor is (scale, precision, bitWidth) — scale FIRST (the "A3"
+    // arg-order gotcha). Read precision/scale via the properties and rebuild in
+    // that order so .precision/.scale report correctly on both backends.
+    const dec = dtype as Decimal;
+    const newPrecision = Math.min(dec.precision + 1, 38);
+    return new Decimal(dec.scale, newPrecision, dec.bitWidth);
   }
   throw new Error(`Unsupported numeric type for addition: ${dtype}`);
 }
@@ -322,6 +330,31 @@ const double_fn = defineScalarFunction({
 // 5. add_values - Two AnyArrow params, type promotion
 // ============================================================================
 
+// Read a decimal cell as its UNSCALED integer (bigint), regardless of how the
+// backend surfaces it: bigint, JS number, decimal string (e.g. "1.50"), or a
+// little-endian Uint32Array (DecimalBigNum). `scale` is the column's scale.
+function decimalCellToUnscaled(v: any, scale: number): bigint | null {
+  if (v === null || v === undefined) return null;
+  if (typeof v === "bigint") return v;
+  if (typeof v === "object" && "subarray" in v) {
+    let big = 0n;
+    const u32 = v as Uint32Array;
+    for (let j = u32.length - 1; j >= 0; j--) big = (big << 32n) | BigInt(u32[j] >>> 0);
+    return big;
+  }
+  const s = typeof v === "number" ? v.toString() : String(v);
+  // A decimal string carries the decimal point; scale it to the unscaled int.
+  if (s.includes(".")) {
+    const neg = s.startsWith("-");
+    const [intPart, fracPartRaw] = (neg ? s.slice(1) : s).split(".");
+    const fracPart = (fracPartRaw + "0".repeat(scale)).slice(0, scale);
+    const big = BigInt(intPart + fracPart);
+    return neg ? -big : big;
+  }
+  // No decimal point: already an unscaled integer (or an integer-valued number).
+  return BigInt(s);
+}
+
 const add_values = defineScalarFunction({
   name: "add_values",
   description: "Adds two numeric values",
@@ -330,15 +363,46 @@ const add_values = defineScalarFunction({
     col2: new Null(),
   },
   outputType: (params: ScalarBindParameters) => {
-    const field1 = params.argumentsSchema.fields[0];
-    const field2 = params.argumentsSchema.fields[1];
+    const t1 = params.argumentsSchema.fields[0].type;
+    const t2 = params.argumentsSchema.fields[1].type;
+    // Decimal branch: merge precision/scale, then promote for overflow headroom.
+    // Result scale = max(s1, s2); result precision grows to hold the sum (+1).
+    // The test asserts only the value, not the exact type, so any decimal type
+    // that holds 3.750 is acceptable.
+    if (DataType.isDecimal(t1) && DataType.isDecimal(t2)) {
+      const d1 = t1 as Decimal;
+      const d2 = t2 as Decimal;
+      const scale = Math.max(d1.scale, d2.scale);
+      const intDigits = Math.max(d1.precision - d1.scale, d2.precision - d2.scale);
+      const precision = Math.min(intDigits + scale + 1, 38);
+      return new Decimal(scale, precision, d1.bitWidth);
+    }
     // Find the wider type, then promote for overflow safety
-    const commonType = widerNumericType(field1.type, field2.type);
+    const commonType = widerNumericType(t1, t2);
     return promoteForAddition(commonType);
   },
   compute: (batch: RecordBatch) => {
+    const t1 = batch.schema.fields[0]?.type;
+    const t2 = batch.schema.fields[1]?.type;
     const col1 = getColumnValues(batch, 0);
     const col2 = getColumnValues(batch, 1);
+
+    // Decimal branch: rescale both unscaled integers to the common output scale
+    // and add, returning the unscaled bigint the decimal codec expects.
+    if (t1 && t2 && DataType.isDecimal(t1) && DataType.isDecimal(t2)) {
+      const s1 = (t1 as Decimal).scale;
+      const s2 = (t2 as Decimal).scale;
+      const outScale = Math.max(s1, s2);
+      return col1.map((v1: any, i: number) => {
+        const u1 = decimalCellToUnscaled(v1, s1);
+        const u2 = decimalCellToUnscaled(col2[i], s2);
+        if (u1 === null || u2 === null) return null;
+        const a1 = u1 * 10n ** BigInt(outScale - s1);
+        const a2 = u2 * 10n ** BigInt(outScale - s2);
+        return a1 + a2;
+      });
+    }
+
     return col1.map((v1: any, i: number) => {
       const v2 = col2[i];
       if (v1 === null || v1 === undefined || v2 === null || v2 === undefined) return null;
@@ -585,6 +649,36 @@ const multiply_by_setting = defineScalarFunction({
 });
 
 // ============================================================================
+// 12b. scale_by_setting - float (DOUBLE) Setting() read via get_f64
+// value (DOUBLE) -> DOUBLE; multiplies by the `scale_factor` setting (default 1.0).
+// Ports vgi-go ScaleBySettingFunction / vgi-rust scale_by_setting / vgi-python.
+// ============================================================================
+
+const scale_by_setting = defineScalarFunction({
+  name: "scale_by_setting",
+  description: "Scale the input value by the float setting `scale_factor`",
+  params: { value: new Float64() },
+  returns: new Float64(),
+  requiredSettings: ["scale_factor"],
+  compute: (
+    batch: RecordBatch,
+    _consts: Record<string, any>,
+    info: { settings: Record<string, any>; secrets: Record<string, Record<string, any>> }
+  ) => {
+    const raw = info.settings.scale_factor;
+    const scale = raw === null || raw === undefined ? 1.0 : Number(raw);
+    const values = getColumnValues(batch, 0);
+    return values.map((v: any) => {
+      if (v === null || v === undefined) return null;
+      return Number(v) * scale;
+    });
+  },
+  examples: [
+    { sql: "SELECT scale_by_setting(4.0)", description: "Scale a value by the scale_factor setting" },
+  ],
+});
+
+// ============================================================================
 // 13. return_secret_value - Uses secrets from DuckDB
 // ============================================================================
 
@@ -619,6 +713,60 @@ const return_secret_value = defineScalarFunction({
   },
   examples: [
     { sql: "SELECT return_secret_value()", description: "Return a secret's value" },
+  ],
+});
+
+// ============================================================================
+// 13b. secret_field - Secret() parameter, looks up individual fields by name.
+// Builds "port=<port>;name=<secret_string>": `port` is read by NAMED lookup on
+// the vgi_example secret; `secret_string` (rendered as `name`) is read from the
+// first secret carrying a field of that name. Missing → empty string.
+// Ports vgi-go SecretFieldFunction / vgi-rust secret_field / vgi-python.
+// ============================================================================
+
+function renderSecretValue(val: any): string {
+  if (val === null || val === undefined) return "";
+  if (typeof val === "bigint") return val.toString();
+  if (typeof val === "number") {
+    // int32/port renders without a decimal point.
+    return Number.isInteger(val) ? String(val) : String(val);
+  }
+  if (typeof val === "object" && typeof val.valueOf === "function") {
+    const v = val.valueOf();
+    if (typeof v === "bigint") return v.toString();
+    return String(v);
+  }
+  return String(val);
+}
+
+const secret_field = defineScalarFunction({
+  name: "secret_field",
+  description: "Look up secret fields by name",
+  returns: new Utf8(),
+  requiredSecrets: ["vgi_example"],
+  compute: (
+    batch: RecordBatch,
+    _consts: Record<string, any>,
+    info: { settings: Record<string, any>; secrets: Record<string, Record<string, any>> }
+  ) => {
+    // Named lookup: `port` field on the vgi_example secret specifically.
+    const named = info.secrets.vgi_example ?? {};
+    const port = renderSecretValue(named.port);
+    // Any-secret lookup: first secret carrying a `secret_string` field.
+    let name = "";
+    for (const secretDict of Object.values(info.secrets ?? {})) {
+      if (secretDict && "secret_string" in secretDict && secretDict.secret_string != null) {
+        name = renderSecretValue(secretDict.secret_string);
+        break;
+      }
+    }
+    const s = `port=${port};name=${name}`;
+    const result: string[] = [];
+    for (let i = 0; i < batch.numRows; i++) result.push(s);
+    return result;
+  },
+  examples: [
+    { sql: "SELECT secret_field()", description: "Look up named/positional secret fields" },
   ],
 });
 
@@ -1336,7 +1484,9 @@ export const scalarFunctions: VgiFunction[] = [
   bernoulli,
   random_bytes,
   multiply_by_setting,
+  scale_by_setting,
   return_secret_value,
+  secret_field,
   hash_seed,
   format_number_default,
   format_number_precision,

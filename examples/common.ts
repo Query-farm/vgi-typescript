@@ -130,6 +130,7 @@ export const catalog: CatalogDescriptor = {
     { name: "greeting", description: "Custom greeting message", type: new Utf8(), defaultValue: "Hello" },
     { name: "multiplier", description: "Value multiplier", type: new Int64(), defaultValue: 1 },
     { name: "threshold", description: "Filter threshold", type: new Int64(), defaultValue: 0 },
+    { name: "scale_factor", description: "Float scale factor", type: new Float64(), defaultValue: 1.0 },
     {
       name: "config",
       description: "Sequence configuration struct",
