@@ -517,6 +517,59 @@ const disjoint_range_partitioned = defineTableFunction<DisjointArgs, PartitionSt
   categories: ["generator", "partitioning", "testing"],
 });
 
+const OVERLAPPING_KEY_FIELDS = [new Field("key", new Int64(), true)];
+const OVERLAPPING_SCHEMA = new Schema([
+  partitionField("key", new Int64()),
+  new Field("value", new Int64(), true),
+]);
+
+interface OverlappingArgs {
+  partitions: number;
+  rows_per_partition: number;
+}
+
+const overlapping_range_partitioned = defineTableFunction<OverlappingArgs, PartitionState>({
+  name: "overlapping_range_partitioned",
+  description:
+    "Overlapping per-chunk integer ranges on ``key``. Declares OVERLAPPING_PARTITIONS (wire-level only; DuckDB falls back to HASH_GROUP_BY for now).",
+  args: { partitions: new Int64(), rows_per_partition: new Int64() },
+  argDefaults: { rows_per_partition: 10 },
+  maxWorkers: DEFAULT_MAX_WORKERS,
+  partitionKind: "OVERLAPPING_PARTITIONS",
+  onBind: () => ({ outputSchema: OVERLAPPING_SCHEMA }),
+  onInit: async (params) => {
+    const items: Uint8Array[] = [];
+    for (let i = 0; i < params.args.partitions; i++) items.push(packOne(i));
+    await params.storage.queuePush(items);
+    return { max_workers: DEFAULT_MAX_WORKERS, execution_id: params.executionId, opaque_data: null };
+  },
+  initialState: () => ({ idx: -1 }),
+  process: async (params, state, out) => {
+    const item = await params.storage!.queuePop();
+    if (item === null) {
+      out.finish();
+      return;
+    }
+    state.idx = unpackOne(item);
+    const rpp = Number(params.args.rows_per_partition ?? 10);
+    // Stride of 500 (< rpp when callers want overlap) makes consecutive
+    // chunks share key values.
+    const base = state.idx * 500;
+    const keys: bigint[] = [];
+    const values: bigint[] = [];
+    for (let i = 0; i < rpp; i++) {
+      keys.push(BigInt(base + i));
+      values.push(BigInt(state.idx * 10 + i));
+    }
+    out.emit(
+      batchFromColumns({ key: keys, value: values }, params.outputSchema),
+      // OVERLAPPING: min/max are the range bounds of this chunk.
+      partitionValuesMetadata(OVERLAPPING_KEY_FIELDS, { key: [BigInt(base), BigInt(base + rpp - 1)] }),
+    );
+  },
+  categories: ["generator", "partitioning", "testing"],
+});
+
 // =============================================================================
 // partition_columns broken fixtures
 // =============================================================================
@@ -722,6 +775,7 @@ export const partitionTableFunctions: VgiFunction[] = [
   region_year_partitioned,
   partitioned_with_explicit_override,
   disjoint_range_partitioned,
+  overlapping_range_partitioned,
   broken_missing_partition_values,
   broken_partition_min_neq_max,
   broken_partition_values_no_annotation,

@@ -15,20 +15,33 @@ import {
 import { allFunctions, catalog, createExampleCatalog } from "./common.js";
 import { projectionReproCatalog, projectionReproFunctions } from "./projection_repro.js";
 import { accumulateFunctions, createAccumulateCatalog } from "./accumulate.js";
+import { narrowBindCatalog, narrowBindFunctions } from "./narrow_bind.js";
 
 // Build registry up front so all functions across catalogs are routable.
 const registry = new FunctionRegistry();
-for (const f of [...allFunctions, ...projectionReproFunctions, ...accumulateFunctions]) registry.register(f);
+for (const f of [
+  ...allFunctions,
+  ...projectionReproFunctions,
+  ...accumulateFunctions,
+  ...narrowBindFunctions,
+])
+  registry.register(f);
 
 const exampleBase = new ReadOnlyCatalogInterface(catalog, registry);
 const exampleCatalog = createExampleCatalog(exampleBase);
 const projectionRepro = new ReadOnlyCatalogInterface(projectionReproCatalog, registry);
 const accumulate = createAccumulateCatalog(registry);
+const narrowBind = new ReadOnlyCatalogInterface(narrowBindCatalog, registry);
 
-const composite = new CompositeCatalogInterface([exampleCatalog, projectionRepro, accumulate]);
+const composite = new CompositeCatalogInterface([exampleCatalog, projectionRepro, accumulate, narrowBind]);
 
 const worker = new Worker({
-  functions: [...allFunctions, ...projectionReproFunctions, ...accumulateFunctions],
+  functions: [
+    ...allFunctions,
+    ...projectionReproFunctions,
+    ...accumulateFunctions,
+    ...narrowBindFunctions,
+  ],
   catalogInterface: composite,
 });
 

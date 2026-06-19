@@ -794,6 +794,35 @@ const hash_seed = defineScalarFunction({
 });
 
 // ============================================================================
+// 14b. query_seed - Per-query-stable seed (CONSISTENT_WITHIN_QUERY)
+// ============================================================================
+// The only fixture that emits FunctionStability.CONSISTENT_WITHIN_QUERY.
+// Semantically the offset is fixed for the duration of a single query but may
+// vary across queries (like now()); the value is deterministic here so SQL
+// tests have a stable expected output — the stability flag is what's exercised.
+
+const query_seed = defineScalarFunction({
+  name: "query_seed",
+  description: "Add a per-query-stable seed to each value (demonstrates CONSISTENT_WITHIN_QUERY stability)",
+  params: { value: new Int64() },
+  returns: new Int64(),
+  stability: FunctionStability.CONSISTENT_WITHIN_QUERY,
+  compute: (batch: RecordBatch) => {
+    const values = getColumnValues(batch, 0);
+    return values.map((v: any) => {
+      if (v === null || v === undefined) return null;
+      return BigInt(v) + 1000n;
+    });
+  },
+  examples: [
+    {
+      sql: "SELECT query_seed(value) FROM data",
+      description: "Offset each value by a seed that is constant within a query",
+    },
+  ],
+});
+
+// ============================================================================
 // 15. format_number (3 overloads by ConstParam count)
 // ============================================================================
 
@@ -1488,6 +1517,7 @@ export const scalarFunctions: VgiFunction[] = [
   return_secret_value,
   secret_field,
   hash_seed,
+  query_seed,
   format_number_default,
   format_number_precision,
   format_number_full,
