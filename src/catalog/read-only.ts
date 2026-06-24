@@ -361,9 +361,21 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
           (secretType: string) => ({ secret_type: secretType, scope: null, secret_name: null })
         );
 
+        // Function-level tags surfaced into duckdb_functions().tags. The wire
+        // map is string→string, so the metadata linter (vgi-lint-check) and any
+        // worker-side conventions (e.g. VGI307's `vgi.columns_md` on a dynamic
+        // table function) can read them. Worker-provided tags are MERGED OVER
+        // any SDK-derived tags rather than replacing them — and derived tags
+        // never clobber worker-set keys. There are no SDK-derived function tags
+        // today (examples flow into FunctionInfo.examples, not a tag), so the
+        // derived base is empty; the merge keeps that invariant if one is ever
+        // added.
+        const derivedTags: Record<string, string> = {};
+        const tags: Record<string, string> = { ...derivedTags, ...(meta.tags ?? {}) };
+
         return {
           comment: null,
-          tags: {},
+          tags,
           name: f.meta.name,
           schema_name: name,
           function_type: meta.functionType.toUpperCase() as "SCALAR" | "TABLE" | "TABLE_BUFFERING" | "AGGREGATE",

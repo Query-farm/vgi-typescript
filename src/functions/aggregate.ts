@@ -138,6 +138,8 @@ export interface AggregateFunctionConfig<TArgs = Record<string, any>, TState = a
 
   examples?: FunctionExample[];
   categories?: string[];
+  /** Arbitrary function-level tags surfaced into duckdb_functions().tags. */
+  tags?: Record<string, string>;
   nullHandling?: "DEFAULT" | "SPECIAL";
 }
 
@@ -340,6 +342,7 @@ export function defineAggregate<TArgs = Record<string, any>, TState = any>(
     description: config.description,
     examples: config.examples,
     categories: config.categories,
+    tags: config.tags,
     nullHandling: config.nullHandling as any,
   };
 
