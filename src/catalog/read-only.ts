@@ -8,6 +8,7 @@ import {
   type TransactionOpaqueData,
   type CatalogAttachResult,
   type SchemaInfo,
+  type CatalogInfo,
   type TableInfo,
   type ViewInfo,
   type FunctionInfo,
@@ -39,6 +40,21 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
 
   catalogs(): string[] {
     return [this._descriptor.name];
+  }
+
+  // Advertise the catalog's discovery record. The declarative path carries no
+  // version metadata or attach option specs, but it does surface the optional
+  // `source_url` from the descriptor so it flows through `catalog_catalogs`
+  // (DuckDB's `duckdb_databases()`).
+  override catalogsInfo(): CatalogInfo[] {
+    return [{
+      name: this._descriptor.name,
+      implementation_version: null,
+      data_version_spec: null,
+      attach_option_specs: [],
+      releases: [],
+      source_url: this._descriptor.sourceUrl ?? null,
+    }];
   }
 
   attach(

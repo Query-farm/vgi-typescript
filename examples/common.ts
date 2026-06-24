@@ -111,6 +111,7 @@ export const catalog: CatalogDescriptor = {
   name: "example",
   defaultSchema: "main",
   comment: "Example VGI catalog for testing",
+  sourceUrl: "https://github.com/Query-farm/vgi-typescript",
   tags: { source: "vgi-fixture-worker", version: "1" },
   secretTypes: [
     {
@@ -145,6 +146,10 @@ export const catalog: CatalogDescriptor = {
     {
       name: "main",
       comment: "Example functions for testing VGI",
+      tags: {
+        "vgi.description_llm": "Example functions schema for the VGI fixture worker.",
+        "vgi.description_md": "Example functions for testing VGI.",
+      },
       functions: allFunctions,
       views: [
         {

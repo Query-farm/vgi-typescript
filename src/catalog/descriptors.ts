@@ -146,4 +146,11 @@ export interface CatalogDescriptor {
   secretTypes?: SecretTypeDescriptor[];
   comment?: string;
   tags?: Record<string, string>;
+  /**
+   * Homepage for this catalog — repo, docs, or dataset landing page. Surfaced
+   * through the `catalog_catalogs` discovery record as `CatalogInfo.source_url`,
+   * which DuckDB exposes via `duckdb_databases()`. Optional; omitted/`undefined`
+   * advertises a null `source_url`.
+   */
+  sourceUrl?: string;
 }

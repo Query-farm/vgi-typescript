@@ -24,12 +24,14 @@ describe("ASD codec", () => {
       data_version_spec: null,
       attach_option_specs: [],
       releases: [],
+      source_url: "https://example.com/cat",
     };
     const bytes = encodeASD(CatalogInfoSchema, v);
     const back = decodeASD<CatalogInfo>(CatalogInfoSchema, bytes);
     expect(back.name).toBe("my_cat");
     expect(back.implementation_version).toBe("v1.2");
     expect(back.data_version_spec).toBeNull();
+    expect(back.source_url).toBe("https://example.com/cat");
   });
 
   test("SchemaInfo round-trip with tags Map", () => {
