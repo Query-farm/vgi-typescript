@@ -272,6 +272,7 @@ export function defineTableFunction<
         arrowType: isAny ? nullType() : type,
         isAnyType: isAny,
         isVarargs: varargsSet.has(name),
+        doc: config.argDocs?.[name],
       });
     }
   }

@@ -59,6 +59,8 @@ export const VGI_VARARGS_KEY = "vgi_varargs";
 export const VGI_VARARGS_TRUE = "true";
 export const VGI_CONST_KEY = "vgi_const";
 export const VGI_CONST_TRUE = "true";
+// Per-argument description (UTF-8; presence-only). `vgi_doc_*` prefix reserved.
+export const VGI_DOC_KEY = "vgi_doc";
 
 export interface TableCardinality {
   estimate: number | null;

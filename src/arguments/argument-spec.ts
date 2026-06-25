@@ -13,6 +13,7 @@ import {
   VGI_VARARGS_TRUE,
   VGI_CONST_KEY,
   VGI_CONST_TRUE,
+  VGI_DOC_KEY,
 } from "../types.js";
 
 export interface ArgumentSpec {
@@ -23,6 +24,7 @@ export interface ArgumentSpec {
   isAnyType?: boolean;
   isVarargs?: boolean;
   isConst?: boolean;
+  doc?: string;
 }
 
 function argumentSpecSortKey(spec: ArgumentSpec): [number, number | string] {
@@ -69,6 +71,11 @@ export function argumentSpecsToSchema(specs: ArgumentSpec[]): VgiSchema {
       metadata.set(VGI_CONST_KEY, VGI_CONST_TRUE);
     }
 
+    // Per-argument description (UTF-8; presence-only — omit when empty).
+    if (spec.doc) {
+      metadata.set(VGI_DOC_KEY, spec.doc);
+    }
+
     const field = field_(
       spec.name,
       spec.arrowType,
@@ -101,6 +108,7 @@ export function schemaToArgumentSpecs(schema: VgiSchema): ArgumentSpec[] {
     const isAnyType = vgiType === VGI_TYPE_ANY;
     const isVarargs = metadata.get(VGI_VARARGS_KEY) === VGI_VARARGS_TRUE;
     const isConst = metadata.get(VGI_CONST_KEY) === VGI_CONST_TRUE;
+    const doc = metadata.get(VGI_DOC_KEY) ?? "";
 
     specs.push({
       name: field.name,
@@ -110,6 +118,7 @@ export function schemaToArgumentSpecs(schema: VgiSchema): ArgumentSpec[] {
       isAnyType,
       isVarargs,
       isConst,
+      doc,
     });
   }
 
