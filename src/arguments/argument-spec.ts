@@ -2,7 +2,7 @@
 // ArgumentSpec: converts function argument definitions to Arrow schema with VGI metadata keys.
 // Must produce byte-identical schemas to Python's argument_specs_to_schema().
 
-import { type VgiSchema, schema as schema_, type VgiField, field as field_, type VgiDataType } from "../arrow/index.js";
+import { type VgiSchema, schema as schema_, type VgiField, field as field_, type VgiDataType, nullType, deserializeBatch } from "../arrow/index.js";
 import {
   VGI_ARG_KEY,
   VGI_ARG_NAMED,
@@ -86,6 +86,80 @@ export function argumentSpecsToSchema(specs: ArgumentSpec[]): VgiSchema {
   }
 
   return schema_(fields);
+}
+
+// =============================================================================
+// Macro Argument Schemas
+// =============================================================================
+
+/**
+ * Build a macro `arguments_schema` describing macro parameters.
+ *
+ * Mirrors the function `arguments_schema` mechanism: one Arrow field per macro
+ * parameter, in `parameters` order, each nullable. The per-parameter
+ * description is carried via the same `vgi_doc` field-metadata key functions use
+ * (UTF-8, presence-only — the key is omitted entirely when there is no doc). A
+ * parameter's field type is the type of its default value when one is known
+ * (decoded from `parameterDefaultValues`, a one-row RecordBatch serialized as
+ * IPC bytes), else `nullType()`.
+ *
+ * @param parameters Ordered list of macro parameter names.
+ * @param parameterDefaultValues Optional one-row RecordBatch (IPC bytes) whose
+ *   columns are parameter names with typed default values; used to infer each
+ *   parameter's field type.
+ * @param parameterDocs Optional mapping of parameter name to description. Empty
+ *   or missing descriptions yield no `vgi_doc` metadata on the field.
+ * @returns Arrow schema with one nullable field per parameter, in order.
+ */
+export function macroArgumentsSchema(
+  parameters: string[],
+  parameterDefaultValues?: Uint8Array | null,
+  parameterDocs?: Record<string, string>,
+): VgiSchema {
+  const docs = parameterDocs ?? {};
+
+  // Map parameter name -> Arrow type from the typed default values, if any.
+  const defaultTypes: Map<string, VgiDataType> = new Map();
+  if (parameterDefaultValues && parameterDefaultValues.length > 0) {
+    const batch = deserializeBatch(parameterDefaultValues);
+    for (const f of batch.schema.fields) {
+      defaultTypes.set(f.name, f.type);
+    }
+  }
+
+  const fields: VgiField[] = [];
+  for (const name of parameters) {
+    const metadata: Map<string, string> = new Map();
+    const doc = docs[name];
+    if (doc) {
+      metadata.set(VGI_DOC_KEY, doc);
+    }
+    const fieldType = defaultTypes.get(name) ?? nullType();
+    fields.push(field_(name, fieldType, true, metadata.size > 0 ? metadata : undefined));
+  }
+
+  return schema_(fields);
+}
+
+/**
+ * Extract per-parameter descriptions from a macro `arguments_schema`.
+ *
+ * Inverse of {@link macroArgumentsSchema}'s `vgi_doc` handling: reads the
+ * `vgi_doc` field metadata (UTF-8) for each field. Fields without the key
+ * (undocumented) are omitted from the result.
+ *
+ * @param schema A macro `arguments_schema` (one field per parameter).
+ * @returns Mapping of parameter name to description, for documented parameters only.
+ */
+export function macroParameterDocsFromSchema(schema: VgiSchema): Record<string, string> {
+  const docs: Record<string, string> = {};
+  for (const field of schema.fields) {
+    const doc = field.metadata.get(VGI_DOC_KEY);
+    if (doc) {
+      docs[field.name] = doc;
+    }
+  }
+  return docs;
 }
 
 /**

@@ -59,6 +59,7 @@ export function registerCatalogMacroMethods(protocol: Protocol, getCatalog: GetC
         innerParams.definition,
         innerParams.on_conflict,
         innerParams.parameter_default_values ? toUint8Array(innerParams.parameter_default_values) : null,
+        innerParams.arguments_schema ? toUint8Array(innerParams.arguments_schema) : null,
         innerParams.transaction_opaque_data ? toUint8Array(innerParams.transaction_opaque_data) : undefined
       );
       return {};

@@ -600,6 +600,13 @@ export abstract class CatalogInterface {
     definition: string,
     onConflict: string,
     parameterDefaultValues?: Uint8Array | null,
+    /**
+     * Optional Arrow schema (one nullable field per parameter, in `parameters`
+     * order) serialized as IPC bytes, carrying per-parameter descriptions via the
+     * `vgi_doc` field metadata key. `null`/omitted when no per-parameter docs are
+     * supplied. Build with `macroArgumentsSchema` + `serializeSchema`.
+     */
+    argumentsSchema?: Uint8Array | null,
     transactionOpaqueData?: TransactionOpaqueData
   ): Awaitable<void> {
     throw new CatalogReadOnlyError("macro_create");

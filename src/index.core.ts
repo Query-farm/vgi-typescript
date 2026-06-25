@@ -60,7 +60,7 @@ export type {
 
 // Arguments
 export { Arguments } from "./arguments/arguments.js";
-export { type ArgumentSpec, argumentSpecsToSchema, schemaToArgumentSpecs } from "./arguments/argument-spec.js";
+export { type ArgumentSpec, argumentSpecsToSchema, schemaToArgumentSpecs, macroArgumentsSchema, macroParameterDocsFromSchema } from "./arguments/argument-spec.js";
 
 // Errors
 export {

@@ -1290,6 +1290,7 @@ export class VgiClient {
     definition: string,
     onConflict: OnCreateConflict,
     parameterDefaultValues?: Uint8Array | null,
+    argumentsSchema?: Uint8Array | null,
     transactionOpaqueData?: TransactionOpaqueData,
   ): Promise<void> {
     const schema = schema_([
@@ -1301,6 +1302,7 @@ export class VgiClient {
       field("definition", utf8(), false),
       field("on_conflict", utf8(), false),
       field("parameter_default_values", binary(), true),
+      field("arguments_schema", binary(), true),
       field("transaction_opaque_data", binary(), true),
     ]);
     const innerBatch = batchFromColumns(
@@ -1313,6 +1315,7 @@ export class VgiClient {
         definition: [definition],
         on_conflict: [onConflict],
         parameter_default_values: [parameterDefaultValues ?? null],
+        arguments_schema: [argumentsSchema ?? null],
         transaction_opaque_data: [transactionOpaqueData ?? null],
       },
       schema,
