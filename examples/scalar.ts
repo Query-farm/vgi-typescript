@@ -152,6 +152,13 @@ const multiply = defineScalarFunction({
   description: "Multiplies a value by a constant factor",
   params: { value: new Int64() },
   constParams: { factor: new Int64() },
+  // Standardized per-argument docs (match the other SDKs' example workers) so
+  // vgi_function_arguments() exposes a consistent, LLM-readable reference: a
+  // documented columnar value + a documented const factor.
+  argDocs: {
+    value: "Integer value to multiply",
+    factor: "Multiplication factor",
+  },
   returns: new Int64(),
   compute: (batch: RecordBatch, consts: Record<string, any>) => {
     const factor = typeof consts.factor === "bigint" ? consts.factor : BigInt(consts.factor);

@@ -69,6 +69,8 @@ export interface ScalarParameterDef {
   const?: boolean;
   /** If true, this parameter accepts variable number of arguments. */
   varargs?: boolean;
+  /** Human-readable per-argument description (surfaced as `vgi_doc`). */
+  doc?: string;
 }
 
 /**
@@ -109,6 +111,13 @@ export interface ScalarFunctionConfig<
   params?: P;
   /** Constant params (receive scalar values resolved at bind time) */
   constParams?: Record<string, VgiDataType>;
+  /**
+   * Per-argument descriptions keyed by param name, surfaced as `vgi_doc` field
+   * metadata (and via the extension's `vgi_function_arguments()`). Applies to
+   * `params` and `constParams`; for the ordered `parameters` list use each
+   * entry's `doc` field instead.
+   */
+  argDocs?: Record<string, string>;
   /**
    * Ordered parameter list. When provided, overrides `params` and `constParams`.
    * Use this when parameters need non-default ordering (e.g. const, param, const).
@@ -173,6 +182,7 @@ export function defineScalarFunction<
         isAnyType: isAny,
         isConst: p.const,
         isVarargs: p.varargs,
+        doc: p.doc,
       });
     }
   } else {
@@ -187,6 +197,7 @@ export function defineScalarFunction<
           position: posIdx++,
           arrowType: isAny ? nullType() : type,
           isAnyType: isAny,
+          doc: config.argDocs?.[name],
         });
       }
     }
@@ -198,6 +209,7 @@ export function defineScalarFunction<
           position: posIdx++,
           arrowType: type,
           isConst: true,
+          doc: config.argDocs?.[name],
         });
       }
     }
