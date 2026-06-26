@@ -1,10 +1,11 @@
 // Copyright 2025, 2026 Query Farm LLC - https://query.farm
 // VGI Worker: main entry point for running a VGI function server.
 
-import { VgiRpcServer, serveUnix, serveTcp } from "@query-farm/vgi-rpc";
+import { VgiRpcServer, serveUnix, serveTcp, serveStream as serveStreamRpc } from "@query-farm/vgi-rpc";
 import { FunctionRegistry } from "./functions/registry.js";
 import type { VgiFunction } from "./functions/types.js";
 import { buildVgiProtocol } from "./protocol/dispatch.js";
+import type { Protocol } from "@query-farm/vgi-rpc";
 import type { CatalogDescriptor } from "./catalog/descriptors.js";
 import type { CatalogInterface } from "./catalog/interface.js";
 import { ReadOnlyCatalogInterface } from "./catalog/read-only.js";
@@ -110,11 +111,7 @@ export class Worker {
   run(argv: readonly string[] = process.argv.slice(2)): void {
     process.stderr.write(`[worker] starting, pid=${process.pid}\n`);
     try {
-      const protocol = buildVgiProtocol({
-        registry: this._registry,
-        catalogInterface: this._catalogInterface,
-        catalogName: this._catalogName,
-      });
+      const protocol = this.buildProtocol();
       process.stderr.write(`[worker] protocol built\n`);
 
       const launcher = parseLauncherArgs(argv);
@@ -181,5 +178,35 @@ export class Worker {
       process.stderr.write(`Worker init error: ${err.message}\n${err.stack}\n`);
       process.exit(1);
     }
+  }
+
+  /** Build the VGI protocol from this worker's registry + catalog interface. */
+  private buildProtocol(): Protocol {
+    return buildVgiProtocol({
+      registry: this._registry,
+      catalogInterface: this._catalogInterface,
+      catalogName: this._catalogName,
+    });
+  }
+
+  /**
+   * Serve this worker over a caller-provided byte-stream pair, instead of the
+   * argv-selected stdio/unix/tcp transports `run()` uses. Resolves when the
+   * `readable` ends.
+   *
+   * This is the seam for transports that aren't a process/socket — most notably
+   * a **Web Worker**: bridge the worker's `MessagePort` to a Node `Duplex`
+   * (readable side ← `port.on('message')`, writable side → `port.postMessage`)
+   * and pass it as both arguments. The same code runs in a browser Web Worker.
+   *
+   * @param readable incoming request bytes (web `ReadableStream` or Node `Readable`).
+   * @param writable outgoing response sink (a `net.Socket`/`Duplex`, or an fd
+   *   number). Omit for the stdout fd.
+   */
+  async serveStream(
+    readable: ReadableStream<Uint8Array> | NodeJS.ReadableStream,
+    writable?: number | import("node:net").Socket,
+  ): Promise<void> {
+    await serveStreamRpc(this.buildProtocol(), { readable, writable });
   }
 }
