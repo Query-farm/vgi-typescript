@@ -1,7 +1,7 @@
 // Copyright 2025, 2026 Query Farm LLC - https://query.farm
 // VGI Worker: main entry point for running a VGI function server.
 
-import { VgiRpcServer, serveUnix } from "@query-farm/vgi-rpc";
+import { VgiRpcServer, serveUnix, serveTcp } from "@query-farm/vgi-rpc";
 import { FunctionRegistry } from "./functions/registry.js";
 import type { VgiFunction } from "./functions/types.js";
 import { buildVgiProtocol } from "./protocol/dispatch.js";
@@ -9,12 +9,31 @@ import type { CatalogDescriptor } from "./catalog/descriptors.js";
 import type { CatalogInterface } from "./catalog/interface.js";
 import { ReadOnlyCatalogInterface } from "./catalog/read-only.js";
 
-// argv parser for the launcher's `--unix PATH` / `--idle-timeout SEC`
-// contract. The C++ launcher (vgi extension) appends these to the worker's
-// argv whenever LOCATION uses the `launch:` scheme. Unknown args pass through.
+// argv parser for the launcher's `--unix PATH` / `--tcp [HOST:]PORT` /
+// `--idle-timeout SEC` contract. The C++ launcher (vgi extension) appends
+// these to the worker's argv whenever LOCATION uses the `launch:` scheme.
+// Unknown args pass through.
 interface LauncherArgs {
   unixPath?: string;
+  /** TCP bind host, defaulting to 127.0.0.1 when `--tcp` gives a bare port. */
+  tcpHost?: string;
+  /** TCP bind port; present iff `--tcp` was passed. */
+  tcpPort?: number;
   idleTimeout?: number;
+}
+
+// Parse a `[HOST:]PORT` --tcp bind spec into a LauncherArgs. A bare PORT (no
+// colon) binds 127.0.0.1; an empty host (leading ":") also defaults to loopback.
+function parseTcpSpec(spec: string, out: LauncherArgs): void {
+  const idx = spec.lastIndexOf(":");
+  if (idx >= 0) {
+    const h = spec.slice(0, idx);
+    out.tcpHost = h === "" ? "127.0.0.1" : h;
+    out.tcpPort = Number(spec.slice(idx + 1));
+  } else {
+    out.tcpHost = "127.0.0.1";
+    out.tcpPort = Number(spec);
+  }
 }
 
 function parseLauncherArgs(argv: readonly string[]): LauncherArgs {
@@ -25,6 +44,10 @@ function parseLauncherArgs(argv: readonly string[]): LauncherArgs {
       out.unixPath = argv[++i];
     } else if (a.startsWith("--unix=")) {
       out.unixPath = a.slice("--unix=".length);
+    } else if (a === "--tcp" && i + 1 < argv.length) {
+      parseTcpSpec(argv[++i], out);
+    } else if (a.startsWith("--tcp=")) {
+      parseTcpSpec(a.slice("--tcp=".length), out);
     } else if (a === "--idle-timeout" && i + 1 < argv.length) {
       out.idleTimeout = Number(argv[++i]);
     } else if (a.startsWith("--idle-timeout=")) {
@@ -113,6 +136,32 @@ export class Worker {
           idleTimeout,
         }).then((handle) => handle.done).then(() => {
           process.stderr.write(`[worker] serveUnix done (idle shutdown)\n`);
+        }).catch((err: any) => {
+          process.stderr.write(`Worker error: ${err.message}\n${err.stack}\n`);
+          process.exit(1);
+        });
+        return;
+      }
+
+      if (launcher.tcpPort !== undefined) {
+        // Raw Arrow-IPC framing over TCP — the network sibling of the
+        // AF_UNIX launcher transport. serveTcp prints the
+        // `TCP:<host>:<port>` discovery line itself (with the actual bound
+        // port when tcpPort is 0). NO auth/TLS — loopback/trusted networks
+        // only; use the HTTP transport for untrusted networks.
+        const envOverride = process.env.VGI_WORKER_IDLE_TIMEOUT;
+        const idleTimeout = envOverride !== undefined && envOverride !== ""
+          ? Number(envOverride)
+          : launcher.idleTimeout;
+        process.stderr.write(
+          `[worker] TCP mode: ${launcher.tcpHost}:${launcher.tcpPort} idle=${idleTimeout ?? 300}s${envOverride !== undefined && envOverride !== "" ? " (env override)" : ""}\n`,
+        );
+        serveTcp(protocol, {
+          host: launcher.tcpHost,
+          port: launcher.tcpPort,
+          idleTimeout,
+        }).then((handle) => handle.done).then(() => {
+          process.stderr.write(`[worker] serveTcp done (idle shutdown)\n`);
         }).catch((err: any) => {
           process.stderr.write(`Worker error: ${err.message}\n${err.stack}\n`);
           process.exit(1);

@@ -236,5 +236,5 @@ export type {
 
 // Re-export from vgi-rpc for convenience
 export { str, bytes, int, int32, float, float32, bool, toSchema, OutputCollector, AuthContext } from "@query-farm/vgi-rpc";
-export { subprocessConnect, httpConnect } from "@query-farm/vgi-rpc";
+export { subprocessConnect, httpConnect, tcpConnect } from "@query-farm/vgi-rpc";
 export type { RpcClient, StreamSession, LogMessage } from "@query-farm/vgi-rpc";
