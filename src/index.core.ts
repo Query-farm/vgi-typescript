@@ -137,6 +137,18 @@ export {
   batchToScalarDict,
   batchToSecretDict,
   safeNumber,
+} from "./util/arrow/index.js";
+
+export {
+  type SecretFields,
+  type SecretsDict,
+  secretType,
+  secretsOfType,
+  secretForScope,
+  secretForScopeOfType,
+} from "./secrets/helpers.js";
+
+export {
   serializeSchema,
   deserializeSchema,
   serializeBatch,

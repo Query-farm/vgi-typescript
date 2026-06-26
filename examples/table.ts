@@ -26,6 +26,7 @@ import {
 } from "@query-farm/apache-arrow";
 import {
   defineTableFunction,
+  secretsOfType,
   batchFromColumns,
   emptyBatch,
   formatPushedFilters,
@@ -1188,7 +1189,7 @@ const secret_demo = defineTableFunction<Record<string, any>, null>({
     _state: null,
     out: OutputCollector
   ) => {
-    const secretDict = params.secrets.vgi_example;
+    const secretDict = secretsOfType(params.secrets, "vgi_example")[0];
     if (!secretDict || Object.keys(secretDict).length === 0) {
       out.emit(emptyBatch(params.outputSchema));
       out.finish();
@@ -1270,7 +1271,7 @@ const scoped_secret_demo = defineTableFunction<{ path: string }, null>({
     out: OutputCollector
   ) => {
     const scope = params.args.path;
-    const secretDict = params.secrets.vgi_example;
+    const secretDict = secretsOfType(params.secrets, "vgi_example")[0];
     const found = !!secretDict && Object.keys(secretDict).length > 0;
     const secretKeys = found
       ? Object.keys(secretDict).sort().join(",")

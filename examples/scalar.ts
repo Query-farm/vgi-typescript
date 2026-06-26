@@ -28,6 +28,7 @@ import {
 } from "@query-farm/apache-arrow";
 import {
   defineScalarFunction,
+  secretsOfType,
   FunctionStability,
   NullHandling,
   type ScalarBindParameters,
@@ -699,7 +700,7 @@ const return_secret_value = defineScalarFunction({
     _consts: Record<string, any>,
     info: { settings: Record<string, any>; secrets: Record<string, Record<string, any>> }
   ) => {
-    const secretDict = info.secrets.vgi_example ?? {};
+    const secretDict = secretsOfType(info.secrets, "vgi_example")[0] ?? {};
     // Convert values to plain JS for JSON serialization
     const plainDict: Record<string, any> = {};
     for (const [k, v] of Object.entries(secretDict)) {
@@ -757,7 +758,7 @@ const secret_field = defineScalarFunction({
     info: { settings: Record<string, any>; secrets: Record<string, Record<string, any>> }
   ) => {
     // Named lookup: `port` field on the vgi_example secret specifically.
-    const named = info.secrets.vgi_example ?? {};
+    const named = secretsOfType(info.secrets, "vgi_example")[0] ?? {};
     const port = renderSecretValue(named.port);
     // Any-secret lookup: first secret carrying a `secret_string` field.
     let name = "";
