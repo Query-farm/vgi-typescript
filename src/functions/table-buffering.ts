@@ -67,6 +67,9 @@ export interface TableBufferingBindParams<TArgs = Record<string, any>> {
   bindCall: BindRequest;
   settings: Record<string, any>;
   secrets: Record<string, Record<string, any>>;
+  /** True on the second bind pass, after the connector resolved the secrets
+   *  requested via the onBind `lookupSecret*` return fields on the first pass. */
+  resolvedSecretsProvided: boolean;
 }
 
 export interface TableBufferingParams<TArgs = Record<string, any>> {
@@ -103,10 +106,25 @@ export interface TableBufferingConfig<
   args?: Record<string, VgiDataType>;
   namedArgs?: Record<string, VgiDataType>;
   argDefaults?: Record<string, any>;
-  /** Bind: default passes through input schema. May be async. */
+  /** Bind: default passes through input schema. May be async. Return non-empty
+   *  `lookupSecret*` lists on the first pass to request DuckDB secrets; the
+   *  connector then re-binds with `resolvedSecretsProvided` and the resolved
+   *  values are available in the process/finalize params' `secrets`. */
   onBind?: (params: TableBufferingBindParams<TArgs>) =>
-    | { outputSchema: VgiSchema; opaqueData?: Uint8Array }
-    | Promise<{ outputSchema: VgiSchema; opaqueData?: Uint8Array }>;
+    | {
+        outputSchema: VgiSchema;
+        opaqueData?: Uint8Array;
+        lookupSecretTypes?: string[];
+        lookupScopes?: string[];
+        lookupNames?: string[];
+      }
+    | Promise<{
+        outputSchema: VgiSchema;
+        opaqueData?: Uint8Array;
+        lookupSecretTypes?: string[];
+        lookupScopes?: string[];
+        lookupNames?: string[];
+      }>;
   /** Sink: ingest one batch, return an opaque state_id. */
   process: (
     batch: VgiBatch,
@@ -238,8 +256,20 @@ export function defineTableBufferingFunction<
         const args = extractArgs(request);
         const settings = batchToScalarDict(request.settings);
         const secrets = batchToSecretDict(request.secrets);
-        const result = await config.onBind({ args, bindCall: request, settings, secrets });
-        return { output_schema: result.outputSchema, opaque_data: result.opaqueData ?? null };
+        const result = await config.onBind({
+          args,
+          bindCall: request,
+          settings,
+          secrets,
+          resolvedSecretsProvided: request.resolved_secrets_provided ?? false,
+        });
+        return {
+          output_schema: result.outputSchema,
+          opaque_data: result.opaqueData ?? null,
+          lookup_secret_types: result.lookupSecretTypes,
+          lookup_scopes: result.lookupScopes,
+          lookup_names: result.lookupNames,
+        };
       }
       return {
         output_schema: request.input_schema ?? schema([]),
@@ -384,7 +414,13 @@ export function defineTableBufferingFunction<
       const args = extractArgs(request.bind_call);
       const settings = batchToScalarDict(request.bind_call.settings);
       const secrets = batchToSecretDict(request.bind_call.secrets);
-      return config.cardinality!({ args, bindCall: request.bind_call, settings, secrets });
+      return config.cardinality!({
+        args,
+        bindCall: request.bind_call,
+        settings,
+        secrets,
+        resolvedSecretsProvided: request.bind_call.resolved_secrets_provided ?? false,
+      });
     };
   }
 
