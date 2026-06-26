@@ -26,12 +26,18 @@ export {
   type TableBufferingParams,
   type TableBufferingVgiFunction,
 } from "./functions/table-buffering.js";
+export {
+  defineCopyFromFunction,
+  type CopyFromFunctionConfig,
+  type CopyFromOption,
+  type CopyFromReadParams,
+} from "./functions/copy-from.js";
 
 // Function types
 export type { VgiFunction, FunctionMeta, StreamHandlers, FunctionExample, HandlerState } from "./functions/types.js";
 
 // Catalog
-export { CatalogInterface, type CatalogAttachResult, type SchemaInfo, encodeSchemaInfo, decodeSchemaInfo, type TableInfo, encodeTableInfo, decodeTableInfo, type ViewInfo, encodeViewInfo, decodeViewInfo, type CatalogInfo, encodeCatalogInfo, decodeCatalogInfo, type FunctionInfo, encodeFunctionInfo, decodeFunctionInfo, type FunctionInfoOptions, type MacroInfo, encodeMacroInfo, decodeMacroInfo, type MacroType, type AttachOpaqueData, type TransactionOpaqueData, buildScanBranchesResult, type ScanBranchInput } from "./catalog/interface.js";
+export { CatalogInterface, type CatalogAttachResult, type SchemaInfo, encodeSchemaInfo, decodeSchemaInfo, type TableInfo, encodeTableInfo, decodeTableInfo, type ViewInfo, encodeViewInfo, decodeViewInfo, type CatalogInfo, encodeCatalogInfo, decodeCatalogInfo, type FunctionInfo, encodeFunctionInfo, decodeFunctionInfo, type FunctionInfoOptions, type MacroInfo, encodeMacroInfo, decodeMacroInfo, type MacroType, type CopyFromFormatInfo, encodeCopyFromFormatInfo, type AttachOpaqueData, type TransactionOpaqueData, buildScanBranchesResult, type ScanBranchInput } from "./catalog/interface.js";
 export type { CatalogDescriptor, SchemaDescriptor, TableDescriptor, ViewDescriptor, MacroDescriptor, SettingDescriptor, SecretTypeDescriptor, ForeignKeyDef, DefaultValue } from "./catalog/descriptors.js";
 export { ReadOnlyCatalogInterface } from "./catalog/read-only.js";
 export { CompositeCatalogInterface } from "./catalog/composite.js";
@@ -53,6 +59,7 @@ export {
 export type {
   BindRequest,
   BindResponse,
+  CopyFromContext,
   InitRequest,
   GlobalInitResponse,
   TableCardinality,

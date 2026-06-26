@@ -5,6 +5,7 @@
 import { type VgiSchema, schema, type VgiField, field, type VgiDataType, binary, utf8, bool } from "../../../arrow/index.js";
 import { Protocol, type CallContext } from "@query-farm/vgi-rpc";
 import { encodeSchemaInfo, encodeTableInfo, encodeViewInfo, encodeFunctionInfo, encodeCatalogInfo } from "../../../generated/vgi-client.js";
+import { encodeCopyFromFormatInfo } from "../../../catalog/interface.js";
 import {
   CatalogCatalogsResultSchema,
   CatalogAttachResultSchema,
@@ -15,6 +16,7 @@ import {
   CatalogSchemaContentsTablesResultSchema,
   CatalogSchemaContentsViewsResultSchema,
   CatalogSchemaContentsFunctionsResultSchema,
+  CatalogCopyFromFormatsResultSchema,
 } from "../../../generated/vgi-protocol-schemas.js";
 import { toUint8Array } from "../../../util/bytes.js";
 import { decodeDictValue } from "../../../util/arrow/index.js";
@@ -224,6 +226,23 @@ export function registerCatalogAdminMethods(protocol: Protocol, getCatalog: GetC
       return wrapResult({
         items: schemas.map((s) => encodeSchemaInfo(s)),
       }, CatalogSchemasResultSchema);
+    },
+  });
+
+  // catalog_copy_from_formats — catalog-level (not schema-scoped). Lists the
+  // custom COPY ... FROM formats this catalog advertises; empty list when none.
+  catalogUnary(protocol, signingKey, "catalog_copy_from_formats", {
+    params: attachOpaqueDataTxnParams,
+    result: RESULT_BINARY_SCHEMA,
+    handler: async (params) => {
+      const cat = getCatalog();
+      const formats = await cat.copyFromFormats(
+        toUint8Array(params.attach_opaque_data),
+        params.transaction_opaque_data ? toUint8Array(params.transaction_opaque_data) : undefined,
+      );
+      return wrapResult({
+        items: formats.map((f) => encodeCopyFromFormatInfo(f)),
+      }, CatalogCopyFromFormatsResultSchema);
     },
   });
 

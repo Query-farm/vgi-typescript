@@ -15,6 +15,7 @@ import {
   type MacroInfo,
   type IndexInfo,
   type IndexConstraintType,
+  type CopyFromFormatInfo,
 } from "./interface.js";
 import type { CatalogDescriptor, SchemaDescriptor, TableDescriptor, ViewDescriptor, MacroDescriptor, SettingDescriptor, SecretTypeDescriptor, ForeignKeyDef, DefaultValue } from "./descriptors.js";
 import { serializeColumnStatistics } from "../util/statistics.js";
@@ -589,6 +590,40 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
   ): ViewInfo | null {
     const views = this.schemaContentsViews(attachOpaqueData, schemaName, transactionOpaqueData);
     return views.find((v) => v.name === name) ?? null;
+  }
+
+  // Advertise every COPY-FROM format reader registered in this catalog. Walks
+  // the descriptor's functions for those carrying `meta.copyFromFormat` (set by
+  // defineCopyFromFunction) and converts each into a CopyFromFormatInfo. The
+  // option schema reuses the same argument serialization as functions, so
+  // option types / defaults / docs surface identically to
+  // vgi_function_arguments(). Mirrors vgi-python's
+  // ReadOnlyCatalogInterface.copy_from_formats.
+  override copyFromFormats(
+    attachOpaqueData: AttachOpaqueData,
+    transactionOpaqueData?: TransactionOpaqueData,
+  ): CopyFromFormatInfo[] {
+    const formats: CopyFromFormatInfo[] = [];
+    const seen = new Set<string>();
+    for (const schema of this._descriptor.schemas) {
+      for (const f of schema.functions ?? []) {
+        const fmt = f.meta.copyFromFormat;
+        if (!fmt || seen.has(fmt)) continue;
+        seen.add(fmt);
+        const meta = resolveMetadata(f);
+        const argSchema = argumentSpecsToSchema(f.argumentSpecs);
+        formats.push({
+          comment: f.meta.copyFromComment ?? null,
+          tags: meta.tags,
+          format_name: fmt,
+          handler: meta.name,
+          options: serializeSchema(argSchema),
+          direction: f.meta.copyFromDirection ?? "from",
+          description: meta.description ?? "",
+        });
+      }
+    }
+    return formats;
   }
 }
 

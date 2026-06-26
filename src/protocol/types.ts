@@ -14,6 +14,30 @@ import type { VgiSchema, VgiBatch } from "../arrow/index.js";
 import type { Arguments } from "../arguments/arguments.js";
 import { FunctionType, TableInOutPhase, type TableCardinality } from "../types.js";
 
+/**
+ * Context for a `COPY ... FROM` read, threaded onto {@link BindRequest}.
+ *
+ * Present only when the bind/init opens a COPY-FROM scan (`null`/absent
+ * otherwise — set by the VGI extension's `copy_from_bind`). `InitRequest`
+ * embeds the same `BindRequest` as `bind_call`, so process()/init also reach it
+ * via `initCall.bind_call.copy_from`. The handler's options arrive through the
+ * normal `BindRequest.arguments` (built from the COPY options), so they are not
+ * duplicated here. Mirrors vgi-python's `protocol.CopyFromContext`.
+ */
+export interface CopyFromContext {
+  /** The `FORMAT` name resolved at COPY bind time. */
+  format: string;
+  /** The source path from the `COPY ... FROM 'path'` statement. */
+  file_path: string;
+  /**
+   * The COPY target's column schema (name + type, in target order). The worker
+   * must bind its output to, and emit columns whose types match, this schema
+   * exactly — DuckDB inserts no cast between the scan and the INSERT. Holds the
+   * parsed Arrow Schema (the wire field is binary; deserialized here).
+   */
+  expected_schema: VgiSchema;
+}
+
 export interface BindRequest {
   function_name: string;
   arguments: Arguments;
@@ -24,6 +48,12 @@ export interface BindRequest {
   attach_opaque_data: Uint8Array | null;
   transaction_opaque_data: Uint8Array | null;
   resolved_secrets_provided: boolean;
+  /**
+   * COPY ... FROM context — `null`/absent unless this bind/init opens a
+   * COPY-FROM scan. Additive + name-keyed, so ordinary scans (which omit it on
+   * the wire) deserialize to `null`. Mirrors vgi-python's `BindRequest.copy_from`.
+   */
+  copy_from?: CopyFromContext | null;
   /**
    * Time travel: the AT (TIMESTAMP|VERSION ...) clause for this scan, threaded
    * from DuckDB's per-reference bind. Both `null` when the scan has no AT clause.

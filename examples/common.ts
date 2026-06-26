@@ -25,6 +25,7 @@ import { tableInOutFunctions } from "./table_in_out.js";
 import { tableBufferingFunctions } from "./table_buffering.js";
 import { aggregateFunctions } from "./aggregate.js";
 import { partitionTableFunctions } from "./table_partition.js";
+import { copyFromFunctions } from "./copy_from.js";
 
 // Find functions for table-backed catalog entries
 const sequenceFunction = tableFunctions.find((f) => f.meta.name === "sequence");
@@ -96,6 +97,7 @@ export const allFunctions = [
   ...tableInOutFunctions,
   ...tableBufferingFunctions,
   ...aggregateFunctions,
+  ...copyFromFunctions,
 ];
 
 // Serialize parameter default values for vgi_clamp: lo=0, hi=100

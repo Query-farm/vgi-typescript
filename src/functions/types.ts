@@ -97,6 +97,19 @@ export interface FunctionMeta {
    * `partition_kind`.
    */
   partitionKind?: "NOT_PARTITIONED" | "SINGLE_VALUE_PARTITIONS" | "OVERLAPPING_PARTITIONS" | "DISJOINT_PARTITIONS";
+  /**
+   * COPY ... FROM custom format reader: the SQL `FORMAT` identifier this
+   * function backs (e.g. `example_lines`). Set by {@link defineCopyFromFunction}.
+   * When present, the catalog advertises this function via
+   * `copyFromFormats()` / the `catalog_copy_from_formats` RPC so the VGI
+   * extension registers a DuckDB CopyFunction for it. Mirrors vgi-python's
+   * `CopyFromFunction.COPY_FROM_FORMAT`.
+   */
+  copyFromFormat?: string;
+  /** COPY direction; only `"from"` is supported today. Default `"from"`. */
+  copyFromDirection?: string;
+  /** Optional free-text comment surfaced by `vgi_copy_formats()`. */
+  copyFromComment?: string | null;
 }
 
 export interface StreamHandlers {

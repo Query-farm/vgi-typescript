@@ -12,6 +12,7 @@ import type {
   AttachOpaqueData,
   CatalogAttachResult,
   CatalogInfo,
+  CopyFromFormatInfo,
   FunctionInfo,
   IndexInfo,
   MacroInfo,
@@ -159,6 +160,10 @@ export class CompositeCatalogInterface extends CatalogInterface {
 
   override async macroGet(attachOpaqueData: AttachOpaqueData, schemaName: string, name: string, transactionOpaqueData?: TransactionOpaqueData): Promise<MacroInfo | null> {
     return await this._route(attachOpaqueData).macroGet(attachOpaqueData, schemaName, name, transactionOpaqueData);
+  }
+
+  override async copyFromFormats(attachOpaqueData: AttachOpaqueData, transactionOpaqueData?: TransactionOpaqueData): Promise<CopyFromFormatInfo[]> {
+    return await this._route(attachOpaqueData).copyFromFormats(attachOpaqueData, transactionOpaqueData);
   }
 
   override async transactionBegin(attachOpaqueData: AttachOpaqueData): Promise<Uint8Array | null> {

@@ -3,10 +3,10 @@
 // ArrowSerializableDataclass field declaration order so the format is
 // positional-compatible with the Python reader.
 
-import { type VgiSchema, schema, type VgiField, field, type VgiBatch, type VgiDataType, utf8, binary, bool, list } from "../../arrow/index.js";
+import { type VgiSchema, schema, type VgiField, field, type VgiBatch, type VgiDataType, utf8, binary, bool, list, struct } from "../../arrow/index.js";
 import { Arguments } from "../../arguments/arguments.js";
 import { FunctionType } from "../../types.js";
-import type { BindRequest, BindResponse } from "../types.js";
+import type { BindRequest, BindResponse, CopyFromContext } from "../types.js";
 import {
   serializeSchema,
   deserializeSchema,
@@ -32,6 +32,18 @@ const BIND_REQUEST_SCHEMA = schema([
   field("at_value", utf8(), true),
 ]);
 
+// COPY ... FROM context — a nullable nested struct<format, file_path,
+// expected_schema>. Byte-for-byte the shape the C++ extension builds in
+// vgi_rpc_types.cpp (BuildBindRequest's copy_from branch) and the Python
+// BindRequest.copy_from field. Only appended to the serialized batch when the
+// bind actually opens a COPY scan, so ordinary scans keep the legacy wire shape.
+const COPY_FROM_STRUCT_TYPE = struct([
+  field("format", utf8(), false),
+  field("file_path", utf8(), false),
+  field("expected_schema", binary(), false),
+]);
+const COPY_FROM_FIELD = field("copy_from", COPY_FROM_STRUCT_TYPE, true);
+
 const BIND_RESPONSE_SCHEMA = schema([
   field("output_schema", binary(), false),
   field("opaque_data", binary(), true),
@@ -54,7 +66,33 @@ export function serializeBindRequest(req: BindRequest): VgiBatch {
     at_unit: req.at_unit ?? null,
     at_value: req.at_value ?? null,
   };
+  // Append the copy_from struct column only for COPY scans, so non-COPY binds
+  // serialize to the exact legacy shape (field matched by name on the reader).
+  if (req.copy_from) {
+    const schemaWithCopyFrom = schema([...BIND_REQUEST_SCHEMA.fields, COPY_FROM_FIELD]);
+    row.copy_from = {
+      format: req.copy_from.format,
+      file_path: req.copy_from.file_path,
+      expected_schema: serializeSchema(req.copy_from.expected_schema),
+    };
+    return buildSingleRowBatch(schemaWithCopyFrom, row);
+  }
   return buildSingleRowBatch(BIND_REQUEST_SCHEMA, row);
+}
+
+function parseCopyFromContext(raw: any): CopyFromContext | null {
+  // The struct column decodes to a plain { format, file_path, expected_schema }
+  // object via the codec/canonical path (expected_schema is binary -> Uint8Array).
+  if (raw == null) return null;
+  const format = raw.format;
+  const filePath = raw.file_path;
+  const schemaBytes = raw.expected_schema;
+  if (format == null || filePath == null || schemaBytes == null) return null;
+  return {
+    format: String(format),
+    file_path: String(filePath),
+    expected_schema: deserializeSchema(toUint8Array(schemaBytes)),
+  };
 }
 
 export function deserializeBindRequest(
@@ -100,6 +138,9 @@ export function deserializeBindRequest(
     // Empty string -> null (matches the C++ BuildBindRequest convention).
     at_unit: params.at_unit ? String(params.at_unit) : null,
     at_value: params.at_value ? String(params.at_value) : null,
+    // COPY ... FROM context — absent for ordinary scans (params.copy_from
+    // undefined -> null). The struct column decodes to a plain object.
+    copy_from: parseCopyFromContext(params.copy_from),
   };
 }
 

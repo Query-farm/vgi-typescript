@@ -67,6 +67,47 @@ import type { IndexInfo, IndexConstraintType } from "../generated/vgi-client.js"
 export type { IndexInfo, IndexConstraintType };
 export { encodeIndexInfo, decodeIndexInfo } from "../generated/vgi-client.js";
 
+// CopyFromFormatInfo — a custom `COPY ... FROM` format a VGI catalog advertises.
+// The wire shape matches the generated CopyFromFormatInfoSchema; the codegen
+// does not emit a dedicated interface/encoder for it (it's an items-list type
+// carried as binary), so we declare the snake_case interface here and reuse the
+// generic ASD codec with the generated schema. Mirrors vgi-python's
+// catalog_interface.CopyFromFormatInfo.
+import { encodeASD } from "../codec/asd.js";
+import { CopyFromFormatInfoSchema } from "../generated/vgi-protocol-schemas.js";
+
+export interface CopyFromFormatInfo {
+  /** Free-text comment (CopyFromFunction's `copyFromComment`). */
+  comment?: string | null;
+  /** Function/format tags. */
+  tags: Record<string, string>;
+  /** The `FORMAT` identifier users type (single global namespace). */
+  format_name: string;
+  /** Registered name of the worker function that performs the read. */
+  handler: string;
+  /**
+   * Serialized Arrow schema of the format's options (same encoding as
+   * `FunctionInfo.arguments`), each field carrying type / `vgi_doc` description.
+   */
+  options: Uint8Array;
+  /** `"from"` — the only direction supported today. */
+  direction: string;
+  /** Intrinsic documentation from the handler's description. */
+  description: string;
+}
+
+/** Encode a CopyFromFormatInfo to Arrow IPC bytes (single-row batch). */
+export const encodeCopyFromFormatInfo = (v: CopyFromFormatInfo): Uint8Array =>
+  encodeASD(CopyFromFormatInfoSchema, {
+    comment: v.comment ?? null,
+    tags: v.tags ?? {},
+    format_name: v.format_name,
+    handler: v.handler,
+    options: v.options,
+    direction: v.direction ?? "from",
+    description: v.description ?? "",
+  });
+
 // ============================================================================
 // ScanFunctionResult — typed result for catalog_table_scan_function_get.
 // Mirrors vgi-python's ScanFunctionResult (catalog_interface.py:380).
@@ -642,6 +683,19 @@ export abstract class CatalogInterface {
     transactionOpaqueData?: TransactionOpaqueData
   ): Awaitable<IndexInfo | null> {
     return null;
+  }
+  /**
+   * List custom `COPY ... FROM` formats advertised by this catalog. Catalog-level
+   * (not schema-scoped). The default returns an empty list, so catalogs that
+   * don't define COPY formats are unaffected. The VGI extension treats an empty
+   * list (or a not-implemented method) as "no custom formats". Mirrors
+   * vgi-python's `CatalogInterface.copy_from_formats`.
+   */
+  copyFromFormats(
+    attachOpaqueData: AttachOpaqueData,
+    transactionOpaqueData?: TransactionOpaqueData,
+  ): Awaitable<CopyFromFormatInfo[]> {
+    return [];
   }
   transactionBegin(attachOpaqueData: AttachOpaqueData): Awaitable<Uint8Array | null> {
     return null;
