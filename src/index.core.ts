@@ -201,7 +201,7 @@ export {
 export type {
   // backend-agnostic Arrow types
   VgiTypeId, VgiDataType, VgiField, VgiSchema, VgiColumn, VgiColumnData,
-  VgiBatch, VgiBackendInfo,
+  VgiBatch, VgiBackendInfo, TaggedUnion,
   // precise nominal descriptors
   NullDescriptor, BoolType,
   IntType, Int8Type, Int16Type, Int32Type, Int64Type,

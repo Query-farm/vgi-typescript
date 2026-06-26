@@ -26,7 +26,7 @@ import {
   Table,
   type Column,
 } from "@query-farm/flechette";
-import type { VgiSchema, VgiBatch, VgiDataType, VgiColumnData } from "../types.js";
+import type { VgiSchema, VgiBatch, VgiDataType, VgiColumnData, TaggedUnion } from "../types.js";
 import { toFlechetteType } from "./normalize-type.js";
 
 const MS_PER_DAY = 86_400_000;
@@ -157,8 +157,76 @@ export function readCanonicalValue(
   column: unknown,
   index: number,
 ): unknown {
+  const tid = type.typeId;
+  // Struct and Union must be read column-based: flechette's `.at()` collapses a
+  // union to only its member value (dropping the discriminator), and a struct
+  // wrapping a union would inherit that loss. Reading the child Data nodes
+  // directly preserves the union tag for any nesting depth.
+  if (tid === 13) return readStructColumn(type, column, index);
+  if (tid === 14) return readUnionColumn(type, column, index);
   const at = (column as any)?.at?.(index);
   return canonicalize(type, at);
+}
+
+/** Child Data nodes for a flechette Column/Data. A top-level Column exposes
+ *  `.data[0]`; a nested child is already a Data node carrying `.children`. */
+function childData(column: any): any {
+  return column?.children ? column : column?.data?.[0];
+}
+
+/** True when row `index` is null per the Data node's validity bitmap. */
+function isNullAt(data: any, index: number): boolean {
+  if ((data?.nullCount ?? 0) === 0) return false;
+  const validity: Uint8Array | undefined = data?.validity;
+  if (!validity || validity.length === 0) return false;
+  return ((validity[index >> 3] >> (index & 7)) & 1) === 0;
+}
+
+/** Read a struct column-based so nested union children keep their tags. */
+function readStructColumn(
+  type: VgiDataType,
+  column: unknown,
+  index: number,
+): Record<string, unknown> | null {
+  const col: any = column;
+  const data = childData(col);
+  if (!data?.children) {
+    // No structural access: fall back to value-based canonicalization.
+    return canonicalize(type, col?.at?.(index)) as Record<string, unknown> | null;
+  }
+  // A null struct row has no member values to read.
+  if (isNullAt(data, index)) return null;
+  const children = (type as any).children as Array<{ name: string; type: VgiDataType }>;
+  const out: Record<string, unknown> = {};
+  for (let c = 0; c < children.length; c++) {
+    out[children[c].name] = readCanonicalValue(children[c].type, data.children[c], index);
+  }
+  return out;
+}
+
+/** Read a union column-based into a TaggedUnion, recovering the active tag. */
+function readUnionColumn(
+  type: VgiDataType,
+  column: unknown,
+  index: number,
+): TaggedUnion {
+  const children = (type as any).children as Array<{ name: string; type: VgiDataType }>;
+  const data = childData(column);
+  if (data && isNullAt(data, index)) return { tag: null, value: null };
+  // Per-row type code -> child index. DuckDB emits SPARSE unions: each child is
+  // full-length and aligned with the parent row.
+  const typeIds: ArrayLike<number> | undefined = data?.typeIds;
+  const tcode = typeIds ? typeIds[index] : children.length > 0 ? 0 : -1;
+  const map = (type as any).typeMap as Record<number, number> | undefined;
+  const childIdx = map && map[tcode] !== undefined ? map[tcode] : tcode;
+  const childField = children[childIdx];
+  if (!childField || !data?.children) return { tag: null, value: null };
+  // Dense unions remap the row via offsets; sparse unions share the row index.
+  const offsets: ArrayLike<number> | undefined = data?.offsets;
+  const isDense = (type as any).mode === 1;
+  const childRow = isDense && offsets ? offsets[index] : index;
+  const value = readCanonicalValue(childField.type, data.children[childIdx], childRow);
+  return { tag: childField.name, value };
 }
 
 /**

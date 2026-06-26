@@ -18,6 +18,7 @@ export type {
   VgiColumnData,
   VgiBatch,
   VgiBackendInfo,
+  TaggedUnion,
 } from "./types.js";
 
 // Backend-agnostic predicates.

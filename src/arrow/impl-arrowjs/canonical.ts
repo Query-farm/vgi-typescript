@@ -34,7 +34,7 @@ import {
   Map_,
   type Field,
 } from "@query-farm/apache-arrow";
-import type { VgiDataType, VgiColumnData } from "../types.js";
+import type { VgiDataType, VgiColumnData, TaggedUnion } from "../types.js";
 
 // ===========================================================================
 // WRITE: canonical[] -> arrow-js column Data
@@ -369,6 +369,8 @@ function readFromData(type: DataType, col: any, data: any, index: number): unkno
     }
     case 13: // Struct
       return readStruct(type, col, index);
+    case 14: // Union -> TaggedUnion { tag, value }
+      return readUnion(type, col, data, index);
     case 12: // List
     case 16: // FixedSizeList
       return readList(type, col, data, index);
@@ -428,6 +430,29 @@ function readStruct(type: DataType, col: any, index: number): Record<string, unk
     out[cf.name] = readCanonicalValue(cf.type as VgiDataType, childVec, index);
   }
   return out;
+}
+
+function readUnion(type: DataType, col: any, data: any, index: number): TaggedUnion {
+  const children = (type as any).children as Field[];
+  // Per-row type code -> child index. DuckDB emits SPARSE unions, where every
+  // child is full-length and aligned with the parent row.
+  const typeIds: ArrayLike<number> | undefined = data?.typeIds;
+  const tcode = typeIds ? typeIds[index] : children.length > 0 ? 0 : -1;
+  const map = (type as any).typeIdToChildIndex as Record<number, number> | undefined;
+  const childIdx = map && map[tcode] !== undefined ? map[tcode] : tcode;
+  const childField = children[childIdx];
+  if (!childField) return { tag: null, value: null };
+  // Dense unions carry an offsets buffer remapping the parent row into the
+  // child; sparse unions read the child at the same row.
+  const offsets: ArrayLike<number> | undefined = data?.valueOffsets;
+  const childRow = offsets ? offsets[index] : index;
+  const childVec = typeof col.getChildAt === "function"
+    ? col.getChildAt(childIdx)
+    : col.children?.[childIdx];
+  const value = childVec
+    ? readCanonicalValue(childField.type as VgiDataType, childVec, childRow)
+    : null;
+  return { tag: childField.name, value };
 }
 
 function readList(type: DataType, col: any, data: any, index: number): unknown[] {

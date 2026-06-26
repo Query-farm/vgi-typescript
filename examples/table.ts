@@ -41,6 +41,11 @@ import {
   type BoundStorage,
   type Filter,
   type PushdownFilters,
+  sparseUnion,
+  field,
+  int64,
+  utf8,
+  type TaggedUnion,
 } from "../src/index.js";
 import type { OutputCollector } from "@query-farm/vgi-rpc";
 import type { VgiFunction } from "../src/index.js";
@@ -1974,6 +1979,88 @@ const repeat_value_str = defineTableFunction<{ count: number; [key: string]: any
 });
 
 // ============================================================================
+// 18b. union_varargs - Union-typed varargs; echoes each vararg's active tag
+// ============================================================================
+
+// Sparse union shared by every union_varargs argument. DuckDB only ever emits
+// sparse unions over Arrow, and declaring the vararg type as exactly this makes
+// DuckDB render the parameter type as `UNION(i BIGINT, s VARCHAR)`.
+const UNION_VARARGS_TYPE = sparseUnion([
+  field("i", int64()),
+  field("s", utf8()),
+]) as unknown as DataType;
+
+const UNION_VARARGS_SCHEMA = new Schema([
+  new Field("idx", new Int64(), false),
+  new Field("tag", new Utf8(), true),
+  new Field("value", new Utf8(), true),
+]);
+
+interface UnionVarargsState {
+  idx: bigint[];
+  tags: (string | null)[];
+  values: string[];
+  done: boolean;
+}
+
+// Stringify a union member value so a BIGINT 1n renders as "1" (not "1n").
+function unionValueToString(value: unknown): string {
+  if (value === null || value === undefined) return "";
+  if (typeof value === "bigint") return value.toString();
+  return String(value);
+}
+
+const union_varargs = defineTableFunction<Record<string, any>, UnionVarargsState>({
+  name: "union_varargs",
+  description: "Echo the active member tag and value of each union vararg",
+  args: {
+    values: UNION_VARARGS_TYPE,
+  },
+  varargs: ["values"],
+  onBind: () => ({ outputSchema: UNION_VARARGS_SCHEMA }),
+  cardinality: (params: TableBindParams<any>) => {
+    const n = params.bindCall.arguments.length;
+    return { estimate: n, max: n };
+  },
+  initialState: (params: TableProcessParams<any>) => {
+    const positional = params.initCall.bind_call.arguments.positional;
+    const idx: bigint[] = [];
+    const tags: (string | null)[] = [];
+    const values: string[] = [];
+    for (let i = 0; i < positional.length; i++) {
+      const u = positional[i] as TaggedUnion | null;
+      idx.push(BigInt(i));
+      tags.push(u ? u.tag : null);
+      values.push(u ? unionValueToString(u.value) : "");
+    }
+    return { idx, tags, values, done: false };
+  },
+  process: (params, state, out) => {
+    if (state.done) {
+      out.finish();
+      return;
+    }
+    state.done = true;
+    out.emit(
+      batchFromColumns(
+        { idx: state.idx, tag: state.tags, value: state.values },
+        params.outputSchema,
+      ),
+    );
+  },
+  examples: [
+    {
+      sql:
+        "SELECT * FROM union_varargs(" +
+        "union_value(i := 1)::UNION(i BIGINT, s VARCHAR), " +
+        "union_value(s := 'x')::UNION(i BIGINT, s VARCHAR))",
+      description: "Echo the tag and value of two union arguments",
+    },
+  ],
+  categories: ["generator", "utility"],
+});
+
+// ============================================================================
 // 19. rowid_sequence - Generates rows with a row_id column
 // ============================================================================
 
@@ -3708,6 +3795,7 @@ export const tableFunctions: VgiFunction[] = [
   make_pairs_str,
   repeat_value_int,
   repeat_value_str,
+  union_varargs,
   rowid_sequence,
   late_materialization,
   value_prune,

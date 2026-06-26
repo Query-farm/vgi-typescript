@@ -59,3 +59,16 @@ export interface VgiBackendInfo {
  *  `Column.data[0]`-style object), so this is treated opaquely; it's only
  *  meant to be passed back into facade builders that know how to consume it. */
 export type VgiColumnData = unknown;
+
+/** A decoded union-typed value: which member is active (`tag`) and its `value`.
+ *
+ *  DuckDB `UNION` / Arrow union values are *tagged* — the discriminator (which
+ *  member is present) lives in the union's per-row type code, not in the member
+ *  value. A plain scalar read returns only the member value and drops that tag,
+ *  so union values are decoded into this wrapper instead: `tag` is the active
+ *  member's field name (or `null` for a null union) and `value` is its decoded
+ *  canonical value. Mirrors vgi-python's `vgi.arguments.TaggedUnion`. */
+export interface TaggedUnion {
+  readonly tag: string | null;
+  readonly value: unknown;
+}

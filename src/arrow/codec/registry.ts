@@ -652,6 +652,10 @@ export function codecFor(type: VgiDataType): Codec {
       return bigIntUnitCodec("duration");
     case TypeId.Struct:
       return structCodec(type);
+    case TypeId.Union:
+      // The canonical readers decode a union into a TaggedUnion { tag, value }.
+      // That shape is already the rich representation, so pass it through.
+      return identity("union", () => {});
     case TypeId.List:
     case TypeId.FixedSizeList:
       return listCodec(type);
