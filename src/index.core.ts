@@ -32,6 +32,13 @@ export {
   type CopyFromOption,
   type CopyFromReadParams,
 } from "./functions/copy-from.js";
+export {
+  defineCopyToFunction,
+  type CopyToFunctionConfig,
+  type CopyToOption,
+  type CopyToWriteParams,
+  type CopyToCloseParams,
+} from "./functions/copy-to.js";
 
 // Function types
 export type { VgiFunction, FunctionMeta, StreamHandlers, FunctionExample, HandlerState } from "./functions/types.js";
@@ -60,6 +67,7 @@ export type {
   BindRequest,
   BindResponse,
   CopyFromContext,
+  CopyToContext,
   InitRequest,
   GlobalInitResponse,
   TableCardinality,

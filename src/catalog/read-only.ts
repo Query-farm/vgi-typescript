@@ -604,22 +604,41 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
     transactionOpaqueData?: TransactionOpaqueData,
   ): CopyFromFormatInfo[] {
     const formats: CopyFromFormatInfo[] = [];
+    // Key by (direction, format): a FROM-format and a TO-format may legitimately
+    // share a name; the extension scopes by attach alias anyway. Mirrors
+    // vgi-python's `dedup_key = f"{direction}:{fmt}"`.
     const seen = new Set<string>();
     for (const schema of this._descriptor.schemas) {
       for (const f of schema.functions ?? []) {
-        const fmt = f.meta.copyFromFormat;
-        if (!fmt || seen.has(fmt)) continue;
-        seen.add(fmt);
+        // A format is a COPY FROM reader (copyFromFormat) or a COPY TO writer
+        // (copyToFormat). The RPC name is historical; it returns all directions.
+        const isTo = !!f.meta.copyToFormat;
+        const fmt = isTo ? f.meta.copyToFormat : f.meta.copyFromFormat;
+        if (!fmt) continue;
+        const direction = isTo
+          ? f.meta.copyToDirection ?? "to"
+          : f.meta.copyFromDirection ?? "from";
+        const dedupKey = `${direction}:${fmt}`;
+        if (seen.has(dedupKey)) continue;
+        seen.add(dedupKey);
         const meta = resolveMetadata(f);
-        const argSchema = argumentSpecsToSchema(f.argumentSpecs);
+        // Only the declared options are part of the format's option list — the
+        // synthetic table-input ("data") spec a TO writer carries as a
+        // table_buffering function is not an option (mirrors vgi-python, whose
+        // CopyToFunction options are just the Arg-annotated arguments).
+        const optionSpecs = f.argumentSpecs.filter((s) => !s.isTableInput);
+        const argSchema = argumentSpecsToSchema(optionSpecs);
+        // ordered only meaningful for TO writers (single-thread sink ingest).
+        const ordered = isTo && f.meta.sinkOrderDependent === true;
         formats.push({
-          comment: f.meta.copyFromComment ?? null,
+          comment: (isTo ? f.meta.copyToComment : f.meta.copyFromComment) ?? null,
           tags: meta.tags,
           format_name: fmt,
           handler: meta.name,
           options: serializeSchema(argSchema),
-          direction: f.meta.copyFromDirection ?? "from",
+          direction,
           description: meta.description ?? "",
+          ordered,
         });
       }
     }

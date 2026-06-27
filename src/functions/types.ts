@@ -110,6 +110,21 @@ export interface FunctionMeta {
   copyFromDirection?: string;
   /** Optional free-text comment surfaced by `vgi_copy_formats()`. */
   copyFromComment?: string | null;
+  /**
+   * COPY ... TO custom format writer: the SQL `FORMAT` identifier this function
+   * backs (e.g. `example_lines_out`). Set by {@link defineCopyToFunction}. When
+   * present, the catalog advertises this function via `copyFromFormats()` (the
+   * `catalog_copy_from_formats` RPC returns all directions) so the VGI
+   * extension registers a DuckDB CopyFunction for it. The writer is a
+   * `table_buffering` function under the hood, reusing the
+   * `table_buffering_process` / `table_buffering_combine` RPCs. Mirrors
+   * vgi-python's `CopyToFunction.COPY_TO_FORMAT`.
+   */
+  copyToFormat?: string;
+  /** COPY direction for a TO writer; always `"to"`. Default `"to"`. */
+  copyToDirection?: string;
+  /** Optional free-text comment surfaced by `vgi_copy_formats()`. */
+  copyToComment?: string | null;
 }
 
 export interface StreamHandlers {

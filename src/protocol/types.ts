@@ -38,6 +38,24 @@ export interface CopyFromContext {
   expected_schema: VgiSchema;
 }
 
+/**
+ * Context for a `COPY ... TO` write, threaded onto {@link BindRequest}.
+ *
+ * Present only when the bind/init opens a COPY-TO sink (`null`/absent
+ * otherwise — set by the VGI extension's `copy_to_bind`). `InitRequest`
+ * embeds the same `BindRequest` as `bind_call`, so process()/combine() also
+ * reach it via `initCall.bind_call.copy_to`. The handler's options arrive
+ * through the normal `BindRequest.arguments`; the **source** columns ride the
+ * existing `BindRequest.input_schema` (so they are not duplicated here).
+ * Mirrors vgi-python's `protocol.CopyToContext`.
+ */
+export interface CopyToContext {
+  /** The `FORMAT` name resolved at COPY bind time. */
+  format: string;
+  /** The destination path from the `COPY ... TO 'path'` statement. */
+  file_path: string;
+}
+
 export interface BindRequest {
   function_name: string;
   arguments: Arguments;
@@ -54,6 +72,12 @@ export interface BindRequest {
    * the wire) deserialize to `null`. Mirrors vgi-python's `BindRequest.copy_from`.
    */
   copy_from?: CopyFromContext | null;
+  /**
+   * COPY ... TO context — `null`/absent unless this bind/init opens a COPY-TO
+   * sink. Additive + name-keyed, same wire-safe rationale as `copy_from`.
+   * Mirrors vgi-python's `BindRequest.copy_to`.
+   */
+  copy_to?: CopyToContext | null;
   /**
    * Time travel: the AT (TIMESTAMP|VERSION ...) clause for this scan, threaded
    * from DuckDB's per-reference bind. Both `null` when the scan has no AT clause.

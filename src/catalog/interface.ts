@@ -90,10 +90,18 @@ export interface CopyFromFormatInfo {
    * `FunctionInfo.arguments`), each field carrying type / `vgi_doc` description.
    */
   options: Uint8Array;
-  /** `"from"` — the only direction supported today. */
+  /** `"from"` / `"to"` / `"both"` — the COPY direction this format serves. */
   direction: string;
   /** Intrinsic documentation from the handler's description. */
   description: string;
+  /**
+   * COPY ... TO only — when true the writer requires rows in source order, so
+   * the extension uses a single-threaded sink (`REGULAR_COPY_TO_FILE`) instead
+   * of the default parallel sharded write. Set via `Meta.sinkOrderDependent`
+   * on a CopyToFunction; always false for readers. Mirrors vgi-python's
+   * `CopyFromFormatInfo.ordered`.
+   */
+  ordered: boolean;
 }
 
 /** Encode a CopyFromFormatInfo to Arrow IPC bytes (single-row batch). */
@@ -106,6 +114,7 @@ export const encodeCopyFromFormatInfo = (v: CopyFromFormatInfo): Uint8Array =>
     options: v.options,
     direction: v.direction ?? "from",
     description: v.description ?? "",
+    ordered: v.ordered ?? false,
   });
 
 // ============================================================================
