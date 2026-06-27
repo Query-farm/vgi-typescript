@@ -28,7 +28,7 @@ import {
 // The Arrow type factories `bool`/`utf8` and the batch IPC helpers live on the
 // arrow facade — the package root shadows `bool` with the vgi-rpc arg builder of
 // the same name (see src/index.core.ts note), so import them from here.
-import { utf8, bool, serializeBatch, deserializeBatch, iterRows } from "../src/arrow/index.js";
+import { utf8, bool, int64, serializeBatch, deserializeBatch, iterRows } from "../src/arrow/index.js";
 
 const SHARD_NS = new TextEncoder().encode("copy_to_shard");
 const EMPTY_KEY = new Uint8Array(0);
@@ -38,7 +38,9 @@ interface ExampleLinesOutArgs {
   null_string: string;
   delimiter: string;
   header: boolean;
+  header_repeat: number;
   on_exists: string;
+  fail_on_value: string;
 }
 
 function fmtCell(value: unknown, nullString: string): string {
@@ -48,7 +50,19 @@ function fmtCell(value: unknown, nullString: string): string {
 // Buffer one input batch as an IPC blob in execution-scoped storage. state_append
 // is atomic + race-safe across parallel sink threads / workers.
 async function write(p: CopyToWriteParams<ExampleLinesOutArgs>): Promise<void> {
-  await p.params.storage.stateAppend(SHARD_NS, EMPTY_KEY, serializeBatch(p.batch));
+  const { batch, options } = p;
+  // Mid-sink failure trigger: raise during a process() call when a cell matches
+  // fail_on_value. Exercises the in-flight teardown/recovery path.
+  if (options.fail_on_value) {
+    for (const row of iterRows(batch)) {
+      for (const value of Object.values(row)) {
+        if (value !== null && value !== undefined && String(value) === options.fail_on_value) {
+          throw new Error(`example_lines_out: fail_on_value hit: ${JSON.stringify(options.fail_on_value)}`);
+        }
+      }
+    }
+  }
+  await p.params.storage.stateAppend(SHARD_NS, EMPTY_KEY, serializeBatch(batch));
 }
 
 // Concatenate every shard and write the delimited destination file (once).
@@ -61,14 +75,21 @@ async function close(p: CopyToCloseParams<ExampleLinesOutArgs>): Promise<number>
 
   const shards = await params.storage.stateLogScan(SHARD_NS, EMPTY_KEY, -1);
 
+  // header=true writes the column-name line `header_repeat` times (default 1).
+  const writeHeader = (names: string[]): void => {
+    if (!options.header) return;
+    const headerLine = names.join(options.delimiter);
+    for (let i = 0; i < options.header_repeat; i++) lines.push(headerLine);
+  };
+
   const lines: string[] = [];
   let wroteHeader = false;
   let rowsWritten = 0;
   for (const [, blob] of shards) {
     const batch = deserializeBatch(blob);
     const names = batch.schema.fields.map((f) => f.name);
-    if (options.header && !wroteHeader) {
-      lines.push(names.join(options.delimiter));
+    if (!wroteHeader) {
+      writeHeader(names);
       wroteHeader = true;
     }
     for (const row of iterRows(batch)) {
@@ -76,12 +97,12 @@ async function close(p: CopyToCloseParams<ExampleLinesOutArgs>): Promise<number>
       rowsWritten++;
     }
   }
-  // Empty COPY with header=true still emits the header row. The source column
+  // Empty COPY with header=true still emits the header row(s). The source column
   // names ride the bind's input_schema.
-  if (options.header && !wroteHeader) {
+  if (!wroteHeader) {
     const inSchema = params.initCall.bind_call.input_schema;
     if (inSchema) {
-      lines.push(inSchema.fields.map((f) => f.name).join(options.delimiter));
+      writeHeader(inSchema.fields.map((f) => f.name));
     }
   }
 
@@ -93,11 +114,23 @@ const sharedOptions = {
   null_string: { type: utf8(), doc: "Token written for SQL NULL" }, // required
   delimiter: { type: utf8(), default: ",", doc: "Field separator" },
   header: { type: bool(), default: false, doc: "Write a header row of column names" },
+  header_repeat: {
+    type: int64(),
+    default: 1,
+    ge: 0,
+    le: 3,
+    doc: "When header=true, write the header line this many times",
+  },
   on_exists: {
     type: utf8(),
     default: "overwrite",
     choices: ["overwrite", "error"],
     doc: "Behavior when the destination file already exists",
+  },
+  fail_on_value: {
+    type: utf8(),
+    default: "",
+    doc: "If non-empty, fail mid-write when a cell equals this value",
   },
 } as const;
 

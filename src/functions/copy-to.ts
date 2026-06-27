@@ -62,6 +62,16 @@ export interface CopyToOption {
    * vgi-python's `Arg(..., choices=[...])`.
    */
   choices?: unknown[];
+  /**
+   * Optional inclusive lower bound for numeric options, validated worker-side at
+   * bind. Mirrors vgi-python's `Arg(..., ge=...)`.
+   */
+  ge?: number;
+  /**
+   * Optional inclusive upper bound for numeric options, validated worker-side at
+   * bind. Mirrors vgi-python's `Arg(..., le=...)`.
+   */
+  le?: number;
 }
 
 /** Parameters for the per-batch `write` hook. */
@@ -169,6 +179,20 @@ export function defineCopyToFunction<TArgs = Record<string, unknown>>(
           `COPY (FORMAT ${config.format}): option '${name}' value ${JSON.stringify(val)} ` +
             `is not one of ${JSON.stringify(opt.choices)}`,
         );
+      }
+      if (typeof val === "number") {
+        if (opt.ge !== undefined && val < opt.ge) {
+          throw new Error(
+            `COPY (FORMAT ${config.format}): option '${name}' value ${val} ` +
+              `is below the minimum ${opt.ge}`,
+          );
+        }
+        if (opt.le !== undefined && val > opt.le) {
+          throw new Error(
+            `COPY (FORMAT ${config.format}): option '${name}' value ${val} ` +
+              `is above the maximum ${opt.le}`,
+          );
+        }
       }
       args[name] = val;
     }
