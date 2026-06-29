@@ -192,43 +192,40 @@ test-subprocess:
 
 # HTTP transport: same pattern, but the workers need to be running at known
 # URLs. The HTTP example workers each write a PORT line on stdout when they
-# start; we capture each worker's stdout to a temp file and poll it for the
-# PORT line, then export the URLs before invoking unittest.
+# start; we read it through a FIFO and export the URLs before invoking unittest.
 #
-# Port discovery polls a regular file rather than reading a FIFO. The old FIFO
-# handshake (mkfifo + `read < fifo`) deadlocks on macOS when several heavy Bun
-# workers start at once — opening a worker's stdout FIFO for write blocks until
-# its reader attaches, and the second worker never reaches its PORT write. A
-# plain file never blocks the writer, so all four workers boot in parallel.
+# Each FIFO is opened read-write on a dedicated fd (exec N<>fifo) *before* the
+# worker is launched. A plain `read < fifo` would make the worker's open() for
+# write block until the reader attaches; on macOS, launching the four heavy Bun
+# workers this way deadlocks (the second worker never reaches its PORT write).
+# Holding the read end open keeps the worker's write-open non-blocking, while
+# preserving pipe semantics (a regular-file capture is block-buffered on Linux,
+# so the PORT line never flushes there). Works on both macOS and Linux/CI.
 test-http:
 	@cd $(VGI_DIR) && \
-	port_out=$$(mktemp); $(HTTP_WORKER) > "$$port_out" 2>/tmp/vgi-http-worker.err & http_pid=$$!; \
-	vport_out=$$(mktemp); $(VERSIONED_HTTP) > "$$vport_out" 2>/dev/null & vhttp_pid=$$!; \
-	aport_out=$$(mktemp); $(ATTACH_OPTIONS_HTTP) > "$$aport_out" 2>/dev/null & ahttp_pid=$$!; \
-	tport_out=$$(mktemp); $(VERSIONED_TABLES_HTTP) > "$$tport_out" 2>/dev/null & thttp_pid=$$!; \
+	port_fifo=$$(mktemp -u); mkfifo "$$port_fifo"; exec 3<>"$$port_fifo"; \
+	$(HTTP_WORKER) > "$$port_fifo" 2>/tmp/vgi-http-worker.err & http_pid=$$!; \
+	vport_fifo=$$(mktemp -u); mkfifo "$$vport_fifo"; exec 4<>"$$vport_fifo"; \
+	$(VERSIONED_HTTP) > "$$vport_fifo" 2>/dev/null & vhttp_pid=$$!; \
+	aport_fifo=$$(mktemp -u); mkfifo "$$aport_fifo"; exec 5<>"$$aport_fifo"; \
+	$(ATTACH_OPTIONS_HTTP) > "$$aport_fifo" 2>/dev/null & ahttp_pid=$$!; \
+	tport_fifo=$$(mktemp -u); mkfifo "$$tport_fifo"; exec 6<>"$$tport_fifo"; \
+	$(VERSIONED_TABLES_HTTP) > "$$tport_fifo" 2>/dev/null & thttp_pid=$$!; \
 	cleanup() { \
 		kill $$http_pid $$vhttp_pid $$ahttp_pid $$thttp_pid 2>/dev/null; \
 		wait $$http_pid $$vhttp_pid $$ahttp_pid $$thttp_pid 2>/dev/null; \
-		rm -f "$$port_out" "$$vport_out" "$$aport_out" "$$tport_out"; \
+		exec 3>&- 4>&- 5>&- 6>&- 2>/dev/null; \
+		rm -f "$$port_fifo" "$$vport_fifo" "$$aport_fifo" "$$tport_fifo"; \
 	}; \
 	trap cleanup EXIT; \
-	wait_port() { \
-		local f="$$1" name="$$2" p=""; \
-		for i in $$(seq 1 120); do \
-			p=$$(sed -n 's/^PORT:\([0-9][0-9]*\).*/\1/p' "$$f" 2>/dev/null | head -1); \
-			[ -n "$$p" ] && { echo "$$p"; return 0; }; \
-			sleep 0.5; \
-		done; \
-		echo "ERROR: $$name HTTP worker timeout" >&2; return 1; \
-	}; \
-	port=$$(wait_port "$$port_out" "main") || { echo "--- worker stderr ---" >&2; cat /tmp/vgi-http-worker.err >&2 2>/dev/null; exit 1; }; \
-	vport=$$(wait_port "$$vport_out" "versioned") || exit 1; \
-	aport=$$(wait_port "$$aport_out" "attach-options") || exit 1; \
-	tport=$$(wait_port "$$tport_out" "versioned-tables") || exit 1; \
-	export VGI_TEST_WORKER="http://localhost:$$port/vgi"; \
-	export VGI_VERSIONED_HTTP_WORKER="http://localhost:$$vport/vgi"; \
-	export VGI_ATTACH_OPTIONS_WORKER="http://localhost:$$aport/vgi"; \
-	export VGI_VERSIONED_TABLES_HTTP_WORKER="http://localhost:$$tport/vgi"; \
+	read -t 60 port_line <&3 || { echo "ERROR: HTTP worker timeout"; echo "--- worker stderr ---"; cat /tmp/vgi-http-worker.err 2>/dev/null; exit 1; }; \
+	read -t 60 vport_line <&4 || { echo "ERROR: versioned HTTP worker timeout"; exit 1; }; \
+	read -t 60 aport_line <&5 || { echo "ERROR: attach-options HTTP worker timeout"; exit 1; }; \
+	read -t 60 tport_line <&6 || { echo "ERROR: versioned-tables HTTP worker timeout"; exit 1; }; \
+	export VGI_TEST_WORKER="http://localhost:$${port_line#PORT:}/vgi"; \
+	export VGI_VERSIONED_HTTP_WORKER="http://localhost:$${vport_line#PORT:}/vgi"; \
+	export VGI_ATTACH_OPTIONS_WORKER="http://localhost:$${aport_line#PORT:}/vgi"; \
+	export VGI_VERSIONED_TABLES_HTTP_WORKER="http://localhost:$${tport_line#PORT:}/vgi"; \
 	python3 scripts/run_tests.py -j $(JOBS) $(HTTP_TEST_PATTERNS) > $(TEST_LOG) 2>&1; \
 	rc=$$?; \
 	tail -n 20 $(TEST_LOG); \
@@ -293,24 +290,25 @@ test-http/%:
 		echo "ERROR: test file not found: $$test_file"; \
 		exit 1; \
 	fi; \
-	port_fifo=$$(mktemp -u); mkfifo "$$port_fifo"; \
+	port_fifo=$$(mktemp -u); mkfifo "$$port_fifo"; exec 3<>"$$port_fifo"; \
 	$(HTTP_WORKER) > "$$port_fifo" 2>/tmp/vgi-http-worker.err & http_pid=$$!; \
-	vport_fifo=$$(mktemp -u); mkfifo "$$vport_fifo"; \
+	vport_fifo=$$(mktemp -u); mkfifo "$$vport_fifo"; exec 4<>"$$vport_fifo"; \
 	$(VERSIONED_HTTP) > "$$vport_fifo" 2>/dev/null & vhttp_pid=$$!; \
-	aport_fifo=$$(mktemp -u); mkfifo "$$aport_fifo"; \
+	aport_fifo=$$(mktemp -u); mkfifo "$$aport_fifo"; exec 5<>"$$aport_fifo"; \
 	$(ATTACH_OPTIONS_HTTP) > "$$aport_fifo" 2>/dev/null & ahttp_pid=$$!; \
-	tport_fifo=$$(mktemp -u); mkfifo "$$tport_fifo"; \
+	tport_fifo=$$(mktemp -u); mkfifo "$$tport_fifo"; exec 6<>"$$tport_fifo"; \
 	$(VERSIONED_TABLES_HTTP) > "$$tport_fifo" 2>/dev/null & thttp_pid=$$!; \
 	cleanup() { \
 		kill $$http_pid $$vhttp_pid $$ahttp_pid $$thttp_pid 2>/dev/null; \
 		wait $$http_pid $$vhttp_pid $$ahttp_pid $$thttp_pid 2>/dev/null; \
+		exec 3>&- 4>&- 5>&- 6>&- 2>/dev/null; \
 		rm -f "$$port_fifo" "$$vport_fifo" "$$aport_fifo" "$$tport_fifo"; \
 	}; \
 	trap cleanup EXIT; \
-	read -t 60 port_line < "$$port_fifo" || { echo "ERROR: HTTP worker timeout"; echo "--- worker stderr ---"; cat /tmp/vgi-http-worker.err 2>/dev/null; exit 1; }; \
-	read -t 60 vport_line < "$$vport_fifo" || { echo "ERROR: versioned HTTP worker timeout"; exit 1; }; \
-	read -t 60 aport_line < "$$aport_fifo" || { echo "ERROR: attach-options HTTP worker timeout"; exit 1; }; \
-	read -t 60 tport_line < "$$tport_fifo" || { echo "ERROR: versioned-tables HTTP worker timeout"; exit 1; }; \
+	read -t 60 port_line <&3 || { echo "ERROR: HTTP worker timeout"; echo "--- worker stderr ---"; cat /tmp/vgi-http-worker.err 2>/dev/null; exit 1; }; \
+	read -t 60 vport_line <&4 || { echo "ERROR: versioned HTTP worker timeout"; exit 1; }; \
+	read -t 60 aport_line <&5 || { echo "ERROR: attach-options HTTP worker timeout"; exit 1; }; \
+	read -t 60 tport_line <&6 || { echo "ERROR: versioned-tables HTTP worker timeout"; exit 1; }; \
 	export VGI_TEST_WORKER="http://localhost:$${port_line#PORT:}/vgi"; \
 	export VGI_VERSIONED_HTTP_WORKER="http://localhost:$${vport_line#PORT:}/vgi"; \
 	export VGI_ATTACH_OPTIONS_WORKER="http://localhost:$${aport_line#PORT:}/vgi"; \
