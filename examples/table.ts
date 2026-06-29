@@ -27,6 +27,7 @@ import {
 import {
   defineTableFunction,
   secretsOfType,
+  secretForScopeOfType,
   batchFromColumns,
   emptyBatch,
   formatPushedFilters,
@@ -1291,6 +1292,58 @@ const scoped_secret_demo = defineTableFunction<{ path: string }, null>({
   },
   examples: [
     { sql: "SELECT * FROM scoped_secret_demo('/my/scope')", description: "Lookup scoped secret" },
+  ],
+  categories: ["testing", "secrets"],
+});
+
+// ============================================================================
+// 14b. multi_secret_demo - Two same-type scoped secrets resolved in one bind
+//
+// Requests the vgi_example secret for BOTH s3://bucket-a/ and s3://bucket-b/
+// scopes in a single bind. Because resolved secrets are keyed by name, both
+// survive; secretForScopeOfType then selects the one whose scope matches the
+// path argument and returns its api_key. Mirrors the Go MultiSecretDemoFunction.
+// ============================================================================
+
+const MULTI_SECRET_DEMO_SCHEMA = new Schema([
+  new Field("api_key", new Utf8(), true),
+]);
+
+const multi_secret_demo = defineTableFunction<{ path: string }, null>({
+  name: "multi_secret_demo",
+  description: "Demo: two same-type scoped secrets resolved in one bind",
+  args: {
+    path: new Utf8(),
+  },
+  requiredSecrets: ["vgi_example"],
+  onBind: (params: TableBindParams<{ path: string }>) => {
+    if (!params.resolvedSecretsProvided) {
+      // Phase 1: request the vgi_example secret for two distinct scopes.
+      return {
+        outputSchema: MULTI_SECRET_DEMO_SCHEMA,
+        lookupSecretTypes: ["vgi_example", "vgi_example"],
+        lookupScopes: ["s3://bucket-a/", "s3://bucket-b/"],
+        lookupNames: [null as any, null as any],
+      };
+    }
+    // Phase 2: secrets resolved, return output schema.
+    return { outputSchema: MULTI_SECRET_DEMO_SCHEMA };
+  },
+  process: (
+    params: TableProcessParams<{ path: string }>,
+    _state: null,
+    out: OutputCollector
+  ) => {
+    const secret = secretForScopeOfType(params.secrets, params.args.path, "vgi_example");
+    const apiKey = secret && secret.api_key != null ? String(secret.api_key) : "";
+
+    out.emit(batchFromColumns({
+      api_key: [apiKey],
+    }, params.outputSchema));
+    out.finish();
+  },
+  examples: [
+    { sql: "SELECT api_key FROM multi_secret_demo('s3://bucket-a/data.parquet')", description: "Select the secret matching the path's scope" },
   ],
   categories: ["testing", "secrets"],
 });
@@ -3781,6 +3834,7 @@ export const tableFunctions: VgiFunction[] = [
   struct_settings,
   secret_demo,
   scoped_secret_demo,
+  multi_secret_demo,
   filter_echo,
   filter_echo_partitioned,
   slow_cancellable,
