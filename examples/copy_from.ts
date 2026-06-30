@@ -18,6 +18,7 @@ import { readFileSync } from "node:fs";
 import {
   defineCopyFromFunction,
   batchFromColumns,
+  secretForScopeOfType,
   utf8,
   int64,
   isInt,
@@ -98,4 +99,45 @@ export const exampleLinesCopyFrom: VgiFunction = defineCopyFromFunction<ExampleL
   },
 });
 
-export const copyFromFunctions: VgiFunction[] = [exampleLinesCopyFrom];
+// ============================================================================
+// secret_lines_in — forwards a CREATE SECRET credential to the reader.
+//
+// Exercises the COPY-FROM secret-bind hook (`onSecrets`): it requests the
+// `secret_type` secret scoped to the source path during bind, and `read` emits a
+// single VARCHAR row holding the resolved secret's api_key (or NONE) — so a test
+// can assert the caller's secret reached the reader. TypeScript port of
+// vgi-python's SecretLinesCopyFromFunction.
+// ============================================================================
+
+interface SecretLinesInArgs {
+  secret_type: string;
+}
+
+export const secretLinesCopyFrom: VgiFunction = defineCopyFromFunction<SecretLinesInArgs>({
+  name: "secret_lines_reader",
+  format: "secret_lines_in",
+  description: "Emit the resolved secret's api_key as a single VARCHAR row",
+  comment: "Reader that forwards a CREATE SECRET credential (test fixture)",
+  categories: ["copy", "test", "secret"],
+  tags: { category: "copy_from", stability: "test" },
+  options: {
+    secret_type: {
+      type: utf8(),
+      default: "vgi_example",
+      doc: "Secret type to fetch, scoped by the source path",
+    },
+  },
+  // Request the source-scoped secret; the framework's two-phase secret bind
+  // resolves it and surfaces it on processParams.secrets at read time.
+  onSecrets: ({ options, path }) => [
+    { secretType: options.secret_type, scope: path },
+  ],
+  read: ({ path, options, expectedSchema, processParams, out }) => {
+    const secret = secretForScopeOfType(processParams.secrets, path, options.secret_type);
+    const apiKey = secret && secret.api_key != null ? String(secret.api_key) : "NONE";
+    const firstCol = expectedSchema.fields[0]?.name ?? "k";
+    out.emit(batchFromColumns({ [firstCol]: [apiKey] }, expectedSchema));
+  },
+});
+
+export const copyFromFunctions: VgiFunction[] = [exampleLinesCopyFrom, secretLinesCopyFrom];

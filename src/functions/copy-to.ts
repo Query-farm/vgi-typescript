@@ -45,6 +45,19 @@ import {
   type TableBufferingVgiFunction,
 } from "./table-buffering.js";
 
+/**
+ * A single secret to resolve via the two-phase secret bind, returned from a COPY
+ * format's `onSecrets` hook. Mirrors a vgi-python `SecretLookupEntry`.
+ */
+export interface CopySecretLookup {
+  /** DuckDB secret type to resolve (e.g. `"s3"`, `"vgi_example"`). */
+  secretType: string;
+  /** Optional scope for longest-prefix matching — typically the COPY path. */
+  scope?: string;
+  /** Optional secret name for name-based lookup. */
+  name?: string;
+}
+
 /** Declaration of a single COPY option (a named function argument). */
 export interface CopyToOption {
   /** Arrow type of the option value (e.g. `utf8()`, `int64()`). */
@@ -121,6 +134,20 @@ export interface CopyToFunctionConfig<TArgs = Record<string, unknown>> {
   examples?: FunctionExample[];
   requiredSettings?: string[];
   requiredSecrets?: string[];
+  /**
+   * Optional secret-bind hook: forward CREATE SECRET credentials for
+   * secret-backed cloud writes (S3/GCS/HTTP/…). Called during bind (only on the
+   * first pass); return the secrets to resolve — typically scoped by the
+   * destination `filePath`. The framework's two-phase secret bind resolves each
+   * lookup from the caller's SecretManager and surfaces the resolved values on
+   * `params.secrets` at `write`/`close` time. Mirrors vgi-python's
+   * `CopyToFunction.on_secrets`.
+   */
+  onSecrets?: (params: {
+    options: TArgs;
+    filePath: string;
+    bindCall: BindRequest;
+  }) => CopySecretLookup[] | void;
   /** Persist one input `batch` to a shard (called per sink batch). */
   write: (params: CopyToWriteParams<TArgs>) => void | Promise<void>;
   /**
@@ -221,9 +248,28 @@ export function defineCopyToFunction<TArgs = Record<string, unknown>>(
     requiredSettings: config.requiredSettings,
     requiredSecrets: config.requiredSecrets,
     // A sink produces no rows — bind to an empty output schema. Validate the
-    // options eagerly so a missing/invalid option fails at COPY bind.
-    onBind: ({ bindCall }) => {
-      extractOptions(bindCall);
+    // options eagerly so a missing/invalid option fails at COPY bind. If the
+    // writer declared an onSecrets hook, forward its requested lookups on the
+    // first bind pass so the two-phase secret bind resolves them (the resolved
+    // values reach write/close via params.secrets).
+    onBind: ({ bindCall, resolvedSecretsProvided }) => {
+      const opts = extractOptions(bindCall);
+      if (config.onSecrets && !resolvedSecretsProvided) {
+        const lookups =
+          config.onSecrets({
+            options: opts,
+            filePath: bindCall.copy_to?.file_path ?? "",
+            bindCall,
+          }) ?? [];
+        if (lookups.length > 0) {
+          return {
+            outputSchema: schema([]),
+            lookupSecretTypes: lookups.map((l) => l.secretType),
+            lookupScopes: lookups.map((l) => l.scope ?? ""),
+            lookupNames: lookups.map((l) => l.name ?? ""),
+          };
+        }
+      }
       return { outputSchema: schema([]) };
     },
     // SINK: persist one batch to a shard, bucket by execution_id.

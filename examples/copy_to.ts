@@ -21,6 +21,7 @@
 import { existsSync, writeFileSync } from "node:fs";
 import {
   defineCopyToFunction,
+  secretForScopeOfType,
   type VgiFunction,
   type CopyToWriteParams,
   type CopyToCloseParams,
@@ -167,4 +168,65 @@ export const exampleLinesOrderedCopyTo: VgiFunction = defineCopyToFunction<Examp
   close,
 });
 
-export const copyToFunctions: VgiFunction[] = [exampleLinesCopyTo, exampleLinesOrderedCopyTo];
+// ============================================================================
+// secret_lines_out — forwards a CREATE SECRET credential to the writer.
+//
+// Exercises the COPY-TO secret-bind hook (`onSecrets`): it requests the
+// `secret_type` secret scoped to the destination path during bind, and `close`
+// writes the resolved secret's api_key (or NONE) plus the row count — so a test
+// can assert the caller's secret reached the writer for a secret-backed cloud
+// write. TypeScript port of vgi-python's SecretLinesCopyToFunction.
+// ============================================================================
+
+const SECRET_SHARD_NS = new TextEncoder().encode("copy_to_secret_shard");
+
+interface SecretLinesOutArgs {
+  secret_type: string;
+}
+
+export const secretLinesCopyTo: VgiFunction = defineCopyToFunction<SecretLinesOutArgs>({
+  name: "secret_lines_writer",
+  format: "secret_lines_out",
+  description: "Write the resolved secret's api_key + row count to the destination",
+  comment: "Writer that forwards a CREATE SECRET credential (test fixture)",
+  categories: ["copy", "test", "secret"],
+  tags: { category: "copy_to", stability: "test" },
+  options: {
+    secret_type: {
+      type: utf8(),
+      default: "vgi_example",
+      doc: "Secret type to fetch, scoped by the destination path",
+    },
+  },
+  // Request the destination-scoped secret; the framework's two-phase secret bind
+  // resolves it and surfaces it on params.secrets at close time.
+  onSecrets: ({ options, filePath }) => [
+    { secretType: options.secret_type, scope: filePath },
+  ],
+  // Record this shard's row count (cross-process-safe append).
+  write: async (p) => {
+    await p.params.storage.stateAppend(
+      SECRET_SHARD_NS,
+      EMPTY_KEY,
+      new TextEncoder().encode(String(p.batch.numRows)),
+    );
+  },
+  // Write the forwarded secret's api_key + total row count, once.
+  close: async (p) => {
+    const secret = secretForScopeOfType(p.params.secrets, p.filePath, p.options.secret_type);
+    const apiKey = secret && secret.api_key != null ? String(secret.api_key) : "NONE";
+    const shards = await p.params.storage.stateLogScan(SECRET_SHARD_NS, EMPTY_KEY, -1);
+    let total = 0;
+    for (const [, blob] of shards) {
+      total += Number(new TextDecoder().decode(blob));
+    }
+    writeFileSync(p.filePath, `api_key=${apiKey}\nrows=${total}\n`, "utf-8");
+    return total;
+  },
+});
+
+export const copyToFunctions: VgiFunction[] = [
+  exampleLinesCopyTo,
+  exampleLinesOrderedCopyTo,
+  secretLinesCopyTo,
+];

@@ -29,6 +29,7 @@ import type {
   GlobalInitResponse,
 } from "../protocol/types.js";
 import type { VgiFunction, FunctionMeta, StreamHandlers, FunctionExample } from "./types.js";
+import type { CopySecretLookup } from "./copy-to.js";
 import type { ArgumentSpec } from "../arguments/argument-spec.js";
 import { batchToScalarDict, batchToSecretDict, safeNumber } from "../util/arrow/index.js";
 import { BoundStorage, storage as globalStorage } from "./storage.js";
@@ -87,6 +88,20 @@ export interface CopyFromFunctionConfig<TArgs = Record<string, unknown>> {
   examples?: FunctionExample[];
   requiredSettings?: string[];
   requiredSecrets?: string[];
+  /**
+   * Optional secret-bind hook: forward CREATE SECRET credentials for
+   * secret-backed cloud sources (S3/GCS/HTTP/…). Called during bind (only on the
+   * first pass); return the secrets to resolve — typically scoped by the source
+   * `path`. The framework's two-phase secret bind resolves each lookup from the
+   * caller's SecretManager and surfaces the resolved values on
+   * `processParams.secrets` at `read` time. Mirrors vgi-python's
+   * `CopyFromFunction.on_secrets`.
+   */
+  onSecrets?: (params: {
+    options: TArgs;
+    path: string;
+    bindCall: BindRequest;
+  }) => CopySecretLookup[] | void;
   /** Parse `path` and emit Arrow batches matching `expectedSchema`. */
   read: (params: CopyFromReadParams<TArgs>) => void | Promise<void>;
 }
@@ -183,7 +198,23 @@ export function defineCopyFromFunction<TArgs = Record<string, unknown>>(
     bind(request: BindRequest): BindResponse {
       const cf = requireCopyFrom(request);
       // Validate options eagerly so a missing/invalid option fails at COPY bind.
-      extractOptions(request);
+      const opts = extractOptions(request);
+      // Forward any requested secrets on the first bind pass so the two-phase
+      // secret bind resolves them (the resolved values reach read via
+      // processParams.secrets).
+      if (config.onSecrets && !request.resolved_secrets_provided) {
+        const lookups =
+          config.onSecrets({ options: opts, path: cf.file_path, bindCall: request }) ?? [];
+        if (lookups.length > 0) {
+          return {
+            output_schema: cf.expected_schema,
+            opaque_data: null,
+            lookup_secret_types: lookups.map((l) => l.secretType),
+            lookup_scopes: lookups.map((l) => l.scope ?? ""),
+            lookup_names: lookups.map((l) => l.name ?? ""),
+          };
+        }
+      }
       // DuckDB forces the scan's output to the target table's columns, so a
       // COPY-FROM reader must produce exactly expected_schema.
       return {
