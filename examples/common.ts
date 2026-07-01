@@ -33,6 +33,7 @@ const sequenceFunction = tableFunctions.find((f) => f.meta.name === "sequence");
 const rowIdSequenceFunction = tableFunctions.find((f) => f.meta.name === "rowid_sequence");
 const lateMaterializationFunction = tableFunctions.find((f) => f.meta.name === "late_materialization");
 const tenThousandFunction = tableFunctions.find((f) => f.meta.name === "ten_thousand");
+const secretDemoFunction = tableFunctions.find((f) => f.meta.name === "secret_demo");
 const ttPushdownScanFunction = tableFunctions.find((f) => f.meta.name === "tt_pushdown_scan");
 
 // Precompute stats for tables whose data is known at worker startup. The
@@ -219,6 +220,17 @@ export const catalog: CatalogDescriptor = {
           name: "ten_thousand_table",
           function: tenThousandFunction,
           comment: "Function-backed table over the no-arg ten_thousand function",
+        },
+        // Function-backed table whose backing function (secret_demo) resolves a
+        // secret. The catalog schema-derivation does a single, non-retrying bind,
+        // and secret_demo declares a static requiredSecrets so it returns its full
+        // 3-column key/value/arrow_type schema in that one bind. Backs
+        // integration/secret/secret_function_backed_table.test. The backing
+        // function name (secret_demo) intentionally differs from the table name.
+        {
+          name: "secret_demo_table",
+          function: secretDemoFunction,
+          comment: "Function-backed table over the secret-using secret_demo function",
         },
         // Function-backed table with inlined cardinality. Used by
         // integration/table/inlined_cardinality.test to verify the C++

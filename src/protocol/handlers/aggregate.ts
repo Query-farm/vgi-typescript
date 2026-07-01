@@ -17,7 +17,7 @@ import {
 import { Protocol } from "@query-farm/vgi-rpc";
 import type { FunctionRegistry } from "../../functions/registry.js";
 import { deserializeArguments } from "../serialize.js";
-import { deserializeSchema, serializeSchema } from "../../util/arrow/index.js";
+import { deserializeSchema, serializeSchema, batchToSecretDict } from "../../util/arrow/index.js";
 import { toUint8Array } from "../../util/bytes.js";
 import {
   AggregateBindResultSchema,
@@ -63,12 +63,20 @@ export function registerAggregateMethods(protocol: Protocol, registry: FunctionR
       const inputSchema = innerParams.input_schema
         ? deserializeSchema(toUint8Array(innerParams.input_schema))
         : null;
+      // Decode the resolved-secrets batch the extension pre-resolves for
+      // aggregates that declared `requiredSecrets`. Mirrors the table-buffering
+      // handler (batchToSecretDict). The secret VALUES are delivered only here,
+      // at bind time — update/combine/finalize see no secrets by design.
+      const secretsBytes = innerParams.secrets ? toUint8Array(innerParams.secrets) : null;
+      const secretsBatch =
+        secretsBytes && secretsBytes.length > 0 ? deserializeBatch(secretsBytes) : null;
+      const secrets = secretsBatch ? batchToSecretDict(secretsBatch) : {};
       const bindParams: AggregateBindParams<any> = {
         args: extractArgMap(cfg, args),
         arguments: args,
         inputSchema,
         settings: {},
-        secrets: {},
+        secrets,
       };
       const executionId = new Uint8Array(16);
       crypto.getRandomValues(executionId);

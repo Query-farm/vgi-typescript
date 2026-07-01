@@ -5,7 +5,7 @@
 import { Schema, Field, Int64, Float64, Utf8, Decimal, DataType, Null, List, Struct, RecordBatch } from "@query-farm/apache-arrow";
 import { defineAggregate } from "../src/functions/aggregate.js";
 import { batchFromColumns } from "../src/util/arrow/index.js";
-import { ArgumentValidationError } from "../src/index.js";
+import { ArgumentValidationError, secretsOfType } from "../src/index.js";
 import type { VgiFunction } from "../src/index.js";
 
 // ============================================================================
@@ -1063,9 +1063,66 @@ const vgi_window_sum_batch = defineAggregate<{ value: number }, SumState>({
   categories: ["aggregate", "window"],
 });
 
+// ============================================================================
+// secret_typed_sum — an aggregate whose result TYPE is chosen from a
+// statically-resolved secret. Declares requiredSecrets: ["vgi_example"] so the
+// extension pre-resolves the secret and delivers its VALUES on aggregate_bind.
+// onBind reads the secret's use_ssl field: truthy → DOUBLE (Float64),
+// otherwise → BIGINT (Int64). The sum itself is a normal per-group int sum;
+// finalize builds the column using the bound (secret-chosen) output type.
+//
+// outputType: new Null() advertises ANY in the catalog (duckdb_functions()
+// return_type = ANY); the concrete type is resolved per-invocation in onBind.
+// Secret VALUES do NOT reach update/combine/finalize (the bind is the only
+// place secrets are delivered) — mirrors vgi-python's SecretTypedSumFunction.
+// ============================================================================
+
+const secret_typed_sum = defineAggregate<{ value: number }, SumState>({
+  name: "secret_typed_sum",
+  description: "Sum an integer column; the result type is chosen from a secret",
+  args: { value: new Int64() },
+  outputType: new Null(),  // Null → advertise ANY; onBind resolves the real type
+  requiredSecrets: ["vgi_example"],
+  nullHandling: "DEFAULT",
+  onBind: (params) => {
+    const secret = secretsOfType(params.secrets, "vgi_example")[0];
+    const useSsl = secret ? (secret as any).use_ssl : undefined;
+    return useSsl ? new Float64() : new Int64();
+  },
+  initialState: () => ({ total: 0n }),
+  update: ({ groupIds, columns, ensureState }) => {
+    const valueCol = columns[0];
+    const n = groupIds.length;
+    for (let i = 0; i < n; i++) {
+      if (valueCol != null && !valueCol.isValid(i)) continue;
+      const v = valueCol?.get(i);
+      if (v == null) continue;
+      ensureState(groupIds[i]).total += typeof v === "bigint" ? v : BigInt(v);
+    }
+  },
+  combine: (src, tgt) => ({ total: src.total + tgt.total }),
+  finalize: ({ groupIds, states, outputSchema }) => {
+    const outField = outputSchema.fields[0];
+    const isInt = DataType.isInt(outField.type) && (outField.type as any).bitWidth === 64;
+    const results: (any | null)[] = groupIds.map((gid) => {
+      const s = states.get(gid);
+      if (s == null) return null;
+      return isInt ? s.total : Number(s.total);
+    });
+    return batchFromColumns({ result: results }, outputSchema);
+  },
+  examples: [
+    {
+      sql: "SELECT secret_typed_sum(n) FROM (SELECT 1 AS n UNION ALL SELECT 2)",
+      description: "Sum a column with the result type selected by the vgi_example secret",
+    },
+  ],
+  categories: ["aggregate", "secret"],
+});
+
 export const aggregateFunctions: VgiFunction[] = [
   vgi_count, vgi_sum, vgi_avg, vgi_sum_all, vgi_listagg, vgi_weighted_sum, vgi_generic_sum,
   vgi_percentile, vgi_window_sum, vgi_window_median, vgi_window_listagg, nest_tensor,
-  vgi_streaming_sum, vgi_window_sum_batch,
+  vgi_streaming_sum, vgi_window_sum_batch, secret_typed_sum,
   vgi_dynamic_agg, vgi_dynamic_ml_agg,
 ];

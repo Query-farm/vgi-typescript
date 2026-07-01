@@ -141,6 +141,15 @@ export interface AggregateFunctionConfig<TArgs = Record<string, any>, TState = a
   /** Arbitrary function-level tags surfaced into duckdb_functions().tags. */
   tags?: Record<string, string>;
   nullHandling?: "DEFAULT" | "SPECIAL";
+  /**
+   * DuckDB secret types this aggregate needs. Advertised on the catalog's
+   * `required_secrets` so the C++ extension pre-resolves matching secrets and
+   * delivers their VALUES on the aggregate_bind request (keyed by secret name).
+   * The secret is read at bind time only — update/combine/finalize receive an
+   * empty ResolvedSecrets. Mirrors vgi-python's `Secret()` annotation on an
+   * aggregate `on_bind`.
+   */
+  requiredSecrets?: string[];
 }
 
 // Per-execution state registry. Value = (gid → state) + bind context.
@@ -344,6 +353,7 @@ export function defineAggregate<TArgs = Record<string, any>, TState = any>(
     categories: config.categories,
     tags: config.tags,
     nullHandling: config.nullHandling as any,
+    requiredSecrets: config.requiredSecrets,
   };
 
   // The normal VgiFunction methods (bind/globalInit/createStreamHandlers) are

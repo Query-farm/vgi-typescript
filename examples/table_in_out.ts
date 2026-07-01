@@ -19,6 +19,7 @@ import {
   emptyBatch,
   serializeBatch,
   deserializeBatch,
+  secretsOfType,
   type TableInOutBindParams,
   type TableInOutProcessParams,
 } from "../src/index.js";
@@ -467,6 +468,61 @@ const echo_witness = defineTableInOutFunction({
   categories: ["test", "pushdown"],
 });
 
+// ============================================================================
+// secret_in_out - Append a resolved secret value to each input row
+//
+// Exercises secrets x table-in-out. Declares a static requiredSecrets so the
+// extension pre-resolves the vgi_example secret and delivers its VALUES on the
+// bind + init requests. onBind returns the input schema with a trailing
+// `secret_string` Utf8 column; process() reads the resolved secret's
+// secret_string and appends it (constant) to every input row (1:1).
+//
+// (The Python fixture calls params.secrets.get() in on_bind for a two-phase
+// resolve; the TS table-in-out onBind has no two-phase path, so we use the
+// static requiredSecrets approach which resolves the same secret values.)
+// ============================================================================
+
+const secret_in_out = defineTableInOutFunction({
+  name: "secret_in_out",
+  description: "Append a resolved secret value to each input row",
+  requiredSecrets: ["vgi_example"],
+  onBind: (params: TableInOutBindParams) => {
+    if (!params.bindCall.input_schema) {
+      throw new Error("input_schema is required");
+    }
+    const fields = [
+      ...params.bindCall.input_schema.fields,
+      new Field("secret_string", new Utf8(), true),
+    ];
+    return { outputSchema: new Schema(fields) };
+  },
+  process: (
+    params: TableInOutProcessParams,
+    _state: null,
+    batch: RecordBatch,
+    out: OutputCollector,
+  ) => {
+    const secret = secretsOfType(params.secrets, "vgi_example")[0];
+    const value =
+      secret && "secret_string" in secret ? (secret.secret_string as any) : null;
+    const columns: Record<string, any[]> = {};
+    for (const f of batch.schema.fields) {
+      const col: any[] = [];
+      const child = (batch as any).getChild(f.name);
+      for (let i = 0; i < batch.numRows; i++) col.push(child.get(i));
+      columns[f.name] = col;
+    }
+    columns["secret_string"] = new Array(batch.numRows).fill(
+      value === null || value === undefined ? null : String(value),
+    );
+    out.emit(batchFromColumns(columns, params.outputSchema));
+  },
+  examples: [
+    { sql: "SELECT * FROM secret_in_out((SELECT 1 AS n))", description: "Append the secret_string value to each input row" },
+  ],
+  categories: ["transform", "secret"],
+});
+
 export const tableInOutFunctions: VgiFunction[] = [
   echo,
   repeat_inputs,
@@ -475,4 +531,5 @@ export const tableInOutFunctions: VgiFunction[] = [
   slow_cancellable_inout,
   unnest_tensor_rows,
   echo_witness,
+  secret_in_out,
 ];
