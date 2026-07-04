@@ -16,6 +16,7 @@ import {
   type IndexInfo,
   type IndexConstraintType,
   type CopyFromFormatInfo,
+  encodeAttachCatalogInfo,
 } from "./interface.js";
 import type { CatalogDescriptor, SchemaDescriptor, TableDescriptor, ViewDescriptor, MacroDescriptor, SettingDescriptor, SecretTypeDescriptor, ForeignKeyDef, DefaultValue } from "./descriptors.js";
 import { serializeColumnStatistics } from "../util/statistics.js";
@@ -80,6 +81,10 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
       serializeSecretType(s)
     );
 
+    const attachCatalogs = (this._descriptor.attachCatalogs ?? []).map((c) =>
+      encodeAttachCatalogInfo(c)
+    );
+
     // Auto-derive supportsTimeTravel from table descriptors
     const hasTimeTravel = this._descriptor.schemas.some(
       (s) => s.tables?.some((t) => t.supportsTimeTravel) ?? false
@@ -95,6 +100,7 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
       default_schema: this._descriptor.defaultSchema ?? "main",
       settings,
       secret_types: secretTypes,
+      attach_catalogs: attachCatalogs,
       comment: this._descriptor.comment ?? null,
       tags: this._descriptor.tags ?? {},
       // Advertise true so DuckDB routes catalog_table_column_statistics_get

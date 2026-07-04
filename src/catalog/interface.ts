@@ -74,7 +74,10 @@ export { encodeIndexInfo, decodeIndexInfo } from "../generated/vgi-client.js";
 // generic ASD codec with the generated schema. Mirrors vgi-python's
 // catalog_interface.CopyFromFormatInfo.
 import { encodeASD } from "../codec/asd.js";
-import { CopyFromFormatInfoSchema } from "../generated/vgi-protocol-schemas.js";
+import {
+  AttachCatalogInfoSchema,
+  CopyFromFormatInfoSchema,
+} from "../generated/vgi-protocol-schemas.js";
 
 export interface CopyFromFormatInfo {
   /** Free-text comment (CopyFromFunction's `copyFromComment`). */
@@ -115,6 +118,42 @@ export const encodeCopyFromFormatInfo = (v: CopyFromFormatInfo): Uint8Array =>
     direction: v.direction ?? "from",
     description: v.description ?? "",
     ordered: v.ordered ?? false,
+  });
+
+/**
+ * A companion catalog the client should ATTACH when this VGI catalog attaches
+ * (lakehouse federation). Serialized into `CatalogAttachResult.attach_catalogs`;
+ * the C++ VGI extension attaches each at VGI-attach time so multi-branch
+ * catalog-table branches can resolve tables in a companion DuckLake / Iceberg /
+ * Postgres / DuckDB.
+ */
+export interface AttachCatalogInfo {
+  /** ATTACH alias; also a catalog-table ScanBranch's `sourceCatalog`. */
+  alias: string;
+  /** ATTACH target — a path or DSN (e.g. `ducklake:sqlite:/data/meta.sqlite`). */
+  target: string;
+  /** DuckDB db type; empty => inferred from the target scheme prefix. */
+  db_type?: string;
+  /** Extra ATTACH options forwarded verbatim (e.g. DuckLake DATA_PATH). */
+  options?: Record<string, string>;
+  /** Attach hidden (excluded from duckdb_databases()); still resolvable. */
+  hidden?: boolean;
+  /** When true, attach failure fails the whole VGI ATTACH. */
+  required?: boolean;
+  /** Optional named secret to inject into the companion's ATTACH options. */
+  secret_ref?: string;
+}
+
+/** Encode an AttachCatalogInfo to Arrow IPC bytes (single-row batch). */
+export const encodeAttachCatalogInfo = (v: AttachCatalogInfo): Uint8Array =>
+  encodeASD(AttachCatalogInfoSchema, {
+    alias: v.alias,
+    target: v.target,
+    db_type: v.db_type ?? "",
+    options: v.options ?? {},
+    hidden: v.hidden ?? false,
+    required: v.required ?? false,
+    secret_ref: v.secret_ref ?? "",
   });
 
 // ============================================================================
@@ -204,6 +243,9 @@ export function singleBranchResult(
       arguments: [toUint8Array(legacy.arguments)],
       branch_filter: [null],
       writable: [false],
+      source_catalog: [null],
+      source_schema: [null],
+      source_table: [null],
     },
     ScanBranchSchema as any,
   );
@@ -233,6 +275,15 @@ export interface ScanBranchInput {
   branchFilter?: string | null;
   /** Declares this branch as the INSERT target (at most one per table). */
   writable?: boolean;
+  /**
+   * Catalog-table branch (lakehouse federation): leave `functionName` empty and
+   * set these to scan the base table
+   * `sourceCatalog.sourceSchema.sourceTable` in a companion catalog instead of
+   * calling a table function.
+   */
+  sourceCatalog?: string | null;
+  sourceSchema?: string | null;
+  sourceTable?: string | null;
 }
 
 /**
@@ -284,6 +335,9 @@ export function buildScanBranchesResult(
         arguments: [serializeBranchArguments(branch)],
         branch_filter: [branch.branchFilter ?? null],
         writable: [branch.writable ?? false],
+        source_catalog: [branch.sourceCatalog ?? null],
+        source_schema: [branch.sourceSchema ?? null],
+        source_table: [branch.sourceTable ?? null],
       },
       ScanBranchSchema as any,
     );

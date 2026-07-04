@@ -621,6 +621,9 @@ export class VgiClient {
       secret_types: inner.secret_types
         ? (Array.isArray(inner.secret_types) ? inner.secret_types : [...inner.secret_types]).map(toUint8Array)
         : [],
+      attach_catalogs: inner.attach_catalogs
+        ? (Array.isArray(inner.attach_catalogs) ? inner.attach_catalogs : [...inner.attach_catalogs]).map(toUint8Array)
+        : [],
       comment: inner.comment ?? null,
       tags: deserializeTags(inner.tags),
       supports_column_statistics: inner.supports_column_statistics ?? false,

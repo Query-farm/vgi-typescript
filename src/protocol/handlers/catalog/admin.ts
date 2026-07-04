@@ -100,6 +100,7 @@ export function registerCatalogAdminMethods(protocol: Protocol, getCatalog: GetC
         default_schema: result.default_schema ?? "main",
         settings: result.settings ?? [],
         secret_types: result.secret_types ?? [],
+        attach_catalogs: result.attach_catalogs ?? [],
         comment: result.comment ?? null,
         tags: result.tags ?? {},
         // True so DuckDB will route catalog_table_column_statistics_get RPCs

@@ -2,6 +2,7 @@
 // Declarative catalog descriptor types.
 
 import type { VgiSchema, VgiDataType } from "../arrow/index.js";
+import type { AttachCatalogInfo } from "./interface.js";
 import type { VgiFunction } from "../functions/types.js";
 import type { Arguments } from "../arguments/arguments.js";
 import type { ColumnStatistics } from "../util/statistics.js";
@@ -152,6 +153,11 @@ export interface CatalogDescriptor {
   schemas: SchemaDescriptor[];
   settings?: SettingDescriptor[];
   secretTypes?: SecretTypeDescriptor[];
+  /**
+   * Companion catalogs (lakehouse federation) the client should ATTACH when this
+   * VGI catalog attaches. Surfaced via `catalog_attach.attach_catalogs`.
+   */
+  attachCatalogs?: AttachCatalogInfo[];
   comment?: string;
   tags?: Record<string, string>;
   /**

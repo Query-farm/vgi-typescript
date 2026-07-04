@@ -43,6 +43,7 @@ class RecordingCatalog extends CatalogInterface {
       default_schema: "main",
       settings: [],
       secret_types: [],
+      attach_catalogs: [],
       tags: {},
       supports_column_statistics: false,
       resolved_data_version: null,
