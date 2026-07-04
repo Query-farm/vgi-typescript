@@ -1,0 +1,113 @@
+# Copyright 2025, 2026 Query Farm LLC - https://query.farm
+#
+# Publish @query-farm/vgi to npm.
+#
+# Trigger: pushing a `vX.Y.Z` tag (the existing release convention — see the
+# `release: bump version …` commits, each followed by a matching v-tag).
+# `workflow_dispatch` is kept for manual re-runs of a tag that already exists.
+#
+# Auth is npm Trusted Publishing (OIDC) — NO long-lived token. Each run mints a
+# short-lived, workflow-scoped credential via GitHub's OIDC (`id-token: write`
+# below), and npm attaches provenance automatically.
+#
+# Prerequisites (one-time, on npmjs.com — done once, not per release):
+#   • Configure a trusted publisher for the package:
+#       https://www.npmjs.com/package/@query-farm/vgi/access → "Trusted Publisher"
+#       → GitHub Actions, with:
+#         Organization / user : Query-farm
+#         Repository          : vgi-typescript
+#         Workflow filename    : publish.yml
+#         Environment          : (leave blank — none configured here)
+#   • The package must already exist on npm (it does — 0.6.0 was published
+#     manually). OIDC cannot publish a package's very first version.
+#   • No `NPM_TOKEN` secret is needed and none should be set.
+
+name: Publish
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      dry-run:
+        description: "Pack + validate but do not publish"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  id-token: write # npm provenance (OIDC)
+
+jobs:
+  publish:
+    name: Build, verify, publish to npm
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      # Bun does the building; npm does the publishing. registry-url points the
+      # .npmrc at the public registry so the OIDC exchange targets it.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          registry-url: "https://registry.npmjs.org"
+
+      # Trusted Publishing (OIDC) requires npm CLI >= 11.5.1; Node 22 ships an
+      # older 10.x, so upgrade before publishing.
+      - name: Upgrade npm (OIDC trusted publishing needs >= 11.5.1)
+        run: npm install -g npm@latest
+
+      - name: Install dependencies
+        run: bun install
+
+      # Cheap safety: a v-tag must match the version in package.json, so we never
+      # publish 0.6.0 under a v0.7.0 tag or vice-versa. Skipped for manual runs.
+      - name: Verify tag matches package.json version
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          PKG_VERSION="$(node -p "require('./package.json').version")"
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          echo "package.json: $PKG_VERSION   tag: $TAG_VERSION"
+          if [ "$PKG_VERSION" != "$TAG_VERSION" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match package.json version $PKG_VERSION"
+            exit 1
+          fi
+
+      - name: Build (types + bundles)
+        run: bun run build
+
+      - name: Unit tests
+        run: bun test
+
+      - name: Arrow facade parity (arrow-js + flechette)
+        run: make test-facade-parity
+
+      # Refuse to re-publish a version that already exists — makes accidental
+      # re-runs a clean no-op instead of a hard error.
+      - name: Skip if version already on npm
+        id: exists
+        run: |
+          PKG_VERSION="$(node -p "require('./package.json').version")"
+          if npm view "@query-farm/vgi@$PKG_VERSION" version >/dev/null 2>&1; then
+            echo "already=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::@query-farm/vgi@$PKG_VERSION already published — nothing to do."
+          else
+            echo "already=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Publish (dry-run)
+        if: >-
+          steps.exists.outputs.already == 'false' &&
+          github.event_name == 'workflow_dispatch' &&
+          inputs.dry-run
+        run: npm publish --provenance --access public --dry-run
+
+      - name: Publish
+        if: >-
+          steps.exists.outputs.already == 'false' &&
+          !(github.event_name == 'workflow_dispatch' && inputs.dry-run)
+        run: npm publish --provenance --access public
