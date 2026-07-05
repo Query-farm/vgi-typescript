@@ -37,7 +37,7 @@ import type {
   FunctionExample,
 } from "./types.js";
 import type { ArgumentSpec } from "../arguments/argument-spec.js";
-import { argumentSpecsToSchema } from "../arguments/argument-spec.js";
+import { argumentSpecsToSchema, constraintSpecFields } from "../arguments/argument-spec.js";
 import { batchToScalarDict, batchToSecretDict, batchFromColumns, projectBatch, safeNumber } from "../util/arrow/index.js";
 
 // ============================================================================
@@ -71,6 +71,22 @@ export interface ScalarParameterDef {
   varargs?: boolean;
   /** Human-readable per-argument description (surfaced as `vgi_doc`). */
   doc?: string;
+  // Discovery-facing validation constraints (surfaced via
+  // `vgi_function_arguments()`). All optional; see `ArgumentConstraints`.
+  /** Closed set of allowed values (surfaced as `vgi_choices`). */
+  choices?: readonly unknown[];
+  /** Inclusive lower bound, `>=` (folded into `vgi_range`). */
+  ge?: number;
+  /** Inclusive upper bound, `<=` (folded into `vgi_range`). */
+  le?: number;
+  /** Exclusive lower bound, `>` (folded into `vgi_range`). */
+  gt?: number;
+  /** Exclusive upper bound, `<` (folded into `vgi_range`). */
+  lt?: number;
+  /** Regex the value must match (surfaced as `vgi_pattern`). */
+  pattern?: string;
+  /** Default value (surfaced as `vgi_default`, JSON-encoded). */
+  default?: unknown;
 }
 
 /**
@@ -183,6 +199,7 @@ export function defineScalarFunction<
         isConst: p.const,
         isVarargs: p.varargs,
         doc: p.doc,
+        ...constraintSpecFields(p),
       });
     }
   } else {

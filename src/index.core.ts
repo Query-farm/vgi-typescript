@@ -75,7 +75,7 @@ export type {
 
 // Arguments
 export { Arguments } from "./arguments/arguments.js";
-export { type ArgumentSpec, argumentSpecsToSchema, schemaToArgumentSpecs, macroArgumentsSchema, macroParameterDocsFromSchema } from "./arguments/argument-spec.js";
+export { type ArgumentSpec, type ArgumentConstraints, argumentSpecsToSchema, schemaToArgumentSpecs, macroArgumentsSchema, macroParameterDocsFromSchema, formatRange, constraintSpecFields } from "./arguments/argument-spec.js";
 
 // Errors
 export {

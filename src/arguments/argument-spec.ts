@@ -14,6 +14,10 @@ import {
   VGI_CONST_KEY,
   VGI_CONST_TRUE,
   VGI_DOC_KEY,
+  VGI_DEFAULT_KEY,
+  VGI_CHOICES_KEY,
+  VGI_RANGE_KEY,
+  VGI_PATTERN_KEY,
 } from "../types.js";
 
 export interface ArgumentSpec {
@@ -25,6 +29,126 @@ export interface ArgumentSpec {
   isVarargs?: boolean;
   isConst?: boolean;
   doc?: string;
+  /**
+   * Discovery-facing constraint metadata, pre-encoded to their surfaced UTF-8
+   * forms (presence-only — `undefined` means the constraint is absent and the
+   * corresponding field-metadata key is omitted entirely). Mirrors Python's
+   * `ArgumentSpec.default_json` / `choices_json` / `range_notation` / `pattern`
+   * so `argumentSpecsToSchema`/`schemaToArgumentSpecs` round-trip symmetrically.
+   */
+  defaultJson?: string;
+  choicesJson?: string;
+  rangeNotation?: string;
+  pattern?: string;
+}
+
+/**
+ * Raw per-argument constraint declarations, as authored on a function's
+ * argument descriptor. Encoded into the pre-computed {@link ArgumentSpec}
+ * constraint fields via {@link constraintSpecFields}.
+ */
+export interface ArgumentConstraints {
+  /** Closed set of allowed values (JSON-encoded into `vgi_choices`). */
+  choices?: readonly unknown[];
+  /** Inclusive lower bound (`>=`). */
+  ge?: number;
+  /** Inclusive upper bound (`<=`). */
+  le?: number;
+  /** Exclusive lower bound (`>`). */
+  gt?: number;
+  /** Exclusive upper bound (`<`). */
+  lt?: number;
+  /** Regex the value must match (surfaced as `vgi_pattern`, as-is). */
+  pattern?: string;
+  /** Default value (JSON-encoded into `vgi_default`); optional args only. */
+  default?: unknown;
+}
+
+/** `JSON.stringify`, falling back to the value's string form when unserializable. */
+function safeJson(value: unknown): string {
+  try {
+    const encoded = JSON.stringify(value);
+    // JSON.stringify returns undefined for functions/symbols/undefined.
+    if (encoded === undefined) {
+      return JSON.stringify(String(value));
+    }
+    return encoded;
+  } catch {
+    return JSON.stringify(String(value));
+  }
+}
+
+/**
+ * Build interval notation from an argument's numeric bounds.
+ *
+ * Inclusive bounds (`ge`/`le`) render as square brackets, exclusive bounds
+ * (`gt`/`lt`) as parentheses, and an open side as `-inf`/`+inf`. Returns
+ * `undefined` when the argument has no numeric bound at all.
+ *
+ * Examples: `ge=0,le=10` -> `"[0, 10]"`; `gt=0` -> `"(0, +inf)"`;
+ * `ge=1,lt=10` -> `"[1, 10)"`.
+ */
+export function formatRange(
+  ge?: number,
+  le?: number,
+  gt?: number,
+  lt?: number,
+): string | undefined {
+  if (ge === undefined && le === undefined && gt === undefined && lt === undefined) {
+    return undefined;
+  }
+  let low: string;
+  if (gt !== undefined) {
+    low = `(${gt}`;
+  } else if (ge !== undefined) {
+    low = `[${ge}`;
+  } else {
+    low = "(-inf";
+  }
+  let high: string;
+  if (lt !== undefined) {
+    high = `${lt})`;
+  } else if (le !== undefined) {
+    high = `${le}]`;
+  } else {
+    high = "+inf)";
+  }
+  return `${low}, ${high}`;
+}
+
+/**
+ * Encode raw {@link ArgumentConstraints} into the pre-computed constraint
+ * fields of an {@link ArgumentSpec} (presence-only — absent constraints yield
+ * no field). Mirrors Python's `_constraint_kwargs`.
+ */
+export function constraintSpecFields(
+  constraints: ArgumentConstraints | undefined,
+): Pick<ArgumentSpec, "defaultJson" | "choicesJson" | "rangeNotation" | "pattern"> {
+  const fields: Pick<
+    ArgumentSpec,
+    "defaultJson" | "choicesJson" | "rangeNotation" | "pattern"
+  > = {};
+  if (constraints === undefined) return fields;
+
+  if ("default" in constraints && constraints.default !== undefined) {
+    fields.defaultJson = safeJson(constraints.default);
+  }
+  if (constraints.choices !== undefined) {
+    fields.choicesJson = safeJson([...constraints.choices]);
+  }
+  const range = formatRange(
+    constraints.ge,
+    constraints.le,
+    constraints.gt,
+    constraints.lt,
+  );
+  if (range !== undefined) {
+    fields.rangeNotation = range;
+  }
+  if (constraints.pattern !== undefined) {
+    fields.pattern = constraints.pattern;
+  }
+  return fields;
 }
 
 function argumentSpecSortKey(spec: ArgumentSpec): [number, number | string] {
@@ -74,6 +198,20 @@ export function argumentSpecsToSchema(specs: ArgumentSpec[]): VgiSchema {
     // Per-argument description (UTF-8; presence-only — omit when empty).
     if (spec.doc) {
       metadata.set(VGI_DOC_KEY, spec.doc);
+    }
+
+    // Per-argument constraint metadata (presence-only; already value-encoded).
+    if (spec.defaultJson !== undefined) {
+      metadata.set(VGI_DEFAULT_KEY, spec.defaultJson);
+    }
+    if (spec.choicesJson !== undefined) {
+      metadata.set(VGI_CHOICES_KEY, spec.choicesJson);
+    }
+    if (spec.rangeNotation !== undefined) {
+      metadata.set(VGI_RANGE_KEY, spec.rangeNotation);
+    }
+    if (spec.pattern !== undefined) {
+      metadata.set(VGI_PATTERN_KEY, spec.pattern);
     }
 
     const field = field_(
@@ -184,6 +322,12 @@ export function schemaToArgumentSpecs(schema: VgiSchema): ArgumentSpec[] {
     const isConst = metadata.get(VGI_CONST_KEY) === VGI_CONST_TRUE;
     const doc = metadata.get(VGI_DOC_KEY) ?? "";
 
+    // Per-argument constraint metadata (absent key -> undefined).
+    const defaultJson = metadata.get(VGI_DEFAULT_KEY);
+    const choicesJson = metadata.get(VGI_CHOICES_KEY);
+    const rangeNotation = metadata.get(VGI_RANGE_KEY);
+    const pattern = metadata.get(VGI_PATTERN_KEY);
+
     specs.push({
       name: field.name,
       position,
@@ -193,6 +337,10 @@ export function schemaToArgumentSpecs(schema: VgiSchema): ArgumentSpec[] {
       isVarargs,
       isConst,
       doc,
+      defaultJson,
+      choicesJson,
+      rangeNotation,
+      pattern,
     });
   }
 

@@ -62,6 +62,20 @@ export const VGI_CONST_TRUE = "true";
 // Per-argument description (UTF-8; presence-only). `vgi_doc_*` prefix reserved.
 export const VGI_DOC_KEY = "vgi_doc";
 
+// Per-argument constraint metadata for agent discovery. All presence-only
+// (omitted when absent) and value-encoded as UTF-8 so the surfaced column type
+// stays uniform regardless of the arg's value type:
+//   vgi_default — JSON scalar (the arg's default value; optional args only)
+//   vgi_choices — JSON array (the closed set of allowed values)
+//   vgi_range   — interval notation built from ge/le/gt/lt (e.g. "[0, 100]",
+//                 "(0, +inf)", "[1, 10)"); a discovery surface, not raw bounds
+//   vgi_pattern — raw regex the value must match (open set)
+// Kept byte-for-byte in sync with the C++ reader and the Python/other SDKs.
+export const VGI_DEFAULT_KEY = "vgi_default";
+export const VGI_CHOICES_KEY = "vgi_choices";
+export const VGI_RANGE_KEY = "vgi_range";
+export const VGI_PATTERN_KEY = "vgi_pattern";
+
 export interface TableCardinality {
   estimate: number | null;
   max: number | null;
