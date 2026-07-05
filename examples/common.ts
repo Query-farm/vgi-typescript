@@ -348,6 +348,11 @@ export const catalog: CatalogDescriptor = {
           comment: "Multi-branch: sequence(50) + read_parquet — used by multi_branch_heterogeneous.test",
         },
         {
+          name: "multi_branch_iceberg",
+          columns: new Schema([new Field("n", new Int64(), true)]),
+          comment: "Multi-branch: sequence(50) + iceberg_scan — used by multi_branch_iceberg.test",
+        },
+        {
           name: "multi_branch_recon",
           columns: new Schema([
             new Field("a", new Int64(), true),
@@ -963,6 +968,14 @@ export function createExampleCatalog(base: ReadOnlyCatalogInterface): ReadOnlyCa
             seq(50),
             { functionName: "read_parquet", positionalArguments: [str("/tmp/vgi_hetero_branch.parquet")] },
           ]);
+        case "multi_branch_iceberg":
+          return buildScanBranchesResult(
+            [
+              seq(50),
+              { functionName: "iceberg_scan", positionalArguments: [str("/tmp/vgi_iceberg_branch")] },
+            ],
+            ["iceberg"],
+          );
         case "multi_branch_empty":
           return buildScanBranchesResult([]);
         case "multi_branch_two_writable":
