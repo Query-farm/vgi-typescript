@@ -32,6 +32,7 @@ import {
   type AggregateBindParams,
 } from "../../functions/aggregate.js";
 import { Arguments } from "../../arguments/arguments.js";
+import { validateConstConstraints } from "../../arguments/argument-spec.js";
 import {
   REQUEST_PARAMS_SCHEMA,
   RESULT_BINARY_SCHEMA,
@@ -310,8 +311,9 @@ function extractArgMap(
     }
   }
   for (let i = 0; i < constNames.length; i++) {
+    let v: any;
     try {
-      let v = args.get(i);
+      v = args.get(i);
       // Decode DECIMAL scalars (DuckDB serializes 0.5-style literals as
       // DECIMAL(2,1), which Arrow stores as the unscaled integer — a raw
       // BigInt here). Scale back to float using the declared scale.
@@ -323,14 +325,22 @@ function extractArgMap(
       } else if (typeof v === "bigint") {
         v = Number(v);
       }
-      out[constNames[i]] = v;
     } catch {
       // args.get throws when the arg isn't set — fall back to the declared
       // default so aggregates called without an explicit const value still
       // see it in update/finalize.
       const def = cfg.argDefaults?.[constNames[i]];
       if (def !== undefined) out[constNames[i]] = def;
+      continue;
     }
+    // Enforce declared constraints on the supplied value. This sits OUTSIDE the
+    // try above so a constraint violation propagates as a bind error rather than
+    // being swallowed and silently replaced by the default.
+    const constraints = cfg.argConstraints?.[constNames[i]];
+    if (constraints !== undefined) {
+      validateConstConstraints(constNames[i], constraints, v);
+    }
+    out[constNames[i]] = v;
   }
   // Non-const args aren't in the wire Arguments, but users may still want
   // defaults surfaced for `params.args` — apply them here.

@@ -15,7 +15,11 @@
 
 import { type VgiSchema, schema, type VgiField, field, type VgiBatch, type VgiDataType, nullType, isNull } from "../arrow/index.js";
 import type { Arguments } from "../arguments/arguments.js";
-import type { ArgumentSpec } from "../arguments/argument-spec.js";
+import {
+  constraintSpecFields,
+  type ArgumentSpec,
+  type ArgumentConstraints,
+} from "../arguments/argument-spec.js";
 import type {
   FunctionMeta,
   VgiFunction,
@@ -123,6 +127,13 @@ export interface AggregateFunctionConfig<TArgs = Record<string, any>, TState = a
   onBind?: (params: AggregateBindParams<TArgs>) => VgiDataType | Promise<VgiDataType>;
   /** Optional per-arg default values (positional only here). */
   argDefaults?: Record<string, any>;
+  /**
+   * Per-argument discovery constraints (choices / ge / le / gt / lt / pattern),
+   * keyed by argument name. Surfaced via `vgi_function_arguments()` and enforced
+   * at aggregate_bind for const params: a value violating a declared constraint
+   * fails the bind with an ArgumentValidationError.
+   */
+  argConstraints?: Record<string, ArgumentConstraints>;
 
   initialState: (params: AggregateBindParams<TArgs>) => TState;
   /**
@@ -342,6 +353,7 @@ export function defineAggregate<TArgs = Record<string, any>, TState = any>(
         isAnyType,
         isVarargs: varargsSet.has(name),
         isConst,
+        ...constraintSpecFields(config.argConstraints?.[name]),
       });
     }
   }

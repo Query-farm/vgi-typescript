@@ -29,7 +29,12 @@ import type {
   StreamHandlers,
   FunctionExample,
 } from "./types.js";
-import type { ArgumentSpec } from "../arguments/argument-spec.js";
+import {
+  constraintSpecFields,
+  validateConstConstraints,
+  type ArgumentSpec,
+  type ArgumentConstraints,
+} from "../arguments/argument-spec.js";
 import { batchToScalarDict, batchToSecretDict, projectSchema, safeNumber } from "../util/arrow/index.js";
 import {
   buildJoinKeysLookup,
@@ -166,6 +171,13 @@ export interface TableFunctionConfig<
   argDocs?: Record<string, string>;
   /** Argument defaults */
   argDefaults?: Record<string, any>;
+  /**
+   * Per-argument discovery constraints (choices / ge / le / gt / lt / pattern),
+   * keyed by argument name. Surfaced via `vgi_function_arguments()` for agent
+   * discovery AND enforced at bind: a value violating a declared constraint
+   * fails the bind with an ArgumentValidationError.
+   */
+  argConstraints?: Record<string, ArgumentConstraints>;
   /** Names of args that accept variable number of arguments */
   varargs?: string[];
   /** Bind: return output schema. May be async — handlers `await` the result. */
@@ -273,6 +285,7 @@ export function defineTableFunction<
         isAnyType: isAny,
         isVarargs: varargsSet.has(name),
         doc: config.argDocs?.[name],
+        ...constraintSpecFields(config.argConstraints?.[name]),
       });
     }
   }
@@ -318,6 +331,9 @@ export function defineTableFunction<
       }
       // Arrow Int64 values come through as BigInt — coerce to number
       if (typeof val === "bigint") val = safeNumber(val);
+      // Enforce declared constraints at bind (table args are all bind-time).
+      const constraints = config.argConstraints?.[spec.name];
+      if (constraints) validateConstConstraints(spec.name, constraints, val);
       args[spec.name] = val;
     }
     return args as TArgs;
