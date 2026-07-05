@@ -852,7 +852,7 @@ const format_number_precision = defineScalarFunction({
   name: "format_number",
   description: "Format number with specified precision",
   parameters: [
-    { name: "precision", type: new Int64(), const: true },
+    { name: "precision", type: new Int64(), const: true, ge: 0, le: 10 },
     { name: "value", type: new Float64() },
   ],
   returns: new Utf8(),
@@ -872,7 +872,7 @@ const format_number_full = defineScalarFunction({
   name: "format_number",
   description: "Format number with precision and prefix",
   parameters: [
-    { name: "precision", type: new Int64(), const: true },
+    { name: "precision", type: new Int64(), const: true, ge: 0, le: 10 },
     { name: "prefix", type: new Utf8(), const: true },
     { name: "value", type: new Float64() },
   ],

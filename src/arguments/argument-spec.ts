@@ -19,6 +19,7 @@ import {
   VGI_RANGE_KEY,
   VGI_PATTERN_KEY,
 } from "../types.js";
+import { ArgumentValidationError } from "../errors.js";
 
 export interface ArgumentSpec {
   name: string;
@@ -149,6 +150,73 @@ export function constraintSpecFields(
     fields.pattern = constraints.pattern;
   }
   return fields;
+}
+
+/** Coerce a numeric const value (number or int64 `bigint`) to `number`. */
+function toNumber(value: unknown): number | undefined {
+  if (typeof value === "number") return value;
+  if (typeof value === "bigint") return Number(value);
+  return undefined;
+}
+
+/** Equality for a choice comparison, coercing numeric/bigint operands. */
+function choiceEquals(choice: unknown, value: unknown): boolean {
+  const cn = toNumber(choice);
+  const vn = toNumber(value);
+  if (cn !== undefined && vn !== undefined) return cn === vn;
+  return choice === value;
+}
+
+/**
+ * Enforce a bind-time const value against its declared {@link ArgumentConstraints},
+ * throwing {@link ArgumentValidationError} on violation. Mirrors the Python SDK's
+ * `Arg._validate`: numeric range (`ge`/`le`/`gt`/`lt`), closed choice set, and
+ * regex `pattern`. A `null`/`undefined` value skips its value constraints.
+ */
+export function validateConstConstraints(
+  name: string,
+  constraints: ArgumentConstraints,
+  value: unknown,
+): void {
+  if (value === null || value === undefined) return;
+
+  const num = toNumber(value);
+  if (num !== undefined) {
+    if (constraints.ge !== undefined && num < constraints.ge) {
+      throw new ArgumentValidationError(`argument '${name}' must be >= ${constraints.ge}`);
+    }
+    if (constraints.le !== undefined && num > constraints.le) {
+      throw new ArgumentValidationError(`argument '${name}' must be <= ${constraints.le}`);
+    }
+    if (constraints.gt !== undefined && num <= constraints.gt) {
+      throw new ArgumentValidationError(`argument '${name}' must be > ${constraints.gt}`);
+    }
+    if (constraints.lt !== undefined && num >= constraints.lt) {
+      throw new ArgumentValidationError(`argument '${name}' must be < ${constraints.lt}`);
+    }
+  }
+
+  if (constraints.choices !== undefined && constraints.choices.length > 0) {
+    if (!constraints.choices.some((c) => choiceEquals(c, value))) {
+      throw new ArgumentValidationError(
+        `argument '${name}' must be one of ${JSON.stringify([...constraints.choices])}`,
+      );
+    }
+  }
+
+  if (constraints.pattern !== undefined && typeof value === "string") {
+    let re: RegExp | undefined;
+    try {
+      re = new RegExp(constraints.pattern);
+    } catch {
+      re = undefined; // an invalid declared regex must not reject the caller
+    }
+    if (re !== undefined && !re.test(value)) {
+      throw new ArgumentValidationError(
+        `argument '${name}' must match pattern ${JSON.stringify(constraints.pattern)}`,
+      );
+    }
+  }
 }
 
 function argumentSpecSortKey(spec: ArgumentSpec): [number, number | string] {

@@ -37,7 +37,12 @@ import type {
   FunctionExample,
 } from "./types.js";
 import type { ArgumentSpec } from "../arguments/argument-spec.js";
-import { argumentSpecsToSchema, constraintSpecFields } from "../arguments/argument-spec.js";
+import {
+  argumentSpecsToSchema,
+  constraintSpecFields,
+  validateConstConstraints,
+  type ArgumentConstraints,
+} from "../arguments/argument-spec.js";
 import { batchToScalarDict, batchToSecretDict, batchFromColumns, projectBatch, safeNumber } from "../util/arrow/index.js";
 
 // ============================================================================
@@ -232,6 +237,26 @@ export function defineScalarFunction<
     }
   }
 
+  // Raw const-arg constraints for bind-time enforcement, keyed by arg name.
+  // Only the ordered `parameters` API carries constraints (the legacy
+  // params/constParams path does not), so only its const params appear here.
+  const constConstraints = new Map<string, ArgumentConstraints>();
+  if (config.parameters) {
+    for (const p of config.parameters) {
+      if (
+        p.const &&
+        (p.choices !== undefined ||
+          p.ge !== undefined ||
+          p.le !== undefined ||
+          p.gt !== undefined ||
+          p.lt !== undefined ||
+          p.pattern !== undefined)
+      ) {
+        constConstraints.set(p.name, p);
+      }
+    }
+  }
+
   const meta: FunctionMeta = {
     name: config.name,
     description: config.description,
@@ -270,7 +295,11 @@ export function defineScalarFunction<
         let constIdx = 0;
         for (const spec of specs) {
           if (spec.isConst) {
-            constArgs[spec.name] = request.arguments.get(constIdx, undefined);
+            const value = request.arguments.get(constIdx, undefined);
+            constArgs[spec.name] = value;
+            // Enforce declared const-arg constraints at bind (choices/range/pattern).
+            const constraints = constConstraints.get(spec.name);
+            if (constraints) validateConstConstraints(spec.name, constraints, value);
             constIdx++;
           }
         }

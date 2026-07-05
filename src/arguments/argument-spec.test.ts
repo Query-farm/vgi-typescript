@@ -16,7 +16,9 @@ import {
   schemaToArgumentSpecs,
   formatRange,
   constraintSpecFields,
+  validateConstConstraints,
 } from "./argument-spec.js";
+import { ArgumentValidationError } from "../errors.js";
 
 describe("ArgumentSpec vgi_doc", () => {
   test("vgi_doc round-trips through argumentSpecsToSchema/schemaToArgumentSpecs", () => {
@@ -243,5 +245,50 @@ describe("ArgumentSpec constraint metadata emission + round-trip", () => {
     ];
     const field = argumentSpecsToSchema(specs).fields.find((f) => f.name === "precision")!;
     expect(field.metadata.get(VGI_RANGE_KEY)).toBe("[0, 10]");
+  });
+});
+
+describe("validateConstConstraints (bind-time enforcement)", () => {
+  test("numeric range: in-range passes, out-of-range throws", () => {
+    const c = { ge: 0, le: 10 };
+    expect(() => validateConstConstraints("precision", c, 5)).not.toThrow();
+    expect(() => validateConstConstraints("precision", c, 11)).toThrow(ArgumentValidationError);
+    expect(() => validateConstConstraints("precision", c, -1)).toThrow(ArgumentValidationError);
+  });
+
+  test("numeric range accepts int64 bigint values", () => {
+    const c = { ge: 0, le: 10 };
+    expect(() => validateConstConstraints("precision", c, 5n)).not.toThrow();
+    expect(() => validateConstConstraints("precision", c, 99n)).toThrow(ArgumentValidationError);
+  });
+
+  test("exclusive bounds", () => {
+    expect(() => validateConstConstraints("x", { gt: 0 }, 0)).toThrow(ArgumentValidationError);
+    expect(() => validateConstConstraints("x", { gt: 0 }, 1)).not.toThrow();
+    expect(() => validateConstConstraints("x", { lt: 1 }, 1)).toThrow(ArgumentValidationError);
+  });
+
+  test("choices: member passes, non-member throws", () => {
+    const c = { choices: ["mm", "cm", "m"] };
+    expect(() => validateConstConstraints("unit", c, "cm")).not.toThrow();
+    expect(() => validateConstConstraints("unit", c, "xx")).toThrow(ArgumentValidationError);
+  });
+
+  test("numeric choices tolerate bigint", () => {
+    const c = { choices: [0, 1, 2] };
+    expect(() => validateConstConstraints("mode", c, 1n)).not.toThrow();
+    expect(() => validateConstConstraints("mode", c, 9n)).toThrow(ArgumentValidationError);
+  });
+
+  test("pattern: match passes, non-match throws", () => {
+    const c = { pattern: "^[A-Z]{2}$" };
+    expect(() => validateConstConstraints("code", c, "AB")).not.toThrow();
+    expect(() => validateConstConstraints("code", c, "abc")).toThrow(ArgumentValidationError);
+  });
+
+  test("null / undefined skips value constraints", () => {
+    const c = { ge: 0, le: 10, choices: [1, 2], pattern: "^x$" };
+    expect(() => validateConstConstraints("x", c, null)).not.toThrow();
+    expect(() => validateConstConstraints("x", c, undefined)).not.toThrow();
   });
 });
