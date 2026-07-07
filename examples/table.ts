@@ -1741,6 +1741,7 @@ const make_series_count = defineTableFunction<{ count: number }, MakeSeriesRange
   name: "make_series",
   description: "Generate integers from 0 to count-1",
   args: { count: new Int64() },
+  argConstraints: { count: { ge: 0 } },
   onBind: () => ({ outputSchema: MAKE_SERIES_SCHEMA }),
   cardinality: (params: TableBindParams<{ count: number }>) => ({
     estimate: params.args.count,
@@ -1817,6 +1818,7 @@ const make_series_step = defineTableFunction<{ start: number; stop: number; step
   name: "make_series",
   description: "Generate integers from start to stop-1 with step",
   args: { start: new Int64(), stop: new Int64(), step: new Int64() },
+  argConstraints: { step: { ge: 1 } },
   onBind: () => ({ outputSchema: MAKE_SERIES_SCHEMA }),
   initialState: (params: TableProcessParams<{ start: number; stop: number; step: number }>) => {
     const step = params.args.step;
