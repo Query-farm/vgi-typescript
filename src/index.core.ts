@@ -120,6 +120,19 @@ export { arrowStateSerializer, EXCHANGE_STATE_SCHEMA, serializeUserState, deseri
 // Protocol assembly (for embedding the worker dispatcher in a custom HTTP server).
 export { buildVgiProtocol, type ProtocolConfig } from "./protocol/dispatch.js";
 
+// VGI HTTP landing surface producer (describe.json contract). Pass
+// `createLandingDescribe(catalogInterface, workerInfo)` to `createHttpHandler`'s
+// `landingDescribe` option. See docs/http-landing-contract.md.
+export {
+  buildColumnsJson,
+  buildDescribeJson,
+  createLandingDescribe,
+  CUPOLA_BASE,
+  LANDING_SCHEMA_VERSION,
+  type LandingDescribeProvider,
+  type WorkerDescribeInfo,
+} from "./http/describe-json.js";
+
 // Wire schemas — needed by workers that synthesize TableInfo.bind_result /
 // TableInfo.scan_function bytes to short-circuit per-scan RPCs.
 export { BindResultSchema, ScanFunctionResultSchema } from "./generated/vgi-protocol-schemas.js";

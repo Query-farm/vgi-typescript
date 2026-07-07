@@ -9,6 +9,7 @@ import { FunctionRegistry } from "../src/functions/registry.js";
 import { buildVgiProtocol } from "../src/protocol/dispatch.js";
 import { ReadOnlyCatalogInterface } from "../src/catalog/read-only.js";
 import { CompositeCatalogInterface } from "../src/catalog/composite.js";
+import { createLandingDescribe } from "../src/http/describe-json.js";
 import { allFunctions, catalog, createExampleCatalog } from "./common.js";
 import { projectionReproCatalog, projectionReproFunctions } from "./projection_repro.js";
 import { accumulateFunctions, createAccumulateCatalog } from "./accumulate.js";
@@ -56,6 +57,13 @@ const handler = createHttpHandler(protocol, {
   signingKey,
   tokenTtl,
   stateSerializer: arrowStateSerializer,
+  // Standardized VGI landing surface: serves the shared landing.html plus the
+  // describe.json contract built from this worker's catalog introspection.
+  landingDescribe: createLandingDescribe(catalogInterface, {
+    name: "VgiExampleWorker",
+    doc: "Example VGI TypeScript worker.",
+    version: "0.12.0",
+  }),
 });
 
 const server = Bun.serve({ port: 0, fetch: handler });
