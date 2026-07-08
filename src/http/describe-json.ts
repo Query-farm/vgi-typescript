@@ -399,7 +399,12 @@ async function buildSchemas(
         String(a.type).localeCompare(String(b.type)) || String(a.name).localeCompare(String(b.name)),
     );
 
-    schemas.push({ name: si.name, tables, views, functions });
+    const schemaObj: Record<string, unknown> = { name: si.name };
+    if (si.comment) schemaObj.doc = si.comment;
+    schemaObj.tables = tables;
+    schemaObj.views = views;
+    schemaObj.functions = functions;
+    schemas.push(schemaObj);
     counts.schemas += 1;
     counts.tables += tables.length;
     counts.views += views.length;

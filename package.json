@@ -1,6 +1,6 @@
 {
   "name": "@query-farm/vgi",
-  "version": "0.14.0",
+  "version": "0.15.0",
   "description": "TypeScript framework for extending DuckDB with user-defined functions via the Vector Gateway Interface (VGI) over Arrow IPC.",
   "license": "SEE LICENSE IN LICENSE",
   "author": "Query Farm LLC (https://query.farm)",
@@ -75,12 +75,12 @@
   },
   "peerDependencies": {
     "@query-farm/apache-arrow": "^21.1.1",
-    "@query-farm/vgi-rpc": "^0.11.0"
+    "@query-farm/vgi-rpc": "^0.12.0"
   },
   "devDependencies": {
     "@duckdb/node-api": "^1.5.2-r.1",
     "@query-farm/apache-arrow": "^21.1.1",
-    "@query-farm/vgi-rpc": "^0.11.0",
+    "@query-farm/vgi-rpc": "^0.12.0",
     "@types/bun": "latest",
     "typescript": "^6.0.3"
   },

@@ -37,6 +37,7 @@ function makeCatalog(): ReadOnlyCatalogInterface {
     schemas: [
       {
         name: "main",
+        comment: "The main schema.",
         tables: [
           {
             name: "widgets",
@@ -93,6 +94,7 @@ describe("buildDescribeJson", () => {
     expect(cat.counts).toEqual({ schemas: 1, tables: 1, views: 1, functions: 1 });
 
     const main = cat.schemas.find((s: any) => s.name === "main");
+    expect(main.doc).toBe("The main schema.");
     expect(main.tables).toEqual([{ name: "widgets", cols: 2, comment: "A table of widgets." }]);
     expect(main.views).toEqual([
       { name: "recent_widgets", cols: 2, comment: "Recent widgets.", def: "SELECT * FROM widgets" },
@@ -105,6 +107,22 @@ describe("buildDescribeJson", () => {
     expect(fn.doc).toBe("Uppercase a string.");
     expect(fn.args).toEqual([{ name: "s", type: "VARCHAR", desc: "Input string." }]);
     expect(fn.returns).toBe("VARCHAR");
+  });
+
+  test("omits schema doc when the schema has no comment", async () => {
+    const registry = new FunctionRegistry();
+    const descriptor: CatalogDescriptor = {
+      name: "example",
+      defaultSchema: "main",
+      schemas: [{ name: "main" }],
+    };
+    const doc = (await buildDescribeJson(
+      new ReadOnlyCatalogInterface(descriptor, registry),
+      { name: "W" },
+    )) as any;
+    const main = doc.catalogs[0].schemas.find((s: any) => s.name === "main");
+    expect(main.name).toBe("main");
+    expect("doc" in main).toBe(false);
   });
 });
 
