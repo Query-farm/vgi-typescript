@@ -31,6 +31,7 @@ import type {
   CatalogAttachResult,
   CatalogInfo,
   FunctionInfo,
+  MacroInfo,
   SchemaInfo,
   TableInfo,
   ViewInfo,
@@ -102,6 +103,32 @@ function typeToString(type: VgiDataType): string {
   }
   const s = (type as { toString?: () => string }).toString?.();
   return s ?? String(type.typeId);
+}
+
+/**
+ * Raw Arrow type string (e.g. `int64`, `string`, `double`) matching pyarrow's
+ * `str(type)`. Unlike {@link typeToString} (DuckDB-ish names used for table/view
+ * columns), macro arg types are carried verbatim in `describe.json` — the shared
+ * landing page maps Arrow → DuckDB client-side — so they must be byte-identical
+ * to what the Python reference producer emits for cross-language parity.
+ */
+function arrowTypeString(type: VgiDataType): string {
+  if (isNull(type)) return "null";
+  if (isBool(type)) return "bool";
+  if (isUtf8(type)) return "string";
+  if (isBinary(type)) return "binary";
+  if (isInt(type)) {
+    const bw = (type as { bitWidth?: number }).bitWidth ?? 32;
+    const signed =
+      (type as { isSigned?: boolean }).isSigned ?? (type as { signed?: boolean }).signed ?? true;
+    return `${signed ? "" : "u"}int${bw}`;
+  }
+  if (isFloat(type)) {
+    const precision = (type as { precision?: number }).precision ?? 2;
+    return precision === 0 ? "halffloat" : precision === 1 ? "float" : "double";
+  }
+  const s = (type as { toString?: () => string }).toString?.();
+  return (s ?? String(type.typeId)).toLowerCase();
 }
 
 function fieldMeta(field: VgiField, key: string): string | undefined {
@@ -190,6 +217,85 @@ function functionArgs(fn: FunctionInfo): ArgJson[] {
 }
 
 // ---------------------------------------------------------------------------
+// Macro mapping
+// ---------------------------------------------------------------------------
+
+// A scalar macro is invoked exactly like a scalar function in SQL, and a table
+// macro like a table function; surface them in the same buckets so the landing
+// page lists a catalog's full callable surface (VGI workers commonly expose
+// their "functions" as declarative macros). Mirrors Python `_macro_display_type`.
+function macroDisplayType(m: MacroInfo): "scalar" | "table" {
+  return String(m.macro_type).toUpperCase() === "SCALAR" ? "scalar" : "table";
+}
+
+/** JSON-encode a decoded macro default scalar, matching Python's `json.dumps`. */
+function macroDefaultJson(value: unknown): string {
+  // int64 defaults decode to BigInt, which JSON.stringify rejects; a bigint's
+  // decimal string is already its JSON integer encoding (0n -> "0").
+  if (typeof value === "bigint") return value.toString();
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+}
+
+function macroArgs(m: MacroInfo): ArgJson[] {
+  // Defaulted parameters are optional and callable by name in DuckDB, so we
+  // present them as named args (with their default); the rest are positional.
+  const defaults = new Map<string, unknown>();
+  const defBytes = m.parameter_default_values;
+  if (defBytes && defBytes.length > 0) {
+    try {
+      const batch = deserializeBatch(defBytes);
+      for (const field of batch.schema.fields) {
+        try {
+          defaults.set(field.name, batch.getChild(field.name)?.get(0));
+        } catch {
+          // skip an undecodable default column
+        }
+      }
+    } catch {
+      // no usable defaults
+    }
+  }
+
+  const schema = readSchemaSafe(m.arguments_schema);
+  const fields = schema ? schema.fields : null;
+  const fieldByName = new Map<string, VgiField>();
+  if (fields) for (const f of fields) fieldByName.set(f.name, f);
+  const names = fields ? fields.map((f) => f.name) : m.parameters;
+
+  const args: ArgJson[] = [];
+  for (const name of names) {
+    const field = fieldByName.get(name);
+    // Macro parameters are untyped unless a typed default pins them; show ANY
+    // rather than the Arrow null placeholder.
+    const arg: ArgJson =
+      field !== undefined && !isNull(field.type)
+        ? { name, type: arrowTypeString(field.type) }
+        : { name, type: "ANY" };
+    const doc = field !== undefined ? fieldMeta(field, VGI_DOC_KEY) : undefined;
+    if (doc) arg.desc = doc;
+    if (defaults.has(name)) {
+      arg.named = true;
+      arg.default = macroDefaultJson(defaults.get(name));
+    }
+    args.push(arg);
+  }
+  return args;
+}
+
+function macroToObject(m: MacroInfo): Record<string, unknown> {
+  return {
+    name: m.name,
+    type: macroDisplayType(m),
+    doc: m.comment ?? "",
+    args: macroArgs(m),
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Catalog contents
 // ---------------------------------------------------------------------------
 
@@ -214,6 +320,18 @@ async function schemaFunctions(iface: CatalogInterface, aod: Uint8Array, name: s
   for (const kind of ["SCALAR_FUNCTION", "TABLE_FUNCTION", "AGGREGATE_FUNCTION"]) {
     try {
       out.push(...(await iface.schemaContentsFunctions(aod, name, kind)));
+    } catch {
+      // best-effort — keep whatever we collected
+    }
+  }
+  return out;
+}
+
+async function schemaMacros(iface: CatalogInterface, aod: Uint8Array, name: string): Promise<MacroInfo[]> {
+  const out: MacroInfo[] = [];
+  for (const kind of ["SCALAR_MACRO", "TABLE_MACRO"]) {
+    try {
+      out.push(...(await iface.schemaContentsMacros(aod, name, kind)));
     } catch {
       // best-effort — keep whatever we collected
     }
@@ -246,6 +364,7 @@ async function buildSchemas(
     const tablesRaw = (await schemaContents(iface, aod, si.name, "TABLE")) as TableInfo[];
     const viewsRaw = (await schemaContents(iface, aod, si.name, "VIEW")) as ViewInfo[];
     const funcsRaw = await schemaFunctions(iface, aod, si.name);
+    const macrosRaw = await schemaMacros(iface, aod, si.name);
 
     const tables = tablesRaw.map((t) => {
       const schema = readSchemaSafe(t.columns);
@@ -259,22 +378,26 @@ async function buildSchemas(
       def: v.definition,
     }));
 
-    const functions = funcsRaw
-      .slice()
-      .sort((a, b) =>
-        String(a.function_type).localeCompare(String(b.function_type)) || a.name.localeCompare(b.name),
-      )
-      .map((fn) => {
-        const obj: Record<string, unknown> = {
-          name: fn.name,
-          type: functionDisplayType(fn),
-          doc: fn.description ?? "",
-          args: functionArgs(fn),
-        };
-        const ret = functionReturns(fn);
-        if (ret) obj.returns = ret;
-        return obj;
-      });
+    const functions: Record<string, unknown>[] = funcsRaw.map((fn) => {
+      const obj: Record<string, unknown> = {
+        name: fn.name,
+        type: functionDisplayType(fn),
+        doc: fn.description ?? "",
+        args: functionArgs(fn),
+      };
+      const ret = functionReturns(fn);
+      if (ret) obj.returns = ret;
+      return obj;
+    });
+    // Fold macros into the same scalar/table buckets (VGI catalogs commonly
+    // expose their callable surface as declarative macros).
+    functions.push(...macrosRaw.map((m) => macroToObject(m)));
+    // Deterministic ordering across functions + macros, matching the Python
+    // reference producer's `sort(key=(type, name))`.
+    functions.sort(
+      (a, b) =>
+        String(a.type).localeCompare(String(b.type)) || String(a.name).localeCompare(String(b.name)),
+    );
 
     schemas.push({ name: si.name, tables, views, functions });
     counts.schemas += 1;
