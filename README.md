@@ -441,6 +441,59 @@ A worker serves the same functions over any of:
 
 Transport handling lives in [`@query-farm/vgi-rpc`](https://www.npmjs.com/package/@query-farm/vgi-rpc).
 
+### Serving a worker over HTTP
+
+Don't hand-roll the HTTP wiring. `@query-farm/vgi/serve` assembles the protocol, the
+signed state-token key, CORS, and the standardized landing surface, then binds the port:
+
+```ts
+// scripts/serve.ts
+import { serveVgiWorker } from "@query-farm/vgi/serve";
+import { makeWorkerParts } from "../src/parts.js";
+
+const { registry, catalogInterface } = makeWorkerParts();
+
+serveVgiWorker({
+  name: "ishares",
+  doc: "iShares (BlackRock) US fund data.",
+  version: "0.1.0",
+  repositoryUrl: "https://github.com/Query-farm/vgi-etf-ishares",
+  registry,
+  catalogInterface,
+});
+```
+
+```console
+$ PORT=8787 bun run scripts/serve.ts
+```
+
+Mounted at the origin root, so DuckDB attaches the bare URL:
+
+```sql
+ATTACH 'ishares' AS ishares (TYPE vgi, LOCATION 'http://localhost:8787');
+```
+
+It also serves `GET /` (landing page), `GET /describe.json` (catalog contract), and
+`GET /health`.
+
+| Variable          | Default | Meaning                                                     |
+| ----------------- | ------- | ----------------------------------------------------------- |
+| `PORT`            | `8787`  | Listen port. `0` binds an ephemeral port.                    |
+| `VGI_SIGNING_KEY` | random  | State-token HMAC key, **64 hex chars** (`openssl rand -hex 32`). |
+| `VGI_TOKEN_TTL`   | `3600`  | State-token lifetime in seconds.                             |
+| `CORS_ORIGINS`    | `*`     | Allowed origins. Pass `corsOrigins: null` to disable CORS.   |
+
+Every variable has an explicit option that takes precedence over it.
+
+With no `VGI_SIGNING_KEY`, a random key is generated and a warning is printed: state
+tokens then stop validating after a restart, and never validate across two instances
+behind a load balancer. Set it for any real deployment. A key that isn't exactly 64 hex
+characters is rejected rather than silently truncated.
+
+To mount the VGI routes inside a server you already own, use `createVgiWorkerFetch`,
+which returns the `fetch` handler without binding a port. On Cloudflare Workers use
+`createVgiFetch` from `@query-farm/vgi/worker-cf`; both share one implementation.
+
 ## Runtimes & entry points
 
 The package ships a backend-agnostic Arrow facade and selects an implementation at

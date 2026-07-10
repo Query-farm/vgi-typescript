@@ -3,13 +3,10 @@
 // Serves the same functions as worker.ts over HTTP transport.
 // Prints PORT:<n> to stdout for test discovery.
 
-import { createHttpHandler, unpackStateToken } from "@query-farm/vgi-rpc";
-import { arrowStateSerializer } from "../src/protocol/state-serializer.js";
+import { serveVgiWorker } from "../src/serve-entry.js";
 import { FunctionRegistry } from "../src/functions/registry.js";
-import { buildVgiProtocol } from "../src/protocol/dispatch.js";
 import { ReadOnlyCatalogInterface } from "../src/catalog/read-only.js";
 import { CompositeCatalogInterface } from "../src/catalog/composite.js";
-import { createLandingDescribe } from "../src/http/describe-json.js";
 import { allFunctions, catalog, createExampleCatalog } from "./common.js";
 import { projectionReproCatalog, projectionReproFunctions } from "./projection_repro.js";
 import { accumulateFunctions, createAccumulateCatalog } from "./accumulate.js";
@@ -37,34 +34,23 @@ const catalogInterface = new CompositeCatalogInterface([
   narrowBind,
 ]);
 
-// Shared signing key so buildVgiProtocol can decode state tokens created by createHttpHandler
-const signingKey = crypto.getRandomValues(new Uint8Array(32));
-const tokenTtl = 3600;
-
-const protocol = buildVgiProtocol({
+// The `signingKey` this example used to pass to createHttpHandler was never read
+// — the handler's option is `tokenKey`, so it minted tokens under a random key
+// while the protocol tried to recover them under this one. serveVgiWorker feeds
+// both seams from a single key. Left unset here: the helper generates a random
+// one and warns, which is exactly right for an ephemeral test fixture.
+const server = serveVgiWorker({
+  name: "VgiExampleWorker",
+  doc: "Example VGI TypeScript worker.",
+  version: "0.12.0",
   registry,
   catalogInterface,
-  recoverExchangeState: (opaqueData: Uint8Array) => {
-    const tokenString = new TextDecoder().decode(opaqueData);
-    const unpacked = unpackStateToken(tokenString, signingKey, tokenTtl);
-    return arrowStateSerializer.deserialize(unpacked.stateBytes);
-  },
-});
-
-const handler = createHttpHandler(protocol, {
+  // The integration harness attaches to http://localhost:$PORT/vgi.
   prefix: "/vgi",
   serverId: "vgi-example-http",
-  signingKey,
-  tokenTtl,
-  stateSerializer: arrowStateSerializer,
-  // Standardized VGI landing surface: serves the shared landing.html plus the
-  // describe.json contract built from this worker's catalog introspection.
-  landingDescribe: createLandingDescribe(catalogInterface, {
-    name: "VgiExampleWorker",
-    doc: "Example VGI TypeScript worker.",
-    version: "0.12.0",
-  }),
+  port: 0,
+  quiet: true,
 });
 
-const server = Bun.serve({ port: 0, fetch: handler });
+// The Makefile's test-http target reads this line off stdout to discover the port.
 console.log(`PORT:${server.port}`);

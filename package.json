@@ -1,6 +1,6 @@
 {
   "name": "@query-farm/vgi",
-  "version": "0.15.0",
+  "version": "0.16.0",
   "description": "TypeScript framework for extending DuckDB with user-defined functions via the Vector Gateway Interface (VGI) over Arrow IPC.",
   "license": "SEE LICENSE IN LICENSE",
   "author": "Query Farm LLC (https://query.farm)",
@@ -29,7 +29,13 @@
     "node": ">=22.15"
   },
   "type": "module",
-  "sideEffects": false,
+  "//sideEffects": "Entry modules are listed so the bundler cannot tree-shake them away. Under a bare `sideEffects: false`, an entry consisting only of re-exports builds to a dangling export list with no imports and no definitions \u2014 invalid ESM that throws on first import. Modules not listed stay side-effect-free, so consumers still tree-shake normally.",
+  "sideEffects": [
+    "./src/index.ts",
+    "./src/client-entry.ts",
+    "./src/worker-cf-entry.ts",
+    "./src/serve-entry.ts"
+  ],
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "exports": {
@@ -53,6 +59,11 @@
       "browser": "./src/worker-cf-entry.ts",
       "bun": "./src/worker-cf-entry.ts",
       "import": "./dist/worker-cf-entry.js"
+    },
+    "./serve": {
+      "types": "./dist/serve-entry.d.ts",
+      "bun": "./src/serve-entry.ts",
+      "import": "./dist/serve-entry.js"
     }
   },
   "files": [
@@ -85,10 +96,11 @@
     "typescript": "^6.0.3"
   },
   "scripts": {
-    "build": "bun run build:types && bun run build:js",
+    "build": "bun run build:types && bun run build:js && bun run check:bundles",
+    "check:bundles": "bun run scripts/check-bundles.ts",
     "prepack": "bun run build",
     "build:types": "bunx tsc -p tsconfig.build.json",
-    "build:js": "bun build ./src/index.ts --outdir dist --target node --format esm --sourcemap=external --external @query-farm/apache-arrow --external @query-farm/vgi-rpc && bun build ./src/client-entry.ts --outdir dist --target browser --format esm --sourcemap=external --external @query-farm/apache-arrow --external @query-farm/vgi-rpc && bun build ./src/worker-cf-entry.ts --outdir dist --target node --format esm --sourcemap=external --external @query-farm/apache-arrow --external @query-farm/vgi-rpc",
+    "build:js": "bun build ./src/index.ts --outdir dist --target node --format esm --sourcemap=external --external @query-farm/apache-arrow --external @query-farm/vgi-rpc && bun build ./src/client-entry.ts --outdir dist --target browser --format esm --sourcemap=external --external @query-farm/apache-arrow --external @query-farm/vgi-rpc && bun build ./src/worker-cf-entry.ts --outdir dist --target node --format esm --sourcemap=external --external @query-farm/apache-arrow --external @query-farm/vgi-rpc && bun build ./src/serve-entry.ts --outdir dist --target bun --format esm --sourcemap=external --external @query-farm/apache-arrow --external @query-farm/vgi-rpc",
     "postinstall": "node scripts/postinstall.cjs",
     "build:browser-test": "bun build examples/browser/main.ts --outdir examples/browser/dist --target browser --format esm --sourcemap=external",
     "test": "bun test"

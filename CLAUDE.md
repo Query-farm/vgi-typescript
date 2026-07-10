@@ -168,6 +168,32 @@ VGI_WORKER_STDERR_PASSTHROUGH=1 /Users/rusty/Development/vgi/build/debug/duckdb 
 VGI_WORKER_DEBUG=1 /Users/rusty/Development/vgi/build/debug/duckdb -c "..."
 ```
 
+## HTTP entry points
+
+Three subpaths, one implementation (`src/http/fetch.ts` → `createVgiFetch`):
+
+- **`@query-farm/vgi/serve`** (`src/serve-entry.ts`, Bun-only) — `serveVgiWorker({name, doc,
+  version, registry, catalogInterface})` assembles protocol + signing key + CORS + landing
+  surface and calls `Bun.serve`. This is what a worker repo's `scripts/serve.ts` should use;
+  don't hand-roll `buildVgiProtocol` + `createHttpHandler` in a worker. Reads `PORT`,
+  `VGI_SIGNING_KEY`, `VGI_TOKEN_TTL`, `CORS_ORIGINS`. `createVgiWorkerFetch` returns the bare
+  handler if you own the server.
+- **`@query-farm/vgi/worker-cf`** (`src/worker-cf-entry.ts`) — `createVgiFetch` for workerd.
+- Worker repos pair this with a `src/parts.ts` exporting `makeWorkerParts()`, consumed by both
+  `src/worker.ts` (stdio) and `scripts/serve.ts` (HTTP), so the registry is wired once.
+
+Two traps, both fixed and both worth not reintroducing:
+
+- `createHttpHandler`'s key option is **`tokenKey`**, not `signingKey`. Passing `signingKey`
+  type-checks (it's an unknown property on a variable, not a literal) and is silently ignored —
+  the handler then mints state tokens under a random key while `buildVgiProtocol` tries to
+  recover them under yours. `createVgiFetch` feeds both seams from one key.
+- **Never** set a bare `"sideEffects": false` in package.json. Bun tree-shakes any entry that is
+  pure re-exports down to an export list with no imports and no definitions — invalid ESM that
+  throws on first import. `dist/client-entry.js` shipped broken this way. The entry modules are
+  now listed explicitly in `sideEffects`, and `bun run check:bundles` (part of `bun run build`)
+  imports every `dist/` entry so it can't regress silently.
+
 ## Design Principles
 
 ### No in-memory state for HTTP transport
