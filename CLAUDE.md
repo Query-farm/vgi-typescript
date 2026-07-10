@@ -194,6 +194,42 @@ Two traps, both fixed and both worth not reintroducing:
   now listed explicitly in `sideEffects`, and `bun run check:bundles` (part of `bun run build`)
   imports every `dist/` entry so it can't regress silently.
 
+## Result cache (`vgi.cache.*`)
+
+`src/cache-control.ts` is the cache-control vocabulary the C++ extension reads by
+string. A table function advertises that its result is cacheable by attaching the
+rendered keys to the **first** batch it emits:
+
+```ts
+import { cacheControlMetadata } from "@query-farm/vgi";
+
+out.emit(firstBatch, cacheControlMetadata({ ttl: 300 }));
+```
+
+`cacheControlMetadata(cc, extra?)` merges `extra` first, so a function that already
+emits per-batch metadata (`vgi_batch_index`, `vgi_partition_values#b64`) folds the
+cache keys in without losing them. The cache keys win on collision.
+
+Conditional revalidation: a worker that advertises `{ ttl: 0, etag, revalidatable: true }`
+gets the client's stored validator back on its next call as
+`params.ifNoneMatch` / `params.ifModifiedSince`, and answers a still-fresh result with
+a 0-row `cacheControlMetadata({ notModified: true, ... })` batch instead of
+re-streaming.
+
+Those validators reach `process()` by different routes per transport, and both are
+already wired: over subprocess they ride the first producer tick; over HTTP the first
+producer turn folds into the `/init` POST, so vgi-rpc attaches that request's
+`custom_metadata` to the first synthetic tick batch (`produceStreamResponse`, gated on
+`firstTick`). `defineTableFunction`'s `onTick` reads them off the tick metadata. Requires
+`@query-farm/vgi-rpc` >= 0.13.0 — under 0.12.0 the HTTP path silently never revalidates
+and `test/sql/integration/cache/revalidate.test` fails on the HTTP lane only.
+
+The example worker's fixtures live in `examples/cache.ts` (ported from vgi-python's
+`vgi/_test_fixtures/table/cache.py`) and back the 35 tests under
+`test/sql/integration/cache/`. `cache_multicol` is registered with the worker but
+deliberately kept out of `catalog.functions` — it only backs the `data.cache_multicol`
+table, and `integration/table/function_registration.test` pins the resulting count.
+
 ## Design Principles
 
 ### No in-memory state for HTTP transport

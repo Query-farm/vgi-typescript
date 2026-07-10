@@ -27,6 +27,7 @@ import { aggregateFunctions } from "./aggregate.js";
 import { partitionTableFunctions } from "./table_partition.js";
 import { copyFromFunctions } from "./copy_from.js";
 import { copyToFunctions } from "./copy_to.js";
+import { cacheTableFunctions } from "./cache.js";
 
 // Find functions for table-backed catalog entries
 const sequenceFunction = tableFunctions.find((f) => f.meta.name === "sequence");
@@ -35,6 +36,14 @@ const lateMaterializationFunction = tableFunctions.find((f) => f.meta.name === "
 const tenThousandFunction = tableFunctions.find((f) => f.meta.name === "ten_thousand");
 const secretDemoFunction = tableFunctions.find((f) => f.meta.name === "secret_demo");
 const ttPushdownScanFunction = tableFunctions.find((f) => f.meta.name === "tt_pushdown_scan");
+
+// Result-cache fixtures backing catalog data tables. Throws rather than
+// silently declaring a table with no backing function if a name ever drifts.
+function cacheFn(name: string) {
+  const fn = cacheTableFunctions.find((f) => f.meta.name === name);
+  if (!fn) throw new Error(`cache fixture '${name}' is not registered in cacheTableFunctions`);
+  return fn;
+}
 
 // Precompute stats for tables whose data is known at worker startup. The
 // statisticsFromDuckDB helper spins up an in-process DuckDB, builds the demo
@@ -95,6 +104,7 @@ const colorsScanFunction = tableFunctions.find((f) => f.meta.name === "colors_sc
 export const allFunctions = [
   ...scalarFunctions,
   ...tableFunctions,
+  ...cacheTableFunctions,
   ...partitionTableFunctions,
   ...tableInOutFunctions,
   ...tableBufferingFunctions,
@@ -102,6 +112,14 @@ export const allFunctions = [
   ...copyFromFunctions,
   ...copyToFunctions,
 ];
+
+// The catalog advertises every registered function EXCEPT cache_multicol, which
+// exists only to back the `data.cache_multicol` table. Keeping it out of the
+// advertised set means it never surfaces in `duckdb_functions()` — the worker's
+// registry still resolves it for the table's inlined scan_function. Mirrors
+// vgi-python's example catalog, whose `functions=[...]` list omits it too.
+const CATALOG_HIDDEN_FUNCTIONS = new Set(["cache_multicol"]);
+const catalogFunctions = allFunctions.filter((f) => !CATALOG_HIDDEN_FUNCTIONS.has(f.meta.name));
 
 // Serialize parameter default values for vgi_clamp: lo=0, hi=100
 const clampDefaultsSchema = new Schema([
@@ -155,7 +173,7 @@ export const catalog: CatalogDescriptor = {
         "vgi.description_llm": "Example functions schema for the VGI fixture worker.",
         "vgi.description_md": "Example functions for testing VGI.",
       },
-      functions: allFunctions,
+      functions: catalogFunctions,
       views: [
         {
           name: "first_ten",
@@ -241,6 +259,88 @@ export const catalog: CatalogDescriptor = {
           function: tenThousandFunction,
           inlinedCardinality: { estimate: 10000n, max: 10000n },
           comment: "Function-backed table with inlined cardinality (10000 rows)",
+        },
+        // Result-cache fixtures, exposed as function-backed tables so the
+        // catalog-attached path (SELECT ... FROM ex.data.<name>) exercises the
+        // C++ result cache. See examples/cache.ts.
+        //
+        // NB: cache_bench is intentionally NOT a data Table — it takes a
+        // required positional arg (rows) that a function-backed Table can't
+        // supply at bind. The scaling bench + S8 guard use the direct path
+        // `vgi_table_function(w, 'cache_bench', [rows])` instead.
+        {
+          name: "cacheable_numbers",
+          function: cacheFn("cacheable_numbers"),
+          comment: "Cacheable 10-row result advertising vgi.cache.ttl",
+        },
+        {
+          name: "cache_nonce",
+          function: cacheFn("cache_nonce"),
+          comment: "One-row cacheable result whose value changes per real invocation",
+        },
+        {
+          name: "cache_multicol",
+          function: cacheFn("cache_multicol"),
+          comment: "Multi-column cacheable result (projection-coverage reuse)",
+        },
+        {
+          name: "cache_no_store",
+          function: cacheFn("cache_no_store"),
+          comment: "Advertises vgi.cache.no_store — must never be cached",
+        },
+        {
+          name: "cache_scoped_txn",
+          function: cacheFn("cache_scoped_txn"),
+          comment: "Advertises vgi.cache.scope=transaction",
+        },
+        {
+          name: "cache_filtered",
+          function: cacheFn("cache_filtered"),
+          comment: "Cacheable sequence with static filter pushdown (filter_bytes keying)",
+        },
+        {
+          name: "cache_big",
+          function: cacheFn("cache_big"),
+          comment: "Large multi-batch cacheable result (advertises vgi.cache.ttl)",
+        },
+        {
+          name: "cache_ordered",
+          function: cacheFn("cache_ordered"),
+          comment:
+            "Multi-worker order-sensitive cacheable result (batch_index; parallel capture, ordered serve)",
+        },
+        {
+          name: "cache_revalidatable",
+          function: cacheFn("cache_revalidatable"),
+          comment: "Always-revalidate result (304 not_modified reuses stored bytes)",
+        },
+        {
+          name: "cache_whoami",
+          function: cacheFn("cache_whoami"),
+          comment: "Cacheable result echoing the caller's auth principal (identity-scoped)",
+        },
+        // Time-travel + cacheable: AT (VERSION => n) is resolved to the
+        // scan-function version arg in tableScanFunctionGet below.
+        {
+          name: "cache_versioned",
+          columns: new Schema([new Field("v", new Int64(), true)]),
+          supportsTimeTravel: true,
+          comment: "Version-specific cacheable rows (AT-keyed cache isolation)",
+        },
+        {
+          name: "cache_projection",
+          function: cacheFn("cache_projection"),
+          comment: "Projection-pushdown cacheable result (SELECT a vs b are distinct keys)",
+        },
+        {
+          name: "cache_poison",
+          function: cacheFn("cache_poison"),
+          comment: "Cacheable first batch then a mid-stream error (never-partial check)",
+        },
+        {
+          name: "cache_external_fail",
+          function: cacheFn("cache_external_fail"),
+          comment: "Cacheable first batch then an unresolvable external-location pointer",
         },
         {
           name: "versioned_data",
@@ -885,6 +985,12 @@ export function createExampleCatalog(base: ReadOnlyCatalogInterface): ReadOnlyCa
     if (schemaName.toLowerCase() === "data" && name.toLowerCase() === "versioned_constraints") {
       const version = resolveVersionedConstraintsVersion(atUnit, atValue);
       return { function_name: "versioned_constraints_scan", arguments: buildVersionArgBytes(version), required_extensions: [] };
+    }
+    // cache_versioned: AT -> version arg, same as versioned_data but the scan
+    // function advertises cache metadata (for the AT cache-isolation test).
+    if (schemaName.toLowerCase() === "data" && name.toLowerCase() === "cache_versioned") {
+      const version = resolveVersion(atUnit, atValue);
+      return { function_name: "cache_versioned_scan", arguments: buildVersionArgBytes(version), required_extensions: [] };
     }
     // Columns-based time-travel + pushdown: resolve AT -> version and pass it as
     // a scan-function argument (the native columns-based AT mechanism).

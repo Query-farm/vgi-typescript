@@ -7,6 +7,27 @@
 // for Cloudflare Workers / browsers via worker-cf-entry.ts. The node/bun barrel
 // (`./index.ts`) re-exports this plus `Worker`.
 
+// Result-cache control vocabulary (`vgi.cache.*`)
+export {
+  CACHE_ETAG_KEY,
+  CACHE_EXPIRES_KEY,
+  CACHE_IF_MODIFIED_SINCE_KEY,
+  CACHE_IF_NONE_MATCH_KEY,
+  CACHE_LAST_MODIFIED_KEY,
+  CACHE_NO_STORE_KEY,
+  CACHE_NOT_MODIFIED_KEY,
+  CACHE_REVALIDATABLE_KEY,
+  CACHE_SCOPE_CATALOG,
+  CACHE_SCOPE_KEY,
+  CACHE_SCOPE_TRANSACTION,
+  CACHE_STALE_IF_ERROR_KEY,
+  CACHE_STALE_WHILE_REVALIDATE_KEY,
+  CACHE_TTL_KEY,
+  type CacheControl,
+  cacheControlMetadata,
+  type CacheScope,
+} from "./cache-control.js";
+
 // Function factories (primary API)
 export { defineScalarFunction, type ScalarFunctionConfig, type ScalarBindParameters, type ScalarParameterDef } from "./functions/scalar.js";
 export { defineTableFunction, type TableFunctionConfig, type TableBindParams, type TableProcessParams } from "./functions/table.js";

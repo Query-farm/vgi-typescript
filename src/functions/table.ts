@@ -51,6 +51,7 @@ import {
   type DistinctDependence,
 } from "../types.js";
 import { BoundStorage, storage as globalStorage } from "./storage.js";
+import { CACHE_IF_MODIFIED_SINCE_KEY, CACHE_IF_NONE_MATCH_KEY } from "../cache-control.js";
 
 // Base64-decode a string into raw bytes. Used to unpack the dynamic filter
 // update DuckDB attaches to each tick batch's custom metadata.
@@ -153,6 +154,18 @@ export interface TableProcessParams<TArgs = Record<string, any>> {
    */
   atUnit?: string;
   atValue?: string;
+  /**
+   * Conditional-revalidation validator (the client's stored ETag). Set when the
+   * client holds a stale-but-revalidatable cached result and asks the worker to
+   * confirm freshness cheaply; a worker that advertised `revalidatable` compares
+   * it and, if unchanged, emits a 0-row batch tagged
+   * `cacheControlMetadata({ notModified: true })` instead of re-streaming.
+   * Undefined on a normal call.
+   */
+  ifNoneMatch?: string;
+  /** Conditional-revalidation validator (the client's stored Last-Modified).
+   *  Companion to {@link ifNoneMatch}. Undefined on a normal call. */
+  ifModifiedSince?: string;
 }
 
 // ============================================================================
@@ -443,12 +456,23 @@ export function defineTableFunction<
           pState: { state: TState; processParams: TableProcessParams<TArgs> },
           tickMetadata: Map<string, string> | undefined,
         ) => {
+          if (!tickMetadata) return;
+
+          // Conditional-revalidation validators: the client holds a stale
+          // cached result and asks the worker to confirm freshness cheaply.
+          // Over subprocess these ride the first producer tick; over HTTP the
+          // first tick folds into the /init request, whose metadata vgi-rpc
+          // surfaces here.
+          const ifNoneMatch = tickMetadata.get(CACHE_IF_NONE_MATCH_KEY);
+          const ifModifiedSince = tickMetadata.get(CACHE_IF_MODIFIED_SINCE_KEY);
+          if (ifNoneMatch !== undefined) pState.processParams.ifNoneMatch = ifNoneMatch;
+          if (ifModifiedSince !== undefined) pState.processParams.ifModifiedSince = ifModifiedSince;
+
           // Dynamic filter pushdown: DuckDB's Top-N optimizer tightens filters
           // between ticks and serializes the current filter into the tick
           // batch's custom metadata under `vgi_pushdown_filters` (base64 of a
           // filter IPC stream). Decode and overwrite the current pushdown
           // filters so process() sees the updated value.
-          if (!tickMetadata) return;
           const encoded = tickMetadata.get("vgi_pushdown_filters");
           if (!encoded) return;
           try {
