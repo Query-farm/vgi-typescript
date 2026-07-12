@@ -697,43 +697,51 @@ export const catalog: CatalogDescriptor = {
           }],
           comment: "Projects with composite PK and FK to departments",
         },
-        // ----- required_field_filter_paths fixtures -----
+        // ----- required_filters fixtures -----
         // Exercised by ~/Development/vgi/test/sql/integration/table/
-        // required_field_filter_paths_*.test to verify the C++ optimizer
-        // extension that enforces Table.requiredFieldFilterPaths.
+        // required_filters_*.test to verify the C++ optimizer extension that
+        // enforces Table.requiredFilters (AND-of-OR-groups). Existing fixtures
+        // use singleton groups (== the old flat-AND behavior); rff_or exercises
+        // a genuine OR-group.
         {
           name: "rff_simple",
           columns: RFF_SIMPLE_SCHEMA,
-          requiredFieldFilterPaths: ["a"],
+          requiredFilters: [["a"]],
           comment: "rff_simple — requires a filter referencing column 'a'.",
         },
         {
           name: "rff_struct",
           columns: RFF_STRUCT_SCHEMA,
-          requiredFieldFilterPaths: ["s.a", "s.b"],
+          requiredFilters: [["s.a"], ["s.b"]],
           comment: "rff_struct — requires filters on both struct subfields s.a and s.b.",
         },
         {
           name: "rff_nested",
           columns: RFF_NESTED_SCHEMA,
-          requiredFieldFilterPaths: ["wrapper.mid.leaf"],
+          requiredFilters: [["wrapper.mid.leaf"]],
           comment: "rff_nested — requires a filter on the 3-deep nested path wrapper.mid.leaf.",
         },
         {
           name: "rff_multi",
           columns: RFF_MULTI_SCHEMA,
-          requiredFieldFilterPaths: ["top", "s.a"],
+          requiredFilters: [["top"], ["s.a"]],
           comment: "rff_multi — mixed top-level + struct subfield requirements.",
+        },
+        {
+          name: "rff_or",
+          columns: RFF_SIMPLE_SCHEMA,
+          requiredFilters: [["a", "b"]],
+          comment: "rff_or — requires a filter on 'a' OR 'b' (a single OR-group).",
         },
         {
           name: "rff_none",
           columns: RFF_NONE_SCHEMA,
-          comment: "rff_none — control table with no required_field_filter_paths (opt-out fast path).",
+          comment: "rff_none — control table with no required_filters (opt-out fast path).",
         },
         {
           name: "rff_rowid",
           columns: RFF_ROWID_SCHEMA,
-          requiredFieldFilterPaths: ["bbox.xmin", "bbox.xmax", "bbox.ymin", "bbox.ymax"],
+          requiredFilters: [["bbox.xmin"], ["bbox.xmax"], ["bbox.ymin"], ["bbox.ymax"]],
           comment: "rff_rowid — row_id virtual column + required bbox.* filters.",
         },
         // Native read_parquet delegation (scan dispatched in tableScanFunctionGet
@@ -749,7 +757,7 @@ export const catalog: CatalogDescriptor = {
             ]), true),
             new Field("other", new Int64(), true),
           ]),
-          requiredFieldFilterPaths: ["bbox.xmin", "bbox.xmax", "bbox.ymin", "bbox.ymax"],
+          requiredFilters: [["bbox.xmin"], ["bbox.xmax"], ["bbox.ymin"], ["bbox.ymax"]],
           comment: "rff_parquet — native read_parquet delegation with bbox.* required filters.",
         },
         {
@@ -767,7 +775,7 @@ export const catalog: CatalogDescriptor = {
             new Field("theme", new Utf8(), true),
             new Field("type", new Utf8(), true),
           ]),
-          requiredFieldFilterPaths: ["bbox.xmin", "bbox.xmax", "bbox.ymin", "bbox.ymax"],
+          requiredFilters: [["bbox.xmin"], ["bbox.xmax"], ["bbox.ymin"], ["bbox.ymax"]],
           comment: "rff_hive — native read_parquet over Hive glob with bbox.* required filters.",
         },
         {
@@ -785,7 +793,7 @@ export const catalog: CatalogDescriptor = {
             new Field("theme", new Utf8(), true),
             new Field("type", new Utf8(), true),
           ]),
-          requiredFieldFilterPaths: ["id", "bbox.xmin", "bbox.xmax", "bbox.ymin", "bbox.ymax"],
+          requiredFilters: [["id"], ["bbox.xmin"], ["bbox.xmax"], ["bbox.ymin"], ["bbox.ymax"]],
           comment: "rff_hive_mixed — native read_parquet, top-level 'id' + bbox.* required filters.",
         },
         {
@@ -909,7 +917,7 @@ export function createExampleCatalog(base: ReadOnlyCatalogInterface): ReadOnlyCa
         delete_function: new Uint8Array(0),
         cardinality_estimate: 0,
         cardinality_max: 0,
-        required_field_filter_paths: [],
+        required_filters: [],
       };
     }
     if (schemaName.toLowerCase() === "data" && name.toLowerCase() === "versioned_constraints" && atUnit) {
@@ -952,7 +960,7 @@ export function createExampleCatalog(base: ReadOnlyCatalogInterface): ReadOnlyCa
         delete_function: new Uint8Array(0),
         cardinality_estimate: 0,
         cardinality_max: 0,
-        required_field_filter_paths: [],
+        required_filters: [],
       };
     }
     // Multi-branch tables: accept AT at table_get and pass it through with AT
@@ -1026,6 +1034,8 @@ export function createExampleCatalog(base: ReadOnlyCatalogInterface): ReadOnlyCa
       rff_struct: "rff_struct_scan",
       rff_nested: "rff_nested_scan",
       rff_multi: "rff_multi_scan",
+      // rff_or reuses the rff_simple (a, b) scan — no new function needed.
+      rff_or: "rff_simple_scan",
       rff_none: "rff_none_scan",
       rff_rowid: "rff_rowid_scan",
       filter_echo_table: "filter_echo_table_scan",

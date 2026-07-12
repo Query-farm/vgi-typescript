@@ -162,7 +162,7 @@ jobs:
             "~test/sql/integration/catalog/multi_branch_join_optimizer.test"
             "~test/sql/integration/catalog/multi_branch_reconciliation.test"
             "~test/sql/integration/table/dynamic_filter.test"
-            "~test/sql/integration/table/required_field_filter_paths_native.test"
+            "~test/sql/integration/table/required_filters_native.test"
         run: >-
           make test-http VGI_DIR="$GITHUB_WORKSPACE/vgi" JOBS=1
           EXTRA_HTTP_EXCLUDES="$SKEW"
@@ -179,7 +179,7 @@ jobs:
             "~test/sql/integration/catalog/multi_branch_join_optimizer.test"
             "~test/sql/integration/catalog/multi_branch_reconciliation.test"
             "~test/sql/integration/table/dynamic_filter.test"
-            "~test/sql/integration/table/required_field_filter_paths_native.test"
+            "~test/sql/integration/table/required_filters_native.test"
         run: >-
           make test-http VGI_DIR="$GITHUB_WORKSPACE/vgi" JOBS=1
           EXTRA_HTTP_EXCLUDES="$SKEW"

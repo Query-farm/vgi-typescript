@@ -235,26 +235,34 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
       const pkIndices = resolveIndexGroups(colSchema, t.primaryKey);
       const fkBytes = serializeForeignKeys(t.foreignKey, name);
 
-      // Validate required_field_filter_paths: the leading dotted segment of
-      // each path must be a real column on this table. Struct subfield
+      // Validate required_filters: an AND (outer list) of OR-groups (inner
+      // lists). Each OR-group must be non-empty, and the leading dotted segment
+      // of each path must be a real column on this table. Struct subfield
       // validity is not checked here — DuckDB's binder catches typos at scan
       // time, and the descriptor doesn't unpack STRUCT subfields. (Mirrors
       // vgi-python's Table descriptor validation.)
-      const requiredFieldFilterPaths = t.requiredFieldFilterPaths ?? [];
-      if (requiredFieldFilterPaths.length > 0) {
+      const requiredFilters = t.requiredFilters ?? [];
+      if (requiredFilters.length > 0) {
         const columnNames = new Set(colSchema.fields.map((f) => f.name));
-        for (const path of requiredFieldFilterPaths) {
-          if (!path) {
+        for (const group of requiredFilters) {
+          if (!group || group.length === 0) {
             throw new Error(
-              `Table '${t.name}': requiredFieldFilterPaths must not contain empty strings`
+              `Table '${t.name}': requiredFilters must not contain empty groups`
             );
           }
-          const head = path.split(".", 1)[0];
-          if (!columnNames.has(head)) {
-            throw new Error(
-              `Table '${t.name}': requiredFieldFilterPaths path '${path}' references ` +
-                `unknown column '${head}'. Available columns: ${[...columnNames].sort().join(", ")}`
-            );
+          for (const path of group) {
+            if (!path) {
+              throw new Error(
+                `Table '${t.name}': requiredFilters must not contain empty strings`
+              );
+            }
+            const head = path.split(".", 1)[0];
+            if (!columnNames.has(head)) {
+              throw new Error(
+                `Table '${t.name}': requiredFilters path '${path}' references ` +
+                  `unknown column '${head}'. Available columns: ${[...columnNames].sort().join(", ")}`
+              );
+            }
           }
         }
       }
@@ -292,7 +300,7 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
         cardinality_max: t.inlinedCardinality
           ? Number(t.inlinedCardinality.max)
           : null,
-        required_field_filter_paths: requiredFieldFilterPaths,
+        required_filters: requiredFilters,
       };
     }));
   }

@@ -289,7 +289,7 @@ class VersionedTablesCatalog extends CatalogInterface {
       cardinality_max: null,
       column_statistics: null,
       bind_result: null,
-      required_field_filter_paths: [],
+      required_filters: [],
     };
   }
 

@@ -60,18 +60,24 @@ export interface TableDescriptor {
    */
   statisticsCacheMaxAgeSeconds?: number | null;
   /**
-   * Dotted-path column references that MUST appear in a WHERE expression for
-   * any scan of this table. Top-level names (`"country"`) or struct subfields
-   * (`"bbox.xmin"`, `"nested.outer.inner"`). Empty/undefined (default) means
-   * no enforcement — the zero-cost fast path for every existing table.
+   * Required WHERE-filter groups in conjunctive normal form — an AND (outer
+   * list) of OR-groups (inner lists) of dotted-path column references that MUST
+   * appear in a WHERE expression for any scan of this table. A group is
+   * satisfied when any one of its paths has a filter; every group must be
+   * satisfied. So `[["accession_number"], ["ticker", "cik"]]` means
+   * "accession_number AND one of (ticker, cik)"; a single-path group
+   * `[["country"]]` is a plain mandatory filter. Paths are top-level names
+   * (`"country"`) or struct subfields (`"bbox.xmin"`, `"nested.outer.inner"`).
+   * Empty/undefined (default) means no enforcement — the zero-cost fast path
+   * for every existing table.
    *
    * Satisfaction is prefix-based: a present filter on a shorter path satisfies
    * any required path it is a prefix of. So a whole-struct filter on `bbox`
    * satisfies all of `bbox.xmin` / `.xmax` / `.ymin` / `.ymax`. The VGI DuckDB
-   * extension's optimizer pass consults this list at bind time and throws a
-   * `BinderException` listing any unsatisfied paths.
+   * extension's optimizer pass consults this at bind time and throws a
+   * `BinderException` listing any unsatisfied groups.
    */
-  requiredFieldFilterPaths?: string[];
+  requiredFilters?: string[][];
   supportsTimeTravel?: boolean;
   /**
    * Inline cardinality estimate/max surfaced through TableInfo. When set,
