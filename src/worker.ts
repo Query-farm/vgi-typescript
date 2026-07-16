@@ -205,7 +205,7 @@ export class Worker {
    */
   async serveStream(
     readable: ReadableStream<Uint8Array> | NodeJS.ReadableStream,
-    writable?: number | import("node:net").Socket,
+    writable?: number | import("node:net").Socket | import("@query-farm/vgi-rpc").ByteSink,
   ): Promise<void> {
     await serveStreamRpc(this.buildProtocol(), { readable, writable });
   }
