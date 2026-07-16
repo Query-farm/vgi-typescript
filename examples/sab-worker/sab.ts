@@ -116,7 +116,7 @@ export type ServeFn = (readable: ReadableStream<Uint8Array>, writable: ByteSink)
 // One slot's dispatcher loop: wait for a claim, serve one connection over c2w/w2c,
 // close w2c with the claim-id TOKEN (== our STATE, so a stale close after reclaim is
 // ignored by the client), wait for release, repeat. Async — never blocks the worker.
-async function serveSlotForever(ch: Channel, slot: number, serve: ServeFn): Promise<void> {
+export async function serveSlotForever(ch: Channel, slot: number, serve: ServeFn): Promise<void> {
   const sb = slotBase(ch, slot);
   for (;;) {
     // await_slot: STATE 0 -> claim id

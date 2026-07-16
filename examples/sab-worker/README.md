@@ -9,15 +9,20 @@ in-browser VGI worker.
 
 - **`sab.ts`** — the channel adapter. Opens the SAB channel (byte-exact to
   `vgi/src/include/vgi_sab_abi.hpp`) and presents each claimed slot's client→worker ring
-  as a `ReadableStream<Uint8Array>` and the worker→client ring as a `ByteSink`. One Web
-  Worker multiplexes **all** slots on the event loop via `Atomics.waitAsync` (no
-  blocking) — the JS analog of the Rust worker's thread-per-slot. Implements the same
+  as a `ReadableStream<Uint8Array>` and the worker→client ring as a `ByteSink`
+  (`serveSlotForever` awaits the ring via `Atomics.waitAsync`). Implements the same
   claim-id close **token** + reclaim **bail** invariants as the Rust/JS reference.
 - **`boot.ts`** — builds the VGI protocol (`buildVgiProtocol` + a `FunctionRegistry` +
-  a `ReadOnlyCatalogInterface` so `ATTACH` works) with two fixtures (`ts_count` table,
-  `ts_double` scalar) and drives `serveStream` over each slot. Imports from
-  `index.core.js` (the browser-safe entry — the top-level `Worker` class pulls in
+  a `ReadOnlyCatalogInterface` so `ATTACH` works) with fixtures (`ts_count`/`ts_double`,
+  plus `ts_probe`/`ts_peek` for the parallelism proof) and drives `serveStream`. Imports
+  from `index.core.js` (the browser-safe entry — the top-level `Worker` class pulls in
   Node-only `serveUnix`/`serveTcp`).
+  **Truly parallel (thread-per-slot):** the bridge spawns this once (the BOOT role); it
+  spawns ONE dedicated sub-Worker per channel slot (the SLOT role), sharing the SAB, so N
+  slots are served on N real threads — matching the Rust worker's emscripten
+  thread-per-slot (vs. multiplexing all slots on one event loop). Both roles run this same
+  bundle, keyed by the init message type; `ts_probe` (a busy-loop under a shared
+  concurrency counter) proves a peak of N simultaneous serves.
 
 Requires vgi-rpc ≥ the `ByteSink` serve writable (`serveStream({ writable })` accepting a
 `{ write(bytes) }` sink, not just a Node fd/Socket).

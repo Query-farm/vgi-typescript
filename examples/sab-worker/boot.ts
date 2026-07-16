@@ -1,13 +1,13 @@
-// TypeScript VGI worker served over the in-browser SAB (`worker:`) transport.
+// TypeScript VGI worker over the in-browser SAB (`worker:`) transport — TRULY PARALLEL.
 //
-// The extension's bridge spawns this as `new Worker(url)` and postMessages
-// `{type:'vgi-init', buffer, offset}` with DuckDB's shared linear memory (the SAB) +
-// the channel offset. We build the VGI protocol (a couple of fixtures + a read-only
-// catalog so ATTACH works) and drive `serveStream` over each SAB slot via
-// `serveChannel`. Proves a TS worker reaches parity with the Rust `sabtable` worker.
+// The extension bridge spawns this once (the BOOT role). Instead of multiplexing all
+// slots on one event loop, the boot worker spawns ONE dedicated sub-Worker per channel
+// slot (the SLOT role) — real OS threads sharing the SAB — so N slots are served in
+// genuine parallel, matching the Rust worker's emscripten thread-per-slot. Roles are
+// distinguished by the init message type; both run this same bundle.
 //
-// NB: import from `index.core.js` (the browser-safe entry) — the top-level `Worker`
-// class pulls in Node-only serveUnix/serveTcp, which don't exist in a Web Worker.
+// NB: import from `index.core.js` (browser-safe) — the top-level `Worker` class pulls
+// in Node-only serveUnix/serveTcp.
 import { Schema, Field, Int64 } from "@query-farm/apache-arrow";
 import {
   defineTableFunction,
@@ -20,14 +20,17 @@ import {
   type TableProcessParams,
 } from "../../src/index.core.js";
 import { serveStream, type OutputCollector } from "@query-farm/vgi-rpc";
-import { openChannel, serveChannel } from "./sab.js";
+import { openChannel, serveSlotForever } from "./sab.js";
 
 const N_SCHEMA = new Schema([new Field("value", new Int64(), true)]);
+
+// Cross-sub-Worker concurrency counter (its own SharedArrayBuffer, handed to every SLOT
+// worker): i32[0] = # of ts_probe serves active right now, i32[1] = peak ever seen.
+let probe: Int32Array | undefined;
 
 interface CountArgs { n: number }
 interface CountState { i: number; n: number }
 
-// ts_count(n) -> value 0..n-1 (producer; mirrors the Rust count_to).
 const tsCount = defineTableFunction<CountArgs, CountState>({
   name: "ts_count",
   description: "Emit value 0..n-1 (TypeScript SAB worker)",
@@ -43,7 +46,6 @@ const tsCount = defineTableFunction<CountArgs, CountState>({
   },
 });
 
-// ts_double(x) -> x*2 (scalar; exchange 1:1, null passthrough).
 const tsDouble = defineScalarFunction({
   name: "ts_double",
   description: "x * 2 (TypeScript SAB worker)",
@@ -60,31 +62,97 @@ const tsDouble = defineScalarFunction({
   },
 });
 
-// Build the protocol once: registry (dispatch) + a read-only catalog (so ATTACH +
-// wcat.main.<fn> discovery/binding works, in addition to direct vgi_table_function()).
+// ts_probe(busy_ms): declares maxWorkers=4 so a SINGLE scan fans out across DuckDB scan
+// threads → N `worker:` connections → N slots → N SLOT sub-Workers. Each produce holds a
+// shared concurrency guard while CPU-BUSY-LOOPING busy_ms. A busy loop (not setTimeout)
+// is the load-bearing detail: on a single async event loop it blocks, so only one probe
+// runs at a time (peak=1); N real sub-Worker threads run them at once (peak=N). ts_peek
+// reads the peak. This distinguishes true parallelism from async multiplexing.
+interface ProbeArgs { busy_ms: number }
+const tsProbe = defineTableFunction<ProbeArgs, { done: boolean }>({
+  name: "ts_probe",
+  description: "Parallel-serve probe: busy-loop under a shared concurrency guard",
+  args: { busy_ms: new Int64() },
+  maxWorkers: 4,
+  onBind: (_p: TableBindParams<ProbeArgs>) => ({ outputSchema: N_SCHEMA }),
+  initialState: () => ({ done: false }),
+  process: (p: TableProcessParams<ProbeArgs>, state: { done: boolean }, out: OutputCollector) => {
+    if (state.done) { out.finish(); return; }
+    state.done = true;
+    let peak = 1;
+    if (probe) {
+      const cur = Atomics.add(probe, 0, 1) + 1; // enter
+      let m = Atomics.load(probe, 1);
+      while (cur > m) { const prev = Atomics.compareExchange(probe, 1, m, cur); if (prev === m) { m = cur; break; } m = prev; }
+      const end = Date.now() + Math.max(0, Number(p.args.busy_ms));
+      while (Date.now() < end) { /* CPU busy — blocks this thread's event loop */ }
+      Atomics.sub(probe, 0, 1); // leave
+      peak = Atomics.load(probe, 1);
+    }
+    out.emit(batchFromColumns({ value: [BigInt(peak)] }, p.outputSchema));
+  },
+});
+
+const tsPeek = defineTableFunction<Record<string, never>, { done: boolean }>({
+  name: "ts_peek",
+  description: "Read back the peak simultaneous ts_probe serves",
+  args: {},
+  onBind: () => ({ outputSchema: N_SCHEMA }),
+  initialState: () => ({ done: false }),
+  process: (p: TableProcessParams<Record<string, never>>, state: { done: boolean }, out: OutputCollector) => {
+    if (state.done) { out.finish(); return; }
+    state.done = true;
+    out.emit(batchFromColumns({ value: [BigInt(probe ? Atomics.load(probe, 1) : 0)] }, p.outputSchema));
+  },
+});
+
+// Build the protocol once (each SLOT worker builds its own instance).
 const registry = new FunctionRegistry();
-registry.register(tsCount);
-registry.register(tsDouble);
-const catalog = { name: "main", schemas: [{ name: "main", functions: [tsCount, tsDouble] }] };
+for (const f of [tsCount, tsDouble, tsProbe, tsPeek]) registry.register(f);
+const catalog = { name: "main", schemas: [{ name: "main", functions: [tsCount, tsDouble, tsProbe, tsPeek] }] };
 const catalogInterface = new ReadOnlyCatalogInterface(catalog, registry);
 const protocol = buildVgiProtocol({ registry, catalogInterface, catalogName: "main" });
 
-function handleInit(d: { type?: string; buffer?: SharedArrayBuffer; offset?: number }) {
-  if (!d || d.type !== "vgi-init") return;
-  try {
-    const ch = openChannel(d.buffer as SharedArrayBuffer, d.offset as number);
-    serveChannel(ch, (readable, writable) => serveStream(protocol, { readable, writable }));
-    (self as unknown as { postMessage: (m: unknown) => void }).postMessage({ type: "vgi-ready" });
-  } catch (err) {
-    (self as unknown as { postMessage: (m: unknown) => void }).postMessage({ type: "vgi-error", error: String((err as Error)?.message ?? err) });
+const post = (m: unknown) => (self as unknown as { postMessage: (x: unknown) => void }).postMessage(m);
+
+function handle(d: {
+  type?: string;
+  buffer?: SharedArrayBuffer;
+  offset?: number;
+  slot?: number;
+  probeSab?: SharedArrayBuffer;
+}) {
+  if (!d) return;
+  // BOOT role: the bridge sent the channel. Spawn one SLOT sub-Worker per slot (real
+  // parallel threads sharing the SAB), then ack readiness to the bridge.
+  if (d.type === "vgi-init") {
+    try {
+      const ch = openChannel(d.buffer as SharedArrayBuffer, d.offset as number);
+      const probeSab = new SharedArrayBuffer(8); // [active, peak]
+      for (let s = 0; s < ch.nSlots; s++) {
+        const w = new Worker("ts-worker-boot.js");
+        w.postMessage({ type: "vgi-slot-init", buffer: d.buffer, offset: d.offset, slot: s, probeSab });
+      }
+      post({ type: "vgi-ready" });
+    } catch (err) {
+      post({ type: "vgi-error", error: String((err as Error)?.message ?? err) });
+    }
+    return;
+  }
+  // SLOT role: serve exactly one slot forever (this whole Worker is dedicated to it).
+  if (d.type === "vgi-slot-init") {
+    try {
+      probe = new Int32Array(d.probeSab as SharedArrayBuffer);
+      const ch = openChannel(d.buffer as SharedArrayBuffer, d.offset as number);
+      void serveSlotForever(ch, d.slot as number, (readable, writable) => serveStream(protocol, { readable, writable }));
+    } catch (err) {
+      post({ type: "vgi-error", error: String((err as Error)?.message ?? err) });
+    }
   }
 }
 
-// This module is loaded via a classic worker shim (ts-worker-boot.js) using dynamic
-// import(), because a classic Worker can't `new Worker(url,{type:module})` here and an
-// IIFE bundle can't use `import.meta` (arrow deps do). The shim buffers any messages
-// (the one-shot `vgi-init`) that arrived before this module finished importing into
-// globalThis.__vgiBuffered; drain them, then handle future ones.
+// The classic shim buffers messages that arrived before this module imported; drain, then
+// handle future ones (see ts-worker-boot.js).
 const buffered = (globalThis as unknown as { __vgiBuffered?: unknown[] }).__vgiBuffered;
-if (Array.isArray(buffered)) for (const d of buffered) handleInit(d as { type?: string });
-self.addEventListener("message", (e: MessageEvent) => handleInit(e.data));
+if (Array.isArray(buffered)) for (const d of buffered) handle(d as { type?: string });
+self.addEventListener("message", (e: MessageEvent) => handle(e.data));
