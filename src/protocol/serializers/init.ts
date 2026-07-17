@@ -53,6 +53,9 @@ const INIT_REQUEST_SCHEMA = makeSchema([
   field("phase", utf8(), true),
   field("execution_id", binary(), true),
   field("init_opaque_data", binary(), true),
+  // Per-substream identity for parallel streaming table-in-out (client-minted,
+  // stable across this substream's init/process/finalize; null when absent).
+  field("substream_id", binary(), true),
   // Order pushdown hints from DuckDB's RowGroupPruner (all null when no hint).
   field("order_by_column_name", utf8(), true),
   field("order_by_direction", utf8(), true),
@@ -87,6 +90,7 @@ export function serializeInitRequest(req: InitRequest): VgiBatch {
     phase: req.phase ?? null,
     execution_id: req.execution_id ?? null,
     init_opaque_data: req.init_opaque_data ?? null,
+    substream_id: req.substream_id ?? null,
     order_by_column_name: req.order_by_column_name ?? null,
     order_by_direction: req.order_by_direction ?? null,
     order_by_null_order: req.order_by_null_order ?? null,
@@ -176,6 +180,9 @@ export function deserializeInitRequest(
       : null,
     init_opaque_data: params.init_opaque_data
       ? toUint8Array(params.init_opaque_data)
+      : null,
+    substream_id: params.substream_id
+      ? toUint8Array(params.substream_id)
       : null,
     order_by_column_name: parseEnum(decodeDictValue(params.order_by_column_name)) ?? null,
     order_by_direction: parseDirection(decodeDictValue(params.order_by_direction)),

@@ -108,120 +108,75 @@ const repeat_inputs = defineTableInOutFunction<RepeatInputsArgs>({
 // 4. sum_all_columns - Column-wise sum aggregation
 // ============================================================================
 
-interface SumAllColumnsArgs {
-  logging: boolean;
-}
-
-interface SumAllColumnsState {
-  sums: Record<string, bigint | number>;
-}
-
-function buildNumericOutputSchema(inputSchema: Schema): Schema {
-  const fields: Field[] = [];
-  for (const field of inputSchema.fields) {
-    if (DataType.isInt(field.type)) {
-      fields.push(new Field(field.name, new Int64(), true));
-    } else if (DataType.isFloat(field.type)) {
-      fields.push(new Field(field.name, new Float64(), true));
-    }
-    // Skip non-numeric types
-  }
-  return new Schema(fields);
-}
-
 // sum_all_columns is now a TableBufferingFunction — see examples/table_buffering.ts.
 
 // ============================================================================
 // 5. exception_process - Throws on even batches
 // ============================================================================
 
-interface ExceptionProcessState {
-  batchCount: number;
-}
-
 // exception_process and exception_finalize are now TableBufferingFunctions —
 // see examples/table_buffering.ts.
 
+// sum_all_columns_simple_distributed — a *global* cross-substream reduction —
+// is now ALSO a TableBufferingFunction (see examples/table_buffering.ts): a
+// streaming table-in-out is a per-substream map, and under per-substream
+// worker fan-out a streaming finish() that merged across substreams would
+// produce a partial. Mirrors vgi-python's migration.
+
 // ============================================================================
-// 7. sum_all_columns_simple_distributed - Simpler distributed sum
+// 7. substream_partial_sum — per-substream partial sum emitted at finalize.
+//    Proves parallel streaming FINALIZE (Phase A / A4): process() accumulates
+//    only THIS substream's rows (emitting nothing but the lockstep empty
+//    batch), and finalize() emits ONE row = this substream's partial sum.
+//    DuckDB unions the substreams' finalize outputs, so the caller
+//    re-aggregates with an outer SELECT sum() — correct no matter how the
+//    rows were partitioned across substreams. This is NOT a global
+//    cross-substream combine (that is a TableBufferingFunction; see
+//    sum_all_columns_simple_distributed in table_buffering.ts). Mirrors
+//    vgi-python's SubstreamPartialSumFunction.
 // ============================================================================
 
-interface SimpleDistributedState {
-  partialSums: Record<string, bigint | number>;
+interface SubstreamPartialSumState {
+  total: number;
 }
 
-const sum_all_columns_simple_distributed = defineTableInOutFunction<Record<string, any>, SimpleDistributedState>({
-  name: "sum_all_columns_simple_distributed",
-  description: "Distributed sum using simple callback API",
+const substream_partial_sum = defineTableInOutFunction<Record<string, any>, SubstreamPartialSumState>({
+  name: "substream_partial_sum",
+  description: "Per-substream partial sum emitted at finalize (parallel streaming finalize)",
   onBind: (params: TableInOutBindParams) => {
     if (!params.bindCall.input_schema) {
       throw new Error("input_schema is required");
     }
-    return { outputSchema: buildNumericOutputSchema(params.bindCall.input_schema) };
+    const first = params.bindCall.input_schema.fields[0];
+    return { outputSchema: new Schema([new Field(first.name, new Int64(), true)]) };
   },
-  initialState: (params: TableInOutProcessParams) => {
-    const partialSums: Record<string, bigint | number> = {};
-    for (const field of params.outputSchema.fields) {
-      if (DataType.isInt(field.type)) {
-        partialSums[field.name] = BigInt(0);
-      } else {
-        partialSums[field.name] = 0;
-      }
-    }
-    return { partialSums };
-  },
+  initialState: () => ({ total: 0 }),
   process: (
     params: TableInOutProcessParams,
-    state: SimpleDistributedState,
+    state: SubstreamPartialSumState,
     batch: RecordBatch,
-    out: OutputCollector
+    out: OutputCollector,
   ) => {
-    // Accumulate column sums
-    for (const name of Object.keys(state.partialSums)) {
-      const col = batch.getChild(name);
-      if (!col) continue;
+    const col = batch.getChildAt(0);
+    if (col) {
       for (let i = 0; i < col.length; i++) {
         const v = col.get(i);
         if (v === null || v === undefined) continue;
-        if (typeof state.partialSums[name] === "bigint") {
-          const bigV = typeof v === "bigint" ? v : BigInt(v);
-          state.partialSums[name] = (state.partialSums[name] as bigint) + bigV;
-        } else {
-          state.partialSums[name] = (state.partialSums[name] as number) + Number(v);
-        }
+        state.total += Number(v);
       }
     }
-
+    // Accumulate only; emit nothing during processing (lockstep empty batch).
     out.emit(emptyBatch(params.outputSchema));
   },
-  finalize: (params: TableInOutProcessParams, states: SimpleDistributedState[]) => {
-    // Merge partial sums from all workers (framework auto-collected from SQLite)
-    const merged: Record<string, bigint | number> = {};
-    for (const field of params.outputSchema.fields) {
-      merged[field.name] = DataType.isInt(field.type) ? BigInt(0) : 0;
-    }
-    for (const s of states) {
-      if (!s?.partialSums) continue;
-      for (const field of params.outputSchema.fields) {
-        const v = s.partialSums[field.name];
-        if (v === null || v === undefined) continue;
-        if (typeof merged[field.name] === "bigint") {
-          merged[field.name] = (merged[field.name] as bigint) + (typeof v === "bigint" ? v : BigInt(v));
-        } else {
-          merged[field.name] = (merged[field.name] as number) + Number(v);
-        }
-      }
-    }
-    const columns: Record<string, any[]> = {};
-    for (const field of params.outputSchema.fields) {
-      columns[field.name] = [merged[field.name] ?? (DataType.isInt(field.type) ? BigInt(0) : 0)];
-    }
-    return [batchFromColumns(columns, params.outputSchema)];
+  finalize: (params: TableInOutProcessParams, states: SubstreamPartialSumState[]) => {
+    // `states` are THIS substream's accumulated states (one per worker that
+    // handled this substream's batches); their sum is this substream's partial.
+    let total = 0;
+    for (const s of states) total += Number(s?.total ?? 0);
+    const name = params.outputSchema.fields[0].name;
+    return [batchFromColumns({ [name]: [BigInt(total)] }, params.outputSchema)];
   },
-  examples: [
-    { sql: "SELECT * FROM sum_all_columns_simple_distributed((SELECT * FROM input_table))", description: "Sum columns using distributed workers with callback API" },
-  ],
-  categories: ["aggregation", "numeric", "distributed"],
+  categories: ["aggregation", "numeric"],
 });
 
 // ============================================================================
@@ -526,7 +481,7 @@ const secret_in_out = defineTableInOutFunction({
 export const tableInOutFunctions: VgiFunction[] = [
   echo,
   repeat_inputs,
-  sum_all_columns_simple_distributed,
+  substream_partial_sum,
   filter_by_setting,
   slow_cancellable_inout,
   unnest_tensor_rows,

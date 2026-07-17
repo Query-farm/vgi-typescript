@@ -51,6 +51,16 @@ export interface TableInOutProcessParams<TArgs = Record<string, any>> {
   pushdownFilters?: PushdownFilters;
   /** Shared storage for cross-phase and cross-worker data (SQLite-backed). */
   storage: BoundStorage;
+  /**
+   * Stable client-minted id for this streaming table-in-out substream.
+   * Present (identical across init / every process() / finalize) when the
+   * client fanned this function out across per-substream workers; use it to
+   * key per-substream accumulated state in shared storage so a finalize()
+   * that lands on a different HTTP backend than the process() calls still
+   * finds it. `null`/`undefined` for the serial path or an old client.
+   * Mirrors vgi-python's `ProcessParams.substream_id`.
+   */
+  substreamId?: Uint8Array | null;
 }
 
 // ============================================================================
@@ -273,6 +283,7 @@ export function defineTableInOutFunction<
         secrets,
         pushdownFilters,
         storage: boundStorage,
+        substreamId: request.substream_id ?? null,
       };
 
       const phase = request.phase;

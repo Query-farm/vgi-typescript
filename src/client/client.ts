@@ -170,6 +170,7 @@ export class VgiClient {
       tablesample_seed: ts?.seed == null ? null : BigInt(ts.seed),
       execution_id: opts?.executionId ?? null,
       init_opaque_data: null,
+      substream_id: null,
     };
 
     const initBatch = serializeInitRequest(initRequest);

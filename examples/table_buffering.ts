@@ -221,6 +221,74 @@ const sum_all_columns = defineTableBufferingFunction<SumArgs, LogDrainState>({
 });
 
 // ============================================================================
+// sum_all_columns_simple_distributed — distributed column-wise sum, a *global*
+// reduction over all input. Migrated from a streaming TableInOutFunction (whose
+// global finish(states) merged across substreams — invalid under per-substream
+// worker fan-out) to the buffered Sink+Combine+Source model, mirroring
+// vgi-python. Behaviourally identical to sum_all_columns (kept as a distinct
+// named fixture so its integration tests keep exercising the buffered path
+// under its own name); no named args.
+// ============================================================================
+
+function sumNumericBindPlain(params: TableBufferingBindParams) {
+  if (!params.bindCall.input_schema) throw new Error("input_schema is required");
+  const out = buildNumericOutputSchema(params.bindCall.input_schema);
+  if (out.fields.length === 0) {
+    throw new Error("sum_all_columns_simple_distributed requires at least one numeric input column");
+  }
+  return { outputSchema: out };
+}
+
+async function sumCombine(
+  _stateIds: Uint8Array[],
+  params: TableBufferingParams<any>,
+): Promise<Uint8Array[]> {
+  const merged: Record<string, bigint | number> = {};
+  for (const f of params.outputSchema.fields) {
+    merged[f.name] = DataType.isInt(f.type) ? 0n : 0;
+  }
+  const rows = await params.storage.stateLogScan(ns("partial"), ns(""));
+  for (const [, blob] of rows) {
+    const partial = deserializeBatch(blob);
+    for (const f of params.outputSchema.fields) {
+      const col = partial.getChild(f.name);
+      if (!col) continue;
+      const v = col.get(0);
+      if (v === null || v === undefined) continue;
+      if (typeof merged[f.name] === "bigint") {
+        merged[f.name] = (merged[f.name] as bigint) + (typeof v === "bigint" ? v : BigInt(v));
+      } else {
+        merged[f.name] = (merged[f.name] as number) + Number(v);
+      }
+    }
+  }
+  const columns: Record<string, any[]> = {};
+  for (const f of params.outputSchema.fields) columns[f.name] = [merged[f.name]];
+  const mergedBatch = batchFromColumns(columns, params.outputSchema);
+  await params.storage.stateAppend(ns("buf"), ns(""), serializeBatch(mergedBatch));
+  return [params.executionId];
+}
+
+const sum_all_columns_simple_distributed = defineTableBufferingFunction<Record<string, any>, LogDrainState>({
+  name: "sum_all_columns_simple_distributed",
+  description: "Distributed sum using the buffered (Sink+Combine+Source) model",
+  cardinality: () => ({ estimate: 1n, max: 1n }),
+  onBind: sumNumericBindPlain,
+  process: async (batch, params) => {
+    const partial = partialSumsBatch(batch, params.outputSchema);
+    await params.storage.stateAppend(ns("partial"), ns(""), serializeBatch(partial));
+    return params.executionId;
+  },
+  combine: sumCombine,
+  initialFinalizeState: () => initBufDrain(),
+  finalize: logDrainFinalize,
+  examples: [
+    { sql: "SELECT * FROM sum_all_columns_simple_distributed((SELECT * FROM input_table))", description: "Sum columns across buffered workers" },
+  ],
+  categories: ["aggregation", "numeric", "distributed"],
+});
+
+// ============================================================================
 // exception_process / exception_finalize — failure injection on sum shape
 // ============================================================================
 
@@ -563,6 +631,7 @@ export const tableBufferingFunctions: VgiFunction[] = [
   buffer_emit_wide,
   echo_buffering,
   sum_all_columns,
+  sum_all_columns_simple_distributed,
   exception_process,
   exception_finalize,
   crash_on_process,

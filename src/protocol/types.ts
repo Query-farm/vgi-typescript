@@ -119,6 +119,18 @@ export interface InitRequest {
   finalize_state_id: Uint8Array | null;
   execution_id: Uint8Array | null;
   init_opaque_data: Uint8Array | null;
+  /**
+   * Per-substream identity for parallel streaming table-in-out functions.
+   * A stable, CLIENT-minted id for one substream (one DuckDB PipelineExecutor),
+   * identical across this substream's init / every process tick / finalize.
+   * Unlike a worker-minted `execution_id`, it survives an HTTP load balancer
+   * dispatching each request to an arbitrary backend: a finalize that lands on
+   * a different backend than the process() calls can still key the substream's
+   * accumulated state (in shared storage) by `substream_id`. `null` when the
+   * client did not supply one (serial path, non-table-in-out functions, old
+   * clients). Mirrors vgi-python's `InitRequest.substream_id`.
+   */
+  substream_id: Uint8Array | null;
   // Order pushdown hints from DuckDB's RowGroupPruner (null when no hint).
   order_by_column_name: string | null;
   order_by_direction: OrderByDirection | null;
