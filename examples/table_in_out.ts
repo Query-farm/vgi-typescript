@@ -27,6 +27,7 @@ import {
   type TableInOutBindParams,
   type TableInOutProcessParams,
 } from "../src/index.js";
+import { createHash } from "node:crypto";
 import type { OutputCollector } from "@query-farm/vgi-rpc";
 import type { VgiFunction } from "../src/index.js";
 
@@ -826,6 +827,83 @@ const cached_echo = defineTableInOutFunction({
   categories: ["cache", "test"],
 });
 
+// Stable etag from a batch's content (deterministic across runs for equal
+// data). Only compared against etags this same worker minted earlier, so the
+// exact digest formula need not match other SDKs.
+function contentEtag(batch: RecordBatch): string {
+  const h = createHash("sha256");
+  for (let c = 0; c < batch.schema.fields.length; c++) {
+    const col = batch.getChildAt(c);
+    const vals: string[] = [];
+    if (col) {
+      for (let i = 0; i < batch.numRows; i++) {
+        const v = col.get(i);
+        vals.push(v === null || v === undefined ? "null" : String(v));
+      }
+    }
+    h.update(`${batch.schema.fields[c].name}:[${vals.join(",")}];`);
+  }
+  return h.digest("hex").slice(0, 16);
+}
+
+// Classic (TABLE-input) passthrough with the always-revalidate (304)
+// contract: CacheControl(ttl=0, etag, revalidatable) — stored but immediately
+// stale, so every repeat sends a conditional request (vgi.cache.if_none_match
+// on the input batch's metadata). On a matching validator the worker answers
+// with a 0-row not_modified batch and the C++ side reuses the stored bytes.
+const cached_reval_echo = defineTableInOutFunction({
+  name: "cached_reval_echo",
+  description: "Classic passthrough with always-revalidate (304 not_modified) contract",
+  onBind: (params: TableInOutBindParams) => {
+    if (!params.bindCall.input_schema) {
+      throw new Error("input_schema is required");
+    }
+    return { outputSchema: params.bindCall.input_schema };
+  },
+  process: (
+    params: TableInOutProcessParams,
+    _state: null,
+    batch: RecordBatch,
+    out: OutputCollector,
+  ) => {
+    const etag = contentEtag(batch);
+    if (params.ifNoneMatch === etag) {
+      // 304 Not Modified: the client's stored copy for this input is valid.
+      out.emit(
+        batch.slice(0, 0),
+        cacheControlMetadata({ notModified: true, ttl: 0, etag, revalidatable: true }),
+      );
+      return;
+    }
+    out.emit(batch, cacheControlMetadata({ ttl: 0, etag, revalidatable: true }));
+  },
+  categories: ["cache", "test"],
+});
+
+// Blended map (x -> x*2) with the always-revalidate (304) contract —
+// exercises the LATERAL exchange-cache revalidation path (M2).
+const cached_reval_double = defineRowTransformFunction({
+  name: "cached_reval_double",
+  description: "Blended map x->x*2 with always-revalidate (304 not_modified) contract",
+  args: { x: new Int64() },
+  argDocs: { x: "Input column" },
+  onBind: () => ({ outputSchema: CACHED_DOUBLE_SCHEMA }),
+  process: (params, batch, out) => {
+    const etag = contentEtag(batch);
+    if (params.ifNoneMatch === etag) {
+      out.emit(
+        batchFromColumns({ doubled: [] as bigint[] }, CACHED_DOUBLE_SCHEMA),
+        cacheControlMetadata({ notModified: true, ttl: 0, etag, revalidatable: true }),
+      );
+      return;
+    }
+    out.emit(
+      batchFromColumns({ doubled: doubledColumn(batch) }, CACHED_DOUBLE_SCHEMA),
+      cacheControlMetadata({ ttl: 0, etag, revalidatable: true }),
+    );
+  },
+  categories: ["blended", "cache", "test"],
+});
 
 export const tableInOutFunctions: VgiFunction[] = [
   echo,
@@ -845,4 +923,6 @@ export const tableInOutFunctions: VgiFunction[] = [
   hostile_provenance,
   cached_double,
   cached_echo,
+  cached_reval_echo,
+  cached_reval_double,
 ];

@@ -53,6 +53,8 @@ export {
   emptyBatch, batchFromRows, batchFromColumns, columnFromArray,
   iterRows, batchToScalarDict, batchToSecretDict, safeNumber, decodeDictValue,
   filterBatch, projectSchema, projectBatch,
+  // per-record-batch metadata attachment
+  withBatchMetadata,
   // canonical single-value read (backend-agnostic, lossless)
   readCanonicalValue,
   // IPC

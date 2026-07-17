@@ -41,6 +41,7 @@ export {
 export { filterBatch } from "./filter.js";
 export { projectSchema, projectBatch } from "./project.js";
 export { readCanonicalValue } from "./canonical.js";
+export { withBatchMetadata } from "./metadata.js";
 
 // IPC
 export {

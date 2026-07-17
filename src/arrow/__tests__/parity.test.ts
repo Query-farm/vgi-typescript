@@ -18,6 +18,7 @@ import {
   isList, isStruct, isDecimal, isDictionary, isTimestamp,
   TypeId,
   batchFromColumns, serializeBatch, deserializeBatch, iterRows,
+  withBatchMetadata,
   backend,
 } from "../index.js";
 
@@ -217,6 +218,25 @@ describe(`facade (backend=${backend.name})`, () => {
     const round = deserializeBatch(serializeBatch(batch));
     const rows = [...iterRows(round)];
     expect(rows.map((r) => r.color)).toEqual(["red", "green", "red", null, "blue"]);
+  });
+
+  test("withBatchMetadata surfaces the map on batch.metadata (incl. 0-row)", () => {
+    const sch = schema([field("v", int64(), true)]);
+    const md = new Map([["vgi.cache.not_modified", "1"], ["vgi.cache.etag", '"e1"']]);
+
+    // 0-row batch — the load-bearing case (a not_modified reply).
+    const empty = batchFromColumns({ v: [] as bigint[] }, sch);
+    const stamped = withBatchMetadata(empty, md);
+    expect(stamped.numRows).toBe(0);
+    expect((stamped as any).metadata?.get("vgi.cache.not_modified")).toBe("1");
+    // The original batch is not mutated.
+    expect((empty as any).metadata?.get?.("vgi.cache.not_modified")).toBeUndefined();
+
+    // Non-empty batch keeps its data.
+    const full = batchFromColumns({ v: [1n, 2n] }, sch);
+    const stamped2 = withBatchMetadata(full, md);
+    expect(stamped2.numRows).toBe(2);
+    expect((stamped2 as any).metadata?.get("vgi.cache.etag")).toBe('"e1"');
   });
 
   test("backend reports its own name", () => {

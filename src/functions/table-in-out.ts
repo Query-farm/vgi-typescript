@@ -3,7 +3,7 @@
 // Two-phase: INPUT phase receives and transforms batches,
 // FINALIZE phase emits final results.
 
-import { type VgiSchema, schema, type VgiField, type VgiDataType, type VgiBatch, nullType } from "../arrow/index.js";
+import { type VgiSchema, schema, type VgiField, type VgiDataType, type VgiBatch, nullType, withBatchMetadata } from "../arrow/index.js";
 import type { OutputCollector } from "@query-farm/vgi-rpc";
 import { DEFAULT_MAX_WORKERS, TableInOutPhase } from "../types.js";
 import type {
@@ -20,6 +20,7 @@ import type {
 } from "./types.js";
 import type { ArgumentSpec } from "../arguments/argument-spec.js";
 import { batchToScalarDict, batchToSecretDict, projectSchema, projectBatch, emptyBatch } from "../util/arrow/index.js";
+import { CACHE_IF_MODIFIED_SINCE_KEY, CACHE_IF_NONE_MATCH_KEY } from "../cache-control.js";
 import {
   buildJoinKeysLookup,
   deserializeFilters,
@@ -61,6 +62,18 @@ export interface TableInOutProcessParams<TArgs = Record<string, any>> {
    * Mirrors vgi-python's `ProcessParams.substream_id`.
    */
   substreamId?: Uint8Array | null;
+  /**
+   * Conditional-revalidation validator (exchange-mode result cache): the
+   * client holds a stale cached result for THIS input unit and asks the
+   * worker to confirm freshness cheaply. When set, process() may answer with
+   * a 0-row `cacheControlMetadata({ notModified: true, ... })` batch instead
+   * of recomputing. Rides the input batch's custom metadata (attached by the
+   * C++ WriteInputBatch). Undefined on a normal call.
+   */
+  ifNoneMatch?: string;
+  /** RFC 3339 Last-Modified validator for conditional revalidation.
+   *  Companion to {@link ifNoneMatch}. Undefined on a normal call. */
+  ifModifiedSince?: string;
 }
 
 // ============================================================================
@@ -365,12 +378,18 @@ export function defineTableInOutFunction<
           input: VgiBatch,
           out: OutputCollector
         ) => {
-          // Reconcile emitted batches to the (possibly projected) output schema
+          // Surface conditional-revalidation validators off the input batch's
+          // custom metadata (attached by the C++ WriteInputBatch), so process()
+          // can answer a 0-row `notModified` batch instead of recomputing.
+          applyRevalidationValidators(eState.processParams, input);
+          // Bake emit metadata onto the batch (0-row HTTP survival), then
+          // reconcile emitted batches to the (possibly projected) output schema
           // by name — a process() may emit its full declared schema and let the
           // framework project (mirrors Python's OutputCollector.emit reconcile).
-          let wrappedOut: OutputCollector = projIds
-            ? makeSchemaReconcilingCollector(out, outputSchema)
-            : out;
+          let wrappedOut: OutputCollector = makeMetadataBakingCollector(out);
+          if (projIds) {
+            wrappedOut = makeSchemaReconcilingCollector(wrappedOut, outputSchema);
+          }
           if (config.autoApplyFilters && pushdownFilters) {
             wrappedOut = new FilteringOutputCollector(wrappedOut, pushdownFilters) as unknown as OutputCollector;
           }
@@ -392,6 +411,62 @@ export function defineTableInOutFunction<
 // ============================================================================
 // Shared INPUT-phase helpers
 // ============================================================================
+
+/**
+ * Surface conditional-revalidation validators (exchange-mode result cache)
+ * from an input batch's custom metadata onto the process params. The C++
+ * WriteInputBatch attaches `vgi.cache.if_none_match` / `if_modified_since`
+ * when it holds a stale-but-revalidatable cached result for this input unit.
+ * Cleared (undefined) when absent so a later batch on the same stream doesn't
+ * see a stale validator.
+ */
+function applyRevalidationValidators(
+  params: { ifNoneMatch?: string; ifModifiedSince?: string },
+  input: VgiBatch,
+): void {
+  const md: Map<string, string> | undefined = (input as any)?.metadata;
+  params.ifNoneMatch = md?.get(CACHE_IF_NONE_MATCH_KEY);
+  params.ifModifiedSince = md?.get(CACHE_IF_MODIFIED_SINCE_KEY);
+}
+
+/**
+ * Wrap an OutputCollector so a pre-built batch emitted WITH metadata carries
+ * that metadata on the batch object itself (merged over any metadata the
+ * batch already had), in addition to the separate emit argument.
+ *
+ * Load-bearing for the HTTP transport: vgi-rpc's HTTP exchange dispatch
+ * merges the separate emit-metadata argument into the response batch only
+ * when `batch.numRows > 0` — a 0-row emit (e.g. a conditional-revalidation
+ * `notModified` reply) would silently lose its `vgi.cache.*` keys. A
+ * batch-carried map survives that path on both transports.
+ */
+function makeMetadataBakingCollector(inner: OutputCollector): OutputCollector {
+  return new Proxy(inner, {
+    get(target, prop, receiver) {
+      if (prop === "emit") {
+        return function (
+          batchOrColumns: VgiBatch | Record<string, any[]>,
+          metadata?: Map<string, string>,
+        ) {
+          if (
+            batchOrColumns &&
+            typeof (batchOrColumns as any).getChild === "function" &&
+            metadata &&
+            metadata.size > 0
+          ) {
+            const batch = batchOrColumns as VgiBatch;
+            const merged = new Map<string, string>((batch as any).metadata ?? []);
+            for (const [k, v] of metadata) merged.set(k, v);
+            return (target as any).emit(withBatchMetadata(batch, merged), merged);
+          }
+          return (target as any).emit(batchOrColumns, metadata);
+        };
+      }
+      const v = Reflect.get(target, prop, receiver);
+      return typeof v === "function" ? v.bind(target) : v;
+    },
+  });
+}
 
 /**
  * Wrap an OutputCollector so each emitted pre-built batch is reconciled to the
@@ -758,9 +833,11 @@ export function defineRowTransformFunction<
           input: VgiBatch,
           out: OutputCollector,
         ) => {
-          let wrappedOut: OutputCollector = projIds
-            ? makeSchemaReconcilingCollector(out, outputSchema)
-            : out;
+          applyRevalidationValidators(eState.processParams, input);
+          let wrappedOut: OutputCollector = makeMetadataBakingCollector(out);
+          if (projIds) {
+            wrappedOut = makeSchemaReconcilingCollector(wrappedOut, outputSchema);
+          }
           if (config.autoApplyFilters && pushdownFilters) {
             wrappedOut = new FilteringOutputCollector(wrappedOut, pushdownFilters) as unknown as OutputCollector;
           }
