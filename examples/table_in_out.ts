@@ -18,6 +18,7 @@ import {
   defineRowTransformFunction,
   parentRowsMetadata,
   PARENT_ROW_METADATA_KEY,
+  cacheControlMetadata,
   batchFromColumns,
   emptyBatch,
   serializeBatch,
@@ -765,6 +766,67 @@ const hostile_provenance = defineRowTransformFunction<HostileNamedArgs>({
   categories: ["blended", "test", "adversarial"],
 });
 
+// ============================================================================
+// Exchange-mode result-cache fixtures (M1/M2) + always-revalidate (304)
+// fixtures. Port vgi-python's CachedDoubleFunction / CachedEchoFunction /
+// CachedRevalidatingEchoFunction / CachedRevalidatingDoubleFunction.
+// ============================================================================
+
+const CACHED_DOUBLE_SCHEMA = new Schema([new Field("doubled", new Int64(), true)]);
+
+function doubledColumn(batch: RecordBatch): (bigint | null)[] {
+  const xs = batch.getChild("x");
+  const doubled: (bigint | null)[] = [];
+  for (let i = 0; i < batch.numRows; i++) {
+    const v = xs?.get(i);
+    doubled.push(v === null || v === undefined ? null : BigInt(v) * 2n);
+  }
+  return doubled;
+}
+
+// Cacheable blended 1->1 map (x -> x*2) advertising vgi.cache.*. Backs
+// exchange-mode result-cache tests on BOTH call shapes served by the same
+// registration: the streaming column form and the correlated LATERAL form.
+const cached_double = defineRowTransformFunction({
+  name: "cached_double",
+  description: "Cacheable blended map x -> x*2 (advertises vgi.cache.ttl)",
+  args: { x: new Int64() },
+  argDocs: { x: "Input column" },
+  onBind: () => ({ outputSchema: CACHED_DOUBLE_SCHEMA }),
+  process: (_params, batch, out) => {
+    out.emit(
+      batchFromColumns({ doubled: doubledColumn(batch) }, CACHED_DOUBLE_SCHEMA),
+      cacheControlMetadata({ ttl: 300 }),
+    );
+  },
+  categories: ["blended", "cache", "test"],
+});
+
+// Cacheable CLASSIC (TABLE-input) streaming table-in-out passthrough. Called
+// as FROM cached_echo((SELECT ...)) — routed through the streaming
+// VgiTableInOutFunction exchange (M1 per-input-batch memoization). Advertises
+// a ttl on each output batch.
+const cached_echo = defineTableInOutFunction({
+  name: "cached_echo",
+  description: "Cacheable classic (TABLE-input) passthrough (advertises vgi.cache.ttl)",
+  onBind: (params: TableInOutBindParams) => {
+    if (!params.bindCall.input_schema) {
+      throw new Error("input_schema is required");
+    }
+    return { outputSchema: params.bindCall.input_schema };
+  },
+  process: (
+    _params: TableInOutProcessParams,
+    _state: null,
+    batch: RecordBatch,
+    out: OutputCollector,
+  ) => {
+    out.emit(batch, cacheControlMetadata({ ttl: 300 }));
+  },
+  categories: ["cache", "test"],
+});
+
+
 export const tableInOutFunctions: VgiFunction[] = [
   echo,
   repeat_inputs,
@@ -781,4 +843,6 @@ export const tableInOutFunctions: VgiFunction[] = [
   blended_explode,
   projectable_blended,
   hostile_provenance,
+  cached_double,
+  cached_echo,
 ];

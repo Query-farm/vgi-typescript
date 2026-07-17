@@ -23,6 +23,7 @@ import {
   batchFromColumns,
   serializeBatch,
   deserializeBatch,
+  cacheControlMetadata,
   type TableBufferingBindParams,
   type TableBufferingParams,
   type VgiFunction,
@@ -286,6 +287,43 @@ const sum_all_columns_simple_distributed = defineTableBufferingFunction<Record<s
     { sql: "SELECT * FROM sum_all_columns_simple_distributed((SELECT * FROM input_table))", description: "Sum columns across buffered workers" },
   ],
   categories: ["aggregation", "numeric", "distributed"],
+});
+
+// ============================================================================
+// cached_sum_all — cacheable BUFFERED whole-input reducer (column-wise sum)
+// advertising vgi.cache.*. Reuses the sum_all_columns Sink+Combine shape and a
+// finalize that advertises a ttl on its output — backs the exchange-mode
+// buffered result cache (M3, cache/exchange_buffered.test). A repeat query with
+// the same input multiset (any order) replays the cached single-row result and
+// skips the combine + finalize-drain on the worker. Deterministic output (the
+// sum) keeps values identical. Mirrors vgi-python's CachedSumAllColumnsFunction.
+// ============================================================================
+
+const cached_sum_all = defineTableBufferingFunction<SumArgs, LogDrainState>({
+  name: "cached_sum_all",
+  description: "Cacheable column-wise sum across all input (advertises vgi.cache.ttl)",
+  namedArgs: { logging: new Bool() },
+  argDefaults: { logging: false },
+  cardinality: () => ({ estimate: 1n, max: 1n }),
+  onBind: sumNumericBind,
+  process: async (batch, params) => {
+    const partial = partialSumsBatch(batch, params.outputSchema);
+    await params.storage.stateAppend(ns("partial"), ns(""), serializeBatch(partial));
+    return params.executionId;
+  },
+  combine: sumCombine,
+  initialFinalizeState: () => initBufDrain(),
+  finalize: async (params, _fid, state, out) => {
+    const rows = await params.storage.stateLogScan(ns(state.ns), ns(""), state.afterId, 1);
+    if (rows.length === 0) {
+      out.finish();
+      return;
+    }
+    const [logId, value] = rows[0];
+    out.emit(deserializeBatch(value), cacheControlMetadata({ ttl: 300 }));
+    state.afterId = logId;
+  },
+  categories: ["aggregation", "cache", "test"],
 });
 
 // ============================================================================
@@ -632,6 +670,7 @@ export const tableBufferingFunctions: VgiFunction[] = [
   echo_buffering,
   sum_all_columns,
   sum_all_columns_simple_distributed,
+  cached_sum_all,
   exception_process,
   exception_finalize,
   crash_on_process,
