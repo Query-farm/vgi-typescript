@@ -445,6 +445,15 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
             (f.kind as string) === "table_buffering" && f.meta.sinkOrderDependent === true,
           requires_input_batch_index:
             (f.kind as string) === "table_buffering" && f.meta.requiresInputBatchIndex === true,
+          // Blended ("UNNEST-style") table-in-out: positional args ARE the
+          // per-row input columns (real typed args, no TABLE placeholder), so
+          // one registration serves literal / column / LATERAL call shapes.
+          // Set by defineRowTransformFunction; the C++ extension reads it to
+          // enter the in-out registration branch with real-typed args and
+          // drive the literal single-row scan-mode. False for scalars —
+          // mirrors Python's `input_from_args=False if is_scalar else ...`.
+          input_from_args:
+            f.kind === "table_in_out" && f.meta.inputFromArgs === true,
           required_settings: meta.requiredSettings,
           required_secrets: requiredSecrets.map((s) => ({
             secret_type: s.secret_type,

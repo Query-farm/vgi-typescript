@@ -15,6 +15,7 @@ import {
 } from "@query-farm/apache-arrow";
 import {
   defineTableInOutFunction,
+  defineRowTransformFunction,
   batchFromColumns,
   emptyBatch,
   serializeBatch,
@@ -478,6 +479,163 @@ const secret_in_out = defineTableInOutFunction({
   categories: ["transform", "secret"],
 });
 
+// ============================================================================
+// Blended ("UNNEST-style") fixtures — Phase B. A blended function's POSITIONAL
+// args ARE its per-row input columns (real typed args, no synthetic TABLE
+// placeholder), so ONE registration serves the literal call (f(52,13)), the
+// column call (FROM t, f(t.x,t.y)), and LATERAL. Ports vgi-python's
+// GeoEncodeFunction / GeoEncode3Function / RowSumFunction / BlendedDropFunction
+// / BlendedExplodeFunction / ProjectableBlendedFunction /
+// HostileProvenanceFunction from vgi/_test_fixtures/table_in_out.py.
+// ============================================================================
+
+// Python-float-repr formatting for a rounded double: integral values render
+// with a trailing ".0" (round(52.0, 4) -> "52.0"), matching the Python
+// fixture's f"{round(lat, p)}" output the shared blended.test asserts.
+function fmtRounded(v: number, precision: number): string {
+  const f = 10 ** precision;
+  const r = Math.round(v * f) / f;
+  return Number.isInteger(r) ? `${r.toFixed(1)}` : String(r);
+}
+
+const GEOHASH_SCHEMA = new Schema([new Field("geohash", new Utf8(), true)]);
+
+interface GeoNamedArgs {
+  precision: number;
+}
+
+// geo_encode(latitude, longitude) — the simple blended fixture: one
+// registration serves every call shape. latitude/longitude are POSITIONAL
+// args = the per-row input columns (read from `batch` by declared name — the
+// C++ bind builds the input schema from the declared arg names and casts a
+// literal call's constants to the declared types). `precision` is a named
+// bind-time option surfaced on params.args. Emits one "<lat>:<lon>" string
+// per input row, rounded to `precision` decimals — deterministic so tests
+// assert exact values.
+const geo_encode = defineRowTransformFunction<GeoNamedArgs>({
+  name: "geo_encode",
+  description: "Blended per-row geo encoder (lat, lon -> geohash)",
+  args: { latitude: new Float64(), longitude: new Float64() },
+  argDocs: {
+    latitude: "Latitude input column",
+    longitude: "Longitude input column",
+    precision: "Rounding precision",
+  },
+  namedArgs: { precision: new Int64() },
+  argDefaults: { precision: 4 },
+  onBind: () => ({ outputSchema: GEOHASH_SCHEMA }),
+  process: (params, batch, out) => {
+    const precision = Number(params.args.precision ?? 4);
+    const lats = batch.getChild("latitude");
+    const lons = batch.getChild("longitude");
+    const codes: (string | null)[] = [];
+    for (let i = 0; i < batch.numRows; i++) {
+      const lat = lats?.get(i);
+      const lon = lons?.get(i);
+      codes.push(
+        lat === null || lat === undefined || lon === null || lon === undefined
+          ? null
+          : `${fmtRounded(Number(lat), precision)}:${fmtRounded(Number(lon), precision)}`,
+      );
+    }
+    out.emit(batchFromColumns({ geohash: codes }, GEOHASH_SCHEMA));
+  },
+  categories: ["geo", "blended"],
+});
+
+// Arity-overloaded blended geo encoder — same name ("geo_encode"), 3
+// positional input columns (lat, lon, alt). Proves same-name blended
+// overloads resolve by INPUT-COLUMN arity: blended functions use REAL value
+// types (no TABLE-typed arg), so DuckDB permits multiple overloads.
+const geo_encode3 = defineRowTransformFunction<GeoNamedArgs>({
+  name: "geo_encode",
+  description: "Blended per-row geo encoder (lat, lon, alt -> geohash)",
+  args: { latitude: new Float64(), longitude: new Float64(), altitude: new Float64() },
+  argDocs: {
+    latitude: "Latitude input column",
+    longitude: "Longitude input column",
+    altitude: "Altitude input column",
+    precision: "Rounding precision",
+  },
+  namedArgs: { precision: new Int64() },
+  argDefaults: { precision: 4 },
+  onBind: () => ({ outputSchema: GEOHASH_SCHEMA }),
+  process: (params, batch, out) => {
+    const p = Number(params.args.precision ?? 4);
+    const lats = batch.getChild("latitude");
+    const lons = batch.getChild("longitude");
+    const alts = batch.getChild("altitude");
+    const codes: (string | null)[] = [];
+    for (let i = 0; i < batch.numRows; i++) {
+      const lat = lats?.get(i);
+      const lon = lons?.get(i);
+      const alt = alts?.get(i);
+      codes.push(
+        lat == null || lon == null || alt == null
+          ? null
+          : `${fmtRounded(Number(lat), p)}:${fmtRounded(Number(lon), p)}:${fmtRounded(Number(alt), p)}`,
+      );
+    }
+    out.emit(batchFromColumns({ geohash: codes }, GEOHASH_SCHEMA));
+  },
+  categories: ["geo", "blended"],
+});
+
+// Blended VARARGS row-wise sum — proves the varargs input path. `values` is a
+// varargs positional arg: the per-row input is N columns of the declared
+// type. A varargs blended function has no per-column declared names (the C++
+// bind names them col0..colN-1), so process() reads the columns POSITIONALLY
+// off `batch`. row_sum(1,2,3) -> 6; FROM t, row_sum(t.a,t.b,t.c) sums each
+// row's columns. The `absolute` named option is surfaced on params.args.
+interface RowSumNamedArgs {
+  absolute: boolean;
+}
+
+const ROW_SUM_SCHEMA = new Schema([new Field("row_sum", new Float64(), true)]);
+
+const row_sum = defineRowTransformFunction<RowSumNamedArgs>({
+  name: "row_sum",
+  description: "Blended per-row varargs sum",
+  varargs: { name: "values", type: new Float64(), doc: "Numeric input columns" },
+  namedArgs: { absolute: new Bool() },
+  argDocs: { absolute: "Sum absolute values" },
+  argDefaults: { absolute: false },
+  onBind: () => ({ outputSchema: ROW_SUM_SCHEMA }),
+  process: (params, batch, out) => {
+    const absolute = Boolean(params.args.absolute);
+    const sums: number[] = new Array(batch.numRows).fill(0);
+    for (let c = 0; c < batch.schema.fields.length; c++) {
+      const col = batch.getChildAt(c);
+      if (!col) continue;
+      for (let i = 0; i < batch.numRows; i++) {
+        const v = col.get(i);
+        if (v === null || v === undefined) continue;
+        const n = Number(v);
+        sums[i] += absolute ? Math.abs(n) : n;
+      }
+    }
+    out.emit(batchFromColumns({ row_sum: sums }, ROW_SUM_SCHEMA));
+  },
+  categories: ["numeric", "blended"],
+});
+
+// Blended 1->0 map: emits a single 0-row output batch for its input row.
+// Exercises the literal scan-mode drain loop's "empty-but-not-EOS -> keep
+// reading, finish only at true EOS" branch (no infinite loop).
+const BLENDED_DROP_SCHEMA = new Schema([new Field("v", new Int64(), true)]);
+
+const blended_drop = defineRowTransformFunction({
+  name: "blended_drop",
+  description: "Blended 1->0 map emitting a single 0-row batch (literal scan-mode)",
+  args: { x: new Float64() },
+  argDocs: { x: "Input column (ignored)" },
+  onBind: () => ({ outputSchema: BLENDED_DROP_SCHEMA }),
+  process: (_params, _batch, out) => {
+    out.emit(batchFromColumns({ v: [] as bigint[] }, BLENDED_DROP_SCHEMA));
+  },
+  categories: ["blended", "test"],
+});
+
 export const tableInOutFunctions: VgiFunction[] = [
   echo,
   repeat_inputs,
@@ -487,4 +645,8 @@ export const tableInOutFunctions: VgiFunction[] = [
   unnest_tensor_rows,
   echo_witness,
   secret_in_out,
+  geo_encode,
+  geo_encode3,
+  row_sum,
+  blended_drop,
 ];

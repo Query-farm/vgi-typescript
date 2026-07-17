@@ -123,16 +123,40 @@ function filterByArgumentTypes(
         matched = r2.matched;
       }
     } else {
-      // Table functions: compare positional arg types
+      // Table functions: compare declared positional specs against the
+      // argument types.
       const posSpecs = specs
         .filter(s => typeof s.position === "number" && !s.isTableInput)
         .sort((a, b) => (a.position as number) - (b.position as number));
 
       const posTypes: (VgiDataType | null)[] = [];
-      const argsSchema = args.argumentsSchema;
-      for (let i = 0; i < args.positional.length; i++) {
-        const field = argsSchema?.fields.find(f => f.name === `positional_${i}`);
-        posTypes.push(field ? field.type : null);
+      if (func.meta.inputFromArgs) {
+        // Blended ("UNNEST-style"): the positional args ARE the per-row input
+        // columns, so they are NOT on the wire (args.positional is empty).
+        // Score the declared positional specs against the INPUT_SCHEMA column
+        // types instead (coercibly, via scoreTypes), so same-arity overloads
+        // disambiguate by type — matching what DuckDB's binder resolved.
+        // Expand a trailing varargs spec across the remaining input columns
+        // (mirrors the scalar column path).
+        if (inputSchema) {
+          let varArgsSpec: ArgumentSpec | null = null;
+          for (const spec of posSpecs) {
+            if (spec.isVarargs) varArgsSpec = spec;
+            const pos = spec.position as number;
+            posTypes.push(pos < inputSchema.fields.length ? inputSchema.fields[pos].type : null);
+          }
+          if (varArgsSpec) {
+            for (let i = (varArgsSpec.position as number) + 1; i < inputSchema.fields.length; i++) {
+              posTypes.push(inputSchema.fields[i].type);
+            }
+          }
+        }
+      } else {
+        const argsSchema = args.argumentsSchema;
+        for (let i = 0; i < args.positional.length; i++) {
+          const field = argsSchema?.fields.find(f => f.name === `positional_${i}`);
+          posTypes.push(field ? field.type : null);
+        }
       }
       const r = scoreTypes(posSpecs, posTypes);
       score += r.score;
@@ -207,6 +231,30 @@ export class FunctionRegistry {
         );
         const hasVarargs = posSpecs.some(s => s.isVarargs);
         const nonVarargs = posSpecs.filter(s => !s.isVarargs).length;
+        if (func.meta.inputFromArgs) {
+          // Blended ("UNNEST-style") overload: the positional params ARE the
+          // per-row input columns, so they are NOT on the wire
+          // (args.positional is empty). Resolve by INPUT-COLUMN count (arity)
+          // against the declared positional params instead — e.g.
+          // geo_encode(52,13) -> 2 input cols -> the 2-positional overload.
+          // Named (str-position) args still come from the wire arguments.
+          const numInputCols = context.inputSchema?.fields.length ?? 0;
+          if (hasVarargs) {
+            if (numInputCols < nonVarargs) return false;
+          } else if (numInputCols !== posSpecs.length) {
+            return false;
+          }
+          // Unknown named argument disqualifies the overload.
+          const validNamed = new Set(
+            func.argumentSpecs
+              .filter(s => typeof s.position === "string")
+              .map(s => s.position as string),
+          );
+          for (const key of args.named.keys()) {
+            if (!validNamed.has(key)) return false;
+          }
+          return true;
+        }
         if (hasVarargs) {
           return numArgs >= nonVarargs;
         }

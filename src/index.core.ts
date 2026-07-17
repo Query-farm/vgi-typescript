@@ -39,7 +39,15 @@ export {
   type AggregateUpdateParams,
   type AggregateFinalizeParams,
 } from "./functions/aggregate.js";
-export { defineTableInOutFunction, type TableInOutConfig, type TableInOutBindParams, type TableInOutProcessParams } from "./functions/table-in-out.js";
+export {
+  defineTableInOutFunction,
+  defineRowTransformFunction,
+  type TableInOutConfig,
+  type TableInOutBindParams,
+  type TableInOutProcessParams,
+  type RowTransformConfig,
+  type RowTransformProcessParams,
+} from "./functions/table-in-out.js";
 export {
   defineTableBufferingFunction,
   type TableBufferingConfig,

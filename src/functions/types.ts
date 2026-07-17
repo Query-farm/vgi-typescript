@@ -69,6 +69,18 @@ export interface FunctionMeta {
    */
   hasFinalize?: boolean;
   /**
+   * Blended ("UNNEST-style") table-in-out: the function's positional args ARE
+   * its per-row input columns (real typed args, no synthetic TABLE
+   * placeholder), so ONE registration serves f(52,13) (literal -> 1 input
+   * row), FROM t, f(t.x, t.y) (columns -> streaming), and LATERAL f(t.x,t.y).
+   * Set by {@link defineRowTransformFunction}; surfaces as
+   * FunctionInfo.input_from_args. The C++ extension reads it to enter the
+   * in-out registration branch with real-typed args and drive the literal
+   * single-row scan-mode. Mirrors vgi-python's RowTransformFunction /
+   * ResolvedMetadata.input_from_args.
+   */
+  inputFromArgs?: boolean;
+  /**
    * table_buffering: force ParallelSink=false in the C++ operator
    * (single-thread, source-ordered ingest).
    */
