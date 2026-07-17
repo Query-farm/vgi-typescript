@@ -44,6 +44,7 @@ import {
   type ArgumentConstraints,
 } from "../arguments/argument-spec.js";
 import { batchToScalarDict, batchToSecretDict, batchFromColumns, projectBatch, safeNumber } from "../util/arrow/index.js";
+import { cacheControlMetadata, type CacheControl } from "../cache-control.js";
 
 // ============================================================================
 // Scalar Bind Parameters
@@ -181,6 +182,15 @@ export interface ScalarFunctionConfig<
   maxWorkers?: number;
   requiredSettings?: string[];
   requiredSecrets?: string[];
+  /**
+   * Result-cache opt-in: when set, this CacheControl's `vgi.cache.*` metadata
+   * rides every output batch's custom metadata (per-batch — NOT the schema,
+   * which the IPC stream fixes at open), so the extension can memoize the
+   * scalar's output per distinct input value. A pure, deterministic scalar
+   * only — advertising this on a non-pure scalar serves stale rows. Mirrors
+   * vgi-python's `ScalarFunction.CACHE_CONTROL`.
+   */
+  cacheControl?: CacheControl;
 }
 
 export function defineScalarFunction<
@@ -394,7 +404,13 @@ export function defineScalarFunction<
             );
           }
 
-          out.emit(outputBatch);
+          // Result-cache opt-in: a scalar declaring cacheControl rides its
+          // vgi.cache.* keys on the emit path's per-batch custom metadata so
+          // the extension can memoize the output per distinct input value.
+          out.emit(
+            outputBatch,
+            config.cacheControl ? cacheControlMetadata(config.cacheControl) : undefined,
+          );
         },
       };
     },

@@ -335,6 +335,71 @@ const double_fn = defineScalarFunction({
 });
 
 // ============================================================================
+// 4b. Cacheable scalar fixtures — result-cache opt-in via cacheControl.
+// Port vgi-python's CachedDoubleScalarFunction / CachedAddConstScalarFunction /
+// CachedLabelScalarFunction (vgi/_test_fixtures/scalar/arithmetic.py). Backs
+// the extension's scalar per-value memoization tests (scalar/per_value*.test,
+// cache/per_value_*.test). Deterministic 1:1 maps, so opting into the result
+// cache is sound.
+// ============================================================================
+
+// cached_double_scalar — doubles a BIGINT value, advertises vgi.cache.ttl.
+const cached_double_scalar = defineScalarFunction({
+  name: "cached_double_scalar",
+  description: "Doubles a BIGINT value (advertises vgi.cache.ttl for per-value memo)",
+  params: { value: new Int64() },
+  argDocs: { value: "Value to double" },
+  returns: new Int64(),
+  cacheControl: { ttl: 300 },
+  compute: (batch: RecordBatch) => {
+    const values = getColumnValues(batch, 0);
+    return values.map((v: any) =>
+      v === null || v === undefined ? null : BigInt(v) * 2n,
+    );
+  },
+});
+
+// cached_add_const — value + addend (a CONST param), cacheable. Two calls with
+// the same value but different addend must NOT cross-serve: the const arg is
+// folded into the per-value cache key.
+const cached_add_const = defineScalarFunction({
+  name: "cached_add_const",
+  description: "value + const addend (advertises vgi.cache.ttl)",
+  params: { value: new Int64() },
+  constParams: { addend: new Int64() },
+  argDocs: { value: "Value", addend: "Constant addend" },
+  returns: new Int64(),
+  cacheControl: { ttl: 300 },
+  compute: (batch: RecordBatch, consts: any) => {
+    const addend = BigInt(consts.addend ?? 0);
+    const values = getColumnValues(batch, 0);
+    return values.map((v: any) =>
+      v === null || v === undefined ? null : BigInt(v) + addend,
+    );
+  },
+});
+
+// cached_label — VARCHAR output with NULLs, cacheable. Returns 'lbl-<value>'
+// for value >= 0, NULL otherwise, so a cached per-value entry must round-trip
+// both a heap string and a null.
+const cached_label = defineScalarFunction({
+  name: "cached_label",
+  description: "value -> 'lbl-<value>' or NULL for negatives (advertises vgi.cache.ttl)",
+  params: { value: new Int64() },
+  argDocs: { value: "Value" },
+  returns: new Utf8(),
+  cacheControl: { ttl: 300 },
+  compute: (batch: RecordBatch) => {
+    const values = getColumnValues(batch, 0);
+    return values.map((v: any) => {
+      if (v === null || v === undefined) return null;
+      const n = typeof v === "bigint" ? v : BigInt(v);
+      return n >= 0n ? `lbl-${n}` : null;
+    });
+  },
+});
+
+// ============================================================================
 // 5. add_values - Two AnyArrow params, type promotion
 // ============================================================================
 
@@ -1513,6 +1578,9 @@ export const scalarFunctions: VgiFunction[] = [
   conditional_message,
   binary_packet,
   double_fn,
+  cached_double_scalar,
+  cached_add_const,
+  cached_label,
   add_values,
   upper_case,
   sum_values,
