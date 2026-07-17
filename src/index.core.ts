@@ -42,6 +42,8 @@ export {
 export {
   defineTableInOutFunction,
   defineRowTransformFunction,
+  parentRowsMetadata,
+  PARENT_ROW_METADATA_KEY,
   type TableInOutConfig,
   type TableInOutBindParams,
   type TableInOutProcessParams,

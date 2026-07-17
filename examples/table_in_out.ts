@@ -16,6 +16,8 @@ import {
 import {
   defineTableInOutFunction,
   defineRowTransformFunction,
+  parentRowsMetadata,
+  PARENT_ROW_METADATA_KEY,
   batchFromColumns,
   emptyBatch,
   serializeBatch,
@@ -636,6 +638,133 @@ const blended_drop = defineRowTransformFunction({
   categories: ["blended", "test"],
 });
 
+// Blended 1->N fan-out map carrying per-output-row provenance. For each input
+// row with count `n`, emits `n` output rows (the integers 0..n-1) and
+// declares which input row produced each output row via parentRowsMetadata —
+// that lets the batched correlated-LATERAL operator ship a whole input chunk
+// in ONE exchange and still stamp each output row's outer columns from the
+// right input row. n=0 -> 1->0 (filter), n=1 -> 1->1, n=3 -> 1->N.
+const BLENDED_EXPLODE_SCHEMA = new Schema([new Field("i", new Int64(), true)]);
+
+const blended_explode = defineRowTransformFunction({
+  name: "blended_explode",
+  description: "Blended 1->N fan-out (emit 0..n-1 per input row) with row provenance",
+  args: { n: new Int64() },
+  argDocs: { n: "Fan-out count: emit rows 0..n-1 for this input row" },
+  onBind: () => ({ outputSchema: BLENDED_EXPLODE_SCHEMA }),
+  process: (_params, batch, out) => {
+    const counts = batch.getChild("n");
+    const outVals: bigint[] = [];
+    const parentRows: number[] = [];
+    for (let rowIdx = 0; rowIdx < batch.numRows; rowIdx++) {
+      const raw = counts?.get(rowIdx);
+      const fan = raw === null || raw === undefined || Number(raw) < 0 ? 0 : Number(raw);
+      for (let k = 0; k < fan; k++) {
+        outVals.push(BigInt(k));
+        parentRows.push(rowIdx);
+      }
+    }
+    // Whole-chunk fan-out: one emit for the whole input batch, carrying the
+    // per-output-row parent index. (Identity provenance is omitted for 1->1
+    // maps — the extension assumes it — but here the row count changes.)
+    out.emit(
+      batchFromColumns({ i: outVals }, BLENDED_EXPLODE_SCHEMA),
+      parentRowsMetadata(parentRows, outVals.length),
+    );
+  },
+  categories: ["blended", "test"],
+});
+
+// Blended 1->1 map advertising projection_pushdown, with TWO output columns
+// (a=x*10, b=x*100). Regression fixture for the batched correlated-LATERAL
+// operator vs projection pushdown: a subset projection under correlated
+// LATERAL must NOT read worker column 0 into the `b` slot.
+const PROJECTABLE_SCHEMA = new Schema([
+  new Field("a", new Int64(), true),
+  new Field("b", new Int64(), true),
+]);
+
+const projectable_blended = defineRowTransformFunction({
+  name: "projectable_blended",
+  description: "Blended 1->1 map with projection_pushdown + two output columns",
+  args: { x: new Int64() },
+  argDocs: { x: "Input column" },
+  projectionPushdown: true,
+  onBind: () => ({ outputSchema: PROJECTABLE_SCHEMA }),
+  process: (_params, batch, out) => {
+    const xs = batch.getChild("x");
+    const a: (bigint | null)[] = [];
+    const b: (bigint | null)[] = [];
+    for (let i = 0; i < batch.numRows; i++) {
+      const v = xs?.get(i);
+      if (v === null || v === undefined) {
+        a.push(null);
+        b.push(null);
+      } else {
+        const n = BigInt(v);
+        a.push(n * 10n);
+        b.push(n * 100n);
+      }
+    }
+    // 1->1 identity map: no provenance needed (the operator assumes identity).
+    // Emits the full declared schema; the framework projects when narrowed.
+    out.emit(batchFromColumns({ a, b }, PROJECTABLE_SCHEMA));
+  },
+  categories: ["blended", "test"],
+});
+
+// Adversarial blended fixture: emits a MALFORMED vgi_rpc.parent_row payload
+// per `mode`, simulating a buggy or hostile worker. The extension must reject
+// each rather than use the integers as unchecked array indices; asserted on
+// both transports so the subprocess/HTTP validate paths stay symmetric.
+interface HostileNamedArgs {
+  mode: string;
+}
+
+const HOSTILE_SCHEMA = new Schema([new Field("hv", new Int64(), true)]);
+
+function b64encode(bytes: Uint8Array): string {
+  return Buffer.from(bytes).toString("base64");
+}
+
+const hostile_provenance = defineRowTransformFunction<HostileNamedArgs>({
+  name: "hostile_provenance",
+  description: "Adversarial blended fixture emitting malformed vgi_rpc.parent_row",
+  args: { x: new Int64() },
+  argDocs: { x: "Input column (echoed as output)", mode: "range | length | base64" },
+  namedArgs: { mode: new Utf8() },
+  argDefaults: { mode: "range" },
+  onBind: () => ({ outputSchema: HOSTILE_SCHEMA }),
+  process: (params, batch, out) => {
+    const n = batch.numRows;
+    const xs = batch.getChild("x");
+    const hv: (bigint | null)[] = [];
+    for (let i = 0; i < n; i++) {
+      const v = xs?.get(i);
+      hv.push(v === null || v === undefined ? null : BigInt(v));
+    }
+    const mode = String(params.args.mode ?? "range");
+    let payload: string;
+    if (mode === "base64") {
+      payload = "@@@ this is not base64 @@@";
+    } else if (mode === "length") {
+      // One int32 too many for the emitted row count.
+      payload = b64encode(new Uint8Array((n + 1) * 4));
+    } else {
+      // "range" — every parent index == n (one past the last valid index n-1)
+      const raw = new Uint8Array(n * 4);
+      const dv = new DataView(raw.buffer);
+      for (let i = 0; i < n; i++) dv.setInt32(i * 4, n, true);
+      payload = b64encode(raw);
+    }
+    out.emit(
+      batchFromColumns({ hv }, HOSTILE_SCHEMA),
+      new Map([[PARENT_ROW_METADATA_KEY, payload]]),
+    );
+  },
+  categories: ["blended", "test", "adversarial"],
+});
+
 export const tableInOutFunctions: VgiFunction[] = [
   echo,
   repeat_inputs,
@@ -649,4 +778,7 @@ export const tableInOutFunctions: VgiFunction[] = [
   geo_encode3,
   row_sum,
   blended_drop,
+  blended_explode,
+  projectable_blended,
+  hostile_provenance,
 ];

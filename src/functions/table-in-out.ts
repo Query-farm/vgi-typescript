@@ -445,6 +445,70 @@ function makeSchemaReconcilingCollector(
 }
 
 // ============================================================================
+// Per-output-row provenance (batched correlated LATERAL)
+// ============================================================================
+
+/** Metadata key carrying per-output-row provenance: base64 of a raw
+ *  little-endian int32[] mapping each output row to the input row that
+ *  produced it. Shared by string with the C++ extension and vgi-python. */
+export const PARENT_ROW_METADATA_KEY = "vgi_rpc.parent_row#b64";
+
+/**
+ * Fold per-output-row provenance into an emit metadata map.
+ *
+ * Used by the **batched correlated LATERAL** operator (blended
+ * RowTransformFunction under `FROM t, f(t.x)` / `LATERAL`): the C++ extension
+ * ships a whole input chunk to the worker in ONE exchange and reads ONE
+ * output batch, then maps each output row back to the input row that produced
+ * it via this array — so a 1->N fan-out or 1->0 filter can be batched instead
+ * of driven row-by-row.
+ *
+ * `parentRows[i]` is the 0-based index (into the input batch) of the row that
+ * produced output row `i`. Encoded as a raw little-endian `int32` array (NOT
+ * Arrow IPC), base64-encoded, under `vgi_rpc.parent_row#b64`. Absent metadata
+ * means an identity 1->1 map (the common case: the extension assumes it, and
+ * requires output rows == input rows).
+ *
+ * Contract: `parentRows.length` MUST equal the emitted batch's row count (a
+ * mismatch is a worker bug that would corrupt the stamping). Values are
+ * range-checked against the input width on the C++ side. Mirrors vgi-python's
+ * `_merge_parent_rows` / `out.emit(..., parent_rows=[...])`.
+ */
+export function parentRowsMetadata(
+  parentRows: number[],
+  outputRows: number,
+  extra?: Map<string, string>,
+): Map<string, string> {
+  if (parentRows.length !== outputRows) {
+    throw new Error(
+      `parentRowsMetadata: length ${parentRows.length} != output rows ${outputRows}; ` +
+        `parentRows must carry exactly one input-row index per emitted output row`,
+    );
+  }
+  const md = new Map<string, string>(extra ?? []);
+  if (outputRows === 0) {
+    // Nothing to map; skip the base64+pack for an empty emit.
+    return md;
+  }
+  const raw = new Uint8Array(parentRows.length * 4);
+  const dv = new DataView(raw.buffer);
+  for (let i = 0; i < parentRows.length; i++) {
+    dv.setInt32(i * 4, parentRows[i], true);
+  }
+  md.set(PARENT_ROW_METADATA_KEY, base64Encode(raw));
+  return md;
+}
+
+function base64Encode(bytes: Uint8Array): string {
+  if (typeof (globalThis as any).Buffer !== "undefined") {
+    return (globalThis as any).Buffer.from(bytes).toString("base64");
+  }
+  let bin = "";
+  for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+  return (globalThis as any).btoa(bin);
+}
+
+// ============================================================================
 // Blended ("UNNEST-style") row-transform functions
 // ============================================================================
 
