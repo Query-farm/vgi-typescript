@@ -167,13 +167,14 @@ jobs:
           make test-http VGI_DIR="$GITHUB_WORKSPACE/vgi" JOBS=1
           EXTRA_HTTP_EXCLUDES="$SKEW"
 
-      # flechette is the workerd/browser/CF backend — HTTP transport only (it
-      # does not support stdio incremental streaming). VGI_BUN_CONDITIONS=worker
-      # makes the HTTP example workers resolve the flechette Arrow backend, so
-      # this exercises the same suite over the flechette serialization path.
+      # Exercise the same suite over the flechette Arrow serialization path.
+      # VGI_BUN_CONDITIONS=flechette selects the flechette backend while keeping
+      # @query-farm/vgi-rpc in Node mode (the broad `worker` condition also flips
+      # vgi-rpc to its browser build and drops tcpConnect, breaking the Node HTTP
+      # worker). Requires vgi-rpc >= 0.14.2 (which adds the `flechette` condition).
       - name: Integration tests — HTTP transport (flechette backend)
         env:
-          VGI_BUN_CONDITIONS: worker
+          VGI_BUN_CONDITIONS: flechette
           SKEW: >-
             "~test/sql/integration/catalog/multi_branch_heterogeneous.test"
             "~test/sql/integration/catalog/multi_branch_join_optimizer.test"
