@@ -23,6 +23,8 @@ import {
   list, largeList, fixedSizeList, struct, map, dictionary, union,
 } from "@query-farm/flechette";
 
+import { aliasIntSigned } from "./compat.js";
+
 function fField(f: any): any {
   return f_field(f.name, toFlechetteType(f.type), f.nullable ?? true, f.metadata ?? null);
 }
@@ -40,7 +42,9 @@ export function toFlechetteType(type: any): any {
     case Type.Bool:
       return bool();
     case Type.Int:
-      return int(type.bitWidth, type.isSigned ?? type.signed ?? true);
+      // Keep the arrow-js-spelled `isSigned` readable on the result — worker
+      // code round-trips types through here and then branches on it.
+      return aliasIntSigned(int(type.bitWidth, type.isSigned ?? type.signed ?? true));
     case Type.Float:
       return float(type.precision);
     case Type.Binary:

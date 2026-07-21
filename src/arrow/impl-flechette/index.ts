@@ -5,6 +5,11 @@
 
 import type { VgiBackendInfo } from "../types.js";
 
+// Side-effect import: installs the arrow-js-shaped methods flechette's Column
+// and Table lack (`isValid`, `slice`). Must come before anything hands a
+// column or a table to worker code. See ./compat.ts.
+import "./compat.js";
+
 export const backend: VgiBackendInfo = { name: "flechette" };
 
 // Schema / Field / DataType factories

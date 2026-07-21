@@ -52,6 +52,7 @@ import {
 } from "@query-farm/flechette";
 
 import type { VgiField, VgiSchema, VgiDataType } from "../types.js";
+import { aliasIntSigned } from "./compat.js";
 
 // ----- Unit / mode constants -----------------------------------------------
 
@@ -91,16 +92,19 @@ export function field(
 export const nullType = (): VgiDataType => f_nullType() as unknown as VgiDataType;
 export const bool = (): VgiDataType => f_bool() as unknown as VgiDataType;
 
-export const int8 = (): VgiDataType => f_int8() as unknown as VgiDataType;
-export const int16 = (): VgiDataType => f_int16() as unknown as VgiDataType;
-export const int32 = (): VgiDataType => f_int32() as unknown as VgiDataType;
-export const int64 = (): VgiDataType => f_int64() as unknown as VgiDataType;
-export const uint8 = (): VgiDataType => f_uint8() as unknown as VgiDataType;
-export const uint16 = (): VgiDataType => f_uint16() as unknown as VgiDataType;
-export const uint32 = (): VgiDataType => f_uint32() as unknown as VgiDataType;
-export const uint64 = (): VgiDataType => f_uint64() as unknown as VgiDataType;
+// Int types carry the `isSigned` alias (arrow-js's spelling of flechette's
+// `signed`) so worker code that branches on signedness reads the same property
+// on both backends — see ./compat.ts.
+export const int8 = (): VgiDataType => aliasIntSigned(f_int8()) as unknown as VgiDataType;
+export const int16 = (): VgiDataType => aliasIntSigned(f_int16()) as unknown as VgiDataType;
+export const int32 = (): VgiDataType => aliasIntSigned(f_int32()) as unknown as VgiDataType;
+export const int64 = (): VgiDataType => aliasIntSigned(f_int64()) as unknown as VgiDataType;
+export const uint8 = (): VgiDataType => aliasIntSigned(f_uint8()) as unknown as VgiDataType;
+export const uint16 = (): VgiDataType => aliasIntSigned(f_uint16()) as unknown as VgiDataType;
+export const uint32 = (): VgiDataType => aliasIntSigned(f_uint32()) as unknown as VgiDataType;
+export const uint64 = (): VgiDataType => aliasIntSigned(f_uint64()) as unknown as VgiDataType;
 export const int = (bitWidth: 8 | 16 | 32 | 64 = 32, signed = true): VgiDataType =>
-  f_int(bitWidth, signed) as unknown as VgiDataType;
+  aliasIntSigned(f_int(bitWidth, signed)) as unknown as VgiDataType;
 
 export const float16 = (): VgiDataType => f_float16() as unknown as VgiDataType;
 export const float32 = (): VgiDataType => f_float32() as unknown as VgiDataType;

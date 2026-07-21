@@ -31,6 +31,9 @@ import { toFlechetteType } from "./normalize-type.js";
 
 const MS_PER_DAY = 86_400_000;
 
+/** `IntervalUnit.MONTH_DAY_NANO` — same ordinal in arrow-js and flechette. */
+const MONTH_DAY_NANO = 2;
+
 const COLUMN_OPTS = {
   useBigInt: true,
   useBigIntTimestamp: true,
@@ -99,6 +102,21 @@ export function prepareForFlechette(type: VgiDataType, values: unknown[]): unkno
       return new Date(isDay ? n * MS_PER_DAY : n);
     });
   }
+  if (tid === 11 && (type as any).unit === MONTH_DAY_NANO) {
+    // arrow-js represents a MonthDayNano interval as four int32 words
+    // [months, days, nanos_lo, nanos_hi]; flechette's builder wants
+    // [months, days, nanos] with nanos as one number/bigint. The facade
+    // presents arrow-js's shape (see compat.ts, which makes the read side
+    // agree), so fold the 64-bit word pair back together here.
+    return values.map((v) => {
+      if (v == null) return null;
+      const w = v as ArrayLike<number>;
+      if (typeof (w as any).length !== "number" || w.length < 4) return v;
+      const lo = BigInt(w[2] >>> 0);
+      const hi = BigInt(w[3] | 0);
+      return [w[0] | 0, w[1] | 0, BigInt.asIntN(64, (hi << 32n) | lo)];
+    });
+  }
   if (tid === 17) {
     return values.map((v) => {
       if (v == null) return null;
@@ -139,6 +157,7 @@ export function prepareForFlechette(type: VgiDataType, values: unknown[]): unkno
 function needsPrepare(type: VgiDataType): boolean {
   const tid = type.typeId;
   if (tid === 8 || tid === 17) return true;
+  if (tid === 11 && (type as any).unit === MONTH_DAY_NANO) return true;
   if (tid === 13) return ((type as any).children ?? []).some((c: any) => needsPrepare(c.type));
   if (tid === 12 || tid === 16) {
     const ct = (type as any).children?.[0]?.type;

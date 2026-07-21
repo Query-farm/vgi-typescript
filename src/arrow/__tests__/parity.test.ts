@@ -13,11 +13,11 @@
 
 import { describe, test, expect } from "bun:test";
 import {
-  schema, field, utf8, int32, int64, struct, list, dictionary, decimal128,
+  schema, field, utf8, int32, int64, uint64, struct, list, dictionary, decimal128,
   timestamp, TimeUnit, dateDay,
   isList, isStruct, isDecimal, isDictionary, isTimestamp,
   TypeId,
-  batchFromColumns, serializeBatch, deserializeBatch, iterRows,
+  batchFromColumns, serializeBatch, deserializeBatch, deserializeSchema, iterRows,
   withBatchMetadata,
   backend,
 } from "../index.js";
@@ -241,5 +241,66 @@ describe(`facade (backend=${backend.name})`, () => {
 
   test("backend reports its own name", () => {
     expect(backend.name).toMatch(/^(arrow-js|flechette)$/);
+  });
+
+  // ---------------------------------------------------------------------
+  // arrow-js-shaped surface the workers and examples read directly.
+  // Each of these was a live flechette-only integration failure.
+  // ---------------------------------------------------------------------
+
+  const compatSchema = schema([
+    field("name", utf8(), true),
+    field("v", int32(), true),
+    field("big", int64(), true),
+    field("ub", uint64(), true),
+  ]);
+  const compatBytes = serializeBatch(
+    batchFromColumns(
+      { name: ["a", null, "c"], v: [1, 2, null], big: [10n, null, 30n], ub: [1n, 2n, 3n] },
+      compatSchema,
+    ),
+  );
+
+  test("IPC decode accepts a stream at a non-8-byte-aligned offset", () => {
+    // Length-prefixed payloads (`splitLenPrefixed`) and nested IPC carried in
+    // Arrow Binary values land at arbitrary byteOffsets. flechette builds its
+    // buffer views zero-copy off `bytes.byteOffset`, so a misaligned stream
+    // throws "RangeError: Byte offset is not aligned" unless the facade
+    // re-bases it.
+    for (let skew = 1; skew < 8; skew++) {
+      const backing = new Uint8Array(compatBytes.length + skew);
+      backing.set(compatBytes, skew);
+      const round = deserializeBatch(backing.subarray(skew));
+      expect(round.numRows).toBe(3);
+      expect([...iterRows(round)].length).toBe(3);
+    }
+  });
+
+  test("column exposes isValid(index)", () => {
+    const col = (deserializeBatch(compatBytes) as any).getChild("name");
+    expect(typeof col.isValid).toBe("function");
+    expect([col.isValid(0), col.isValid(1), col.isValid(2)]).toEqual([true, false, true]);
+  });
+
+  test("batch exposes slice(begin, end)", () => {
+    const round = deserializeBatch(compatBytes) as any;
+    const empty = round.slice(0, 0);
+    expect(empty.numRows).toBe(0);
+    expect(empty.schema.fields.length).toBe(4);
+    const mid = round.slice(1, 3);
+    expect(mid.numRows).toBe(2);
+    expect(mid.getChild("name").at(1)).toBe("c");
+    expect(mid.getChild("name").isValid(0)).toBe(false);
+  });
+
+  test("int types report isSigned (decoded and constructed)", () => {
+    const s = deserializeSchema(compatBytes) as any;
+    expect(s.fields[2].type.isSigned).toBe(true);
+    expect(s.fields[3].type.isSigned).toBe(false);
+    const b = deserializeBatch(compatBytes) as any;
+    expect(b.schema.fields[2].type.isSigned).toBe(true);
+    expect(b.schema.fields[3].type.isSigned).toBe(false);
+    expect((int64() as any).isSigned).toBe(true);
+    expect((uint64() as any).isSigned).toBe(false);
   });
 });

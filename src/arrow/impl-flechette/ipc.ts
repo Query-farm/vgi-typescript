@@ -17,6 +17,8 @@ import {
 
 import type { VgiSchema, VgiBatch } from "../types.js";
 import { readFirstRecordBatchMeta } from "./message-meta.js";
+import { aliasSchemaIntSigned } from "./compat.js";
+import { toFlechetteType } from "./normalize-type.js";
 
 // flechette decoding options that match how vgi-typescript callers expect
 // values to come out: 64-bit ints stay as BigInt, decimals as scaled BigInts,
@@ -27,6 +29,38 @@ const EXTRACT_OPTS = {
   useDecimalInt: true,
   useMap: false,
 } as const;
+
+/**
+ * Re-base an IPC stream onto an 8-byte-aligned ArrayBuffer offset.
+ *
+ * flechette decodes record-batch buffers zero-copy, as
+ * `new ArrayType(bytes.buffer, bytes.byteOffset + region.offset, …)`. The Arrow
+ * IPC stream format guarantees `region.offset` is 8-byte aligned *relative to
+ * the message body*, so that view is only legal when the stream's own
+ * `byteOffset` is 8-byte aligned too. `TypedArray` throws
+ * `RangeError: Byte offset is not aligned` otherwise, and there is no way to
+ * recover after the fact.
+ *
+ * Nothing upstream promises that alignment. VGI hands us IPC streams that are
+ * views into a larger buffer at an arbitrary offset:
+ *   * `splitLenPrefixed` subarrays past a 4-byte length prefix (odd by
+ *     construction — buffering init/state payloads);
+ *   * Arrow Binary column values, which are packed back-to-back in a shared
+ *     data buffer with no per-value padding (nested IPC in state tokens,
+ *     `init_request`, secret payloads);
+ *   * HTTP body slices handed over by the runtime.
+ *
+ * arrow-js hides this by copying every misaligned buffer inside
+ * `toArrayBufferView`, which is why the arrow-js backend never saw it. We copy
+ * once here instead — the whole stream, so every body inside it keeps its
+ * relative alignment — and only when the input is actually misaligned, so the
+ * common already-aligned case stays zero-copy.
+ */
+function align8(bytes: Uint8Array): Uint8Array {
+  if ((bytes.byteOffset & 7) === 0) return bytes;
+  // `slice` copies into a fresh ArrayBuffer, whose byteOffset is 0.
+  return bytes.slice();
+}
 
 /**
  * Serialize a Schema to Arrow IPC bytes.
@@ -41,9 +75,17 @@ export function serializeSchema(schema: VgiSchema): Uint8Array {
   // tableFromColumns rebuilds fields with nullable=true, which round-trips
   // wrong on the C++ side (rejects schema-conforming payloads as schema
   // mismatches). See build.ts for the same fix on batches.
-  const cols = schema.fields.map((f) => columnFromArray([], f.type as any));
+  //
+  // Types are normalized to flechette-native first. Callers routinely declare
+  // schemas with arrow-js DataType instances (`new FixedSizeList(2, …)`), and
+  // flechette's IPC writer reads the *flechette* property names off whatever
+  // object it is handed — `stride`, not arrow-js's `listSize` — so a foreign
+  // type serializes with its parameters silently zeroed. That is what emitted
+  // `DOUBLE[0]` for a `DOUBLE[2]` argument and made DuckDB refuse the cast.
+  const types = schema.fields.map((f) => toFlechetteType(f.type));
+  const cols = types.map((t) => columnFromArray([], t as any));
   const fields = schema.fields.map((f, i) =>
-    f_field(f.name, cols[i].type as any, (f as any).nullable ?? true, (f as any).metadata ?? null),
+    f_field(f.name, types[i], (f as any).nullable ?? true, (f as any).metadata ?? null),
   );
   const flechSchema = {
     version: 5,
@@ -59,9 +101,9 @@ export function serializeSchema(schema: VgiSchema): Uint8Array {
  * decoded table (which may be 0-row if the source was a schema-only stream).
  */
 export function deserializeSchema(bytes: Uint8Array): VgiSchema {
-  const table = tableFromIPC(bytes, EXTRACT_OPTS);
+  const table = tableFromIPC(align8(bytes), EXTRACT_OPTS);
   // flechette's Table.schema is the structural shape we need.
-  return table.schema as unknown as VgiSchema;
+  return aliasSchemaIntSigned(table.schema) as unknown as VgiSchema;
 }
 
 /**
@@ -74,7 +116,27 @@ export function deserializeSchema(bytes: Uint8Array): VgiSchema {
  */
 export function serializeBatch(batch: VgiBatch): Uint8Array {
   // VgiBatch is structurally a flechette Table at this point.
-  return tableToIPC(batch as any, { format: "stream" }) as Uint8Array;
+  const t = batch as any;
+  // Two things `tableToIPC` will not do on its own, and arrow-js's
+  // `_writeRecordBatch` always does:
+  //
+  //  1. Emit a RecordBatch message when the table has no column data to walk.
+  //     flechette derives its record batches from `columns[0].data`, so a
+  //     zero-FIELD table (a legal vgi-rpc shape — `aggregate_update`'s ack,
+  //     cancel signals, state-token carriers) encodes as schema + EOS with no
+  //     batch at all. The C++ client reads that as "RPC returned an empty
+  //     response" and fails the query.
+  //  2. Pick up per-batch `custom_metadata`. `withBatchMetadata` pins the map
+  //     on `_vgiRecordMetadata`, but only the `batchMetadata` encode option
+  //     puts it on the wire — so cache/state metadata was being dropped on
+  //     serialize even though it read back correctly in-process.
+  //
+  // Passing a one-entry positional `batchMetadata` covers both: it synthesises
+  // the missing empty batch and attaches the map when there is one. Tables
+  // that already have batches and no metadata are unaffected.
+  const md: Map<string, string> | undefined = t._vgiRecordMetadata ?? t.metadata;
+  const batchMetadata = [md && md.size > 0 ? md : undefined];
+  return tableToIPC(t, { format: "stream", batchMetadata } as any) as Uint8Array;
 }
 
 /**
@@ -85,8 +147,12 @@ export function serializeBatch(batch: VgiBatch): Uint8Array {
  * multi-batch streams this collapses to a single logical batch, matching
  * the subprocess transport's one-batch-per-call convention.
  */
-export function deserializeBatch(bytes: Uint8Array): VgiBatch {
+export function deserializeBatch(input: Uint8Array): VgiBatch {
+  const bytes = align8(input);
   const table: any = tableFromIPC(bytes, EXTRACT_OPTS);
+  // Worker code reads `batch.schema.fields[i].type.isSigned` (arrow-js's
+  // spelling) to pick promoted result types; flechette spells it `signed`.
+  aliasSchemaIntSigned(table.schema);
   // flechette's IPC parser ignores the Message-level `custom_metadata` field
   // and reports row counts only via column children, so a "metadata-only"
   // batch over a 0-field schema (legal in vgi-rpc — used to ferry state
