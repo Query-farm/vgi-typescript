@@ -26,6 +26,7 @@ import {
   Decimal,
   RecordBatch,
 } from "@query-farm/apache-arrow";
+import { createHash } from "node:crypto";
 import {
   defineScalarFunction,
   secretsOfType,
@@ -1573,7 +1574,70 @@ const shift_timestamp_us = defineScalarFunction({
 // Export all scalar functions
 // ============================================================================
 
+const passthru = defineScalarFunction({
+  name: "passthru",
+  description: "Returns the input string unchanged (zero-compute wire probe)",
+  params: { value: new Utf8() },
+  returns: new Utf8(),
+  compute: (batch: RecordBatch) => {
+    const values = getColumnValues(batch, 0);
+    return values.map((v: any) => (v === null || v === undefined ? null : String(v)));
+  },
+});
+
+const collatz_steps = defineScalarFunction({
+  name: "collatz_steps",
+  description: "Number of Collatz (3n+1) steps to reach 1",
+  params: { value: new Int64() },
+  returns: new Int64(),
+  compute: (batch: RecordBatch) => {
+    const values = getColumnValues(batch, 0);
+    return values.map((v: any) => {
+      if (v === null || v === undefined) return null;
+      let n = Number(v); // trajectory of n<=200k stays < 2^53 — exact & fast
+      if (n <= 0) return 0n;
+      let steps = 0;
+      while (n !== 1) { n = n % 2 === 0 ? n / 2 : 3 * n + 1; steps++; }
+      return BigInt(steps);
+    });
+  },
+});
+
+const sha256_hex = defineScalarFunction({
+  name: "sha256_hex",
+  description: "Lowercase hex SHA-256 of the UTF-8 string",
+  params: { value: new Utf8() },
+  returns: new Utf8(),
+  compute: (batch: RecordBatch) => {
+    const values = getColumnValues(batch, 0);
+    return values.map((v: any) =>
+      v === null || v === undefined ? null : createHash("sha256").update(String(v), "utf8").digest("hex"));
+  },
+});
+
+const hash_rounds = defineScalarFunction({
+  name: "hash_rounds",
+  description: "Apply SHA-256 rounds times (key-stretching); rounds is a const compute knob",
+  params: { value: new Utf8() },
+  constParams: { rounds: new Int64() },
+  returns: new Utf8(),
+  compute: (batch: RecordBatch, consts: Record<string, any>) => {
+    const k = Number(consts.rounds);
+    const values = getColumnValues(batch, 0);
+    return values.map((v: any) => {
+      if (v === null || v === undefined) return null;
+      let buf: Buffer = Buffer.from(String(v), "utf8");
+      for (let i = 0; i < k; i++) buf = createHash("sha256").update(buf).digest();
+      return buf.toString("hex");
+    });
+  },
+});
+
 export const scalarFunctions: VgiFunction[] = [
+  passthru,
+  collatz_steps,
+  sha256_hex,
+  hash_rounds,
   multiply,
   conditional_message,
   binary_packet,
