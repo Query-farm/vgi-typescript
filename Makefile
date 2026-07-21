@@ -222,10 +222,10 @@ test-http:
 	read -t 60 vport_line <&4 || { echo "ERROR: versioned HTTP worker timeout"; exit 1; }; \
 	read -t 60 aport_line <&5 || { echo "ERROR: attach-options HTTP worker timeout"; exit 1; }; \
 	read -t 60 tport_line <&6 || { echo "ERROR: versioned-tables HTTP worker timeout"; exit 1; }; \
-	export VGI_TEST_WORKER="http://localhost:$${port_line#PORT:}/vgi"; \
-	export VGI_VERSIONED_HTTP_WORKER="http://localhost:$${vport_line#PORT:}/vgi"; \
-	export VGI_ATTACH_OPTIONS_WORKER="http://localhost:$${aport_line#PORT:}/vgi"; \
-	export VGI_VERSIONED_TABLES_HTTP_WORKER="http://localhost:$${tport_line#PORT:}/vgi"; \
+	export VGI_TEST_WORKER="http://localhost:$${port_line#PORT:}"; \
+	export VGI_VERSIONED_HTTP_WORKER="http://localhost:$${vport_line#PORT:}"; \
+	export VGI_ATTACH_OPTIONS_WORKER="http://localhost:$${aport_line#PORT:}"; \
+	export VGI_VERSIONED_TABLES_HTTP_WORKER="http://localhost:$${tport_line#PORT:}"; \
 	python3 scripts/run_tests.py -j $(JOBS) $(HTTP_TEST_PATTERNS) > $(TEST_LOG) 2>&1; \
 	rc=$$?; \
 	tail -n 20 $(TEST_LOG); \
@@ -309,10 +309,10 @@ test-http/%:
 	read -t 60 vport_line <&4 || { echo "ERROR: versioned HTTP worker timeout"; exit 1; }; \
 	read -t 60 aport_line <&5 || { echo "ERROR: attach-options HTTP worker timeout"; exit 1; }; \
 	read -t 60 tport_line <&6 || { echo "ERROR: versioned-tables HTTP worker timeout"; exit 1; }; \
-	export VGI_TEST_WORKER="http://localhost:$${port_line#PORT:}/vgi"; \
-	export VGI_VERSIONED_HTTP_WORKER="http://localhost:$${vport_line#PORT:}/vgi"; \
-	export VGI_ATTACH_OPTIONS_WORKER="http://localhost:$${aport_line#PORT:}/vgi"; \
-	export VGI_VERSIONED_TABLES_HTTP_WORKER="http://localhost:$${tport_line#PORT:}/vgi"; \
+	export VGI_TEST_WORKER="http://localhost:$${port_line#PORT:}"; \
+	export VGI_VERSIONED_HTTP_WORKER="http://localhost:$${vport_line#PORT:}"; \
+	export VGI_ATTACH_OPTIONS_WORKER="http://localhost:$${aport_line#PORT:}"; \
+	export VGI_VERSIONED_TABLES_HTTP_WORKER="http://localhost:$${tport_line#PORT:}"; \
 	cd $(VGI_DIR) && ./build/release/test/unittest -s "$$test_file"
 
 # VgiClient end-to-end tests against vgi-python's HTTP workers.

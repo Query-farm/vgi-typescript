@@ -45,8 +45,8 @@ const server = serveVgiWorker({
   version: "0.12.0",
   registry,
   catalogInterface,
-  // The integration harness attaches to http://localhost:$PORT/vgi.
-  prefix: "/vgi",
+  // The integration harness attaches to http://localhost:$PORT (root, like the other SDK workers).
+  prefix: "",
   serverId: "vgi-example-http",
   port: 0,
   quiet: true,

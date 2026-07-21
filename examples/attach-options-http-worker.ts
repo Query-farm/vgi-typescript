@@ -199,7 +199,7 @@ const protocol = buildVgiProtocol({
 });
 
 const handler = createHttpHandler(protocol, {
-  prefix: "/vgi",
+  prefix: "",
   serverId: "vgi-example-attach-options-http",
   signingKey,
   tokenTtl,
