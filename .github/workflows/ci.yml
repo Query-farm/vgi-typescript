@@ -5,23 +5,26 @@
 # Two jobs:
 #   unit        — pure TypeScript: build + `bun test` + Arrow facade parity.
 #                 No DuckDB / vgi extension needed. Fast, always runs.
-#   integration — the C++ sqllogictest suite from the Query-farm/vgi repo,
-#                 run against the bun example worker via the npm-distributed
-#                 `haybarn-unittest` runner + the community `vgi` extension.
+#   integration — the C++ sqllogictest suite from the Query-farm/vgi repo, run
+#                 against the bun example workers through ci/run-integration.sh
+#                 — the same harness vgi-go and vgi-python use. See ci/README.md.
 #
-# ── How "expected to fail" tests are excluded (no CI-specific list) ──────────
-# Skips are inherited from two existing mechanisms, not duplicated here:
-#   1. `require-env` auto-skip: a sqllogictest with `require-env VGI_X_WORKER`
-#      is skipped when that var is unset. We deliberately do NOT wire
-#      VGI_SIMPLE_WRITABLE_WORKER, so the writable suite skips (visible as
-#      "skipped" in the run summary).
-#   2. `~`-prefix exclusions in the Makefile (TEST_PATTERNS / HTTP_TEST_PATTERNS,
-#      consumed by vgi/scripts/run_tests.py) for tests that would run-but-fail:
-#      schema_reconcile (writable), constant_columns_types (arrow-js has no
-#      TIMESTAMP_NS), zero_count_bypass (broken upstream), and transport-
-#      semantics tests. Each is commented in the Makefile with the reason.
-# The integration job just calls the existing `make` targets, so it inherits
-# both automatically.
+# ── Why the integration job no longer calls `make test-http` ─────────────────
+# It used to, with LOCAL_EXTENSION_REPO pointed at the community repo *globally*.
+# `vgi` is not autoloadable so it installed fine from there; `httpfs` IS
+# autoloadable, so DuckDB's CheckRequire took the autoinstall branch and issued
+# `INSTALL httpfs FROM '<community repo>'`, which 404s. A failed `require` is a
+# silent SKIP_TEST, and vgi/scripts/run_tests.py has no skipped category at all
+# (`passes = [r for r in results if r["exit"] == 0]`, and DuckDB exits 0 on a
+# skip). Result: 261 of 286 test cases skipped while this job reported
+# "passed: 280" in 84 seconds. ci/run-integration.sh scopes the community repo
+# to `vgi` alone, takes every other extension FROM core, and — the part that
+# makes it stay fixed — counts skips, names them, fails on any skip that is not
+# in its expected-skip allowlist, and enforces a floor on executed test cases.
+#
+# Excluded tests are NOT listed here: ci/run-integration.sh owns that list, with
+# the reason for each, so the exclusions live next to the harness that applies
+# them instead of being split across a Makefile and a workflow env var.
 
 name: CI
 
@@ -55,25 +58,39 @@ jobs:
         run: make test-facade-parity
 
   integration:
-    name: "Integration (sqllogictest — HTTP: arrow-js + flechette)"
+    # Lanes run independently (fail-fast: false) so a regression in one is never
+    # masked by another. The plain subprocess transport is deliberately absent:
+    # it pays a bun cold start per test and thrashes CI's 2-core runners.
+    name: "Integration (${{ matrix.lane }} — ${{ matrix.backend }})"
     runs-on: ubuntu-latest
-    env:
-      # Make `require vgi` resolve in the generic haybarn-unittest binary:
-      # autoloading=available lets the runner INSTALL+LOAD a non-statically-
-      # linked extension, and LOCAL_EXTENSION_REPO points at the community repo
-      # so `INSTALL vgi FROM '<repo>'` downloads the matching build.
-      DUCKDB_TEST_AUTOLOADING: available
-      LOCAL_EXTENSION_REPO: http://haybarn-extensions.query.farm/community
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # The whole suite over the stateless HTTP transport, per Arrow backend.
+          - { lane: http, backend: arrow-js, conditions: '' }
+          # VGI_BUN_CONDITIONS=flechette selects the flechette backend while
+          # keeping @query-farm/vgi-rpc in Node mode (the broad `worker`
+          # condition also flips vgi-rpc to its browser build and drops
+          # tcpConnect, breaking the Node HTTP worker). flechette is HTTP-only —
+          # no stdio incremental streaming — so it has no launch lane.
+          - { lane: http, backend: flechette, conditions: flechette }
+          # The AF_UNIX launcher transport (the repo's default `make test`). One
+          # warm bun worker serves the whole run, so it is the *fastest* lane,
+          # and it covers what http structurally cannot: the launcher-only tests
+          # and the four subprocess-pool-semantics files.
+          - { lane: launch, backend: arrow-js, conditions: '' }
     steps:
       - name: Checkout vgi-typescript
         uses: actions/checkout@v4
 
-      - name: Checkout Query-farm/vgi (test/sql + run_tests.py)
+      - name: Checkout Query-farm/vgi (supplies test/sql/integration)
         uses: actions/checkout@v4
         with:
           repository: Query-farm/vgi
-          path: vgi
-          # Pin to the tag matching the extension version below when you cut
+          path: vgi-upstream
+          # Pin to the tag matching the published extension when you cut
           # releases; main is fine while tracking head.
           ref: main
 
@@ -81,112 +98,42 @@ jobs:
         with:
           bun-version: latest
 
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-
       - name: Install dependencies
         run: bun install
 
       # Resolve the latest haybarn release so the unittest host matches the
-      # rebuilt community vgi extension's DuckDB ABI. The old npm pin
-      # (haybarn-unittest@1.5.3-rc6) is older than the extension's build
-      # (haybarn-v1.5.3-rc10) and SIGSEGVs loading it; the GitHub release tracks
-      # head. Mirrors the worker-SDK example repos' integration jobs.
+      # rebuilt community vgi extension's DuckDB ABI. A stale pin SIGSEGVs on
+      # load. Mirrors the vgi-go / vgi-python integration jobs.
       - name: Resolve latest haybarn release
-        id: haybarn
         run: |
           REL=$(gh release view --repo Query-farm-haybarn/haybarn --json tagName --jq .tagName)
-          echo "release=$REL" >> "$GITHUB_OUTPUT"
+          echo "HAYBARN_RELEASE=$REL" >> "$GITHUB_ENV"
           echo "Latest haybarn release: $REL"
         env:
           GH_TOKEN: ${{ github.token }}
 
-      - name: Download haybarn-unittest and wire it where run_tests.py expects it
+      - name: Download haybarn-unittest
         run: |
           gh release download "$HAYBARN_RELEASE" \
             --repo Query-farm-haybarn/haybarn \
             --pattern 'haybarn_unittest-linux-amd64.zip' \
-            --output haybarn-unittest.zip --clobber
-          mkdir -p hb && unzip -o -q haybarn-unittest.zip -d hb
-          UNITTEST="$PWD/$(find hb -name 'haybarn-unittest' -type f | head -1)"
+            --output /tmp/haybarn-unittest.zip --clobber
+          unzip -o -q /tmp/haybarn-unittest.zip -d /tmp/haybarn-unittest
+          UNITTEST=$(find /tmp/haybarn-unittest -name 'haybarn-unittest' -type f | head -1)
           chmod +x "$UNITTEST"
-          # run_tests.py invokes <root>/build/release/test/unittest with paths
-          # relative to the vgi checkout; shim it to the downloaded binary.
-          mkdir -p vgi/build/release/test
-          printf '#!/usr/bin/env bash\nexec "%s" "$@"\n' "$UNITTEST" \
-            > vgi/build/release/test/unittest
-          chmod +x vgi/build/release/test/unittest
+          echo "HAYBARN_UNITTEST=$UNITTEST" >> "$GITHUB_ENV"
         env:
           GH_TOKEN: ${{ github.token }}
-          HAYBARN_RELEASE: ${{ steps.haybarn.outputs.release }}
 
-      # Force a fresh download of the (rebuilt) community vgi extension so the
-      # suite never runs against a stale cached copy, plus httpfs from core.
-      # FROM the same community repo the per-test `require vgi` autoload uses
-      # (LOCAL_EXTENSION_REPO). The runner matches tests by a path relative to
-      # the vgi checkout, so write the warm test there and run from it.
-      # Non-fatal: a hiccup here is only a warning — per-test autoload still
-      # gates each file.
-      - name: Force-install the rebuilt community vgi extension
-        run: |
-          mkdir -p vgi/test
-          printf '%s\n' \
-            '# name: test/_warm.test' \
-            '# group: [warm]' \
-            'statement ok' \
-            'INSTALL httpfs FROM core;' \
-            '' \
-            'statement ok' \
-            "FORCE INSTALL vgi FROM '${LOCAL_EXTENSION_REPO}';" \
-            > vgi/test/_warm.test
-          ( cd vgi && build/release/test/unittest test/_warm.test ) \
-            || echo "::warning::vgi force-install warm step did not fully succeed (per-test autoload still applies)"
-          rm -f vgi/test/_warm.test
-
-      # HTTP transport uses one long-lived worker, avoiding the per-test bun
-      # cold-start that makes the subprocess transport (172 spawns) thrash and
-      # time out on CI's 2-core runners. Both Arrow backends are covered here;
-      # flechette is HTTP-only anyway (no stdio incremental streaming).
-      #
-      # JOBS=1: a parallel run has 8 fresh unittest processes all `INSTALL vgi
-      #   FROM community` into a cold cache at once — they race and most fail.
-      #   Serial installs once, then reuses the cache.
-      # EXTRA_HTTP_EXCLUDES: a few advanced C++ optimizer tests are version-
-      #   skewed against the *prebuilt* community vgi extension (they pass with
-      #   a from-source build matching test/sql@main). Not backend-specific.
-      - name: Integration tests — HTTP transport (arrow-js backend)
+      # The harness stages a rewritten copy of the suite, boots the example HTTP
+      # workers, warms the extension cache (FORCE INSTALL vgi FROM community;
+      # everything else FROM core), runs one unittest invocation, and then
+      # enforces the skip contract: every skip must match an expected reason and
+      # at least MIN_EXECUTED test cases must actually execute. Note that
+      # LOCAL_EXTENSION_REPO is deliberately NOT set anywhere in this file.
+      - name: Integration suite (${{ matrix.lane }} / ${{ matrix.backend }})
+        run: ci/run-integration.sh
         env:
-          SKEW: >-
-            "~test/sql/integration/catalog/multi_branch_heterogeneous.test"
-            "~test/sql/integration/catalog/multi_branch_join_optimizer.test"
-            "~test/sql/integration/catalog/multi_branch_reconciliation.test"
-            "~test/sql/integration/table/dynamic_filter.test"
-            "~test/sql/integration/table/required_filters_native.test"
-        run: >-
-          make test-http VGI_DIR="$GITHUB_WORKSPACE/vgi" JOBS=1
-          EXTRA_HTTP_EXCLUDES="$SKEW"
-
-      # Exercise the same suite over the flechette Arrow serialization path.
-      # VGI_BUN_CONDITIONS=flechette selects the flechette backend while keeping
-      # @query-farm/vgi-rpc in Node mode (the broad `worker` condition also flips
-      # vgi-rpc to its browser build and drops tcpConnect, breaking the Node HTTP
-      # worker). Requires vgi-rpc >= 0.14.2 (which adds the `flechette` condition).
-      - name: Integration tests — HTTP transport (flechette backend)
-        env:
-          VGI_BUN_CONDITIONS: flechette
-          SKEW: >-
-            "~test/sql/integration/catalog/multi_branch_heterogeneous.test"
-            "~test/sql/integration/catalog/multi_branch_join_optimizer.test"
-            "~test/sql/integration/catalog/multi_branch_reconciliation.test"
-            "~test/sql/integration/table/dynamic_filter.test"
-            "~test/sql/integration/table/required_filters_native.test"
-        run: >-
-          make test-http VGI_DIR="$GITHUB_WORKSPACE/vgi" JOBS=1
-          EXTRA_HTTP_EXCLUDES="$SKEW"
-
-      - name: Dump test log (on failure)
-        if: failure()
-        run: |
-          echo "===== raw TEST_LOG (first 120 lines = first failed test detail) ====="
-          sed -n '1,120p' /tmp/vgi-typescript-test.log || true
+          VGI_SRC: ${{ github.workspace }}/vgi-upstream
+          TRANSPORT: ${{ matrix.lane }}
+          VGI_BUN_CONDITIONS: ${{ matrix.conditions }}

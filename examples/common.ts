@@ -28,6 +28,7 @@ import { partitionTableFunctions } from "./table_partition.js";
 import { copyFromFunctions } from "./copy_from.js";
 import { copyToFunctions } from "./copy_to.js";
 import { cacheTableFunctions } from "./cache.js";
+import { cachePartitionScopeTableFunctions } from "./cache_partition_scope.js";
 
 // Find functions for table-backed catalog entries
 const sequenceFunction = tableFunctions.find((f) => f.meta.name === "sequence");
@@ -105,6 +106,7 @@ export const allFunctions = [
   ...scalarFunctions,
   ...tableFunctions,
   ...cacheTableFunctions,
+  ...cachePartitionScopeTableFunctions,
   ...partitionTableFunctions,
   ...tableInOutFunctions,
   ...tableBufferingFunctions,

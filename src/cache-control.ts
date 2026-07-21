@@ -41,6 +41,7 @@ export const CACHE_REVALIDATABLE_KEY = "vgi.cache.revalidatable";
 export const CACHE_STALE_WHILE_REVALIDATE_KEY = "vgi.cache.stale_while_revalidate";
 export const CACHE_STALE_IF_ERROR_KEY = "vgi.cache.stale_if_error";
 export const CACHE_NOT_MODIFIED_KEY = "vgi.cache.not_modified";
+export const CACHE_PARTITION_SCOPE_KEY = "vgi.cache.partition_scope";
 
 // --- Request-side metadata keys (client -> worker) --------------------------
 // Ride on the first producer tick; surfaced as `TableProcessParams.ifNoneMatch`
@@ -91,6 +92,12 @@ export interface CacheControl {
    *  assert the client's stored payload is still fresh (the client reuses it
    *  instead of re-streaming). */
   notModified?: boolean;
+  /** Opt in to per-PARTITION caching: in addition to the whole-scan entry, the
+   *  client stores the result split by distinct partition tuple, so a later
+   *  `=`/`IN`-filtered scan on the partition column(s) can serve the requested
+   *  partitions without calling the worker. Only meaningful for a
+   *  `SINGLE_VALUE_PARTITIONS` table function; purely additive. */
+  partitionScope?: boolean;
 }
 
 const VALID_SCOPES: readonly string[] = [CACHE_SCOPE_CATALOG, CACHE_SCOPE_TRANSACTION];
@@ -129,5 +136,6 @@ export function cacheControlMetadata(cc: CacheControl, extra?: Map<string, strin
   if (cc.staleWhileRevalidate !== undefined) md.set(CACHE_STALE_WHILE_REVALIDATE_KEY, String(cc.staleWhileRevalidate));
   if (cc.staleIfError !== undefined) md.set(CACHE_STALE_IF_ERROR_KEY, String(cc.staleIfError));
   if (cc.notModified) md.set(CACHE_NOT_MODIFIED_KEY, "1");
+  if (cc.partitionScope) md.set(CACHE_PARTITION_SCOPE_KEY, "1");
   return md;
 }
