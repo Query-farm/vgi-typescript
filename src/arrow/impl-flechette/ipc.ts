@@ -17,7 +17,7 @@ import {
 
 import type { VgiSchema, VgiBatch } from "../types.js";
 import { readFirstRecordBatchMeta } from "./message-meta.js";
-import { aliasSchemaIntSigned } from "./compat.js";
+import { aliasSchemaIntSigned } from "./int-signed.js";
 import { toFlechetteType } from "./normalize-type.js";
 
 // flechette decoding options that match how vgi-typescript callers expect

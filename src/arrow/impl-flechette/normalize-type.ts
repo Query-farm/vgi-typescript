@@ -23,7 +23,7 @@ import {
   list, largeList, fixedSizeList, struct, map, dictionary, union,
 } from "@query-farm/flechette";
 
-import { aliasIntSigned } from "./compat.js";
+import { aliasIntSigned } from "./int-signed.js";
 
 function fField(f: any): any {
   return f_field(f.name, toFlechetteType(f.type), f.nullable ?? true, f.metadata ?? null);
@@ -71,7 +71,11 @@ export function toFlechetteType(type: any): any {
     case Type.LargeList:
       return (type.typeId === Type.LargeList ? largeList : list)(fField(type.children[0]));
     case Type.FixedSizeList:
-      return fixedSizeList(fField(type.children[0]), type.listSize);
+      // arrow-js calls the width `listSize`, flechette calls it `stride`.
+      // Reading only the first makes this non-idempotent: normalizing an
+      // already-native type would zero the width and DuckDB then refuses to
+      // cast INT[3] to INT[0].
+      return fixedSizeList(fField(type.children[0]), type.listSize ?? type.stride);
     case Type.Struct:
       return struct(type.children.map(fField));
     case Type.Map: {

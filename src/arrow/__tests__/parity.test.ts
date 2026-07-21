@@ -13,7 +13,8 @@
 
 import { describe, test, expect } from "bun:test";
 import {
-  schema, field, utf8, int32, int64, uint64, struct, list, dictionary, decimal128,
+  schema, field, utf8, int32, int64, uint64, float64, struct, list, dictionary, decimal128,
+  fixedSizeList, fixedSizeBinary, serializeSchema,
   timestamp, TimeUnit, dateDay,
   isList, isStruct, isDecimal, isDictionary, isTimestamp,
   TypeId,
@@ -277,9 +278,13 @@ describe(`facade (backend=${backend.name})`, () => {
   });
 
   test("column exposes isValid(index)", () => {
-    const col = (deserializeBatch(compatBytes) as any).getChild("name");
+    const decoded = deserializeBatch(compatBytes) as any;
+    const col = decoded.getChild("name");
     expect(typeof col.isValid).toBe("function");
     expect([col.isValid(0), col.isValid(1), col.isValid(2)]).toEqual([true, false, true]);
+    // A column with no nulls carries no validity bitmap; every row is valid.
+    const dense = decoded.getChild("ub");
+    expect([dense.isValid(0), dense.isValid(1), dense.isValid(2)]).toEqual([true, true, true]);
   });
 
   test("batch exposes slice(begin, end)", () => {
@@ -291,6 +296,40 @@ describe(`facade (backend=${backend.name})`, () => {
     expect(mid.numRows).toBe(2);
     expect(mid.getChild("name").at(1)).toBe("c");
     expect(mid.getChild("name").isValid(0)).toBe(false);
+    // A slice goes straight back onto the wire — an exchange round replies
+    // with `batch.slice(0, 0)` to close a stream — so it has to survive the
+    // IPC encoder, not just property reads.
+    expect(deserializeBatch(serializeBatch(empty)).numRows).toBe(0);
+    const midRound = deserializeBatch(serializeBatch(mid)) as any;
+    expect(midRound.numRows).toBe(2);
+    expect([...iterRows(midRound)].map((r: any) => r.name)).toEqual([null, "c"]);
+  });
+
+  test("parameterized types survive a schema re-serialize", () => {
+    // A worker echoes a decoded schema straight back out, so every type has to
+    // re-encode from its *decoded* form, not just from the constructor's.
+    // flechette and arrow-js disagree on several parameter names
+    // (`stride`/`listSize`, `signed`/`isSigned`, …), and reading only one of
+    // the pair silently zeroes the parameter — DOUBLE[2] went out as DOUBLE[0].
+    const sch = schema([
+      field("fsl", fixedSizeList(field("item", float64(), true), 3), true),
+      field("fsb", fixedSizeBinary(4), true),
+      field("dec", decimal128(18, 4), true),
+      field("dict", dictionary(utf8(), int32()), true),
+      field("ts", timestamp(TimeUnit.MICROSECOND, "UTC"), true),
+      field("ub", uint64(), true),
+    ]);
+    const once = deserializeSchema(serializeSchema(sch)) as any;
+    const twice = deserializeSchema(serializeSchema(once)) as any;
+    const width = (t: any) => t.listSize ?? t.stride;
+    expect(width(once.fields[0].type)).toBe(3);
+    expect(width(twice.fields[0].type)).toBe(3);
+    expect(twice.fields[1].type.byteWidth ?? twice.fields[1].type.stride).toBe(4);
+    expect(twice.fields[2].type.precision).toBe(18);
+    expect(twice.fields[2].type.scale).toBe(4);
+    expect(twice.fields[3].type.typeId).toBe(TypeId.Dictionary);
+    expect(twice.fields[4].type.timezone).toBe("UTC");
+    expect(twice.fields[5].type.isSigned).toBe(false);
   });
 
   test("int types report isSigned (decoded and constructed)", () => {

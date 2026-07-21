@@ -52,7 +52,7 @@ import {
 } from "@query-farm/flechette";
 
 import type { VgiField, VgiSchema, VgiDataType } from "../types.js";
-import { aliasIntSigned } from "./compat.js";
+import { aliasIntSigned } from "./int-signed.js";
 
 // ----- Unit / mode constants -----------------------------------------------
 
