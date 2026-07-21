@@ -1,3 +1,8 @@
 #!/usr/bin/env bash
-# VGI_BUN_CONDITIONS (e.g. "worker") selects the flechette Arrow backend.
-exec bun ${VGI_BUN_CONDITIONS:+--conditions "$VGI_BUN_CONDITIONS"} run "$(dirname "$0")/../examples/worker.ts" "$@"
+# VGI_BUN_CONDITIONS selects the Arrow backend via import conditions.
+# Use "flechette" for the fast flechette Arrow IPC backend on Node/Bun (keeps
+# @query-farm/vgi-rpc in Node mode, unlike the broad "worker" condition which
+# also flips vgi-rpc to its browser build and drops tcpConnect).
+# NOTE: bun needs the `--conditions=VALUE` (equals) form; the space form makes
+# bun mis-parse the args and print usage.
+exec bun ${VGI_BUN_CONDITIONS:+--conditions="$VGI_BUN_CONDITIONS"} run "$(dirname "$0")/../examples/worker.ts" "$@"
