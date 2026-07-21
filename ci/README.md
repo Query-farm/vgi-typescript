@@ -205,23 +205,48 @@ signature of the bug this harness was written to catch.
 
 ## Known-red: the flechette backend
 
-The `flechette` matrix leg currently **fails 67 of its 253 executed test cases**.
-These are genuine defects in the flechette Arrow path, not harness artifacts — they
-reproduce against a from-source vgi build through the pre-existing `make test-http`
-worker boot path, and the arrow-js leg passes 253/253 through the identical
-harness. They were invisible before because the whole suite was skipping.
+The `flechette` matrix leg used to fail **67 of its 253 executed test cases**. Those
+were genuine defects in the flechette Arrow path, not harness artifacts — they
+reproduced against a from-source vgi build, and the arrow-js leg passed 253/253
+through the identical harness. They had been invisible because the whole suite was
+skipping.
 
-Signatures, by count:
+Sixty-five of the sixty-seven are fixed (see `src/arrow/impl-flechette/compat.ts`,
+`arrowjs-shape.ts` and the parity tests in `src/arrow/__tests__/parity.test.ts`):
+unaligned IPC decode, the missing `Column#isValid` / `Table#slice`, `isValid`
+returning false for an all-valid column, `isSigned` vs `signed`, `listSize` vs
+`stride`, the dropped zero-field RecordBatch and per-batch metadata, MonthDayNano
+interval shape, `metadata: null` on decoded fields, and `String(type)` as a type
+identity.
 
-- 38 × `RangeError: Byte offset is not aligned` — `deserializeBatch`
-  (`src/arrow/impl-flechette/ipc.ts`) hands flechette a buffer whose offset is not
-  8-byte aligned.
-- 16 × `TypeError: <col>.isValid is not a function` — the flechette column facade
-  is missing `isValid`.
-- 2 × `TypeError: codec[uint64]: value out of uint64 range (got number: -30)`
-- 2 × `HttpRpcError: Missing state token in exchange request`
-- 1 × `TypeError: batch.slice is not a function`
-- 1 × `RangeError: Not an integer`
+**Two remain, and they are not fixable in this repo:**
+
+- `filter_pushdown/enums.test`
+- `table_in_out/echo/all_types.test`
+
+Both fail with `HttpRpcError: Missing state token in exchange request`, and both
+have an ENUM (Arrow Dictionary) in the stream's output schema. Root cause is in
+`@query-farm/flechette`'s encoder:
+
+`columnFromValues` emits no batch for a zero-length column (`if (row) next(b)`), so
+a 0-row table has `column.data.length === 0`. `tableToIPC` then derives no record
+batches, and its `batchMetadata` path synthesises an empty one via
+`appendEmptyNodes` — but it does **not** synthesise the matching empty
+`DictionaryBatch`, while `assembleSchema` still stamps a dictionary id onto the
+schema. The resulting stream declares a dictionary id that no message defines;
+flechette itself cannot read it back (`TypeError: undefined is not an object
+(evaluating 'dictionary.cache')` in `setDictionary`), and neither can DuckDB.
+
+`@query-farm/vgi-rpc` walks straight into it: every HTTP exchange `init` replies
+with `buildEmptyBatch(outputSchema, {state-token})`
+(`src/arrow/impl-flechette/index.ts` → `emptyBatchWithMetadata`), which is exactly
+a 0-row batch carrying metadata. Over an ENUM schema the client never receives the
+token, and the next `exchange` request arrives without one.
+
+Verified: patching `tableToIPC` in `@query-farm/flechette` to synthesise empty
+dictionary batches (and register their ids in `idMap`) alongside the empty record
+batch makes both tests pass unchanged. The fix belongs in
+`@query-farm/flechette@2.4.0` → a release → a `@query-farm/vgi-rpc` rebuild.
 
 The leg is left **blocking** on purpose. Suppressing it would recreate exactly the
 condition this harness was written to eliminate.
