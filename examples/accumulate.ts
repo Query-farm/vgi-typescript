@@ -48,6 +48,7 @@ import {
   deserializeBatch,
   serializeSchema,
   deserializeSchema,
+  typeSignature,
   BoundStorage,
   functionStorage,
   type CatalogDescriptor,
@@ -117,7 +118,11 @@ function inputFieldsMatch(pinned: VgiSchema, incoming: VgiSchema): boolean {
     const a = pinned.fields[i];
     const b = incoming.fields[i];
     if (a.name !== b.name) return false;
-    if (String(a.type) !== String(b.type)) return false;
+    // `String(type)` is not a type identity: arrow-js DataTypes stringify to a
+    // name, flechette's plain-object types all stringify to "[object Object]",
+    // so every schema compared equal and a genuinely mismatched batch was
+    // accepted (then crashed DuckDB's Arrow conversion).
+    if (typeSignature(a.type) !== typeSignature(b.type)) return false;
   }
   return true;
 }

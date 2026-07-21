@@ -17,7 +17,7 @@ import {
 
 import type { VgiSchema, VgiBatch } from "../types.js";
 import { readFirstRecordBatchMeta } from "./message-meta.js";
-import { aliasSchemaIntSigned } from "./int-signed.js";
+import { normalizeDecodedSchema } from "./arrowjs-shape.js";
 import { toFlechetteType } from "./normalize-type.js";
 
 // flechette decoding options that match how vgi-typescript callers expect
@@ -103,7 +103,7 @@ export function serializeSchema(schema: VgiSchema): Uint8Array {
 export function deserializeSchema(bytes: Uint8Array): VgiSchema {
   const table = tableFromIPC(align8(bytes), EXTRACT_OPTS);
   // flechette's Table.schema is the structural shape we need.
-  return aliasSchemaIntSigned(table.schema) as unknown as VgiSchema;
+  return normalizeDecodedSchema(table.schema) as unknown as VgiSchema;
 }
 
 /**
@@ -152,7 +152,7 @@ export function deserializeBatch(input: Uint8Array): VgiBatch {
   const table: any = tableFromIPC(bytes, EXTRACT_OPTS);
   // Worker code reads `batch.schema.fields[i].type.isSigned` (arrow-js's
   // spelling) to pick promoted result types; flechette spells it `signed`.
-  aliasSchemaIntSigned(table.schema);
+  normalizeDecodedSchema(table.schema);
   // flechette's IPC parser ignores the Message-level `custom_metadata` field
   // and reports row counts only via column children, so a "metadata-only"
   // batch over a 0-field schema (legal in vgi-rpc — used to ferry state

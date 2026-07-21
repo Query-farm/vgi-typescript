@@ -1,7 +1,11 @@
 // Copyright 2025, 2026 Query Farm LLC - https://query.farm
 // Function registry: name -> VgiFunction lookup with overload resolution.
 
-import { type VgiDataType, isBinary, isBool, isDecimal, isFloat, isInt, isNull, isUtf8 } from "../arrow/index.js";
+import {
+  type VgiDataType,
+  isBinary, isBool, isDecimal, isFloat, isInt, isNull, isUtf8,
+  typeSignature,
+} from "../arrow/index.js";
 import type { VgiSchema } from "../arrow/index.js";
 import type { VgiFunction } from "./types.js";
 import type { Arguments } from "../arguments/arguments.js";
@@ -17,8 +21,21 @@ export interface OverloadContext {
 const EXACT_MATCH_SCORE = 2;
 const FAMILY_MATCH_SCORE = 1;
 
+/**
+ * Exact structural type identity.
+ *
+ * `toString()` cannot be used: arrow-js DataTypes stringify to a meaningful
+ * name, flechette's plain-object types all stringify to "[object Object]".
+ * Under flechette that made every exact-match test fail, every overload score
+ * collapse to the family tie, and `type_info(42::BIGINT)` resolve to the
+ * INTEGER overload.
+ */
+function typesIdentical(a: VgiDataType, b: VgiDataType): boolean {
+  return typeSignature(a) === typeSignature(b);
+}
+
 function typesCompatible(actual: VgiDataType, declared: VgiDataType): boolean {
-  if (actual.toString() === declared.toString()) return true;
+  if (typesIdentical(actual, declared)) return true;
   // Integer family
   if (isInt(actual) && isInt(declared)) return true;
   // Float/decimal family
@@ -47,7 +64,7 @@ function scoreTypes(
     if (spec.isAnyType || isNull(spec.arrowType)) continue;
     const actual = actualTypes[i];
     if (actual === null) continue;
-    if (actual.toString() === spec.arrowType.toString()) {
+    if (typesIdentical(actual, spec.arrowType)) {
       score += EXACT_MATCH_SCORE;
     } else if (typesCompatible(actual, spec.arrowType)) {
       score += FAMILY_MATCH_SCORE;
@@ -61,7 +78,7 @@ function scoreTypes(
     for (let i = specs.length; i < actualTypes.length; i++) {
       const actual = actualTypes[i];
       if (actual === null) continue;
-      if (actual.toString() === varArgsSpec.arrowType.toString()) {
+      if (typesIdentical(actual, varArgsSpec.arrowType)) {
         score += EXACT_MATCH_SCORE;
       } else if (typesCompatible(actual, varArgsSpec.arrowType)) {
         score += FAMILY_MATCH_SCORE;

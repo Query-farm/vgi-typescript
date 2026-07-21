@@ -44,6 +44,7 @@ export {
   isDuration,
   isDictionary,
   isBatch,
+  typeSignature,
 } from "./predicates.js";
 
 // Active backend's surface (IPC, build, iterate, utilities).

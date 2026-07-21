@@ -248,6 +248,7 @@ export {
   isNull, isInt, isFloat, isBinary, isUtf8, isBool, isDecimal, isDate,
   isTime, isTimestamp, isInterval, isList, isStruct, isUnion,
   isFixedSizeBinary, isFixedSizeList, isMap, isDuration, isDictionary, isBatch,
+  typeSignature,
   readCanonicalValue, columnFromArray, decodeDictValue, backend,
 } from "./arrow/index.js";
 

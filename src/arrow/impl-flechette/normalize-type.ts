@@ -23,7 +23,7 @@ import {
   list, largeList, fixedSizeList, struct, map, dictionary, union,
 } from "@query-farm/flechette";
 
-import { aliasIntSigned } from "./int-signed.js";
+import { aliasIntSigned } from "./arrowjs-shape.js";
 
 function fField(f: any): any {
   return f_field(f.name, toFlechetteType(f.type), f.nullable ?? true, f.metadata ?? null);
