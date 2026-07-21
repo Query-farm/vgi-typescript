@@ -44,6 +44,13 @@ clean:
 
 # --- Test targets ---
 #
+# These are the LOCAL developer targets. They drive vgi/scripts/run_tests.py,
+# which has no "skipped" category — a test that skips (a failed `require`, an
+# unset `require-env`) exits 0 and is reported as a pass. That is fine while
+# iterating, but it means a green `make test-http` is not evidence the suite ran.
+# CI uses ci/run-integration.sh instead, which counts and allowlists every skip
+# and enforces a floor on executed tests; run that when you need certainty.
+#
 # Use the unittest harness's own -j 8 parallelism (see ~/Development/vgi
 # Makefile's test_subprocess target). One unittest invocation runs every
 # matching test in parallel, captures output to a log file, and prints a

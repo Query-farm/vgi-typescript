@@ -1,3 +1,5 @@
 #!/usr/bin/env bash
 # VGI_BUN_CONDITIONS (e.g. "worker") selects the flechette Arrow backend.
-exec bun ${VGI_BUN_CONDITIONS:+--conditions "$VGI_BUN_CONDITIONS"} run "$(dirname "$0")/../examples/versioned-tables-worker.ts" "$@"
+# NOTE: bun needs the `--conditions=VALUE` (equals) form; with the space form it
+# mis-parses the args and prints `bun run` usage instead of starting the worker.
+exec bun ${VGI_BUN_CONDITIONS:+--conditions="$VGI_BUN_CONDITIONS"} run "$(dirname "$0")/../examples/versioned-tables-worker.ts" "$@"

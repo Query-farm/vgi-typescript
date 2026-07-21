@@ -88,6 +88,15 @@ The worker communicates via Arrow IPC on stdin/stdout. Not interactive.
 Prefer `make test` (see Makefile section above). The raw commands below are for
 reference and manual debugging only.
 
+**CI does not use the `make` targets.** It runs `ci/run-integration.sh` — the same
+harness as `vgi-go/ci/` and `vgi-python/ci/`. See [`ci/README.md`](ci/README.md).
+The difference that matters when you are reading a green run: the `make` targets go
+through `vgi/scripts/run_tests.py`, which **counts a skipped test as a pass** (it
+has no skipped category, and DuckDB exits 0 on a skip). `ci/run-integration.sh`
+counts skips, names them by reason, fails on any reason outside its allowlist, and
+fails if fewer than `MIN_EXECUTED` test cases actually executed. If you are trying
+to establish that a change really runs the suite, use it — not `make test-http`.
+
 Tests live in `/Users/rusty/Development/vgi/test/sql/` (DuckDB VGI extension repo).
 Test format is [sqllogictest](https://duckdb.org/docs/stable/dev/sqllogictest/intro) —
 each `.test` file contains `statement ok`, `query`, etc. blocks.
