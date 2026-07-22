@@ -7,6 +7,8 @@ import {
   CACHE_LAST_MODIFIED_KEY,
   CACHE_NO_STORE_KEY,
   CACHE_NOT_MODIFIED_KEY,
+  CACHE_PARTITION_SCOPE_KEY,
+  CACHE_PER_VALUE_KEY,
   CACHE_REVALIDATABLE_KEY,
   CACHE_SCOPE_CATALOG,
   CACHE_SCOPE_KEY,
@@ -26,7 +28,14 @@ describe("cacheControlMetadata", () => {
   });
 
   test("omits unset optionals and false booleans", () => {
-    const md = cacheControlMetadata({ ttl: 0, noStore: false, revalidatable: false, notModified: false });
+    const md = cacheControlMetadata({
+      ttl: 0,
+      noStore: false,
+      revalidatable: false,
+      notModified: false,
+      partitionScope: false,
+      perValue: false,
+    });
     expect([...md.keys()].sort()).toEqual([CACHE_SCOPE_KEY, CACHE_TTL_KEY].sort());
     // ttl=0 is meaningful ("no-cache"), not an absent value.
     expect(md.get(CACHE_TTL_KEY)).toBe("0");
@@ -44,6 +53,8 @@ describe("cacheControlMetadata", () => {
       staleWhileRevalidate: 10,
       staleIfError: 20,
       notModified: true,
+      partitionScope: true,
+      perValue: true,
     });
     expect(md.get(CACHE_TTL_KEY)).toBe("60");
     expect(md.get(CACHE_EXPIRES_KEY)).toBe("2026-07-10T00:00:00Z");
@@ -55,6 +66,28 @@ describe("cacheControlMetadata", () => {
     expect(md.get(CACHE_STALE_WHILE_REVALIDATE_KEY)).toBe("10");
     expect(md.get(CACHE_STALE_IF_ERROR_KEY)).toBe("20");
     expect(md.get(CACHE_NOT_MODIFIED_KEY)).toBe("1");
+    expect(md.get(CACHE_PARTITION_SCOPE_KEY)).toBe("1");
+    expect(md.get(CACHE_PER_VALUE_KEY)).toBe("1");
+  });
+
+  // The two additive opt-ins are off unless asked for: the client only builds
+  // the per-partition / per-value tiers when the worker advertises them, and a
+  // per-value serve is a net loss for a function cheaper than a cache probe.
+  test("per-tier opt-ins are absent by default and additive when set", () => {
+    const base = cacheControlMetadata({ ttl: 300 });
+    expect(base.has(CACHE_PARTITION_SCOPE_KEY)).toBe(false);
+    expect(base.has(CACHE_PER_VALUE_KEY)).toBe(false);
+
+    const partitioned = cacheControlMetadata({ ttl: 300, partitionScope: true });
+    expect(partitioned.get(CACHE_PARTITION_SCOPE_KEY)).toBe("1");
+    expect(partitioned.has(CACHE_PER_VALUE_KEY)).toBe(false);
+
+    const memoized = cacheControlMetadata({ ttl: 300, perValue: true });
+    expect(memoized.get(CACHE_PER_VALUE_KEY)).toBe("1");
+    expect(memoized.has(CACHE_PARTITION_SCOPE_KEY)).toBe(false);
+    // Additive: the whole-result freshness keys still ride along.
+    expect(memoized.get(CACHE_TTL_KEY)).toBe("300");
+    expect(memoized.get(CACHE_SCOPE_KEY)).toBe(CACHE_SCOPE_CATALOG);
   });
 
   test("merges extra metadata, with cache keys winning on collision", () => {

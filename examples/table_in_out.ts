@@ -788,16 +788,22 @@ function doubledColumn(batch: RecordBatch): (bigint | null)[] {
 // Cacheable blended 1->1 map (x -> x*2) advertising vgi.cache.*. Backs
 // exchange-mode result-cache tests on BOTH call shapes served by the same
 // registration: the streaming column form and the correlated LATERAL form.
+//
+// It also advertises `perValue`, which is what enables the extension's per-VALUE
+// memo tier (off unless the worker asks for it), so the per_value_* tests have a
+// blended-map fixture. As with the cached scalars this is a TEST choice: x*2 is
+// far cheaper than a memo probe + decode, so a real worker this cheap should
+// leave `perValue` off.
 const cached_double = defineRowTransformFunction({
   name: "cached_double",
-  description: "Cacheable blended map x -> x*2 (advertises vgi.cache.ttl)",
+  description: "Cacheable blended map x -> x*2 (advertises vgi.cache.ttl + per_value)",
   args: { x: new Int64() },
   argDocs: { x: "Input column" },
   onBind: () => ({ outputSchema: CACHED_DOUBLE_SCHEMA }),
   process: (_params, batch, out) => {
     out.emit(
       batchFromColumns({ doubled: doubledColumn(batch) }, CACHED_DOUBLE_SCHEMA),
-      cacheControlMetadata({ ttl: 300 }),
+      cacheControlMetadata({ ttl: 300, perValue: true }),
     );
   },
   categories: ["blended", "cache", "test"],

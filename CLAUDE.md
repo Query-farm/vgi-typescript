@@ -219,6 +219,17 @@ out.emit(firstBatch, cacheControlMetadata({ ttl: 300 }));
 emits per-batch metadata (`vgi_batch_index`, `vgi_partition_values#b64`) folds the
 cache keys in without losing them. The cache keys win on collision.
 
+Two extra tiers are opt-in, and both are **off** unless the worker advertises them:
+`partitionScope` (per-partition entries for a `SINGLE_VALUE_PARTITIONS` scan) and
+`perValue` (per-VALUE memoization for an exchange-mode map — a scalar, or a blended
+table-in-out called through a correlated `LATERAL`). `perValue` is off by default on
+purpose: serving a value from the memo costs a probe + decode + assembly, which the
+extension measures at roughly 50x the cost of just calling the worker for a cheap
+arithmetic map. Set it only when one call is genuinely expensive (model inference,
+geocoding, a rate-limited or billed remote fetch). The cached example fixtures set it
+because the `per_value_*` tests need the tier populated, not because doubling an
+integer is worth memoizing.
+
 Conditional revalidation: a worker that advertises `{ ttl: 0, etag, revalidatable: true }`
 gets the client's stored validator back on its next call as
 `params.ifNoneMatch` / `params.ifModifiedSince`, and answers a still-fresh result with

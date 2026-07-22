@@ -185,10 +185,14 @@ export interface ScalarFunctionConfig<
   /**
    * Result-cache opt-in: when set, this CacheControl's `vgi.cache.*` metadata
    * rides every output batch's custom metadata (per-batch — NOT the schema,
-   * which the IPC stream fixes at open), so the extension can memoize the
-   * scalar's output per distinct input value. A pure, deterministic scalar
-   * only — advertising this on a non-pure scalar serves stale rows. Mirrors
+   * which the IPC stream fixes at open). A pure, deterministic scalar only —
+   * advertising this on a non-pure scalar serves stale rows. Mirrors
    * vgi-python's `ScalarFunction.CACHE_CONTROL`.
+   *
+   * Per-VALUE memoization (the extension remembering one output per distinct
+   * input value) additionally requires `perValue: true`, which is off by
+   * default because a memo serve only beats a worker call when the call is
+   * expensive — see {@link CacheControl.perValue}.
    */
   cacheControl?: CacheControl;
 }
@@ -405,8 +409,9 @@ export function defineScalarFunction<
           }
 
           // Result-cache opt-in: a scalar declaring cacheControl rides its
-          // vgi.cache.* keys on the emit path's per-batch custom metadata so
-          // the extension can memoize the output per distinct input value.
+          // vgi.cache.* keys on the emit path's per-batch custom metadata. The
+          // per-value memo tier is only populated when that CacheControl also
+          // sets `perValue` (default off — it costs more than a cheap call).
           out.emit(
             outputBatch,
             config.cacheControl ? cacheControlMetadata(config.cacheControl) : undefined,

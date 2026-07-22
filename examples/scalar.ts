@@ -342,6 +342,12 @@ const double_fn = defineScalarFunction({
 // the extension's scalar per-value memoization tests (scalar/per_value*.test,
 // cache/per_value_*.test). Deterministic 1:1 maps, so opting into the result
 // cache is sound.
+//
+// Each also sets `perValue: true`, which is what turns the extension's per-VALUE
+// memo tier on (it is off unless the worker asks — see CacheControl.perValue).
+// That is a deliberate TEST choice, not advice: doubling an integer is far too
+// cheap to memoize per value in production, where the probe + decode costs more
+// than the call itself. These fixtures set it so the tier has coverage.
 // ============================================================================
 
 // cached_double_scalar — doubles a BIGINT value, advertises vgi.cache.ttl.
@@ -351,7 +357,7 @@ const cached_double_scalar = defineScalarFunction({
   params: { value: new Int64() },
   argDocs: { value: "Value to double" },
   returns: new Int64(),
-  cacheControl: { ttl: 300 },
+  cacheControl: { ttl: 300, perValue: true },
   compute: (batch: RecordBatch) => {
     const values = getColumnValues(batch, 0);
     return values.map((v: any) =>
@@ -370,7 +376,7 @@ const cached_add_const = defineScalarFunction({
   constParams: { addend: new Int64() },
   argDocs: { value: "Value", addend: "Constant addend" },
   returns: new Int64(),
-  cacheControl: { ttl: 300 },
+  cacheControl: { ttl: 300, perValue: true },
   compute: (batch: RecordBatch, consts: any) => {
     const addend = BigInt(consts.addend ?? 0);
     const values = getColumnValues(batch, 0);
@@ -389,7 +395,7 @@ const cached_label = defineScalarFunction({
   params: { value: new Int64() },
   argDocs: { value: "Value" },
   returns: new Utf8(),
-  cacheControl: { ttl: 300 },
+  cacheControl: { ttl: 300, perValue: true },
   compute: (batch: RecordBatch) => {
     const values = getColumnValues(batch, 0);
     return values.map((v: any) => {

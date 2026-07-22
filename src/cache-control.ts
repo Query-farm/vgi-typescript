@@ -42,6 +42,7 @@ export const CACHE_STALE_WHILE_REVALIDATE_KEY = "vgi.cache.stale_while_revalidat
 export const CACHE_STALE_IF_ERROR_KEY = "vgi.cache.stale_if_error";
 export const CACHE_NOT_MODIFIED_KEY = "vgi.cache.not_modified";
 export const CACHE_PARTITION_SCOPE_KEY = "vgi.cache.partition_scope";
+export const CACHE_PER_VALUE_KEY = "vgi.cache.per_value";
 
 // --- Request-side metadata keys (client -> worker) --------------------------
 // Ride on the first producer tick; surfaced as `TableProcessParams.ifNoneMatch`
@@ -98,6 +99,31 @@ export interface CacheControl {
    *  partitions without calling the worker. Only meaningful for a
    *  `SINGLE_VALUE_PARTITIONS` table function; purely additive. */
   partitionScope?: boolean;
+  /**
+   * Opt in to per-VALUE memoization: in addition to the whole-result entry, the
+   * client memoizes each distinct worker-input tuple's output keyed on that
+   * tuple, so the same value is served without calling the worker on a later
+   * chunk or a later query. Only meaningful for an exchange-mode MAP — a
+   * scalar, or a blended table-in-out invoked through a correlated `LATERAL`.
+   *
+   * **Default off, and it should stay off unless one call is genuinely
+   * expensive.** This is not a free win: serving a value from the memo costs a
+   * key probe, a decode and a per-value assembly step, and that only pays back
+   * when it is cheaper than asking you for the answer. For a cheap map —
+   * arithmetic, a string tweak, a lookup in a table the worker already has in
+   * memory — it is a large net loss (the engine measures a per-value serve at
+   * roughly 50x the cost of just calling the worker for a simple arithmetic
+   * map). Only the function author knows which side of that line a call falls
+   * on, which is why the engine will not guess: turn it on for model
+   * inference, geocoding, an external API call, or anything rate-limited or
+   * billed per request.
+   *
+   * Independent of freshness: `ttl`/`expires` make a result cacheable at all,
+   * while this decides whether the per-value tier is additionally populated.
+   * Requires a deterministic, side-effect-free function, exactly like the rest
+   * of the result cache.
+   */
+  perValue?: boolean;
 }
 
 const VALID_SCOPES: readonly string[] = [CACHE_SCOPE_CATALOG, CACHE_SCOPE_TRANSACTION];
@@ -137,5 +163,6 @@ export function cacheControlMetadata(cc: CacheControl, extra?: Map<string, strin
   if (cc.staleIfError !== undefined) md.set(CACHE_STALE_IF_ERROR_KEY, String(cc.staleIfError));
   if (cc.notModified) md.set(CACHE_NOT_MODIFIED_KEY, "1");
   if (cc.partitionScope) md.set(CACHE_PARTITION_SCOPE_KEY, "1");
+  if (cc.perValue) md.set(CACHE_PER_VALUE_KEY, "1");
   return md;
 }
