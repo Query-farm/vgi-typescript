@@ -250,6 +250,7 @@ export {
   isFixedSizeBinary, isFixedSizeList, isMap, isDuration, isDictionary, isBatch,
   typeSignature,
   readCanonicalValue, columnFromArray, decodeDictValue, backend,
+  adoptArrowJsShape,
 } from "./arrow/index.js";
 
 export type {

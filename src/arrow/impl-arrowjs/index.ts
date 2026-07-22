@@ -53,3 +53,13 @@ export {
 
 // Column statistics (sparse-union heavy — backend-specific).
 export { buildStatisticsBatch, type ColumnStatistics } from "./statistics.js";
+
+/**
+ * No-op on this backend: arrow-js `RecordBatch`/`Vector` already expose the
+ * full API worker code uses, and arrow-js is a peer dependency, so there is
+ * only ever one copy. Present so both backends satisfy one facade interface —
+ * see impl-flechette/compat.ts for what this does there.
+ */
+export function adoptArrowJsShape<T>(batch: T): T {
+  return batch;
+}

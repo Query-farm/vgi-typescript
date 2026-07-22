@@ -58,3 +58,6 @@ export {
 
 // Column statistics — sparse-union min/max via the codec/canonical path.
 export { buildStatisticsBatch, type ColumnStatistics } from "./statistics.js";
+
+// Arrow-js shape adoption for batches built by another copy of flechette.
+export { adoptArrowJsShape } from "./compat.js";

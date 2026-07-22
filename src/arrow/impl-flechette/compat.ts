@@ -166,24 +166,89 @@ function intervalMonthDayNanoValue(this: any, index: number): Int32Array {
 }
 
 // ---------------------------------------------------------------------------
-// Install (idempotent — this module is imported for its side effects).
+// Installation
 // ---------------------------------------------------------------------------
 
-const CP = Column.prototype as any;
-if (typeof CP.isValid !== "function") CP.isValid = columnIsValid;
+/** Arrow `Type.Interval`, and `IntervalUnit.MONTH_DAY_NANO`. */
+const TYPE_INTERVAL = 11;
+const MONTH_DAY_NANO = 2;
 
-const TP = Table.prototype as any;
-if (typeof TP.slice !== "function") TP.slice = tableSlice;
+function installTableShape(proto: any): void {
+  if (proto && typeof proto.slice !== "function") proto.slice = tableSlice;
+}
 
-// The batch class is not exported by name; `batchType` resolves it from a type.
-const IntervalMonthDayNanoBatch: any = batchType(
-  f_interval(IntervalUnit.MONTH_DAY_NANO) as any,
-  {},
+function installColumnShape(proto: any): void {
+  if (proto && typeof proto.isValid !== "function") proto.isValid = columnIsValid;
+}
+
+function installIntervalShape(proto: any): void {
+  if (proto && !proto.__vgiArrowJsInterval) {
+    proto.value = intervalMonthDayNanoValue;
+    proto.__vgiArrowJsInterval = true;
+  }
+}
+
+// Patch the copy of @query-farm/flechette that *this* module imports. Covers
+// every object the facade itself builds or decodes.
+installColumnShape(Column.prototype);
+installTableShape(Table.prototype);
+// The interval batch class is not exported by name; `batchType` resolves it.
+installIntervalShape(
+  (batchType(f_interval(IntervalUnit.MONTH_DAY_NANO) as any, {}) as any)?.prototype,
 );
-if (
-  IntervalMonthDayNanoBatch?.prototype &&
-  !IntervalMonthDayNanoBatch.prototype.__vgiArrowJsInterval
-) {
-  IntervalMonthDayNanoBatch.prototype.value = intervalMonthDayNanoValue;
-  IntervalMonthDayNanoBatch.prototype.__vgiArrowJsInterval = true;
+
+// ---------------------------------------------------------------------------
+// Adoption — for batches built by a *different copy* of flechette
+// ---------------------------------------------------------------------------
+
+/** Prototypes already patched, so adoption is O(1) after the first sighting. */
+const adopted = new WeakSet<object>();
+
+/**
+ * Give a batch the arrow-js shape even when it was not built by our copy of
+ * flechette.
+ *
+ * The prototype patches above are scoped to one module instance. npm/bun will
+ * happily install a *second* copy of `@query-farm/flechette` — nested under
+ * `@query-farm/vgi-rpc`, say, whenever the two version ranges disagree even
+ * transiently — and then batches decoded off the wire by vgi-rpc are instances
+ * of classes our patches never touched. Worker code that has been calling
+ * `col.isValid(i)` happily for the whole bind phase suddenly gets
+ * `TypeError: col.isValid is not a function` on the first exchange round, with
+ * nothing in the stack to suggest the cause. That is not hypothetical: it took
+ * out four integration tests, and a duplicate copy is invisible to
+ * `bun install` output and to the lockfile, which lists flechette once.
+ *
+ * So rather than trusting module identity, patch whatever prototypes we are
+ * actually handed, once each. `adopted` keeps it to a WeakSet probe per call.
+ *
+ * Returns its argument (mutating prototypes, not the batch) so call sites can
+ * wrap inline.
+ */
+export function adoptArrowJsShape<T>(batch: T): T {
+  const b = batch as any;
+  if (b == null || typeof b !== "object") return batch;
+  // Each prototype is checked independently: a 0-field batch teaches us nothing
+  // about the column class, so short-circuiting on the table alone would leave
+  // `isValid` unpatched for every later batch.
+  once(b, installTableShape);
+  const children: any[] = Array.isArray(b.children) ? b.children : [];
+  for (const col of children) {
+    if (col == null) continue;
+    once(col, installColumnShape);
+    // Interval *values* are produced by the batch class, one level further in.
+    if (col.type?.typeId === TYPE_INTERVAL && col.type?.unit === MONTH_DAY_NANO) {
+      once(col.data?.[0], installIntervalShape);
+    }
+  }
+  return batch;
+}
+
+/** Run `install` on `obj`'s prototype the first time we see that prototype. */
+function once(obj: any, install: (proto: any) => void): void {
+  if (obj == null) return;
+  const proto = Object.getPrototypeOf(obj);
+  if (proto == null || adopted.has(proto)) return;
+  adopted.add(proto);
+  install(proto);
 }

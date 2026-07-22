@@ -20,4 +20,5 @@ export {
   deserializeSchema,
   serializeBatch,
   deserializeBatch,
+  adoptArrowJsShape,
 } from "../../arrow/index.js";

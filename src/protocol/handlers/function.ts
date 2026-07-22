@@ -16,7 +16,7 @@ import {
   serializeTableCardinality,
 } from "../serialize.js";
 import type { GlobalInitResponse } from "../types.js";
-import { batchToScalarDict, deserializeBatch } from "../../util/arrow/index.js";
+import { batchToScalarDict, deserializeBatch, adoptArrowJsShape } from "../../util/arrow/index.js";
 import { toUint8Array } from "../../util/bytes.js";
 import { serializeColumnStatistics } from "../../util/statistics.js";
 import { BindResultSchema, TableFunctionCardinalityResultSchema, TableFunctionDynamicToStringResultSchema } from "../../generated/vgi-protocol-schemas.js";
@@ -153,6 +153,14 @@ export function registerFunctionMethods(protocol: Protocol, config: FunctionHand
       return state;
     },
     exchange: async (state, input, out) => {
+      // `input` is the one batch worker code sees that this package did not
+      // decode — vgi-rpc read it off the wire with its own Arrow backend. If
+      // that resolved to a second copy of @query-farm/flechette (nested under
+      // vgi-rpc whenever the version ranges disagree, even transiently), the
+      // facade's prototype patches never touched its classes and user code
+      // gets `col.isValid is not a function` on the first exchange round.
+      // Adopting here is a WeakSet probe per call and a no-op on arrow-js.
+      input = adoptArrowJsShape(input);
       // Reconstruct live objects from serializable state.
       // This handles both immediate use (producer during init, where _handlers
       // is still present) and deserialized exchange (where we reconstruct).

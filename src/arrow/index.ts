@@ -56,6 +56,8 @@ export {
   filterBatch, projectSchema, projectBatch,
   // per-record-batch metadata attachment
   withBatchMetadata,
+  // arrow-js method shape for batches decoded outside this module's backend copy
+  adoptArrowJsShape,
   // canonical single-value read (backend-agnostic, lossless)
   readCanonicalValue,
   // IPC

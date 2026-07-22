@@ -247,6 +247,16 @@ EXPECTED_SKIP_REASONS=(
   'require-env VGI_TEST_BRANCH_DIR'          # multi-branch Iceberg fixture tree
   'require-env VGI_TEST_BEARER_TOKEN'        # bearer-auth fixture server
   'require-env VGI_HTTP_DISABLE_ZSTD'        # gzip-fallback lane (separate run)
+  # Added upstream in Query-farm/vgi@f8e11ce alongside the fix that made the
+  # client honour an EMPTY `VGI-Supported-Encodings` (a server positively
+  # advertising "no compression") by sending identity request bodies. Driving it
+  # needs vgi's own `test/run_http_no_compression_integration.sh`, which serves
+  # the *Python* fixture worker through `make_wsgi_app(compression_level=None)`.
+  # This repo's example workers have no equivalent no-compression serve mode, so
+  # there is nothing here to point the gate at. Not a regression: the codec
+  # negotiation it guards is exercised on this lane by the capability-probe
+  # tests, which do run.
+  'require-env VGI_HTTP_NO_COMPRESSION'     # no-compression fixture server, Python-side only
   'require spatial'                          # spatial is not published for every haybarn build
 )
 # Transport-specific additions.

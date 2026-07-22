@@ -19,6 +19,7 @@ import {
   isList, isStruct, isDecimal, isDictionary, isTimestamp,
   TypeId,
   batchFromColumns, serializeBatch, deserializeBatch, deserializeSchema, iterRows,
+  adoptArrowJsShape,
   withBatchMetadata,
   backend,
 } from "../index.js";
@@ -330,6 +331,51 @@ describe(`facade (backend=${backend.name})`, () => {
     expect(twice.fields[3].type.typeId).toBe(TypeId.Dictionary);
     expect(twice.fields[4].type.timezone).toBe("UTC");
     expect(twice.fields[5].type.isSigned).toBe(false);
+  });
+
+  test("adoptArrowJsShape restores the shape on a foreign-built batch", () => {
+    const decoded = deserializeBatch(compatBytes) as any;
+    // Identity on any batch this backend already shaped correctly.
+    expect(adoptArrowJsShape(decoded)).toBe(decoded);
+    if (backend.name !== "flechette") {
+      // arrow-js is a peer dependency and its RecordBatch/Vector already carry
+      // the full API, so the duplicate-copy hazard below does not exist there.
+      return;
+    }
+    // Simulate a second copy of the backend library: re-home the batch and its
+    // columns onto fresh prototypes that delegate to the *originals'* parents,
+    // i.e. exactly what a nested duplicate install produces — same classes by
+    // structure, different objects by identity, so the facade's module-level
+    // prototype patches never ran on them.
+    const reproto = (o: any) => {
+      const orig = Object.getPrototypeOf(o);
+      const fresh = Object.create(Object.getPrototypeOf(orig));
+      for (const k of Object.getOwnPropertyNames(orig)) {
+        if (k === "constructor") continue;
+        // Skip the facade's own patches — that is what makes it "foreign".
+        if (k === "isValid" || k === "slice") continue;
+        Object.defineProperty(fresh, k, Object.getOwnPropertyDescriptor(orig, k)!);
+      }
+      const clone = Object.create(fresh);
+      Object.assign(clone, o);
+      return clone;
+    };
+    const foreign = reproto(decoded);
+    foreign.children = decoded.children?.map(reproto) ?? decoded.children;
+    if (foreign.children) {
+      // `getChild`/`getChildAt` read `this.children`, so they follow the clones.
+      foreign.getFactory = decoded.getFactory;
+    }
+
+    adoptArrowJsShape(foreign);
+
+    const col = foreign.getChild ? foreign.getChild("name") : null;
+    if (col) {
+      expect(typeof col.isValid).toBe("function");
+      expect([col.isValid(0), col.isValid(1), col.isValid(2)]).toEqual([true, false, true]);
+    }
+    expect(typeof foreign.slice).toBe("function");
+    expect(foreign.slice(0, 0).numRows).toBe(0);
   });
 
   test("int types report isSigned (decoded and constructed)", () => {
