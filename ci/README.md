@@ -203,50 +203,62 @@ about eight files of headroom below the 253 measured against
 `Query-farm/vgi@b9f3895`. **Do not lower it to make a run pass** — a drop is the
 signature of the bug this harness was written to catch.
 
-## Known-red: the flechette backend
+## The flechette backend: what it took to make it green
 
-The `flechette` matrix leg used to fail **67 of its 253 executed test cases**. Those
-were genuine defects in the flechette Arrow path, not harness artifacts — they
-reproduced against a from-source vgi build, and the arrow-js leg passed 253/253
-through the identical harness. They had been invisible because the whole suite was
-skipping.
+The `flechette` matrix leg once failed **67 of its 253 executed test cases** while
+arrow-js passed every one through the identical harness. All of it was real, and
+all of it had been invisible because the whole suite was skipping. Both legs now
+run **252 / 252**.
 
-Sixty-five of the sixty-seven are fixed (see `src/arrow/impl-flechette/compat.ts`,
-`arrowjs-shape.ts` and the parity tests in `src/arrow/__tests__/parity.test.ts`):
-unaligned IPC decode, the missing `Column#isValid` / `Table#slice`, `isValid`
-returning false for an all-valid column, `isSigned` vs `signed`, `listSize` vs
-`stride`, the dropped zero-field RecordBatch and per-batch metadata, MonthDayNano
-interval shape, `metadata: null` on decoded fields, and `String(type)` as a type
+Most of the 67 were facade gaps — places where flechette and arrow-js disagree and
+worker code was written against arrow-js. They live in
+`src/arrow/impl-flechette/compat.ts` and `arrowjs-shape.ts`, each with a parity
+test in `src/arrow/__tests__/parity.test.ts` that runs under both backends:
+unaligned IPC decode, missing `Column#isValid` / `Table#slice`, `isValid` reading
+`false` for an all-valid column, `isSigned` vs `signed`, `listSize` vs `stride`,
+the dropped zero-field RecordBatch and per-batch metadata, MonthDayNano interval
+shape, `metadata: null` on decoded fields, and `String(type)` used as a type
 identity.
 
-**Two remain, and they are not fixable in this repo:**
+Two needed a fix upstream in `@query-farm/flechette` (shipped in 2.4.1): a
+zero-length column produced no batch, so `tableToIPC` synthesised an empty record
+batch for the `batchMetadata` path but never the matching empty `DictionaryBatch`,
+while `assembleSchema` still stamped a dictionary id. Any 0-row batch over an ENUM
+schema therefore encoded to a stream referencing a dictionary no message defined.
+vgi-rpc hit it on every HTTP exchange `init`, whose state token rides exactly such
+a batch — so ENUM streams failed with `Missing state token in exchange request`.
 
-- `filter_pushdown/enums.test`
-- `table_in_out/echo/all_types.test`
+### The duplicate-copy hazard
 
-Both fail with `HttpRpcError: Missing state token in exchange request`, and both
-have an ENUM (Arrow Dictionary) in the stream's output schema. Root cause is in
-`@query-farm/flechette`'s encoder:
+The last four failures were not an Arrow bug at all, and the shape of them is
+worth remembering:
 
-`columnFromValues` emits no batch for a zero-length column (`if (row) next(b)`), so
-a 0-row table has `column.data.length === 0`. `tableToIPC` then derives no record
-batches, and its `batchMetadata` path synthesises an empty one via
-`appendEmptyNodes` — but it does **not** synthesise the matching empty
-`DictionaryBatch`, while `assembleSchema` still stamps a dictionary id onto the
-schema. The resulting stream declares a dictionary id that no message defines;
-flechette itself cannot read it back (`TypeError: undefined is not an object
-(evaluating 'dictionary.cache')` in `setDictionary`), and neither can DuckDB.
+```
+cache/exchange_revalidate.test        batch.slice is not a function
+aggregate/nest_tensor.test            col.isValid is not a function
+scalar/unnest_tensor.test             col.isValid is not a function
+table_in_out/unnest_tensor_rows.test  col.isValid is not a function
+```
 
-`@query-farm/vgi-rpc` walks straight into it: every HTTP exchange `init` replies
-with `buildEmptyBatch(outputSchema, {state-token})`
-(`src/arrow/impl-flechette/index.ts` → `emptyBatchWithMetadata`), which is exactly
-a 0-row batch carrying metadata. Over an ENUM schema the client never receives the
-token, and the next `exchange` request arrives without one.
+`node_modules` held **two** copies of `@query-farm/flechette@2.4.1` — the hoisted
+one plus a private copy nested under `@query-farm/vgi-rpc`, left behind by a
+two-step dependency bump. `bun.lock` lists flechette once; nothing about the tree
+looks wrong.
 
-Verified: patching `tableToIPC` in `@query-farm/flechette` to synthesise empty
-dictionary batches (and register their ids in `idMap`) alongside the empty record
-batch makes both tests pass unchanged. The fix belongs in
-`@query-farm/flechette@2.4.0` → a release → a `@query-farm/vgi-rpc` rebuild.
+`compat.ts` patches `Column.prototype` / `Table.prototype` on the copy *this*
+package imports. Batches vgi-rpc decodes off the wire are instances of the other
+copy's classes and never saw those patches — which is why the failures land
+exclusively on the **exchange** path, after a bind phase that used the same
+methods successfully.
 
-The leg is left **blocking** on purpose. Suppressing it would recreate exactly the
-condition this harness was written to eliminate.
+A clean `bun install` dedupes and the tests pass, but that is a coincidence, not a
+fix. `adoptArrowJsShape()` (facade-exported, no-op on arrow-js) patches whatever
+prototypes it is handed, once each, and `protocol/handlers/function.ts` adopts the
+exchange input — the one batch worker code sees that this package did not decode.
+The lane is verified green with a duplicate copy deliberately restored.
+
+**If you ever see `X is not a function` on a flechette-only failure, check for a
+second copy before reading any Arrow code.**
+
+The leg is **blocking**, and stays that way. Suppressing it would recreate exactly
+the condition this harness was written to eliminate.
