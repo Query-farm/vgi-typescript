@@ -29,7 +29,7 @@
     "node": ">=22.15"
   },
   "type": "module",
-  "//sideEffects": "Entry modules are listed so the bundler cannot tree-shake them away. Under a bare `sideEffects: false`, an entry consisting only of re-exports builds to a dangling export list with no imports and no definitions \u2014 invalid ESM that throws on first import. Modules not listed stay side-effect-free, so consumers still tree-shake normally.",
+  "//sideEffects": "Entry modules are listed so the bundler cannot tree-shake them away. Under a bare `sideEffects: false`, an entry consisting only of re-exports builds to a dangling export list with no imports and no definitions — invalid ESM that throws on first import. Modules not listed stay side-effect-free, so consumers still tree-shake normally.",
   "sideEffects": [
     "./src/index.ts",
     "./src/client-entry.ts",
@@ -83,16 +83,16 @@
   },
   "dependencies": {
     "@noble/ciphers": "^2.2.0",
-    "@query-farm/flechette": "^2.4.0"
+    "@query-farm/flechette": "^2.4.1"
   },
   "peerDependencies": {
     "@query-farm/apache-arrow": "^21.1.1",
-    "@query-farm/vgi-rpc": "^0.15.0"
+    "@query-farm/vgi-rpc": "^0.15.1"
   },
   "devDependencies": {
     "@duckdb/node-api": "^1.5.2-r.1",
     "@query-farm/apache-arrow": "^21.1.1",
-    "@query-farm/vgi-rpc": "^0.15.0",
+    "@query-farm/vgi-rpc": "^0.15.1",
     "@types/bun": "latest",
     "typescript": "^6.0.3"
   },
