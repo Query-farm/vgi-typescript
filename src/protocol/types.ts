@@ -88,6 +88,14 @@ export interface BindRequest {
    */
   at_unit?: string | null;
   at_value?: string | null;
+  /**
+   * Catalog schema that declares the function being bound. A worker may
+   * register the same name in more than one schema, so the bare name does not
+   * identify an implementation — resolution is by `(schema_name,
+   * function_name)`. Null for callers with no catalog context (COPY handler
+   * binds). Mirrors vgi-python's `BindRequest.schema_name`.
+   */
+  schema_name?: string | null;
 }
 
 export interface BindResponse {

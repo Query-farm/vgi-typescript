@@ -757,76 +757,6 @@ const cache_ordered = defineTableFunction<CacheOrderedArgs, CacheOrderedState>({
 });
 
 // ---------------------------------------------------------------------------
-// cache_interleaved — batch_index reassembly (real reorder on serve)
-// ---------------------------------------------------------------------------
-// Partitions are enqueued in DESCENDING order, so emission order ≠ batch_index
-// order. The live (uncached) scan returns rows in emission order — NOT
-// monotonic; a cached serve flattens and stable-sorts by batch_index, producing
-// strictly 0,1,…,N-1. The gap between the two proves the replay sort genuinely
-// reorders real multi-batch output.
-interface CacheInterleavedArgs {
-  rows: number;
-  chunk_size: number;
-}
-
-const cache_interleaved = defineTableFunction<CacheInterleavedArgs, CacheOrderedState>({
-  name: "cache_interleaved",
-  description: "Parallel batch_index-tagged cacheable sequence; cache serve reassembles order",
-  args: { rows: new Int64(), chunk_size: new Int64() },
-  // Chunk spans MANY batches (chunk / BATCH_SIZE) so the serve reassembly is
-  // tested across batch boundaries, not a single already-sorted batch.
-  argDefaults: { chunk_size: 20000 },
-  argDocs: { rows: "Total number of rows to generate", chunk_size: "Rows per partition" },
-  argConstraints: { rows: { ge: 0 }, chunk_size: { ge: 1 } },
-  maxWorkers: DEFAULT_MAX_WORKERS,
-  supportsBatchIndex: true,
-  onBind: () => ({ outputSchema: N_SCHEMA }),
-  onInit: async (params) => {
-    const rows = Number(params.args.rows);
-    const chunk = Number(params.args.chunk_size);
-    const items: Uint8Array[] = [];
-    let pid = 0;
-    for (let start = 0; start < rows; start += chunk) {
-      items.push(packTriple(pid++, start, Math.min(start + chunk, rows)));
-    }
-    items.reverse(); // highest partition_id popped first → scrambled arrival
-    await params.storage.queuePush(items);
-    return { max_workers: DEFAULT_MAX_WORKERS, execution_id: params.executionId, opaque_data: null };
-  },
-  initialState: () => ({ advertised: false, partitionId: null, currentStart: null, currentEnd: null, currentIdx: 0 }),
-  process: async (params, state, out) => {
-    if (state.partitionId === null || state.currentIdx >= (state.currentEnd ?? 0)) {
-      const item = await params.storage!.queuePop();
-      if (item === null) {
-        out.finish();
-        return;
-      }
-      const [pid, start, end] = unpackTriple(item);
-      state.partitionId = pid;
-      state.currentStart = start;
-      state.currentEnd = end;
-      state.currentIdx = start;
-    }
-    const batchEnd = Math.min(state.currentIdx + 2048, state.currentEnd ?? 0);
-    const batchIndexMeta = new Map([["vgi_batch_index", String(state.partitionId)]]);
-    const metadata = state.advertised
-      ? batchIndexMeta
-      : cacheControlMetadata({ ttl: DEFAULT_TTL_SECONDS }, batchIndexMeta);
-    out.emit(batchFromColumns({ n: int64Range(state.currentIdx, batchEnd) }, params.outputSchema), metadata);
-    state.advertised = true;
-    state.currentIdx = batchEnd;
-  },
-  examples: [
-    {
-      sql: "SELECT count(*) FROM cache_interleaved(100000)",
-      description: "Parallel batch_index reassembly on cache serve",
-    },
-  ],
-  categories: ["generator", "cache", "testing"],
-  tags: { category: "cache", type: "interleaved" },
-});
-
-// ---------------------------------------------------------------------------
 // cache_types — nested / wide / NULL columns through the spill + disk blob
 // ---------------------------------------------------------------------------
 // Every other cacheable fixture emits flat int64/string, so the disk blob and
@@ -858,7 +788,8 @@ const cache_types = defineTableFunction<CacheTypesArgs, CountdownState>({
   args: { rows: new Int64() },
   argDocs: { rows: "Total number of rows to generate" },
   argConstraints: { rows: { ge: 0 } },
-  maxWorkers: DEFAULT_MAX_WORKERS,
+  // No maxWorkers: this generator does not partition its output, so it must
+  // stay single-worker — N workers would each emit the full result.
   onBind: () => ({ outputSchema: CACHE_TYPES_SCHEMA }),
   initialState: (p) => ({ remaining: Number(p.args.rows), currentIndex: 0 }),
   process: (params, state, out) => {
@@ -1029,7 +960,6 @@ export const cacheTableFunctions: VgiFunction[] = [
   cache_bench,
   cache_parallel,
   cache_ordered,
-  cache_interleaved,
   cache_types,
   cache_filtered,
   cache_partitioned,

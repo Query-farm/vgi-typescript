@@ -56,6 +56,15 @@ export class CompositeCatalogInterface extends CatalogInterface {
     return route;
   }
 
+  /** Route to the owning backend and ask it, so the answer is per-attachment. */
+  override catalogNameForAttach(attachOpaqueData: Uint8Array): string | null {
+    try {
+      return this._route(attachOpaqueData).catalogNameForAttach(attachOpaqueData);
+    } catch {
+      return null; // Unroutable attach — fall back to unscoped resolution.
+    }
+  }
+
   catalogs(): string[] {
     const all: string[] = [];
     for (const b of this._backends) all.push(...b.catalogs());

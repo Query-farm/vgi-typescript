@@ -35,10 +35,16 @@ export interface FunctionHandlerConfig {
   registry: FunctionRegistry;
   recoverExchangeState?: (opaqueData: Uint8Array) => any;
   signingKey?: Uint8Array;
+  /**
+   * Used to map a bind's `attach_opaque_data` to its catalog, so resolution can
+   * be scoped when two catalogs declare the same schema and function name.
+   * Optional — without it, resolution falls back to (schema, name).
+   */
+  catalogInterface?: { catalogNameForAttach(a: Uint8Array): string | null };
 }
 
 export function registerFunctionMethods(protocol: Protocol, config: FunctionHandlerConfig): void {
-  const { registry, signingKey } = config;
+  const { registry, signingKey, catalogInterface } = config;
 
   // The framework mints every attach as uuid(16) || catalog_bytes (sealed on
   // HTTP, plaintext on subprocess). Function bodies — like catalog bodies —
@@ -49,6 +55,21 @@ export function registerFunctionMethods(protocol: Protocol, config: FunctionHand
     const env = toUint8Array(attach);
     if (env.length === 0) return env;
     return openAttach(env, ctx?.auth, signingKey);
+  }
+
+  // Build an overload context whose attach has been unsealed, so catalog
+  // resolution sees the real route byte. The bind/init handlers strip their
+  // request in place and can call overloadContext directly; every other site
+  // still holds the sealed envelope (73 bytes on HTTP vs 16 plaintext), whose
+  // leading byte would otherwise route to an arbitrary catalog.
+  async function strippedContext(bindCall: any, ctx?: any) {
+    let attach: Uint8Array | null = null;
+    try {
+      attach = await stripAttach(bindCall.attach_opaque_data, ctx);
+    } catch {
+      attach = null; // Unopenable (wrong key / not sealed) — resolve unscoped.
+    }
+    return overloadContext({ ...bindCall, attach_opaque_data: attach }, catalogInterface);
   }
 
   const initHeaderSchema = schema([
@@ -77,7 +98,7 @@ export function registerFunctionMethods(protocol: Protocol, config: FunctionHand
       const innerParams = unwrapRequest(params.request);
       const request = deserializeBindRequest(innerParams);
       request.attach_opaque_data = await stripAttach(request.attach_opaque_data, ctx);
-      const func = registry.get(request.function_name, overloadContext(request));
+      const func = registry.get(request.function_name, overloadContext(request, catalogInterface));
       const response = await func.bind(request);
       const serialized = serializeBindResponse(response);
       return wrapResult(serialized, BindResultSchema);
@@ -99,7 +120,7 @@ export function registerFunctionMethods(protocol: Protocol, config: FunctionHand
       // Exchange init has no ctx; on subprocess (no signing key) openAttach is a
       // pass-through strip that needs no auth. HTTP carries auth via the bind path.
       request.bind_call.attach_opaque_data = await stripAttach(request.bind_call.attach_opaque_data, undefined);
-      const func = registry.get(request.bind_call.function_name, overloadContext(request.bind_call));
+      const func = registry.get(request.bind_call.function_name, overloadContext(request.bind_call, catalogInterface));
 
       // globalInit is async — table function onInit may touch HTTP-backed
       // FunctionStorage (e.g. Cloudflare DO).
@@ -178,7 +199,7 @@ export function registerFunctionMethods(protocol: Protocol, config: FunctionHand
         const initRequestBatch = deserializeBatch(state.initRequestIpc);
         const initRequestDict = batchToScalarDict(initRequestBatch);
         const request = deserializeInitRequest(initRequestDict);
-        const func = registry.get(state.functionName, overloadContext(request.bind_call));
+        const func = registry.get(state.functionName, await strippedContext(request.bind_call));
         const executionId = state.executionId;
         const opaqueData = state.opaqueData ?? null;
         const initResponse: GlobalInitResponse = {
@@ -243,7 +264,7 @@ export function registerFunctionMethods(protocol: Protocol, config: FunctionHand
     handler: async (params) => {
       const innerParams = unwrapRequest(params.request);
       const request = deserializeCardinalityRequest(innerParams);
-      const func = registry.get(request.bind_call.function_name, overloadContext(request.bind_call));
+      const func = registry.get(request.bind_call.function_name, await strippedContext(request.bind_call));
       let cardResult: Record<string, any>;
       if (func.cardinality) {
         cardResult = serializeTableCardinality(await func.cardinality(request));
@@ -264,10 +285,10 @@ export function registerFunctionMethods(protocol: Protocol, config: FunctionHand
   protocol.unary("table_function_statistics", {
     params: REQUEST_PARAMS_SCHEMA,
     result: RESULT_BINARY_NULLABLE_SCHEMA,
-    handler: (params) => {
+    handler: async (params) => {
       const innerParams = unwrapRequest(params.request);
       const request = deserializeCardinalityRequest(innerParams);
-      const func = registry.get(request.bind_call.function_name, overloadContext(request.bind_call));
+      const func = registry.get(request.bind_call.function_name, await strippedContext(request.bind_call));
       if (!func.statistics) return { result: null };
       const stats = func.statistics(request);
       if (!stats || stats.length === 0) return { result: null };
@@ -298,7 +319,7 @@ export function registerFunctionMethods(protocol: Protocol, config: FunctionHand
       const bindOpaqueData = innerParams.bind_opaque_data
         ? toUint8Array(innerParams.bind_opaque_data)
         : null;
-      const func = registry.get(bindCall.function_name, overloadContext(bindCall));
+      const func = registry.get(bindCall.function_name, await strippedContext(bindCall));
       const map = func.dynamicToString
         ? await func.dynamicToString({ bindCall, bindOpaqueData, globalExecutionId })
         : {};

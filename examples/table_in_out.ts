@@ -677,6 +677,61 @@ const blended_explode = defineRowTransformFunction({
   categories: ["blended", "test"],
 });
 
+// Cacheable blended 1->N fan-out advertising vgi.cache.per_value.
+//
+// Same shape as blended_explode but opts into the per-value memo tier, so it
+// exercises the columnar arena + its SQLite disk backend at cardinalities the
+// 1:1 cached_double cannot reach: n=0 is a NEGATIVE MEMO (a length-0 slot), n>1
+// a 1:N slot whose rows must survive the d-major store gather, the
+// [cached|fresh] partial splice, and (for disk) the per-slot Arrow-IPC round
+// trip. Deterministic (emits 0..n-1) so tests assert exact values.
+//
+// A test choice, not production advice — memoizing a trivial fan-out is a net
+// loss; the point is deterministic coverage of the 1:N and negative-memo paths.
+// Mirrors vgi-python's CachedExplodeFunction.
+const cached_explode = defineRowTransformFunction({
+  name: "cached_explode",
+  description: "Cacheable blended 1->N fan-out (per_value) — 1:0 / 1:1 / 1:N by input",
+  args: { n: new Int64() },
+  argDocs: { n: "Fan-out count: emit rows 0..n-1 for this input row" },
+  onBind: () => ({ outputSchema: BLENDED_EXPLODE_SCHEMA }),
+  process: (_params, batch, out) => {
+    const col = batch.getChild("n");
+    const counts: number[] = [];
+    for (let i = 0; i < batch.numRows; i++) {
+      const raw = col?.get(i);
+      counts.push(raw === null || raw === undefined || Number(raw) < 0 ? 0 : Number(raw));
+    }
+    // INTERLEAVE parents round-robin (round k emits value k for every parent
+    // with n > k), so within one chunk a given parent's output rows are
+    // NON-contiguous — e.g. parents [1,2,3] -> row parents [0,1,2, 1,2, 2].
+    // This deliberately stresses the per-value store's rows_by_d gather and the
+    // serve-time expansion: a gather assuming contiguous runs would corrupt it.
+    const outVals: bigint[] = [];
+    const parentRows: number[] = [];
+    const maxCount = counts.length > 0 ? Math.max(...counts) : 0;
+    for (let k = 0; k < maxCount; k++) {
+      for (let rowIdx = 0; rowIdx < counts.length; rowIdx++) {
+        if (counts[rowIdx] > k) {
+          outVals.push(BigInt(k));
+          parentRows.push(rowIdx);
+        }
+      }
+    }
+    // Both helpers return a Map; compose via `extra` rather than spreading —
+    // spreading a Map yields no own enumerable properties and would silently
+    // drop the provenance and the cache directives alike.
+    out.emit(
+      batchFromColumns({ i: outVals }, BLENDED_EXPLODE_SCHEMA),
+      cacheControlMetadata(
+        { ttl: 300, perValue: true },
+        parentRowsMetadata(parentRows, outVals.length),
+      ),
+    );
+  },
+  categories: ["blended", "cache", "test"],
+});
+
 // Blended 1->1 map advertising projection_pushdown, with TWO output columns
 // (a=x*10, b=x*100). Regression fixture for the batched correlated-LATERAL
 // operator vs projection pushdown: a subset projection under correlated
@@ -925,6 +980,7 @@ export const tableInOutFunctions: VgiFunction[] = [
   row_sum,
   blended_drop,
   blended_explode,
+  cached_explode,
   projectable_blended,
   hostile_provenance,
   cached_double,

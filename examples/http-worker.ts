@@ -11,6 +11,7 @@ import { allFunctions, catalog, createExampleCatalog } from "./common.js";
 import { projectionReproCatalog, projectionReproFunctions } from "./projection_repro.js";
 import { accumulateFunctions, createAccumulateCatalog } from "./accumulate.js";
 import { narrowBindCatalog, narrowBindFunctions } from "./narrow_bind.js";
+import { twinACatalog, twinBCatalog, twinCatalogFunctions } from "./twin_catalogs.js";
 
 const registry = new FunctionRegistry();
 for (const func of [
@@ -18,6 +19,7 @@ for (const func of [
   ...projectionReproFunctions,
   ...accumulateFunctions,
   ...narrowBindFunctions,
+  ...twinCatalogFunctions,
 ]) {
   registry.register(func);
 }
@@ -27,11 +29,17 @@ const exampleCatalog = createExampleCatalog(exampleBase);
 const projectionRepro = new ReadOnlyCatalogInterface(projectionReproCatalog, registry);
 const accumulate = createAccumulateCatalog(registry);
 const narrowBind = new ReadOnlyCatalogInterface(narrowBindCatalog, registry);
+// Two catalogs whose `main` schemas both declare `test_same_name_catalog` —
+// only the attached catalog tells them apart.
+const twinA = new ReadOnlyCatalogInterface(twinACatalog, registry);
+const twinB = new ReadOnlyCatalogInterface(twinBCatalog, registry);
 const catalogInterface = new CompositeCatalogInterface([
   exampleCatalog,
   projectionRepro,
   accumulate,
   narrowBind,
+  twinA,
+  twinB,
 ]);
 
 // The `signingKey` this example used to pass to createHttpHandler was never read

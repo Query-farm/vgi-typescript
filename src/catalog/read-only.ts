@@ -38,6 +38,19 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
     super();
     this._descriptor = descriptor;
     this._registry = registry;
+    // Index every function this catalog declares by its owning schema, so a
+    // schema-qualified bind resolves to the right implementation when one name
+    // is declared in more than one schema. Table-backing functions are indexed
+    // under their table's schema for the same reason.
+    for (const sch of descriptor.schemas ?? []) {
+      for (const fn of sch.functions ?? []) registry.registerInSchema(fn, sch.name, descriptor.name);
+      for (const tbl of sch.tables ?? []) {
+        for (const key of ["function", "insertFunction", "updateFunction", "deleteFunction"] as const) {
+          const fn = (tbl as any)[key];
+          if (fn) registry.registerInSchema(fn, sch.name, descriptor.name);
+        }
+      }
+    }
   }
 
   catalogs(): string[] {

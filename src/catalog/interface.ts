@@ -365,6 +365,21 @@ function isPromise<T>(v: Awaitable<T>): v is Promise<T> {
 }
 
 export abstract class CatalogInterface {
+  /**
+   * Which catalog an `attach_opaque_data` belongs to, or null if unknown.
+   *
+   * Two catalogs served by one worker may declare the same schema *and*
+   * function name, in which case the attachment is the only thing that tells
+   * them apart — the bind path uses this to scope function resolution. The
+   * default answers from `catalogs()` when this interface owns exactly one,
+   * which is right for every single-catalog implementation; the composite
+   * overrides it to route by its backend index byte.
+   */
+  catalogNameForAttach(_attachOpaqueData: Uint8Array): string | null {
+    const names = this.catalogs();
+    return names.length === 1 ? names[0] : null;
+  }
+
   // Required overrides
   abstract catalogs(): string[];
   /**

@@ -16,6 +16,20 @@ export interface OverloadContext {
   arguments?: Arguments;
   inputSchema?: VgiSchema | null;
   isScalar?: boolean;
+  /**
+   * Catalog schema that declares the function, from `BindRequest.schema_name`.
+   * A worker may register the same name in more than one schema, so the bare
+   * name is not a unique key. When set, resolution is scoped to that schema and
+   * never falls back to another one; when absent, every schema is searched.
+   */
+  schemaName?: string | null;
+  /**
+   * Catalog that owns the function, resolved from the bind's
+   * `attach_opaque_data`. Two catalogs served by one worker may each declare
+   * the same schema *and* function name, in which case only the catalog tells
+   * them apart. Absent for calls with no attachment.
+   */
+  catalogName?: string | null;
 }
 
 const EXACT_MATCH_SCORE = 2;
@@ -190,8 +204,26 @@ function filterByArgumentTypes(
   return scored.filter(s => s.score === maxScore).map(s => s.func);
 }
 
+/** Key for the schema-scoped index: lowercased schema, then function name. */
+function schemaKey(schemaName: string, functionName: string): string {
+  return `${schemaName.toLowerCase()}\u0000${functionName}`;
+}
+
+/** Key for the catalog-scoped index: lowercased catalog, then the schema key. */
+function catalogKey(catalogName: string, schemaName: string, functionName: string): string {
+  return `${catalogName.toLowerCase()}\u0000${schemaKey(schemaName, functionName)}`;
+}
+
 export class FunctionRegistry {
   private _functions: Map<string, VgiFunction[]> = new Map();
+  // (lowercased schema, function name) -> functions declared in that schema.
+  // Populated by registerInSchema(), which catalog construction calls for every
+  // function a SchemaDescriptor lists. Lets a schema-qualified bind pick the
+  // right implementation when one name is registered in several schemas.
+  private _bySchema: Map<string, VgiFunction[]> = new Map();
+  // (lowercased catalog, lowercased schema, function name) -> functions. Needed
+  // because two catalogs in one worker may declare the same schema AND name.
+  private _byCatalog: Map<string, VgiFunction[]> = new Map();
 
   register(func: VgiFunction): void {
     const name = func.meta.name;
@@ -201,12 +233,85 @@ export class FunctionRegistry {
     this._functions.get(name)!.push(func);
   }
 
+  /**
+   * Record that `func` is declared in `schemaName`, in addition to the flat
+   * by-name index. Idempotent, and independent of `register()` so a function
+   * reachable from several schemas (e.g. a scan function referenced by tables in
+   * more than one schema) resolves from any of them.
+   */
+  registerInSchema(func: VgiFunction, schemaName: string, catalogName?: string): void {
+    const add = (map: Map<string, VgiFunction[]>, key: string) => {
+      const bucket = map.get(key);
+      if (!bucket) {
+        map.set(key, [func]);
+        return;
+      }
+      if (!bucket.includes(func)) bucket.push(func);
+    };
+    add(this._bySchema, schemaKey(schemaName, func.meta.name));
+    if (catalogName) {
+      add(this._byCatalog, catalogKey(catalogName, schemaName, func.meta.name));
+    }
+  }
+
+  /** Schemas that declare `functionName`, sorted — for error messages. */
+  schemasFor(functionName: string): string[] {
+    const out: string[] = [];
+    for (const key of this._bySchema.keys()) {
+      const [schema, name] = key.split("\u0000");
+      if (name === functionName) out.push(schema);
+    }
+    return out.sort();
+  }
+
   get(name: string, context?: OverloadContext): VgiFunction {
-    const candidates = this._functions.get(name);
+    let candidates = this._functions.get(name);
+
+    // A schema-qualified lookup is exact: only functions declared in that schema
+    // are candidates, so a name registered in two schemas dispatches to the one
+    // the caller named rather than colliding as an overload.
+    // Catalog first: it is the only key that separates two catalogs declaring
+    // the same schema and name.
+    const catalogName = context?.catalogName;
+    const schemaName = context?.schemaName;
+    if (catalogName && schemaName) {
+      const scoped = this._byCatalog.get(catalogKey(catalogName, schemaName, name));
+      if (scoped && scoped.length > 0) {
+        return this._disambiguate(name, scoped, context);
+      }
+    }
+    if (schemaName) {
+      const scoped = this._bySchema.get(schemaKey(schemaName, name));
+      if (scoped && scoped.length > 0) {
+        candidates = scoped;
+      } else if (candidates && candidates.length > 0) {
+        const schemas = this.schemasFor(name);
+        if (schemas.length > 0) {
+          throw new Error(
+            `Function '${name}' is not registered in schema '${schemaName}'. ` +
+              `It is available in: [${schemas.join(", ")}]`,
+          );
+        }
+      }
+    }
+
     if (!candidates || candidates.length === 0) {
       throw new FunctionNotFoundError(name, this.names());
     }
 
+    return this._disambiguate(name, candidates, context);
+  }
+
+  /**
+   * Pick one function from an already-scoped candidate list, by argument shape
+   * and types. Scoping (catalog / schema) happens in `get()`; by the time this
+   * runs, every candidate is a legitimate overload of the same name.
+   */
+  private _disambiguate(
+    name: string,
+    candidates: VgiFunction[],
+    context?: OverloadContext,
+  ): VgiFunction {
     // Fast path: single candidate
     if (candidates.length === 1) {
       return candidates[0];

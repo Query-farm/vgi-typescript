@@ -51,11 +51,35 @@ export function wrapResult(
   return { result: serializeBatch(batch) };
 }
 
-export function overloadContext(req: { function_name: string; arguments: any; input_schema: any; function_type: any }): OverloadContext {
+export function overloadContext(
+  req: {
+    function_name: string;
+    arguments: any;
+    input_schema: any;
+    function_type: any;
+    schema_name?: string | null;
+    attach_opaque_data?: Uint8Array | null;
+  },
+  catalogInterface?: { catalogNameForAttach(a: Uint8Array): string | null },
+): OverloadContext {
+  // The attachment identifies the catalog, which is the only key separating two
+  // catalogs that declare the same schema AND function name.
+  let catalogName: string | null = null;
+  if (catalogInterface && req.attach_opaque_data) {
+    try {
+      catalogName = catalogInterface.catalogNameForAttach(req.attach_opaque_data);
+    } catch {
+      catalogName = null;
+    }
+  }
   return {
     arguments: req.arguments,
     inputSchema: req.input_schema,
     isScalar: String(req.function_type).toLowerCase() === "scalar",
+    // Scopes resolution when the caller named a schema; a name registered in
+    // several schemas is otherwise ambiguous.
+    schemaName: req.schema_name ?? null,
+    catalogName,
   };
 }
 

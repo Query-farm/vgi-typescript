@@ -29,6 +29,7 @@ import { copyFromFunctions } from "./copy_from.js";
 import { copyToFunctions } from "./copy_to.js";
 import { cacheTableFunctions } from "./cache.js";
 import { cachePartitionScopeTableFunctions } from "./cache_partition_scope.js";
+import { sameNameMain, sameNameData } from "./same_name.js";
 
 // Find functions for table-backed catalog entries
 const sequenceFunction = tableFunctions.find((f) => f.meta.name === "sequence");
@@ -113,6 +114,9 @@ export const allFunctions = [
   ...aggregateFunctions,
   ...copyFromFunctions,
   ...copyToFunctions,
+  // Same registered name in two schemas; the schema tells them apart.
+  sameNameMain,
+  sameNameData,
 ];
 
 // The catalog advertises every registered function EXCEPT cache_multicol, which
@@ -121,7 +125,13 @@ export const allFunctions = [
 // registry still resolves it for the table's inlined scan_function. Mirrors
 // vgi-python's example catalog, whose `functions=[...]` list omits it too.
 const CATALOG_HIDDEN_FUNCTIONS = new Set(["cache_multicol"]);
-const catalogFunctions = allFunctions.filter((f) => !CATALOG_HIDDEN_FUNCTIONS.has(f.meta.name));
+// `main` advertises only its own half of the test_same_name_bind pair; the other
+// belongs to `data` (below). Identity, not name — both share the same name, so a
+// name filter would drop both.
+const MAIN_SCHEMA_EXCLUDED = new Set([sameNameData]);
+const catalogFunctions = allFunctions.filter(
+  (f) => !CATALOG_HIDDEN_FUNCTIONS.has(f.meta.name) && !MAIN_SCHEMA_EXCLUDED.has(f),
+);
 
 // Serialize parameter default values for vgi_clamp: lo=0, hi=100
 const clampDefaultsSchema = new Schema([
@@ -225,6 +235,9 @@ export const catalog: CatalogDescriptor = {
     {
       name: "data",
       comment: "Example tables backed by functions",
+      // Schema-disambiguation probe: same registered name as the main-schema
+      // function above, different implementation.
+      functions: [sameNameData],
       tables: [
         {
           name: "large_sequence",

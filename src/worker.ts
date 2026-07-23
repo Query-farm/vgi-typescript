@@ -65,6 +65,14 @@ export interface WorkerConfig {
   /** Factory that receives the built ReadOnlyCatalogInterface and returns a custom catalog. */
   catalogInterfaceFactory?: (base: ReadOnlyCatalogInterface) => CatalogInterface;
   catalogName?: string;
+  /**
+   * Registry to dispatch through. Pass the same instance used to build a
+   * pre-constructed `catalogInterface` — catalogs record which schema (and
+   * catalog) declares each function on the registry they are given, and
+   * schema-qualified resolution only works if that is the registry the worker
+   * dispatches on. Omit to have the worker create its own.
+   */
+  registry?: FunctionRegistry;
 }
 
 export class Worker {
@@ -73,7 +81,10 @@ export class Worker {
   private _catalogName?: string;
 
   constructor(config: WorkerConfig) {
-    this._registry = new FunctionRegistry();
+    // Reuse the caller's registry when given: a catalogInterface built
+    // elsewhere recorded its per-schema function ownership there, and that
+    // index is what makes a schema-qualified bind resolve correctly.
+    this._registry = config.registry ?? new FunctionRegistry();
     this._catalogName = config.catalogName;
 
     // Register explicit functions
@@ -89,6 +100,9 @@ export class Worker {
         if (schema.functions) {
           for (const func of schema.functions) {
             this._registry.register(func);
+            // Also index by owning schema + catalog so a schema-qualified bind
+            // resolves when one name is declared in more than one schema.
+            this._registry.registerInSchema(func, schema.name, config.catalog.name);
           }
         }
       }

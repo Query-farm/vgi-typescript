@@ -987,6 +987,14 @@ const constant_columns = defineTableFunction<ConstantColumnsArgs, ConstantColumn
         if (DataType.isInt(field.type) && (field.type as any).bitWidth === 64) {
           if (typeof val === "number") val = BigInt(val);
         }
+        // DuckDB sends BOOLEAN constants as the `arrow.bool8` extension type,
+        // whose storage is int8 — so the value arrives as 0/1, not a JS boolean.
+        // onBind already maps the *type* to Bool; the value needs the same
+        // treatment or the bool codec rejects it ("expected boolean, got number").
+        if (DataType.isBool(field.type) && val !== null && val !== undefined) {
+          if (typeof val === "number") val = val !== 0;
+          else if (typeof val === "bigint") val = val !== 0n;
+        }
       }
       const arr = new Array(size).fill(val);
       columns[field.name] = arr;

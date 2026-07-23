@@ -30,6 +30,10 @@ const BIND_REQUEST_SCHEMA = schema([
   // Both null when the scan has no AT clause. See BindRequest.at_unit.
   field("at_unit", utf8(), true),
   field("at_value", utf8(), true),
+  // Catalog schema owning the function. A worker may register one name in
+  // several schemas, so the bare name is not a unique key — resolution is by
+  // (schema_name, function_name). Null for callers with no catalog context.
+  field("schema_name", utf8(), true),
 ]);
 
 // COPY ... FROM context — a nullable nested struct<format, file_path,
@@ -76,6 +80,7 @@ export function serializeBindRequest(req: BindRequest): VgiBatch {
     resolved_secrets_provided: req.resolved_secrets_provided ?? false,
     at_unit: req.at_unit ?? null,
     at_value: req.at_value ?? null,
+    schema_name: req.schema_name ?? null,
   };
   // Append the copy_from / copy_to struct columns only for COPY scans/sinks, so
   // non-COPY binds serialize to the exact legacy shape (fields matched by name
@@ -172,6 +177,8 @@ export function deserializeBindRequest(
     // Empty string -> null (matches the C++ BuildBindRequest convention).
     at_unit: params.at_unit ? String(params.at_unit) : null,
     at_value: params.at_value ? String(params.at_value) : null,
+    // Empty string -> null, same convention as at_unit/at_value.
+    schema_name: params.schema_name ? String(params.schema_name) : null,
     // COPY ... FROM context — absent for ordinary scans (params.copy_from
     // undefined -> null). The struct column decodes to a plain object.
     copy_from: parseCopyFromContext(params.copy_from),

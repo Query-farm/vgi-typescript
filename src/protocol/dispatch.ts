@@ -43,6 +43,7 @@ export function buildVgiProtocol(config: ProtocolConfig): Protocol {
     registry: config.registry,
     recoverExchangeState: config.recoverExchangeState,
     signingKey: config.signingKey,
+    catalogInterface: config.catalogInterface,
   });
   registerAggregateMethods(protocol, config.registry);
   registerTableBufferingMethods(protocol, config.registry, config.signingKey);
