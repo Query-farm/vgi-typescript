@@ -157,7 +157,7 @@ for p in "${EXCLUDED[@]}"; do FIND_SKIP+=(-not -path "./$p"); done
 echo "Staging tests into $STAGE (transport=$TRANSPORT, preprocess=$PREPROCESS) ..."
 mkdir -p "$STAGE/test/sql/integration"
 ( cd "$INTEGRATION"
-  find . -name '*.test' "${FIND_SKIP[@]}" | while read -r f; do
+  find . -name '*.test' ${FIND_SKIP[@]+"${FIND_SKIP[@]}"} | while read -r f; do
     mkdir -p "$STAGE/test/sql/integration/$(dirname "$f")"
     awk -v http="$AWK_HTTP" -v install="$PREPROCESS" \
         -f "$HERE/preprocess-require.awk" "$f" > "$STAGE/test/sql/integration/$f"
