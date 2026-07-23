@@ -43,11 +43,19 @@ export function registerTableBufferingMethods(
   registry: FunctionRegistry,
   signingKey?: Uint8Array,
 ): void {
-  function resolveBuffering(name: string): TableBufferingVgiFunction {
+  // `schemaName` scopes resolution to the schema the caller named. The
+  // buffering process/combine RPCs carry it (protocol 1.2.0), so a name
+  // declared in two schemas resolves to the one the request names rather than
+  // colliding on the flat by-name index. `null` keeps the cross-schema lookup.
+  function resolveBuffering(
+    name: string,
+    schemaName?: string | null,
+  ): TableBufferingVgiFunction {
     const func = registry.get(name, {
       arguments: new Arguments(),
       inputSchema: null,
       isScalar: false,
+      schemaName: schemaName ?? null,
     }) as any;
     if (!func || func.kind !== "table_buffering") {
       throw new Error(`Function '${name}' is not a table_buffering function`);
@@ -75,7 +83,7 @@ export function registerTableBufferingMethods(
         : rawAttach;
     const transactionId = inner.transaction_id ? toUint8Array(inner.transaction_id) : null;
 
-    const func = resolveBuffering(functionName);
+    const func = resolveBuffering(functionName, inner.schema_name ?? null);
     const bound = new BoundStorage(defaultStorage, executionId);
     const payload = await bound.stateGet(
       FrameworkNS.BUFFERING_INIT,

@@ -30,6 +30,10 @@ import { copyToFunctions } from "./copy_to.js";
 import { cacheTableFunctions } from "./cache.js";
 import { cachePartitionScopeTableFunctions } from "./cache_partition_scope.js";
 import { sameNameMain, sameNameData } from "./same_name.js";
+import {
+  sameNameExchangeMainFunctions,
+  sameNameExchangeDataFunctions,
+} from "./same_name_exchange.js";
 
 // Find functions for table-backed catalog entries
 const sequenceFunction = tableFunctions.find((f) => f.meta.name === "sequence");
@@ -117,6 +121,12 @@ export const allFunctions = [
   // Same registered name in two schemas; the schema tells them apart.
   sameNameMain,
   sameNameData,
+  // Exchange-mode + aggregate schema-disambiguation pairs
+  // (test_same_name_transform / _buffered / _agg), each declared in both
+  // `main` and `data`. The main halves are advertised in `main` (below); the
+  // data halves are excluded from `main` and listed in the `data` schema.
+  ...sameNameExchangeMainFunctions,
+  ...sameNameExchangeDataFunctions,
 ];
 
 // The catalog advertises every registered function EXCEPT cache_multicol, which
@@ -128,7 +138,7 @@ const CATALOG_HIDDEN_FUNCTIONS = new Set(["cache_multicol"]);
 // `main` advertises only its own half of the test_same_name_bind pair; the other
 // belongs to `data` (below). Identity, not name — both share the same name, so a
 // name filter would drop both.
-const MAIN_SCHEMA_EXCLUDED = new Set([sameNameData]);
+const MAIN_SCHEMA_EXCLUDED = new Set([sameNameData, ...sameNameExchangeDataFunctions]);
 const catalogFunctions = allFunctions.filter(
   (f) => !CATALOG_HIDDEN_FUNCTIONS.has(f.meta.name) && !MAIN_SCHEMA_EXCLUDED.has(f),
 );
@@ -235,9 +245,10 @@ export const catalog: CatalogDescriptor = {
     {
       name: "data",
       comment: "Example tables backed by functions",
-      // Schema-disambiguation probe: same registered name as the main-schema
-      // function above, different implementation.
-      functions: [sameNameData],
+      // Schema-disambiguation probes: same registered names as the main-schema
+      // functions above, different implementations. The scalar pair plus the
+      // exchange-mode + aggregate pairs.
+      functions: [sameNameData, ...sameNameExchangeDataFunctions],
       tables: [
         {
           name: "large_sequence",
