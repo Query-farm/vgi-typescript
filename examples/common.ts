@@ -34,6 +34,10 @@ import {
   sameNameExchangeMainFunctions,
   sameNameExchangeDataFunctions,
 } from "./same_name_exchange.js";
+import {
+  sameNameCachedMainFunctions,
+  sameNameCachedDataFunctions,
+} from "./same_name_cached.js";
 
 // Find functions for table-backed catalog entries
 const sequenceFunction = tableFunctions.find((f) => f.meta.name === "sequence");
@@ -127,6 +131,12 @@ export const allFunctions = [
   // data halves are excluded from `main` and listed in the `data` schema.
   ...sameNameExchangeMainFunctions,
   ...sameNameExchangeDataFunctions,
+  // Cacheable producer schema-disambiguation pair (test_same_name_cached),
+  // declared in both `main` and `data`. Probes the RESULT CACHE (not dispatch):
+  // each schema advertises vgi.cache.ttl and tags its one row with its own
+  // schema, so a cross-served cache entry reads as the wrong tag.
+  ...sameNameCachedMainFunctions,
+  ...sameNameCachedDataFunctions,
 ];
 
 // The catalog advertises every registered function EXCEPT cache_multicol, which
@@ -138,7 +148,11 @@ const CATALOG_HIDDEN_FUNCTIONS = new Set(["cache_multicol"]);
 // `main` advertises only its own half of the test_same_name_bind pair; the other
 // belongs to `data` (below). Identity, not name — both share the same name, so a
 // name filter would drop both.
-const MAIN_SCHEMA_EXCLUDED = new Set([sameNameData, ...sameNameExchangeDataFunctions]);
+const MAIN_SCHEMA_EXCLUDED = new Set([
+  sameNameData,
+  ...sameNameExchangeDataFunctions,
+  ...sameNameCachedDataFunctions,
+]);
 const catalogFunctions = allFunctions.filter(
   (f) => !CATALOG_HIDDEN_FUNCTIONS.has(f.meta.name) && !MAIN_SCHEMA_EXCLUDED.has(f),
 );
@@ -248,7 +262,11 @@ export const catalog: CatalogDescriptor = {
       // Schema-disambiguation probes: same registered names as the main-schema
       // functions above, different implementations. The scalar pair plus the
       // exchange-mode + aggregate pairs.
-      functions: [sameNameData, ...sameNameExchangeDataFunctions],
+      functions: [
+        sameNameData,
+        ...sameNameExchangeDataFunctions,
+        ...sameNameCachedDataFunctions,
+      ],
       tables: [
         {
           name: "large_sequence",
