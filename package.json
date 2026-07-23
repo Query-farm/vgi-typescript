@@ -1,6 +1,6 @@
 {
   "name": "@query-farm/vgi",
-  "version": "0.21.0",
+  "version": "0.22.0",
   "description": "TypeScript framework for extending DuckDB with user-defined functions via the Vector Gateway Interface (VGI) over Arrow IPC.",
   "license": "SEE LICENSE IN LICENSE",
   "author": "Query Farm LLC (https://query.farm)",
