@@ -87,12 +87,12 @@
   },
   "peerDependencies": {
     "@query-farm/apache-arrow": "^21.1.1",
-    "@query-farm/vgi-rpc": "^0.15.1"
+    "@query-farm/vgi-rpc": "^0.15.3"
   },
   "devDependencies": {
     "@duckdb/node-api": "^1.5.2-r.1",
     "@query-farm/apache-arrow": "^21.1.1",
-    "@query-farm/vgi-rpc": "^0.15.1",
+    "@query-farm/vgi-rpc": "^0.15.3",
     "@types/bun": "latest",
     "typescript": "^6.0.3"
   },

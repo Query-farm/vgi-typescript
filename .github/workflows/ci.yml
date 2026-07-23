@@ -73,14 +73,25 @@ jobs:
           # VGI_BUN_CONDITIONS=flechette selects the flechette backend while
           # keeping @query-farm/vgi-rpc in Node mode (the broad `worker`
           # condition also flips vgi-rpc to its browser build and drops
-          # tcpConnect, breaking the Node HTTP worker). flechette is HTTP-only —
-          # no stdio incremental streaming — so it has no launch lane.
+          # tcpConnect, breaking the Node HTTP worker).
           - { lane: http, backend: flechette, conditions: flechette }
           # The AF_UNIX launcher transport (the repo's default `make test`). One
           # warm bun worker serves the whole run, so it is the *fastest* lane,
           # and it covers what http structurally cannot: the launcher-only tests
           # and the four subprocess-pool-semantics files.
           - { lane: launch, backend: arrow-js, conditions: '' }
+          # There is deliberately NO launch/flechette lane. flechette cannot drive
+          # the lockstep stream encoder — an empty table encodes with no
+          # RecordBatch message to slice, and the option that synthesises one
+          # throws on the `tableFromIPC` passthroughs every table-in-out exchange
+          # produces — so it drops per-batch metadata, throws, or hangs. Measured
+          # here: 23 of 295 files failed on this transport, all table-in-out /
+          # exchange, against 0 on arrow-js. @query-farm/vgi-rpc 0.15.3 makes that
+          # an enforced boundary: a worker refuses to start on stdio / AF_UNIX /
+          # TCP under flechette, so such a lane could only ever fail. Consequence
+          # worth knowing: the six http-excluded files below are never exercised
+          # against flechette. Revisit if flechette's assembleRecordBatch learns
+          # to walk those tables.
     steps:
       - name: Checkout vgi-typescript
         uses: actions/checkout@v4
