@@ -46,6 +46,8 @@ class RecordingCatalog extends CatalogInterface {
       attach_catalogs: [],
       tags: {},
       supports_column_statistics: false,
+      global_functions: [],
+      global_function_prefix: "",
       resolved_data_version: null,
       resolved_implementation_version: null,
     };

@@ -628,6 +628,10 @@ export class VgiClient {
       comment: inner.comment ?? null,
       tags: deserializeTags(inner.tags),
       supports_column_statistics: inner.supports_column_statistics ?? false,
+      global_functions: inner.global_functions
+        ? (Array.isArray(inner.global_functions) ? inner.global_functions : [...inner.global_functions]).map(toUint8Array)
+        : [],
+      global_function_prefix: inner.global_function_prefix ?? "",
       resolved_data_version: inner.resolved_data_version ?? null,
       resolved_implementation_version: inner.resolved_implementation_version ?? null,
     };

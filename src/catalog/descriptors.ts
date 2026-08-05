@@ -173,4 +173,22 @@ export interface CatalogDescriptor {
    * advertises a null `source_url`.
    */
   sourceUrl?: string;
+  /**
+   * Functions this catalog asks the client to *additionally* publish into its
+   * global (DuckDB `system.main`) function namespace, on top of the normal
+   * schema-qualified registration. Surfaced as IPC-serialized `FunctionInfo`
+   * records on `catalog_attach.global_functions`.
+   *
+   * Every entry must also be declared in exactly one of this catalog's
+   * schemas — the `FunctionInfo.schema_name` it carries is the bind-dispatch
+   * key, not a sentinel. Mirrors vgi-python's `Catalog.global_functions`.
+   */
+  globalFunctions?: VgiFunction[];
+  /**
+   * Prefix applied client-side to every `globalFunctions` entry's name when it
+   * is published globally (e.g. prefix `vgi_example` + `global_scalar` →
+   * `vgi_example_global_scalar`). The advertised `FunctionInfo.name` stays
+   * unprefixed. Surfaced as `catalog_attach.global_function_prefix`.
+   */
+  globalFunctionPrefix?: string;
 }

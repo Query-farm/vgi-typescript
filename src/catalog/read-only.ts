@@ -17,6 +17,7 @@ import {
   type IndexConstraintType,
   type CopyFromFormatInfo,
   encodeAttachCatalogInfo,
+  encodeFunctionInfo,
 } from "./interface.js";
 import type { CatalogDescriptor, SchemaDescriptor, TableDescriptor, ViewDescriptor, MacroDescriptor, SettingDescriptor, SecretTypeDescriptor, ForeignKeyDef, DefaultValue } from "./descriptors.js";
 import { serializeColumnStatistics } from "../util/statistics.js";
@@ -119,6 +120,11 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
       // Advertise true so DuckDB routes catalog_table_column_statistics_get
       // for tables whose TableInfo.supports_column_statistics is also true.
       supports_column_statistics: true,
+      // Functions the client should ALSO publish into its global (system.main)
+      // namespace, under `global_function_prefix` + "_" + name. Empty unless
+      // the descriptor opts in via `globalFunctions`.
+      global_functions: this._globalFunctionInfos().map(encodeFunctionInfo),
+      global_function_prefix: this._descriptor.globalFunctionPrefix ?? "",
       resolved_data_version: null,
       resolved_implementation_version: null,
     };
@@ -374,7 +380,18 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
         if (t === "AGGREGATE_FUNCTION") return (f.kind as string) === "aggregate";
         return true;
       })
-      .map((f) => {
+      .map((f) => this._functionToInfo(f, name));
+  }
+
+  /**
+   * Build the wire `FunctionInfo` for one declared function.
+   *
+   * `schemaName` is the schema the function actually lives in — it is the
+   * bind-dispatch key, so a function advertised through more than one route
+   * (schema contents *and* `global_functions`) must carry the same value in
+   * both. Shared by `schemaContentsFunctions` and `_globalFunctionInfos`.
+   */
+  private _functionToInfo(f: VgiFunction, name: string): FunctionInfo {
         const meta = resolveMetadata(f);
         const argSchema = argumentSpecsToSchema(f.argumentSpecs);
         const argBytes = serializeSchema(argSchema);
@@ -474,7 +491,39 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
             secret_name: s.secret_name,
           })),
         };
-      });
+  }
+
+  /**
+   * Build `FunctionInfo` records for `CatalogDescriptor.globalFunctions`.
+   *
+   * Each entry's `schema_name` is the schema it actually lives in — the
+   * globally visible name is derived client-side from
+   * `global_function_prefix`, so `name` stays unprefixed here. An entry not
+   * declared in any schema is a descriptor bug, so it throws rather than
+   * advertising a function no bind can resolve. Mirrors vgi-python's
+   * `_global_function_infos`.
+   */
+  private _globalFunctionInfos(): FunctionInfo[] {
+    const globals = this._descriptor.globalFunctions ?? [];
+    if (globals.length === 0) return [];
+
+    const schemaOf = new Map<VgiFunction, string>();
+    for (const sch of this._descriptor.schemas) {
+      for (const fn of sch.functions ?? []) {
+        if (!schemaOf.has(fn)) schemaOf.set(fn, sch.name);
+      }
+    }
+
+    return globals.map((fn) => {
+      const schemaName = schemaOf.get(fn);
+      if (schemaName === undefined) {
+        throw new Error(
+          `Catalog '${this._descriptor.name}': '${fn.meta.name}' is listed in ` +
+            `globalFunctions but is not declared in any schema.`,
+        );
+      }
+      return this._functionToInfo(fn, schemaName);
+    });
   }
 
   override schemaContentsMacros(

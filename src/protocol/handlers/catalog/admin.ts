@@ -108,6 +108,12 @@ export function registerCatalogAdminMethods(protocol: Protocol, getCatalog: GetC
         // is also true. Catalogs that never serve column stats can override
         // this in attach() via CatalogAttachResult.supports_column_statistics.
         supports_column_statistics: result.supports_column_statistics ?? true,
+        // Protocol 1.3.0: functions the worker asks the client to publish into
+        // its global namespace. Empty unless the catalog advertises them —
+        // but the columns must still be present, since the extension pins the
+        // full CatalogAttachResult field list on the response schema.
+        global_functions: result.global_functions ?? [],
+        global_function_prefix: result.global_function_prefix ?? "",
         resolved_data_version: result.resolved_data_version ?? null,
         resolved_implementation_version: result.resolved_implementation_version ?? null,
       }, CatalogAttachResultSchema);

@@ -57,6 +57,8 @@ class VersionedCatalog extends CatalogInterface {
       attach_catalogs: [],
       tags: {},
       supports_column_statistics: false,
+      global_functions: [],
+      global_function_prefix: "",
       resolved_data_version: dataVersionSpec ?? DEFAULT_DATA_VERSION,
       resolved_implementation_version: IMPLEMENTATION_VERSION,
     };

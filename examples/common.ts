@@ -38,6 +38,13 @@ import {
   sameNameCachedMainFunctions,
   sameNameCachedDataFunctions,
 } from "./same_name_cached.js";
+import {
+  globalProbeFunctions,
+  global_scalar,
+  global_table,
+  global_agg,
+  global_buffered,
+} from "./global_functions.js";
 
 // Find functions for table-backed catalog entries
 const sequenceFunction = tableFunctions.find((f) => f.meta.name === "sequence");
@@ -137,6 +144,11 @@ export const allFunctions = [
   // schema, so a cross-served cache entry reads as the wrong tag.
   ...sameNameCachedMainFunctions,
   ...sameNameCachedDataFunctions,
+  // Global-registration probes, one per catalog function type. Registered in
+  // `main` like any other function AND advertised on the catalog's
+  // `globalFunctions` (below), so the client's system.main publication path is
+  // exercised for all four kinds. See ./global_functions.ts.
+  ...globalProbeFunctions,
 ];
 
 // The catalog advertises every registered function EXCEPT cache_multicol, which
@@ -172,6 +184,15 @@ export const catalog: CatalogDescriptor = {
   comment: "Example VGI catalog for testing",
   sourceUrl: "https://github.com/Query-farm/vgi-typescript",
   tags: { source: "vgi-fixture-worker", version: "1" },
+  // Global-function registration probes, one per function type, so the C++
+  // extension's system.main path is exercised for all four. Dedicated fixtures
+  // (see ./global_functions.ts) rather than existing ones: this catalog is a
+  // cross-language contract, so reusing e.g. `double` would force every other
+  // implementation to make the same semantic change to a function it already
+  // ships. Published as vgi_example_global_scalar, vgi_example_global_table,
+  // vgi_example_global_agg, vgi_example_global_buffered.
+  globalFunctionPrefix: "vgi_example",
+  globalFunctions: [global_scalar, global_table, global_agg, global_buffered],
   secretTypes: [
     {
       name: "vgi_example",
