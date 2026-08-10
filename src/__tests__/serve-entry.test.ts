@@ -160,12 +160,21 @@ describe("serveVgiWorker", () => {
     expect(res.status).toBe(200);
   });
 
-  test("serves the landing describe.json contract at the root prefix", async () => {
-    const res = await fetch(`${baseUrl}/describe.json`);
+  // Worker identity moved to the status document when describe.json was
+  // retired: the landing page reads the catalog over the protocol instead.
+  test("carries the worker identity on the status document", async () => {
+    const res = await fetch(`${baseUrl}/?format=json`);
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { worker?: { name?: string; version?: string } };
-    expect(body.worker?.name).toBe("demo");
-    expect(body.worker?.version).toBe("0.0.1");
+    const body = (await res.json()) as { worker?: string; version?: string; lang?: string };
+    expect(body.worker).toBe("demo");
+    expect(body.version).toBe("0.0.1");
+    expect(body.lang).toBe("typescript");
+  });
+
+  test("serves the browser client build the landing page imports", async () => {
+    const res = await fetch(`${baseUrl}/vgi-client.js`);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("text/javascript");
   });
 
   test("speaks VGI at the origin root, so LOCATION is the bare URL", async () => {
