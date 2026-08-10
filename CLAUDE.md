@@ -328,10 +328,18 @@ The Arrow layer is a backend-agnostic facade (`src/arrow/`). Two implementations
 ship in the same source tree and the bundler picks one at build time via
 package.json `imports` conditional resolution:
 
-| Backend         | Picked when         | Bundle (worker-cf)  | Used for                              |
+| Backend         | Picked when         | Bundle              | Used for                              |
 | --------------- | ------------------- | ------------------- | ------------------------------------- |
-| `impl-arrowjs`  | `default` (Node/Bun) | n/a (Node entry)   | Subprocess workers, HTTP under Bun, integration tests |
-| `impl-flechette` | `workerd`/`worker`/`browser` | 252 KB min / 74 KB gzip | Cloudflare Workers, browsers          |
+| `impl-arrowjs`  | `default` (Node/Bun), `browser` | 84 KB gzip (browser client app) | Subprocess workers, HTTP under Bun, integration tests, **browser client** |
+| `impl-flechette` | `workerd`/`worker` | 252 KB min / 74 KB gzip (worker-cf) | Cloudflare Workers                    |
+
+`browser` maps to **arrow-js, not flechette** — measured, not assumed. On the
+client surface a minified browser bundle is 84 KB gzip via arrow-js versus
+116 KB via flechette: arrow-js tree-shakes down to the subset the client
+touches, while flechette links as a unit. Flechette still wins for `worker-cf`,
+which exercises far more of the Arrow API and cannot take a peer dep. The
+`browser` key must stay **after** `workerd`/`worker` in the `imports` map —
+conditions match in key order and a workerd build sets both.
 
 `#arrow-impl` (in this repo) and `#vgi-rpc-arrow` (in vgi-rpc-typescript) are
 the resolution keys — see each `package.json`'s `imports` field. **Never import

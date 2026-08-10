@@ -11,13 +11,13 @@
       "devDependencies": {
         "@duckdb/node-api": "^1.5.2-r.1",
         "@query-farm/apache-arrow": "^21.1.1",
-        "@query-farm/vgi-rpc": "^0.17.0",
+        "@query-farm/vgi-rpc": "^0.18.1",
         "@types/bun": "latest",
         "typescript": "^6.0.3",
       },
       "peerDependencies": {
         "@query-farm/apache-arrow": "^21.1.1",
-        "@query-farm/vgi-rpc": "^0.17.0",
+        "@query-farm/vgi-rpc": ">=0.17.0 <0.19.0",
       },
     },
   },
@@ -44,7 +44,7 @@
 
     "@query-farm/flechette": ["@query-farm/flechette@2.4.1", "", {}, "sha512-aKrkfJk7bS5fIfICCX9/O92vrTEE7mNFvzODaGXJOJPJbg1nzPUDWiCMNOvbGRX5c88iMWU3VUzMmXW1p8VHow=="],
 
-    "@query-farm/vgi-rpc": ["@query-farm/vgi-rpc@0.17.0", "", { "dependencies": { "@noble/ciphers": "^2.2.0", "@query-farm/apache-arrow": "^21.1.1", "@query-farm/flechette": "^2.4.1", "fzstd": "^0.1.1", "oauth4webapi": "^3.8.6" }, "peerDependencies": { "@aws-sdk/client-s3": ">=3.0.0", "@aws-sdk/s3-request-presigner": ">=3.0.0", "@google-cloud/storage": ">=7.0.0", "@opentelemetry/api": ">=1.4.0" }, "optionalPeers": ["@aws-sdk/client-s3", "@aws-sdk/s3-request-presigner", "@google-cloud/storage", "@opentelemetry/api"] }, "sha512-0+n8Mj1BcIZYsTTtyV5DjDeRZw8QnMaCazWq0T9KvH9EFvEQHU5XknBosOT9aaJkpXjQNcaP+/2o0S63rJnh9w=="],
+    "@query-farm/vgi-rpc": ["@query-farm/vgi-rpc@0.18.1", "", { "dependencies": { "@noble/ciphers": "^2.2.0", "@query-farm/apache-arrow": "^21.1.1", "@query-farm/flechette": "^2.4.1", "fzstd": "^0.1.1", "oauth4webapi": "^3.8.6" }, "peerDependencies": { "@aws-sdk/client-s3": ">=3.0.0", "@aws-sdk/s3-request-presigner": ">=3.0.0", "@google-cloud/storage": ">=7.0.0", "@opentelemetry/api": ">=1.4.0" }, "optionalPeers": ["@aws-sdk/client-s3", "@aws-sdk/s3-request-presigner", "@google-cloud/storage", "@opentelemetry/api"] }, "sha512-3sDcoasv7TblZYcwm6/w+pU+6OGx+u7UNtlFg6k06tOV0I51CZ4gvWCUSOOd4t1EbAfKMr41zKeBoi3dBmAQvQ=="],
 
     "@swc/helpers": ["@swc/helpers@0.5.21", "", { "dependencies": { "tslib": "^2.8.0" } }, "sha512-jI/VAmtdjB/RnI8GTnokyX7Ug8c+g+ffD6QRLa6XQewtnGyukKkKSk3wLTM3b5cjt1jNh9x0jfVlagdN2gDKQg=="],
 

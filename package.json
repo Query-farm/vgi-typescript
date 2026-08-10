@@ -1,6 +1,6 @@
 {
   "name": "@query-farm/vgi",
-  "version": "0.24.0",
+  "version": "0.24.1",
   "description": "TypeScript framework for extending DuckDB with user-defined functions via the Vector Gateway Interface (VGI) over Arrow IPC.",
   "license": "SEE LICENSE IN LICENSE",
   "author": "Query Farm LLC (https://query.farm)",
@@ -69,15 +69,18 @@
   "files": [
     "dist",
     "src",
+    "scripts/postinstall.cjs",
     "!src/**/__tests__/**",
     "!src/**/*.test.ts",
     "!src/**/*.spec.ts"
   ],
+  "//imports": "`browser` maps to arrow-js DELIBERATELY, not flechette. Measured on the client surface (VgiClient + Arguments + batch helpers), a minified browser bundle is 84 KB gzip via arrow-js vs 116 KB via flechette — arrow-js tree-shakes to the subset the client touches, while flechette links as a unit. Flechette still wins for `worker-cf`, which exercises far more of the Arrow API and cannot take a peer dep. Keep `browser` AFTER `workerd`/`worker`: conditions match in key order, so a workerd build (which sets both) must hit flechette first.",
   "imports": {
     "#arrow-impl": {
       "flechette": "./src/arrow/impl-flechette/index.ts",
       "workerd": "./src/arrow/impl-flechette/index.ts",
       "worker": "./src/arrow/impl-flechette/index.ts",
+      "browser": "./src/arrow/impl-arrowjs/index.ts",
       "default": "./src/arrow/impl-arrowjs/index.ts"
     }
   },
@@ -87,12 +90,12 @@
   },
   "peerDependencies": {
     "@query-farm/apache-arrow": "^21.1.1",
-    "@query-farm/vgi-rpc": "^0.17.0"
+    "@query-farm/vgi-rpc": ">=0.18.1 <0.19.0"
   },
   "devDependencies": {
     "@duckdb/node-api": "^1.5.2-r.1",
     "@query-farm/apache-arrow": "^21.1.1",
-    "@query-farm/vgi-rpc": "^0.17.0",
+    "@query-farm/vgi-rpc": "^0.18.1",
     "@types/bun": "latest",
     "typescript": "^6.0.3"
   },
