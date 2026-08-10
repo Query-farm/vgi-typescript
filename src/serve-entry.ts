@@ -23,7 +23,6 @@
 
 import type { CatalogInterface } from "./catalog/interface.js";
 import type { FunctionRegistry } from "./functions/registry.js";
-import { createLandingDescribe } from "./http/describe-json.js";
 import { createVgiFetch } from "./http/fetch.js";
 
 /** Environment variables `serveVgiWorker` reads. Injectable for testing. */
@@ -192,11 +191,7 @@ export function createVgiWorkerFetch(
     serverId: opts.serverId ?? opts.name,
     corsOrigins,
     repositoryUrl: opts.repositoryUrl,
-    landingDescribe: createLandingDescribe(opts.catalogInterface, {
-      name: opts.name,
-      doc: opts.doc,
-      version: opts.version,
-    }),
+    landingInfo: { name: opts.name, doc: opts.doc, version: opts.version },
   });
 }
 
@@ -225,7 +220,7 @@ export function serveVgiWorker(opts: ServeVgiWorkerOptions): VgiHttpServer {
     const base = `http://localhost:${server.port}`;
     console.log(`${opts.name} VGI HTTP worker listening on ${base}`);
     console.log(`  landing page   ${base}/`);
-    console.log(`  describe.json  ${base}/describe.json`);
+    console.log(`  client bundle  ${base}/vgi-client.js`);
     console.log(`  health         ${base}/health`);
     console.log(`  attach         ATTACH '${opts.name}' AS ${opts.name} (TYPE vgi, LOCATION '${base}');`);
   }

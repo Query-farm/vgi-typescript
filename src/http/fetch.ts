@@ -13,7 +13,7 @@
 import { createHttpHandler, unpackStateToken, type Protocol } from "@query-farm/vgi-rpc";
 import { arrowStateSerializer } from "../protocol/state-serializer.js";
 import { buildVgiProtocol, type ProtocolConfig } from "../protocol/dispatch.js";
-import type { LandingDescribeProvider } from "./describe-json.js";
+import type { LandingInfo } from "@query-farm/vgi-rpc";
 
 export interface VgiFetchOptions {
   /** Wire-protocol config (registry + catalogInterface). */
@@ -36,10 +36,10 @@ export interface VgiFetchOptions {
   /** Public source-repository URL, surfaced on the landing page. */
   repositoryUrl?: string;
   /** Enables the standardized VGI landing surface: `GET /` serves the shared
-   *  landing.html, `GET /describe.json` the catalog contract, and
-   *  `GET /describe/{catalog}/{schema}/{table}.json` lazy per-object columns.
-   *  Build one with `createLandingDescribe(catalogInterface, workerInfo)`. */
-  landingDescribe?: LandingDescribeProvider;
+   *  landing.html plus a JSON status document carrying this identity, and
+   *  `GET /vgi-client.js` serves the browser client build the page reads the
+   *  catalog with. */
+  landingInfo?: LandingInfo;
 }
 
 /**
@@ -74,7 +74,7 @@ export function createVgiFetch(opts: VgiFetchOptions): (req: Request) => Promise
     stateSerializer: arrowStateSerializer,
     corsOrigins: opts.corsOrigins,
     repositoryUrl: opts.repositoryUrl,
-    landingDescribe: opts.landingDescribe,
+    landingInfo: opts.landingInfo,
   });
   return async (req: Request) => handler(req);
 }

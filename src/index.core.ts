@@ -153,25 +153,18 @@ export { arrowStateSerializer, EXCHANGE_STATE_SCHEMA, serializeUserState, deseri
 // Protocol assembly (for embedding the worker dispatcher in a custom HTTP server).
 export { buildVgiProtocol, type ProtocolConfig } from "./protocol/dispatch.js";
 
-// VGI HTTP landing surface producer (describe.json contract). Pass
-// `createLandingDescribe(catalogInterface, workerInfo)` to `createHttpHandler`'s
-// `landingDescribe` option. See docs/http-landing-contract.md.
-export {
-  buildColumnsJson,
-  buildDescribeJson,
-  createLandingDescribe,
-  CUPOLA_BASE,
-  LANDING_SCHEMA_VERSION,
-  type LandingDescribeProvider,
-  type WorkerDescribeInfo,
-} from "./http/describe-json.js";
+// VGI HTTP landing surface. The shared landing.html reads catalog metadata by
+// speaking the protocol through the client bundle the worker serves beside it,
+// so a worker supplies only its own identity via `createHttpHandler`'s
+// `landingInfo` option.
+export type { LandingInfo } from "@query-farm/vgi-rpc";
 
 // Wire schemas — needed by workers that synthesize TableInfo.bind_result /
 // TableInfo.scan_function bytes to short-circuit per-scan RPCs.
 export { BindResultSchema, ScanFunctionResultSchema } from "./generated/vgi-protocol-schemas.js";
 
 // Attach-option specs (for catalogs that advertise typed ATTACH options).
-export { type AttachOptionSpec, serializeAttachOptionSpec, serializeAttachOptionSpecs } from "./catalog/attach-option.js";
+export { type AttachOptionSpec, serializeAttachOptionSpec, serializeAttachOptionSpecs, deserializeAttachOptionSpec, deserializeAttachOptionSpecs } from "./catalog/attach-option.js";
 
 // Column statistics (for inlining on TableInfo.column_statistics).
 export { type ColumnStatistics, serializeColumnStatistics } from "./util/statistics.js";

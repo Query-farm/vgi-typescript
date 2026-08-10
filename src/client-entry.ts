@@ -103,6 +103,17 @@ export {
   deserializeBatch,
 } from "./util/arrow/index.js";
 
+// Arrow type identification — lets a consumer render a DataType for display
+// without reaching into the backend implementation.
+export { TypeId, typeSignature } from "./arrow/predicates.js";
+
+// Attach options — the page-facing decoder for CatalogInfo.attach_option_specs.
+export {
+  type AttachOptionSpec,
+  deserializeAttachOptionSpec,
+  deserializeAttachOptionSpecs,
+} from "./catalog/attach-option.js";
+
 // Byte utilities
 export { toUint8Array } from "./util/bytes.js";
 

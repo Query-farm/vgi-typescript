@@ -35,9 +35,13 @@ import {
   binary,
   bool,
   batchFromColumns,
+  iterRows,
   serializeBatch,
+  deserializeBatch,
   serializeSchema,
+  deserializeSchema,
 } from "../arrow/index.js";
+import { toUint8Array } from "../util/bytes.js";
 
 /**
  * Declarative spec for a single attach-time option.
@@ -135,6 +139,56 @@ export function serializeAttachOptionSpecs(
   specs: Iterable<AttachOptionSpec>,
 ): Uint8Array[] {
   return Array.from(specs, serializeAttachOptionSpec);
+}
+
+/**
+ * Deserialize one AttachOptionSpec from the wire format above.
+ *
+ * Reads by column name, so a spec written by a peer that predates the
+ * `required` column deserializes with `required: false` rather than failing —
+ * the same tolerance the Python and C++ readers have.
+ */
+export function deserializeAttachOptionSpec(
+  bytes: Uint8Array,
+): AttachOptionSpec {
+  const row = [...iterRows(deserializeBatch(bytes))][0] as
+    | Record<string, unknown>
+    | undefined;
+  if (row === undefined) {
+    throw new Error("Cannot deserialize AttachOptionSpec from an empty batch");
+  }
+
+  // `type` is a serialized Arrow Schema whose single "value" field carries the
+  // option's DataType.
+  const typeSchema = deserializeSchema(toUint8Array(row.type as Uint8Array));
+  const type = typeSchema.fields[0]!.type;
+
+  let value: unknown;
+  const defaultBytes = row.default_value;
+  if (defaultBytes != null) {
+    const asBytes = toUint8Array(defaultBytes as Uint8Array);
+    if (asBytes.length > 0) {
+      const defaultRow = [...iterRows(deserializeBatch(asBytes))][0] as
+        | Record<string, unknown>
+        | undefined;
+      value = defaultRow?.value;
+    }
+  }
+
+  return {
+    name: String(row.name),
+    description: String(row.description ?? ""),
+    type,
+    ...(value === undefined || value === null ? {} : { default: value }),
+    required: row.required === true,
+  };
+}
+
+/** Deserialize many specs — the shape `CatalogInfo.attach_option_specs` holds. */
+export function deserializeAttachOptionSpecs(
+  specs: Iterable<Uint8Array>,
+): AttachOptionSpec[] {
+  return Array.from(specs, deserializeAttachOptionSpec);
 }
 
 /**
