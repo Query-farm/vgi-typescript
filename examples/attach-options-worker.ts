@@ -62,6 +62,10 @@ import { batchFromColumns, deserializeBatch, serializeBatch } from "../src/util/
 // ============================================================================
 
 const CATALOG_NAME = "attach_options";
+// A second catalog from the same worker, declaring one option the caller must
+// supply. Kept separate from CATALOG_NAME so the defaults-and-round-trip
+// coverage above can keep attaching with no options at all.
+const REQUIRED_CATALOG_NAME = "attach_options_required";
 const ATTACH_ID_SEP = 0x00;
 const UUID_BYTES = 16;
 
@@ -96,6 +100,14 @@ const ATTACH_OPTION_SPECS: AttachOptionSpec[] = [
     type: new Struct([new Field("a", new Int64(), true), new Field("b", new Utf8(), true)]),
     default: { a: 1n, b: "x" },
   },
+];
+
+// Attach-time options for the catalog that refuses an anonymous ATTACH.
+// `api_key` declares no default: there is nothing to fall back on, so the
+// caller has to supply it.
+const REQUIRED_OPTION_SPECS: AttachOptionSpec[] = [
+  { name: "api_key", description: "API key", type: new Utf8(), required: true },
+  { name: "region", description: "Region", type: new Utf8(), default: "us-east-1" },
 ];
 
 // Output schema of echo_attach_options: one column per declared option.
@@ -182,13 +194,29 @@ const echo_attach_options = defineTableFunction<Record<string, never>, EchoState
 // override (a) catalogsInfo to advertise attach_option_specs, and
 // (b) attach to encode received options into attach_opaque_data.
 class AttachOptionsCatalog extends ReadOnlyCatalogInterface {
+  override catalogs(): string[] {
+    return [CATALOG_NAME, REQUIRED_CATALOG_NAME];
+  }
+
+  override attachOptionSpecs(name: string): AttachOptionSpec[] {
+    return name === REQUIRED_CATALOG_NAME ? REQUIRED_OPTION_SPECS : ATTACH_OPTION_SPECS;
+  }
+
   override catalogsInfo(): CatalogInfo[] {
-    return [{
-      name: CATALOG_NAME,
-      implementation_version: null,
-      data_version_spec: null,
-      attach_option_specs: serializeAttachOptionSpecs(ATTACH_OPTION_SPECS),
-    }];
+    return [
+      {
+        name: CATALOG_NAME,
+        implementation_version: null,
+        data_version_spec: null,
+        attach_option_specs: serializeAttachOptionSpecs(ATTACH_OPTION_SPECS),
+      },
+      {
+        name: REQUIRED_CATALOG_NAME,
+        implementation_version: null,
+        data_version_spec: null,
+        attach_option_specs: serializeAttachOptionSpecs(REQUIRED_OPTION_SPECS),
+      },
+    ];
   }
 
   override attach(
@@ -197,6 +225,7 @@ class AttachOptionsCatalog extends ReadOnlyCatalogInterface {
     _dataVersionSpec?: string | null,
     _implementationVersion?: string | null,
   ): CatalogAttachResult {
+    // super.attach() runs the required-option check via attachOptionSpecs().
     const base = super.attach(name, options);
     return { ...base, attach_opaque_data: encodeAttachOpaqueData(options ?? {}) };
   }

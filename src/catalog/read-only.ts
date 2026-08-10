@@ -26,6 +26,7 @@ import type { FunctionRegistry } from "../functions/registry.js";
 import { argumentSpecsToSchema, macroArgumentsSchema } from "../arguments/argument-spec.js";
 import { serializeSchema, serializeBatch, emptyBatch, batchFromColumns } from "../util/arrow/index.js";
 import { resolveMetadata } from "../metadata/resolve.js";
+import { type AttachOptionSpec, validateRequiredAttachOptions } from "./attach-option.js";
 import { FunctionStability, NullHandling, OrderPreservation, DEFAULT_MAX_WORKERS } from "../types.js";
 import { Arguments } from "../arguments/arguments.js";
 
@@ -58,6 +59,19 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
     return [this._descriptor.name];
   }
 
+  /**
+   * Attach-time options this catalog declares, for the named catalog.
+   *
+   * Empty by default — the declarative descriptor path carries no attach
+   * options. A subclass that advertises specs in `catalogsInfo()` should
+   * return the same specs here so `attach()` enforces the `required` ones it
+   * advertised. Takes the catalog name because one interface may serve
+   * several catalogs with different option sets.
+   */
+  attachOptionSpecs(_name: string): AttachOptionSpec[] {
+    return [];
+  }
+
   // Advertise the catalog's discovery record. The declarative path carries no
   // version metadata or attach option specs, but it does surface the optional
   // `source_url` from the descriptor so it flows through `catalog_catalogs`
@@ -82,6 +96,12 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
     if (!this.catalogs().includes(name)) {
       throw new Error(`No worker handles catalog '${name}'`);
     }
+    // Refuse an attach that omits a declared-required option, so the caller
+    // gets the option name rather than a catalog that looks mysteriously
+    // empty. A subclass that overrides `attach` outright bypasses this and
+    // should call `validateRequiredAttachOptions` itself — mirrors
+    // CatalogInterface.catalog_attach on the Python side.
+    validateRequiredAttachOptions(name, this.attachOptionSpecs(name), options ?? {});
 
     const attachOpaqueData = new Uint8Array(16);
     crypto.getRandomValues(attachOpaqueData);
