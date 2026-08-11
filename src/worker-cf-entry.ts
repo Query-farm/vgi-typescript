@@ -24,6 +24,18 @@ export {
   defineTableFunction,
   defineAggregate,
   defineTableInOutFunction,
+  // Blended ("UNNEST-style") table-in-out: one registration serves the literal,
+  // streaming, and correlated-LATERAL call shapes. `parentRowsMetadata` is the
+  // per-output-row provenance a 1->N blended function must emit, so both belong
+  // on this facade — a workerd worker cannot reach them through the package
+  // root without dragging in the Node-only stdio Worker.
+  defineRowTransformFunction,
+  parentRowsMetadata,
+  PARENT_ROW_METADATA_KEY,
+  // Encodes ArgumentConstraints into the discovery-facing ArgumentSpec fields.
+  // The blended config has no `argConstraints` of its own, so a worker that
+  // wants ge/le/choices/pattern on a row-transform's args applies them itself.
+  constraintSpecFields,
   FunctionRegistry,
   ReadOnlyCatalogInterface,
   CompositeCatalogInterface,
@@ -49,6 +61,11 @@ export type {
   SchemaInfo,
   VgiFunction,
   TableProcessParams,
+  ArgumentSpec,
+  ArgumentConstraints,
+  RowTransformConfig,
+  RowTransformProcessParams,
+  TableInOutBindParams,
 } from "./index.core.js";
 
 export type { ProtocolConfig } from "./protocol/dispatch.js";
