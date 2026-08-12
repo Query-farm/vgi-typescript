@@ -257,6 +257,17 @@ EXPECTED_SKIP_REASONS=(
   # negotiation it guards is exercised on this lane by the capability-probe
   # tests, which do run.
   'require-env VGI_HTTP_NO_COMPRESSION'     # no-compression fixture server, Python-side only
+  # Added upstream in Query-farm/vgi@1f1d7b1, which split the `required` attach
+  # option assertions out of attach_options_echo.test into their own gated file.
+  # That file says why in its own header: the catalog it needs
+  # (`attach_options_required`, advertising an option with no default) is a
+  # Python-fixture-only catalog for now, while the echo file runs against every
+  # language's attach-options worker. This repo's
+  # `vgi-example-attach-options-{,http-}worker` expose only the all-defaults
+  # catalog, so there is nothing here to point the gate at. The SDK itself does
+  # support required options (ported in 0.25.0); it is the fixture that is
+  # missing, and standing one up would be the way to retire this entry.
+  'require-env VGI_ATTACH_OPTIONS_REQUIRED_WORKER'  # required-options catalog, Python fixture only
   'require spatial'                          # spatial is not published for every haybarn build
 )
 # Transport-specific additions.
