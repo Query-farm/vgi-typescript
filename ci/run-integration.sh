@@ -257,17 +257,6 @@ EXPECTED_SKIP_REASONS=(
   # negotiation it guards is exercised on this lane by the capability-probe
   # tests, which do run.
   'require-env VGI_HTTP_NO_COMPRESSION'     # no-compression fixture server, Python-side only
-  # Added upstream in Query-farm/vgi@1f1d7b1, which split the `required` attach
-  # option assertions out of attach_options_echo.test into their own gated file.
-  # That file says why in its own header: the catalog it needs
-  # (`attach_options_required`, advertising an option with no default) is a
-  # Python-fixture-only catalog for now, while the echo file runs against every
-  # language's attach-options worker. This repo's
-  # `vgi-example-attach-options-{,http-}worker` expose only the all-defaults
-  # catalog, so there is nothing here to point the gate at. The SDK itself does
-  # support required options (ported in 0.25.0); it is the fixture that is
-  # missing, and standing one up would be the way to retire this entry.
-  'require-env VGI_ATTACH_OPTIONS_REQUIRED_WORKER'  # required-options catalog, Python fixture only
   'require spatial'                          # spatial is not published for every haybarn build
 )
 # Transport-specific additions.
@@ -311,6 +300,10 @@ case "$TRANSPORT" in
     export VGI_VERSIONED_WORKER="$VERSIONED"
     export VGI_VERSIONED_TABLES_WORKER="$VERSIONED_TABLES"
     export VGI_ATTACH_OPTIONS_WORKER="$ATTACH_OPTIONS"
+    # Same worker: it also serves the `attach_options_required` catalog, whose
+    # gated ATTACH is asserted separately (upstream split those assertions out
+    # of the shared attach_options_echo.test behind this env var).
+    export VGI_ATTACH_OPTIONS_REQUIRED_WORKER="$VGI_ATTACH_OPTIONS_WORKER"
     # A private worker per DuckDB process makes the SIGKILL-self crash tests safe.
     export VGI_TEST_DEDICATED_WORKER="$WORKER"
     # attach/versioned_tables_*_http and versioning_http attach an http:// worker
@@ -329,6 +322,10 @@ case "$TRANSPORT" in
     export VGI_VERSIONED_WORKER="launch:${VERSIONED}"
     export VGI_VERSIONED_TABLES_WORKER="launch:${VERSIONED_TABLES}"
     export VGI_ATTACH_OPTIONS_WORKER="launch:${ATTACH_OPTIONS}"
+    # Same worker: it also serves the `attach_options_required` catalog, whose
+    # gated ATTACH is asserted separately (upstream split those assertions out
+    # of the shared attach_options_echo.test behind this env var).
+    export VGI_ATTACH_OPTIONS_REQUIRED_WORKER="$VGI_ATTACH_OPTIONS_WORKER"
     export VGI_REQUIRE_LAUNCHER_TRANSPORT=1
     export VGI_WORKER_IDLE_TIMEOUT="${VGI_WORKER_IDLE_TIMEOUT:-120}"
     boot_http_worker "$VERSIONED_TABLES_HTTP" || exit 1
@@ -346,6 +343,10 @@ case "$TRANSPORT" in
     export VGI_VERSIONED_HTTP_WORKER="http://localhost:${BOOTED_PORT}"
     boot_http_worker "$ATTACH_OPTIONS_HTTP" || exit 1
     export VGI_ATTACH_OPTIONS_WORKER="http://localhost:${BOOTED_PORT}"
+    # Same worker: it also serves the `attach_options_required` catalog, whose
+    # gated ATTACH is asserted separately (upstream split those assertions out
+    # of the shared attach_options_echo.test behind this env var).
+    export VGI_ATTACH_OPTIONS_REQUIRED_WORKER="$VGI_ATTACH_OPTIONS_WORKER"
     boot_http_worker "$VERSIONED_TABLES_HTTP" || exit 1
     export VGI_VERSIONED_TABLES_HTTP_WORKER="http://localhost:${BOOTED_PORT}"
     # attach/versioning.test and attach/versioned_tables*.test attach the
