@@ -1,5 +1,55 @@
 # Migration guide
 
+## 0.26.0 — the landing surface moved here from `@query-farm/vgi-rpc`
+
+`GET {prefix}/` and `GET {prefix}/vgi-client.js` are now served by this package
+rather than by `@query-farm/vgi-rpc`, and `LandingInfo` is exported from here.
+
+### Why
+
+vgi-rpc is generic RPC over Arrow. It depends on nothing in this package, yet it
+vendored the shared `landing.html` — a page whose entire vocabulary is catalogs,
+schemas, tables, functions and macros — together with a **compiled browser bundle
+of this package's client**. That put a build artifact of the higher layer inside
+the lower one, and cost every vgi-rpc consumer 911 KB of a 1269 KB bundle whether
+or not they served a VGI page. vgi-rpc's bundle is 358 KB after the move.
+
+vgi-python never had this problem: its landing surface is in `vgi/http/`, and
+`vgi_rpc/http/` carries neither asset. The TypeScript port was the outlier.
+
+### What to change
+
+Nothing, if you use `serveVgiWorker` or `createVgiFetch` — they wire it up.
+
+If you call `createHttpHandler` from `@query-farm/vgi-rpc` directly and passed
+`landingInfo`, that option is gone. Contribute the surface instead:
+
+```ts
+import { createLandingRoutes } from "@query-farm/vgi";
+
+const handler = createHttpHandler(protocol, {
+  // ...
+- landingInfo: { name: "my-worker", doc: "…", version: "1.0.0" },
++ extraRoutes: createLandingRoutes({ name: "my-worker", doc: "…", version: "1.0.0" }),
++ enableLandingPage: false,   // drop vgi-rpc's generic RPC-endpoint page
+});
+```
+
+Import `LandingInfo` from `@query-farm/vgi` (or `@query-farm/vgi/worker-cf`)
+rather than from `@query-farm/vgi-rpc`.
+
+`extraRoutes` is generic and carries no VGI knowledge — it is a GET route hook
+consulted after the OAuth browser-redirect branch and before the generic landing
+page and the 404.
+
+### Worth knowing: these routes are public without PKCE
+
+vgi-rpc gates GET pages on `authenticate && pkceConfig`, and a non-browser caller
+that fails auth falls through to page serving. So unless the worker configures the
+OAuth PKCE flow, the landing page and the client bundle are served to anyone. This
+is unchanged by the move — the surface sits exactly where it did — but it is easy
+to assume otherwise. `vgi-rpc-python` is stricter and answers 401.
+
 ## 0.25.x → 0.26.0 — `createVgiFetch` requires `landingInfo`
 
 `landingInfo` on `createVgiFetch` (`@query-farm/vgi/worker-cf`) is now

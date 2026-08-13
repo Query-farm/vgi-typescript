@@ -73,7 +73,8 @@ export type { ProtocolConfig } from "./protocol/dispatch.js";
 // Landing surface. CF workers pass their identity as `landingInfo` so `GET /`
 // serves the standardized VGI landing page, and `GET /vgi-client.js` the
 // browser client build it reads the catalog with.
-export type { LandingInfo } from "@query-farm/vgi-rpc";
+export type { LandingInfo } from "./http/landing.js";
+export { createLandingRoutes } from "./http/landing.js";
 
 // Backend-agnostic Arrow facade. Same source resolves to arrow-js on
 // Node/Bun and flechette under workerd/worker/browser via the package's

@@ -13,7 +13,7 @@
 import { createHttpHandler, unpackStateToken, type Protocol } from "@query-farm/vgi-rpc";
 import { arrowStateSerializer } from "../protocol/state-serializer.js";
 import { buildVgiProtocol, type ProtocolConfig } from "../protocol/dispatch.js";
-import type { LandingInfo } from "@query-farm/vgi-rpc";
+import { createLandingRoutes, type LandingInfo } from "./landing.js";
 
 export interface VgiFetchOptions {
   /** Wire-protocol config (registry + catalogInterface). */
@@ -94,7 +94,12 @@ export function createVgiFetch(opts: VgiFetchOptions): (req: Request) => Promise
     stateSerializer: arrowStateSerializer,
     corsOrigins: opts.corsOrigins,
     repositoryUrl: opts.repositoryUrl,
-    landingInfo: opts.landingInfo,
+    // The landing surface is ours, contributed into vgi-rpc's routing rather
+    // than built there. `enableLandingPage: false` drops vgi-rpc's generic
+    // "this is an RPC endpoint" page, which would otherwise sit behind ours for
+    // no reason — a VGI worker always has the real thing.
+    extraRoutes: createLandingRoutes(opts.landingInfo),
+    enableLandingPage: false,
   });
   return async (req: Request) => handler(req);
 }

@@ -157,7 +157,8 @@ export { buildVgiProtocol, type ProtocolConfig } from "./protocol/dispatch.js";
 // speaking the protocol through the client bundle the worker serves beside it,
 // so a worker supplies only its own identity via `createHttpHandler`'s
 // `landingInfo` option.
-export type { LandingInfo } from "@query-farm/vgi-rpc";
+export type { LandingInfo } from "./http/landing.js";
+export { createLandingRoutes } from "./http/landing.js";
 
 // Wire schemas — needed by workers that synthesize TableInfo.bind_result /
 // TableInfo.scan_function bytes to short-circuit per-scan RPCs.
