@@ -179,9 +179,11 @@ export function createVgiWorkerFetch(
   const env = opts.env ?? (process.env as ServeEnv);
   const signingKey = resolveSigningKey(opts.signingKey, env);
   const tokenTtl = resolveTokenTtl(opts.tokenTtl, env);
-  // `null` disables CORS; `undefined` falls through to the env var, then "*".
-  const corsOrigins =
-    opts.corsOrigins === null ? undefined : (opts.corsOrigins ?? env.CORS_ORIGINS ?? "*");
+  // `null` disables CORS and must stay `null` through to createVgiFetch, which
+  // now reads a bare `undefined` as "default to *" — passing `undefined` here to
+  // mean "off" would silently re-enable it. `undefined` falls through to the env
+  // var and then to that same default.
+  const corsOrigins = opts.corsOrigins === null ? null : (opts.corsOrigins ?? env.CORS_ORIGINS);
 
   return createVgiFetch({
     protocol: { registry: opts.registry, catalogInterface: opts.catalogInterface },

@@ -29,10 +29,18 @@ export interface VgiFetchOptions {
   prefix?: string;
   /** Server ID for state-token attribution (default "vgi-cf"). */
   serverId?: string;
-  /** CORS allowed origins. When set, CORS headers are added to all responses,
-   *  and the preflight `OPTIONS` that browser clients (e.g. the hosted Cupola
-   *  UI) send before `__describe__` will succeed. Omit to disable CORS. */
-  corsOrigins?: string;
+  /** CORS allowed origins, added to all responses so the preflight `OPTIONS`
+   *  that browser clients send before `__describe__` succeeds.
+   *
+   *  **Defaults to `"*"`.** A VGI worker exists to be attached and explored, and
+   *  the hosted Cupola UI reaches it from another origin, so cross-origin is the
+   *  normal case rather than the exception — and a worker that omits this gets
+   *  no CORS headers at all, which fails only in a browser and only for someone
+   *  else's page, i.e. nowhere its author is looking. `serveVgiWorker` has
+   *  always defaulted this way; this matches it so both entries agree.
+   *
+   *  Pass `null` to disable CORS. */
+  corsOrigins?: string | null;
   /** Public source-repository URL, surfaced on the landing page. */
   repositoryUrl?: string;
   /** Worker identity for the standardized VGI landing surface: `GET /` serves
@@ -92,7 +100,8 @@ export function createVgiFetch(opts: VgiFetchOptions): (req: Request) => Promise
     tokenKey: opts.signingKey,
     tokenTtl,
     stateSerializer: arrowStateSerializer,
-    corsOrigins: opts.corsOrigins,
+    // `null` is the explicit opt-out; `undefined` (omitted) means "*".
+    corsOrigins: opts.corsOrigins === null ? undefined : (opts.corsOrigins ?? "*"),
     repositoryUrl: opts.repositoryUrl,
     // The landing surface is ours, contributed into vgi-rpc's routing rather
     // than built there. `enableLandingPage: false` drops vgi-rpc's generic

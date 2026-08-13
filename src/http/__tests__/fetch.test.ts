@@ -141,3 +141,42 @@ describe("createVgiFetch landing surface", () => {
     expect(() => createVgiFetch(rest as VgiFetchOptions)).toThrow(/landingInfo/);
   });
 });
+
+// CORS was opt-in here while `serveVgiWorker` defaulted it to "*", so the two
+// entries in this package disagreed and a CF worker that simply didn't mention
+// CORS shipped with no Access-Control headers at all. That fails only in a
+// browser, only cross-origin, and so only for someone else's page — never in
+// the author's own curl or test run. vgi-open-meteo was deployed that way and
+// its landing page linked to a Cupola it could not answer.
+describe("createVgiFetch CORS", () => {
+  const preflight = (handler: (r: Request) => Promise<Response>) =>
+    handler(
+      new Request("http://worker.test/__describe__", {
+        method: "OPTIONS",
+        headers: {
+          Origin: "https://cupola.query-farm.services",
+          "Access-Control-Request-Method": "POST",
+        },
+      }),
+    );
+
+  test("defaults to open, so a worker that never mentions CORS still answers a preflight", async () => {
+    const { corsOrigins: _none, ...rest } = options();
+    const res = await preflight(createVgiFetch(rest as VgiFetchOptions));
+    expect(res.headers.get("Access-Control-Allow-Origin")).toBe("*");
+    expect(res.headers.get("Access-Control-Allow-Methods")).toContain("POST");
+  });
+
+  test("an explicit origin is used verbatim", async () => {
+    const res = await preflight(createVgiFetch(options({ corsOrigins: "https://only.test" })));
+    expect(res.headers.get("Access-Control-Allow-Origin")).toBe("https://only.test");
+  });
+
+  // The opt-out is the fragile half: `null` and `undefined` now mean opposite
+  // things, so a refactor that collapses them re-enables CORS for a worker that
+  // deliberately turned it off.
+  test("null disables CORS entirely", async () => {
+    const res = await preflight(createVgiFetch(options({ corsOrigins: null })));
+    expect(res.headers.get("Access-Control-Allow-Origin")).toBeNull();
+  });
+});

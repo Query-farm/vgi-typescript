@@ -238,4 +238,44 @@ describe("serveVgiWorker environment handling", () => {
       server.stop(true);
     }
   });
+
+  test("CORS is open by default, with no env var and no option", async () => {
+    const server = serve();
+    try {
+      const res = await fetch(`http://localhost:${server.port}/health`, {
+        headers: { Origin: "https://cupola.query-farm.services" },
+      });
+      expect(res.headers.get("access-control-allow-origin")).toBe("*");
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  // The opt-out travels through createVgiFetch, which reads `undefined` as
+  // "default to *". Passing `undefined` here to mean "off" would therefore
+  // silently serve CORS to a worker that asked for none — so `null` has to stay
+  // `null` the whole way down, and nothing else pinned that.
+  test("corsOrigins: null disables CORS rather than falling back to the default", async () => {
+    const { registry, catalogInterface } = buildParts();
+    const server = serveVgiWorker({
+      name: "demo",
+      doc: "d",
+      version: "0",
+      registry,
+      catalogInterface,
+      port: 0,
+      quiet: true,
+      signingKey: new Uint8Array(SIGNING_KEY_BYTES).fill(9),
+      corsOrigins: null,
+      env: {},
+    });
+    try {
+      const res = await fetch(`http://localhost:${server.port}/health`, {
+        headers: { Origin: "https://cupola.query-farm.services" },
+      });
+      expect(res.headers.get("access-control-allow-origin")).toBeNull();
+    } finally {
+      server.stop(true);
+    }
+  });
 });
