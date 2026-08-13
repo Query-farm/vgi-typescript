@@ -188,6 +188,12 @@ Three subpaths, one implementation (`src/http/fetch.ts` → `createVgiFetch`):
   `VGI_SIGNING_KEY`, `VGI_TOKEN_TTL`, `CORS_ORIGINS`. `createVgiWorkerFetch` returns the bare
   handler if you own the server.
 - **`@query-farm/vgi/worker-cf`** (`src/worker-cf-entry.ts`) — `createVgiFetch` for workerd.
+  `landingInfo` is **required** here. It was optional until 0.26.0, and omitting it
+  silently downgraded `GET /` to vgi-rpc's generic RPC-endpoint placeholder and 404'd
+  `GET /vgi-client.js` — a worker whose RPC surface worked perfectly and whose landing
+  page was a stub. `serveVgiWorker` builds `landingInfo` from its required
+  `name`/`doc`/`version`, so the two entries can no longer diverge.
+  `src/http/__tests__/fetch.test.ts` pins the surface itself, not just the option.
 - Worker repos pair this with a `src/parts.ts` exporting `makeWorkerParts()`, consumed by both
   `src/worker.ts` (stdio) and `scripts/serve.ts` (HTTP), so the registry is wired once.
 

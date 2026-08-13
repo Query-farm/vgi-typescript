@@ -494,6 +494,12 @@ To mount the VGI routes inside a server you already own, use `createVgiWorkerFet
 which returns the `fetch` handler without binding a port. On Cloudflare Workers use
 `createVgiFetch` from `@query-farm/vgi/worker-cf`; both share one implementation.
 
+`createVgiFetch` requires `landingInfo: { name, doc, version }` — the identity the
+landing page and its JSON status document display. `serveVgiWorker` builds it from
+its own required `name`/`doc`/`version`, so only the Cloudflare entry passes it
+explicitly. Without it there is no landing page and no `/vgi-client.js`; see
+[MIGRATION.md](MIGRATION.md).
+
 ## Runtimes & entry points
 
 The package ships a backend-agnostic Arrow facade and selects an implementation at

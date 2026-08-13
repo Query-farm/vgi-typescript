@@ -35,11 +35,20 @@ export interface VgiFetchOptions {
   corsOrigins?: string;
   /** Public source-repository URL, surfaced on the landing page. */
   repositoryUrl?: string;
-  /** Enables the standardized VGI landing surface: `GET /` serves the shared
-   *  landing.html plus a JSON status document carrying this identity, and
-   *  `GET /vgi-client.js` serves the browser client build the page reads the
-   *  catalog with. */
-  landingInfo?: LandingInfo;
+  /** Worker identity for the standardized VGI landing surface: `GET /` serves
+   *  the shared landing.html plus a JSON status document carrying this
+   *  identity, and `GET /vgi-client.js` serves the browser client build the
+   *  page reads the catalog with.
+   *
+   *  Required, and deliberately so. It used to be optional, and omitting it
+   *  silently downgraded `GET /` to vgi-rpc's generic "this is an RPC
+   *  endpoint" placeholder while `GET /vgi-client.js` 404'd — a worker that
+   *  looked deployed but had no catalog tree, no Cupola link, and no ATTACH
+   *  snippet. Nothing failed loudly, so the only way to notice was to open the
+   *  page. `serveVgiWorker` never had the problem because it builds this from
+   *  its required name/doc/version; the CF entry had to remember, and
+   *  vgi-open-meteo shipped for weeks without it. */
+  landingInfo: LandingInfo;
 }
 
 /**
@@ -49,6 +58,17 @@ export interface VgiFetchOptions {
  * round-trips through the signed state token created here.
  */
 export function createVgiFetch(opts: VgiFetchOptions): (req: Request) => Promise<Response> {
+  // The type makes this required, but a plain-JS caller (or one that predates
+  // the change) reaches here with it undefined, and the failure mode this
+  // guards is silent: a worker that serves a placeholder page forever. Fail
+  // at construction, where the stack points at the caller.
+  if (!opts.landingInfo) {
+    throw new Error(
+      "createVgiFetch requires `landingInfo` ({ name, doc, version }). Without it " +
+        "GET / serves vgi-rpc's generic placeholder instead of the VGI landing page " +
+        "and GET /vgi-client.js 404s.",
+    );
+  }
   const tokenTtl = opts.tokenTtl ?? 3600;
   // `?? "/vgi"` and not `|| "/vgi"`: an explicit "" means "mount at root".
   const prefix = opts.prefix ?? "/vgi";

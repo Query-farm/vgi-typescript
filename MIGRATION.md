@@ -1,5 +1,55 @@
 # Migration guide
 
+## 0.25.x → 0.26.0 — `createVgiFetch` requires `landingInfo`
+
+`landingInfo` on `createVgiFetch` (`@query-farm/vgi/worker-cf`) is now
+**required**, and omitting it throws at construction instead of type-checking.
+
+### Why
+
+It was optional, and the fallback was silent. A Cloudflare worker built without
+it served vgi-rpc's generic "this is an RPC endpoint" placeholder at `GET /` —
+about 2 KB, no catalog tree, no "Explore in Cupola" link, no `ATTACH` snippet —
+and 404'd `GET /vgi-client.js`, the browser client that page imports to read the
+catalog. The worker's RPC surface was completely fine, so nothing failed, no
+test caught it, and the only symptom was a page that looked like a stub.
+`vgi-open-meteo` shipped that way and nobody noticed until the page was opened
+next to a vgi-python worker's.
+
+`serveVgiWorker` was never exposed to this: it takes `name`/`doc`/`version` as
+required options and builds `landingInfo` itself. The asymmetry between the two
+entries was the whole bug, so the CF entry now demands the same information.
+
+### What to change
+
+```ts
+const handler = createVgiFetch({
+  protocol: { registry, catalogInterface },
+  signingKey,
+  prefix: "",
+  serverId: "my-worker",
++ repositoryUrl: "https://github.com/me/my-worker",   // optional, linked from the page
++ landingInfo: {
++   name: "my-worker",
++   doc: "One line on what this worker serves.",
++   version: "1.0.0",
++ },
+});
+```
+
+`name`, `doc`, and `version` are what the page's header and status document
+show; `doc` should be a single line.
+
+### Known issue this does not fix
+
+On workerd the server stamps `X-VGI-Content-Encoding: gzip` (the Cloudflare edge
+re-gzips a standard `Content-Encoding`, so the label has to move). The vendored
+browser client bundle does not yet decode that header, so the landing page on a
+Cloudflare-deployed worker renders but reports "Could not load worker metadata".
+Fixing it means rebuilding the bundle in `vgi-web-frontend` and re-vendoring it
+into `vgi-rpc-typescript` and `vgi-python`; it affects every CF-deployed VGI
+worker regardless of language.
+
 ## 0.2.0 → 0.3.0 — peer dependencies
 
 `@query-farm/apache-arrow` and `@query-farm/vgi-rpc` moved from regular
