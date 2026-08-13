@@ -4,6 +4,10 @@
 export enum FunctionType {
   SCALAR = "scalar",
   TABLE = "table",
+  // Sink+source function bound through defineTableBufferingFunction. Mirrors
+  // vgi-python's FunctionType.TABLE_BUFFERING; without it a buffering bind fell
+  // through deserializeBindRequest's normalization to a bare `as` cast.
+  TABLE_BUFFERING = "table_buffering",
   AGGREGATE = "aggregate",
 }
 

@@ -36,6 +36,11 @@ export {
   // The blended config has no `argConstraints` of its own, so a worker that
   // wants ge/le/choices/pattern on a row-transform's args applies them itself.
   constraintSpecFields,
+  // Result-cache control (`vgi.cache.*`). Advertised as metadata on the FIRST
+  // emitted batch, so it composes with `parentRowsMetadata` via the `extra`
+  // argument. Belongs on this facade for the same reason the blended helpers do:
+  // a workerd worker cannot reach it through the package root.
+  cacheControlMetadata,
   FunctionRegistry,
   ReadOnlyCatalogInterface,
   CompositeCatalogInterface,
@@ -50,6 +55,8 @@ export {
 } from "./index.core.js";
 
 export type {
+  CacheControl,
+  CacheScope,
   AttachOptionSpec,
   ColumnStatistics,
   CatalogAttachResult,

@@ -185,7 +185,7 @@ describe("serveVgiWorker", () => {
   test("exposes the registered function over HTTP", async () => {
     const client = new VgiClient(httpConnect(baseUrl, { prefix: "" }));
     const attach = await client.catalogAttach("demo");
-    const fns = await client.schemaContentsFunctions(attach.attach_opaque_data, "main", "scalar");
+    const fns = await client.schemaContentsFunctions(attach.attach_opaque_data, "main", "SCALAR_FUNCTION");
     expect(fns.map((f) => f.name)).toContain("dbl");
   });
 

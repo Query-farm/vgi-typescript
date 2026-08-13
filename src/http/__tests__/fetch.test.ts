@@ -76,6 +76,66 @@ describe("createVgiFetch landing surface", () => {
     expect(body.cupola_base).toBeTruthy();
   });
 
+  // Both assets sit at URLs that never change but change content on every
+  // release, and they used to be served in the two ways that go wrong quietly:
+  // the page with no Cache-Control and no validator at all (heuristic caching,
+  // nothing to revalidate against, stale until a shift-reload), the bundle with
+  // `max-age=3600` and no validator (a guaranteed hour in which a client cannot
+  // learn a release happened — how a bundle that could not decode workerd's
+  // compressed responses stayed live in a browser after being fixed).
+  //
+  // `no-cache` + a strong ETag costs the same bandwidth as a long TTL on repeat
+  // visits, because they answer 304 with no body, and closes the staleness
+  // window to zero.
+  test.each([
+    ["/", "text/html"],
+    ["/vgi-client.js", "*/*"],
+  ])("%s revalidates rather than going stale", async (path, accept) => {
+    const res = await get(createVgiFetch(options()), path, accept);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("cache-control")).toBe("public, no-cache");
+    expect(res.headers.get("etag")).toMatch(/^"[0-9a-f]+-[0-9a-f]+"$/);
+  });
+
+  test.each([
+    ["/", "text/html"],
+    ["/vgi-client.js", "*/*"],
+  ])("%s answers 304 with no body when the client already has it", async (path, accept) => {
+    const handler = createVgiFetch(options());
+    const first = await get(handler, path, accept);
+    const etag = first.headers.get("etag")!;
+
+    const second = await handler(
+      new Request(`http://worker.test${path}`, { headers: { Accept: accept, "If-None-Match": etag } }),
+    );
+    expect(second.status).toBe(304);
+    expect(await second.text()).toBe("");
+    expect(second.headers.get("etag")).toBe(etag);
+
+    // A cache is allowed to weaken the validator on the way back.
+    const weak = await handler(
+      new Request(`http://worker.test${path}`, {
+        headers: { Accept: accept, "If-None-Match": `W/${etag}` },
+      }),
+    );
+    expect(weak.status).toBe(304);
+
+    // A stale validator must not be honoured.
+    const stale = await handler(
+      new Request(`http://worker.test${path}`, {
+        headers: { Accept: accept, "If-None-Match": '"deadbeef-1"' },
+      }),
+    );
+    expect(stale.status).toBe(200);
+  });
+
+  test("the two assets have different ETags", async () => {
+    const handler = createVgiFetch(options());
+    const page = await get(handler, "/", "text/html");
+    const bundle = await get(handler, "/vgi-client.js", "*/*");
+    expect(page.headers.get("etag")).not.toBe(bundle.headers.get("etag"));
+  });
+
   test("omitting landingInfo throws instead of silently serving the placeholder", () => {
     const { landingInfo: _drop, ...rest } = options();
     expect(() => createVgiFetch(rest as VgiFetchOptions)).toThrow(/landingInfo/);

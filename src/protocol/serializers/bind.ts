@@ -150,6 +150,8 @@ export function deserializeBindRequest(
     functionType = FunctionType.SCALAR;
   } else if (ftStr === "table" || ftStr === "TABLE") {
     functionType = FunctionType.TABLE;
+  } else if (ftStr === "table_buffering" || ftStr === "TABLE_BUFFERING") {
+    functionType = FunctionType.TABLE_BUFFERING;
   } else if (ftStr === "aggregate" || ftStr === "AGGREGATE") {
     functionType = FunctionType.AGGREGATE;
   } else {

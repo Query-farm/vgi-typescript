@@ -56,6 +56,62 @@ export interface LandingInfo {
 /** Default Cupola deployment the page's "Explore" links point at. */
 export const DEFAULT_CUPOLA_BASE = "https://cupola.query-farm.services";
 
+// Caching. Both assets are immutable for a given build but live at URLs that
+// never change, which is the combination that goes wrong quietly: the page used
+// to be served with no Cache-Control and no validator at all, so browsers
+// applied heuristic caching with nothing to revalidate against and could hold a
+// stale page indefinitely — every landing-page fix needed a shift-reload to
+// see. The bundle was worse in a different way: `max-age=3600` with no
+// validator meant a full hour where a client could not learn that a release had
+// happened, which is how a bundle that could not decode workerd's compressed
+// responses stayed live in a browser long after it was fixed.
+//
+// `no-cache` does not mean "do not store" — it means "store, but revalidate
+// before reuse". With a strong ETag a repeat visit is a conditional GET that
+// answers 304 with no body, so the bandwidth is the same as a long TTL and the
+// staleness window closes to zero. `public` is kept so shared caches (the
+// Cloudflare edge in front of a Workers deployment) can hold and revalidate it
+// too, rather than each viewer paying the full transfer.
+const REVALIDATE = "public, no-cache";
+
+/**
+ * FNV-1a over the asset bytes, as a strong ETag.
+ *
+ * Computed lazily and memoised rather than at module load: most requests to a
+ * worker are RPC and never touch these routes, and hashing ~700 KB on every
+ * isolate start would tax cold starts for a page nobody may open. Once per
+ * isolate on first use is the right trade.
+ */
+function etagFor(bytes: Uint8Array): string {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < bytes.length; i++) {
+    hash ^= bytes[i]!;
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  // Length is folded in so two builds that collide on the hash still differ.
+  return `"${hash.toString(16)}-${bytes.length.toString(16)}"`;
+}
+
+let landingEtag: string | null = null;
+let bundleEtag: string | null = null;
+
+/** 304 when the client already holds this exact body, else null. */
+function notModified(request: Request, etag: string, extra?: HeadersInit): Response | null {
+  const ifNoneMatch = request.headers.get("If-None-Match");
+  if (!ifNoneMatch) return null;
+  // A conditional GET may list several validators, and a cache is allowed to
+  // weaken ours to `W/"…"` on the way back.
+  const matches = ifNoneMatch
+    .split(",")
+    .map((c) => c.trim().replace(/^W\//, ""))
+    .includes(etag);
+  if (!matches) return null;
+  const headers = new Headers(extra);
+  headers.set("ETag", etag);
+  headers.set("Cache-Control", REVALIDATE);
+  return new Response(null, { status: 304, headers });
+}
+
 /**
  * Build the VGI landing surface as a route contributed to vgi-rpc's HTTP
  * handler.
@@ -98,7 +154,17 @@ export function createLandingRoutes(info: LandingInfo): ExtraRouteHandler {
         ctx.addCorsHeaders(headers);
         return new Response(body, { status: 200, headers });
       }
-      const headers = new Headers({ "Content-Type": "text/html; charset=utf-8" });
+      landingEtag ??= etagFor(LANDING_HTML_BYTES);
+      const conditional = notModified(request, landingEtag);
+      if (conditional) {
+        ctx.addCorsHeaders(conditional.headers);
+        return conditional;
+      }
+      const headers = new Headers({
+        "Content-Type": "text/html; charset=utf-8",
+        "Cache-Control": REVALIDATE,
+        ETag: landingEtag,
+      });
       ctx.addCorsHeaders(headers);
       return new Response(LANDING_HTML_BYTES as unknown as BodyInit, { status: 200, headers });
     }
@@ -109,9 +175,16 @@ export function createLandingRoutes(info: LandingInfo): ExtraRouteHandler {
     // CDN dependency would break air-gapped deployments that today need nothing
     // but the worker.
     if (path === `${prefix}/vgi-client.js`) {
+      bundleEtag ??= etagFor(CLIENT_BUNDLE_BYTES);
+      const conditional = notModified(request, bundleEtag);
+      if (conditional) {
+        ctx.addCorsHeaders(conditional.headers);
+        return conditional;
+      }
       const headers = new Headers({
         "Content-Type": "text/javascript; charset=utf-8",
-        "Cache-Control": "public, max-age=3600",
+        "Cache-Control": REVALIDATE,
+        ETag: bundleEtag,
       });
       ctx.addCorsHeaders(headers);
       return new Response(CLIENT_BUNDLE_BYTES as unknown as BodyInit, { status: 200, headers });
