@@ -168,46 +168,37 @@ function choiceEquals(choice: unknown, value: unknown): boolean {
 }
 
 /**
- * Enforce a bind-time const value against its declared {@link ArgumentConstraints},
- * throwing {@link ArgumentValidationError} on violation. Mirrors the Python SDK's
- * `Arg._validate`: numeric range (`ge`/`le`/`gt`/`lt`), closed choice set, and
- * regex `pattern`. A `null`/`undefined` value skips its value constraints.
- */
-const MAX_SAFE_BIGINT = BigInt(Number.MAX_SAFE_INTEGER);
-
-/**
- * Narrow a bind-time argument value from bigint to number when that is lossless,
- * and leave it a bigint when it is not.
+ * Narrow a bind-time argument value from Arrow's bigint to a plain number.
  *
- * Arrow int64 arrives as bigint, and most callers want a plain number — nobody
- * writes `BigInt(1)` for a row limit. So the arg-extraction paths narrow. They
- * used to do it with a bare `Number(value)`, which rounds above 2^53: an id, a
- * nanosecond timestamp or an INT64_MAX sentinel passed as a function argument
- * came back subtly wrong, with nothing logged.
+ * DuckDB types an integer literal as BIGINT, so `series(3)` arrives as `3n`
+ * whether or not anyone wanted 64 bits. Nobody writes `BigInt(1000)` for a page
+ * size, so the arg paths narrow — and they now all narrow the same way, which
+ * they did not before (two sites used safeNumber, two a bare Number).
  *
- * Throwing on the unrepresentable case is tempting and wrong. `extractArgs`
- * eagerly resolves *every* declared spec, including a varargs spec whose values
- * the function reads raw off `bindCall.arguments` — so a throw here fires on a
- * value nobody consumes. `constant_columns(2, 9223372036854775807)` is exactly
- * that shape, and it is a passing test.
+ * This is lossy above 2^53, and that is a deliberate call rather than an
+ * oversight. Every int64 *argument* across the fixtures and every shipped
+ * worker is a small control value — count, page_size, batch_size, increment,
+ * lag_minutes, restatement_lookback_days. The large int64s in the test suite
+ * are all somewhere else entirely:
  *
- * Preserving the bigint is what is left, and it is strictly better than either
- * alternative:
+ *   - column data (copy_to/types.test, copy_to/parallel.test) — never touches
+ *     this path;
+ *   - filter-pushdown constants (filter_pushdown/integers.test pins 2^53+1 on
+ *     purpose) — deserialize.ts keeps those bigint, with its own regression
+ *     test;
+ *   - varargs values (constant_columns) — read raw off bindCall.arguments,
+ *     because extractArgs' copy of them is not what the function reads;
+ *   - time-travel versions — carried as strings (`at_value`).
  *
- *   - values within ±2^53 behave exactly as before, so nothing that works today
- *     changes;
- *   - larger values keep their full precision instead of being silently
- *     corrupted, and a function that then mixes them into number arithmetic
- *     fails loudly at the point of use rather than returning a wrong answer.
- *
- * The cost is that such an argument's JS type depends on its magnitude. That is
- * a real wart; the clean fix is for int64 arguments to be bigint always, which
- * is what vgi-python and vgi-go already do, and which is a breaking change.
+ * Preserving the bigint on overflow was tried and reverted: it buys nothing for
+ * any argument that exists, and costs a JS type that depends on magnitude, so a
+ * worker doing `args.n + 1` would work in every test and fail on one caller's
+ * input. If an argument ever genuinely needs the full range — a snowflake id, a
+ * nanosecond epoch — the fix is to make int64 arguments bigint by declared
+ * type, not by magnitude.
  */
 export function narrowArgValue(value: unknown): unknown {
-  if (typeof value !== "bigint") return value;
-  if (value > MAX_SAFE_BIGINT || value < -MAX_SAFE_BIGINT) return value;
-  return Number(value);
+  return typeof value === "bigint" ? Number(value) : value;
 }
 
 /**
@@ -257,6 +248,12 @@ export function assertArrowTypes(
   }
 }
 
+/**
+ * Enforce a bind-time const value against its declared {@link ArgumentConstraints},
+ * throwing {@link ArgumentValidationError} on violation. Mirrors the Python SDK's
+ * `Arg._validate`: numeric range (`ge`/`le`/`gt`/`lt`), closed choice set, and
+ * regex `pattern`. A `null`/`undefined` value skips its value constraints.
+ */
 export function validateConstConstraints(
   name: string,
   constraints: ArgumentConstraints,

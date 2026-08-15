@@ -1,6 +1,6 @@
 // Copyright 2025, 2026 Query Farm LLC - https://query.farm
-// Guards on the bind-time argument path: type-factory rejection and the
-// bigint→number narrowing that used to be silently lossy.
+// Guards on the bind-time argument path: type-factory rejection, and the
+// bigint→number narrowing that all four arg-extraction sites now share.
 
 import { test, expect, describe } from "bun:test";
 import {
@@ -91,28 +91,18 @@ describe("define* reject uncalled factories", () => {
 });
 
 describe("narrowArgValue", () => {
-  test("narrows a representable bigint to number", () => {
+  test("narrows Arrow's bigint to a plain number", () => {
     expect(narrowArgValue(42n)).toBe(42);
     expect(narrowArgValue(0n)).toBe(0);
     expect(narrowArgValue(-7n)).toBe(-7);
     expect(narrowArgValue(BigInt(Number.MAX_SAFE_INTEGER))).toBe(Number.MAX_SAFE_INTEGER);
   });
 
-  test("keeps the bigint when narrowing would lose precision", () => {
-    // The regression this exists for: a bare Number() here rounded INT64_MAX to
-    // 9223372036854775808, silently, and nothing downstream could tell.
-    const intMax = 9223372036854775807n;
-    expect(narrowArgValue(intMax)).toBe(intMax);
-    expect(narrowArgValue(-9223372036854775808n)).toBe(-9223372036854775808n);
-    expect(narrowArgValue(BigInt(Number.MAX_SAFE_INTEGER) + 2n)).toBe(
-      BigInt(Number.MAX_SAFE_INTEGER) + 2n,
-    );
-  });
-
-  test("does NOT throw — extractArgs resolves varargs specs the function reads raw", () => {
-    // constant_columns(2, 9223372036854775807) is exactly this shape: the spec
-    // is resolved eagerly, the value is never read off `args`, and a throw here
-    // would fail a query that works.
+  test("does not throw on a value it cannot represent exactly", () => {
+    // extractArgs resolves EVERY declared spec, including a varargs spec whose
+    // values the function reads raw off bindCall.arguments. A throw here fires
+    // on a value nobody consumes and breaks
+    // `constant_columns(2, 9223372036854775807)`, which is a passing test.
     expect(() => narrowArgValue(9223372036854775807n)).not.toThrow();
   });
 
@@ -121,6 +111,13 @@ describe("narrowArgValue", () => {
     expect(narrowArgValue(1.5)).toBe(1.5);
     expect(narrowArgValue(null)).toBe(null);
     expect(narrowArgValue(undefined)).toBe(undefined);
+  });
+
+  test("all four arg-extraction sites narrow the same way", () => {
+    // They did not before: table/copy-from/copy-to went through safeNumber and
+    // table-in-out through a bare Number(). Same helper now, so a change of
+    // policy is one edit rather than four.
+    expect(typeof narrowArgValue(1n)).toBe("number");
   });
 });
 

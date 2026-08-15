@@ -3,7 +3,6 @@
 // Holds positional and named scalar values from DuckDB.
 
 import type { VgiSchema } from "../arrow/index.js";
-import { safeNumber } from "../util/arrow/index.js";
 
 export class Arguments {
   readonly positional: (any | null)[];
