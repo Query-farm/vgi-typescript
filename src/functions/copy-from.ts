@@ -31,6 +31,7 @@ import type {
 import type { VgiFunction, FunctionMeta, StreamHandlers, FunctionExample } from "./types.js";
 import type { CopySecretLookup } from "./copy-to.js";
 import type { ArgumentSpec } from "../arguments/argument-spec.js";
+import { narrowArgValue } from "../arguments/argument-spec.js";
 import { batchToScalarDict, batchToSecretDict, safeNumber } from "../util/arrow/index.js";
 import { BoundStorage, storage as globalStorage } from "./storage.js";
 import type { TableProcessParams } from "./table.js";
@@ -165,7 +166,7 @@ export function defineCopyFromFunction<TArgs = Record<string, unknown>>(
         }
         val = opt.default;
       }
-      if (typeof val === "bigint") val = safeNumber(val);
+      val = narrowArgValue(val);
       if (opt.choices && !opt.choices.includes(val)) {
         throw new Error(
           `COPY (FORMAT ${config.format}): option '${name}' value ${JSON.stringify(val)} ` +

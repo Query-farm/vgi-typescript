@@ -19,7 +19,8 @@ import type {
   FunctionExample,
 } from "./types.js";
 import type { ArgumentSpec } from "../arguments/argument-spec.js";
-import { batchToScalarDict, batchToSecretDict, projectSchema, projectBatch, emptyBatch } from "../util/arrow/index.js";
+import { assertArrowType, assertArrowTypes, narrowArgValue } from "../arguments/argument-spec.js";
+import { batchToScalarDict, batchToSecretDict, projectSchema, projectBatch, emptyBatch, safeNumber } from "../util/arrow/index.js";
 import { CACHE_IF_MODIFIED_SINCE_KEY, CACHE_IF_NONE_MATCH_KEY } from "../cache-control.js";
 import {
   buildJoinKeysLookup,
@@ -132,6 +133,8 @@ export function defineTableInOutFunction<
   TArgs = Record<string, any>,
   TState = null,
 >(config: TableInOutConfig<TArgs, TState>): VgiFunction {
+  assertArrowTypes((config as any).args, `defineTableInOutFunction("${config.name}"): args`);
+
 
   // Build argument specs
   const specs: ArgumentSpec[] = [];
@@ -192,8 +195,9 @@ export function defineTableInOutFunction<
           : undefined;
       // For named args, position is a string (the arg name)
       let val = request.arguments.get(spec.position, defaultVal);
-      // Arrow Int64 values come through as BigInt — coerce to number
-      if (typeof val === "bigint") val = Number(val);
+      // Arrow Int64 arrives as bigint. Narrow when lossless, keep the
+      // bigint when not — see narrowArgValue.
+      val = narrowArgValue(val);
       args[spec.name] = val;
     }
     return args as TArgs;
@@ -735,7 +739,7 @@ export function defineRowTransformFunction<
           ? config.argDefaults[spec.name]
           : undefined;
       let val = request.arguments.get(spec.position, defaultVal ?? null);
-      if (typeof val === "bigint") val = Number(val);
+      val = narrowArgValue(val);
       args[spec.name] = val;
     }
     return args as TArgs;

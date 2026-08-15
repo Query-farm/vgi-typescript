@@ -173,6 +173,90 @@ function choiceEquals(choice: unknown, value: unknown): boolean {
  * `Arg._validate`: numeric range (`ge`/`le`/`gt`/`lt`), closed choice set, and
  * regex `pattern`. A `null`/`undefined` value skips its value constraints.
  */
+const MAX_SAFE_BIGINT = BigInt(Number.MAX_SAFE_INTEGER);
+
+/**
+ * Narrow a bind-time argument value from bigint to number when that is lossless,
+ * and leave it a bigint when it is not.
+ *
+ * Arrow int64 arrives as bigint, and most callers want a plain number — nobody
+ * writes `BigInt(1)` for a row limit. So the arg-extraction paths narrow. They
+ * used to do it with a bare `Number(value)`, which rounds above 2^53: an id, a
+ * nanosecond timestamp or an INT64_MAX sentinel passed as a function argument
+ * came back subtly wrong, with nothing logged.
+ *
+ * Throwing on the unrepresentable case is tempting and wrong. `extractArgs`
+ * eagerly resolves *every* declared spec, including a varargs spec whose values
+ * the function reads raw off `bindCall.arguments` — so a throw here fires on a
+ * value nobody consumes. `constant_columns(2, 9223372036854775807)` is exactly
+ * that shape, and it is a passing test.
+ *
+ * Preserving the bigint is what is left, and it is strictly better than either
+ * alternative:
+ *
+ *   - values within ±2^53 behave exactly as before, so nothing that works today
+ *     changes;
+ *   - larger values keep their full precision instead of being silently
+ *     corrupted, and a function that then mixes them into number arithmetic
+ *     fails loudly at the point of use rather than returning a wrong answer.
+ *
+ * The cost is that such an argument's JS type depends on its magnitude. That is
+ * a real wart; the clean fix is for int64 arguments to be bigint always, which
+ * is what vgi-python and vgi-go already do, and which is a breaking change.
+ */
+export function narrowArgValue(value: unknown): unknown {
+  if (typeof value !== "bigint") return value;
+  if (value > MAX_SAFE_BIGINT || value < -MAX_SAFE_BIGINT) return value;
+  return Number(value);
+}
+
+/**
+ * Reject a type *factory* where an Arrow *type* was expected.
+ *
+ * `params: { n: int64 }` (no parentheses) is accepted by the type system —
+ * `VgiDataType` is loose enough — and then silently produces an ArgumentSpec
+ * whose `arrowType` is a Function. Nothing complains until the schema is
+ * serialized or the bind arrives, and the error at that point names neither the
+ * argument nor the cause.
+ *
+ * The mistake is easy to make on purpose, too: the same identifier is a
+ * ready-made type on one entry point and a factory on another.
+ *
+ *   @query-farm/vgi            int, int32, float32, bool  →  type instances
+ *   @query-farm/vgi/worker-cf  int, int32, float32, bool  →  factories
+ *
+ * So moving a worker to Cloudflare can turn a correct declaration into a
+ * silently wrong one with no other edit. Failing here, at definition time,
+ * makes that a startup error naming the field.
+ */
+export function assertArrowType(value: unknown, where: string): void {
+  if (typeof value === "function") {
+    const name = (value as { name?: string }).name;
+    const call = name ? `${name}()` : "the factory";
+    throw new ArgumentValidationError(
+      `${where} is a type factory, not an Arrow type — call it: ${call}. ` +
+        `(Note that int, int32, float32 and bool are ready-made types on ` +
+        `@query-farm/vgi but factories on @query-farm/vgi/worker-cf, so the ` +
+        `same name may need parentheses on one entry point and not the other. ` +
+        `int64(), float64(), utf8() and the rest are factories everywhere.)`,
+    );
+  }
+  if (value === null || value === undefined) {
+    throw new ArgumentValidationError(`${where} is ${String(value)}, not an Arrow type.`);
+  }
+}
+
+/** {@link assertArrowType} over a record of declared types, e.g. `params`. */
+export function assertArrowTypes(
+  types: Record<string, unknown> | undefined,
+  where: string,
+): void {
+  if (!types) return;
+  for (const [name, type] of Object.entries(types)) {
+    assertArrowType(type, `${where}.${name}`);
+  }
+}
+
 export function validateConstConstraints(
   name: string,
   constraints: ArgumentConstraints,

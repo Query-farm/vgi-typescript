@@ -41,6 +41,8 @@ import {
   argumentSpecsToSchema,
   constraintSpecFields,
   validateConstConstraints,
+  assertArrowType,
+  assertArrowTypes,
   type ArgumentConstraints,
 } from "../arguments/argument-spec.js";
 import { batchToScalarDict, batchToSecretDict, batchFromColumns, projectBatch, safeNumber } from "../util/arrow/index.js";
@@ -202,6 +204,15 @@ export function defineScalarFunction<
   R extends VgiDataType = VgiDataType,
   M extends Repr = "rich",
 >(config: ScalarFunctionConfig<P, R, M>): VgiFunction {
+  assertArrowTypes(config.params, `defineScalarFunction("${config.name}"): params`);
+  assertArrowTypes(config.constParams, `defineScalarFunction("${config.name}"): constParams`);
+  if (config.returns !== undefined) {
+    assertArrowType(config.returns, `defineScalarFunction("${config.name}"): returns`);
+  }
+  for (const p of config.parameters ?? []) {
+    assertArrowType(p.type, `defineScalarFunction("${config.name}"): parameters["${p.name}"].type`);
+  }
+
   const repr: Repr = config.repr ?? "rich";
   // Build argument specs
   const specs: ArgumentSpec[] = [];

@@ -20,6 +20,7 @@ import {
   type ArgumentSpec,
   type ArgumentConstraints,
 } from "../arguments/argument-spec.js";
+import { assertArrowType, assertArrowTypes } from "../arguments/argument-spec.js";
 import type {
   FunctionMeta,
   VgiFunction,
@@ -333,6 +334,8 @@ export function deleteExecutionState(executionId: Uint8Array): void {
 export function defineAggregate<TArgs = Record<string, any>, TState = any>(
   config: AggregateFunctionConfig<TArgs, TState>,
 ): VgiFunction & { aggregateConfig: AggregateFunctionConfig<TArgs, TState> } {
+  assertArrowTypes((config as any).args, `defineAggregate("${config.name}"): args`);
+
   const specs: ArgumentSpec[] = [];
   let posIdx = 0;
   const varargsSet = new Set(config.varargs ?? []);

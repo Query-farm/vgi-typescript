@@ -10,6 +10,26 @@ import type { CatalogDescriptor } from "./catalog/descriptors.js";
 import type { CatalogInterface } from "./catalog/interface.js";
 import { ReadOnlyCatalogInterface } from "./catalog/read-only.js";
 
+/**
+ * Startup/lifecycle tracing, off unless `VGI_DEBUG` is set to something other
+ * than "" or "0".
+ *
+ * These lines used to be unconditional, which put three of them in the log of
+ * every worker anyone ever deployed. They are genuinely useful when an ATTACH
+ * hangs and you need to know how far startup got, so they are kept rather than
+ * deleted — just behind a flag. Errors are NOT gated: `Worker error:` and
+ * `Worker init error:` always print.
+ *
+ * The message is a thunk so an unset flag costs no interpolation.
+ *
+ * stderr, never stdout: on the stdio transport stdout is the protocol.
+ */
+function debug(message: () => string): void {
+  const flag = process.env.VGI_DEBUG;
+  if (flag === undefined || flag === "" || flag === "0") return;
+  process.stderr.write(message() + "\n");
+}
+
 // argv parser for the launcher's `--unix PATH` / `--tcp [HOST:]PORT` /
 // `--idle-timeout SEC` contract. The C++ launcher (vgi extension) appends
 // these to the worker's argv whenever LOCATION uses the `launch:` scheme.
@@ -123,10 +143,10 @@ export class Worker {
   }
 
   run(argv: readonly string[] = process.argv.slice(2)): void {
-    process.stderr.write(`[worker] starting, pid=${process.pid}\n`);
+    debug(() => `[worker] starting, pid=${process.pid}`);
     try {
       const protocol = this.buildProtocol();
-      process.stderr.write(`[worker] protocol built\n`);
+      debug(() => `[worker] protocol built`);
 
       const launcher = parseLauncherArgs(argv);
       if (launcher.unixPath !== undefined) {
@@ -139,14 +159,14 @@ export class Worker {
         const idleTimeout = envOverride !== undefined && envOverride !== ""
           ? Number(envOverride)
           : launcher.idleTimeout;
-        process.stderr.write(
-          `[worker] AF_UNIX mode: ${launcher.unixPath} idle=${idleTimeout ?? 300}s${envOverride !== undefined && envOverride !== "" ? " (env override)" : ""}\n`,
+        debug(() =>
+          `[worker] AF_UNIX mode: ${launcher.unixPath} idle=${idleTimeout ?? 300}s${envOverride !== undefined && envOverride !== "" ? " (env override)" : ""}`,
         );
         serveUnix(protocol, {
           unixPath: launcher.unixPath,
           idleTimeout,
         }).then((handle) => handle.done).then(() => {
-          process.stderr.write(`[worker] serveUnix done (idle shutdown)\n`);
+          debug(() => `[worker] serveUnix done (idle shutdown)`);
         }).catch((err: any) => {
           process.stderr.write(`Worker error: ${err.message}\n${err.stack}\n`);
           process.exit(1);
@@ -164,15 +184,15 @@ export class Worker {
         const idleTimeout = envOverride !== undefined && envOverride !== ""
           ? Number(envOverride)
           : launcher.idleTimeout;
-        process.stderr.write(
-          `[worker] TCP mode: ${launcher.tcpHost}:${launcher.tcpPort} idle=${idleTimeout ?? 300}s${envOverride !== undefined && envOverride !== "" ? " (env override)" : ""}\n`,
+        debug(() =>
+          `[worker] TCP mode: ${launcher.tcpHost}:${launcher.tcpPort} idle=${idleTimeout ?? 300}s${envOverride !== undefined && envOverride !== "" ? " (env override)" : ""}`,
         );
         serveTcp(protocol, {
           host: launcher.tcpHost,
           port: launcher.tcpPort,
           idleTimeout,
         }).then((handle) => handle.done).then(() => {
-          process.stderr.write(`[worker] serveTcp done (idle shutdown)\n`);
+          debug(() => `[worker] serveTcp done (idle shutdown)`);
         }).catch((err: any) => {
           process.stderr.write(`Worker error: ${err.message}\n${err.stack}\n`);
           process.exit(1);
@@ -181,9 +201,9 @@ export class Worker {
       }
 
       const server = new VgiRpcServer(protocol);
-      process.stderr.write(`[worker] server created, calling run()\n`);
+      debug(() => `[worker] server created, calling run()`);
       server.run().then(() => {
-        process.stderr.write(`[worker] server.run() resolved cleanly\n`);
+        debug(() => `[worker] server.run() resolved cleanly`);
       }).catch((err) => {
         process.stderr.write(`Worker error: ${err.message}\n${err.stack}\n`);
         process.exit(1);

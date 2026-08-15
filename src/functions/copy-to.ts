@@ -38,6 +38,7 @@
 import { type VgiSchema, schema, type VgiBatch, type VgiDataType } from "../arrow/index.js";
 import type { BindRequest } from "../protocol/types.js";
 import type { FunctionMeta, FunctionExample } from "./types.js";
+import { narrowArgValue } from "../arguments/argument-spec.js";
 import { safeNumber } from "../util/arrow/index.js";
 import {
   defineTableBufferingFunction,
@@ -200,7 +201,7 @@ export function defineCopyToFunction<TArgs = Record<string, unknown>>(
         }
         val = opt.default;
       }
-      if (typeof val === "bigint") val = safeNumber(val);
+      val = narrowArgValue(val);
       if (opt.choices && !opt.choices.includes(val)) {
         throw new Error(
           `COPY (FORMAT ${config.format}): option '${name}' value ${JSON.stringify(val)} ` +

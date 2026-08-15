@@ -387,13 +387,32 @@ For manual conversions outside a function, `codecFor(type)` returns the codec wi
 
 ### Factory name note
 
-The typed Arrow type factories `int`, `int32`, `float32`, and `bool` are **not**
-re-exported from the package root, because `@query-farm/vgi` already re-exports
-vgi-rpc argument builders of the same names. Import those four from the arrow facade
-(they ship as the typed factories there); the rest of the typed factory set
-(`int8`/`int16`/`int64`, `uint*`, `float16`/`float64`, `decimal*`, `dateDay`,
-`timestampMicros`, `struct`, `list`, `map`, …) is exported from the package root as
-usual.
+Four names — `int`, `int32`, `float32`, `bool` — mean different things depending on
+which entry point you import from:
+
+| Import from | `int` is | Write |
+| --- | --- | --- |
+| `@query-farm/vgi` | a ready-made `Int64` **type**, re-exported from vgi-rpc | `params: { n: int }` |
+| `@query-farm/vgi/worker-cf` | the typed **factory** `int(bitWidth?, signed?)` | `params: { n: int() }` |
+
+The package root also re-exports `float`, `str` and `bytes` as ready-made types;
+the Cloudflare entry does not have them at all (use `float64()`, `utf8()`,
+`binary()`).
+
+Everything else in the typed factory set — `int8`/`int16`/`int64`, `uint*`,
+`float16`/`float64`, `utf8`, `decimal*`, `dateDay`, `timestampMicros`, `struct`,
+`list`, `map`, … — is a **factory on both entry points** and is exported from the
+package root as usual.
+
+**Prefer the explicit factories in portable code.** `int64()` means the same thing
+everywhere; `int` does not, so moving a worker to Cloudflare Workers can turn a
+correct declaration into a wrong one with no other edit. Since 0.29.0 that mistake
+is caught at definition time rather than silently registering a `Function` as an
+argument type:
+
+```
+defineScalarFunction("double"): params.n is a type factory, not an Arrow type — call it: int64().
+```
 
 ## Migration: the type-handling break
 

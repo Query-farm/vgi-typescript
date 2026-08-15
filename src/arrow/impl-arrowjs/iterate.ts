@@ -151,8 +151,29 @@ export function batchToSecretDict(
 /**
  * Safe number coercion for BigInt values.
  */
+const MAX_SAFE = BigInt(Number.MAX_SAFE_INTEGER);
+const MIN_SAFE = -MAX_SAFE;
+
+/**
+ * Narrow a bigint to a number, refusing to do it lossily.
+ *
+ * Arrow int64/uint64 values arrive as bigint. Several bind-time argument paths
+ * want a plain number, and used to get one from a bare `Number(value)` — which
+ * silently rounds above 2^53, so an id or a nanosecond timestamp passed as a
+ * function argument came back subtly wrong with nothing logged anywhere.
+ *
+ * Throwing is the lesser evil: a caller that genuinely wants a lossy narrowing
+ * can still write `Number(v)` themselves, but nobody has to discover the loss
+ * from mismatched output weeks later.
+ */
 export function safeNumber(value: any): number {
   if (typeof value === "bigint") {
+    if (value > MAX_SAFE || value < MIN_SAFE) {
+      throw new RangeError(
+        `${value} cannot be represented exactly as a JS number ` +
+          `(|value| > Number.MAX_SAFE_INTEGER). Keep it as a bigint.`,
+      );
+    }
     return Number(value);
   }
   return value as number;

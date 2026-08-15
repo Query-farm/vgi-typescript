@@ -17,7 +17,8 @@ export { createVgiFetch } from "./http/fetch.js";
 export type { VgiFetchOptions } from "./http/fetch.js";
 
 // Re-export the public types CF Worker authors need to wire a registry +
-// catalog. They import from "vgi/worker-cf" rather than from "vgi" directly
+// catalog. They import from "@query-farm/vgi/worker-cf" rather than from
+// "@query-farm/vgi" directly
 // so the build-condition resolution picks the flechette Arrow backend.
 export {
   defineScalarFunction,

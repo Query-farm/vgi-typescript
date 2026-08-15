@@ -34,7 +34,9 @@ import {
   validateConstConstraints,
   type ArgumentSpec,
   type ArgumentConstraints,
+  narrowArgValue,
 } from "../arguments/argument-spec.js";
+import { assertArrowType, assertArrowTypes } from "../arguments/argument-spec.js";
 import { batchToScalarDict, batchToSecretDict, projectSchema, safeNumber } from "../util/arrow/index.js";
 import {
   buildJoinKeysLookup,
@@ -281,6 +283,8 @@ export function defineTableFunction<
   TArgs = Record<string, any>,
   TState = null,
 >(config: TableFunctionConfig<TArgs, TState>): VgiFunction {
+  assertArrowTypes((config as any).args, `defineTableFunction("${config.name}"): args`);
+
   // Build argument specs
   const specs: ArgumentSpec[] = [];
   let posIdx = 0;
@@ -342,8 +346,9 @@ export function defineTableFunction<
         // converts positional args to named args)
         val = request.arguments.get(spec.name, defaultVal);
       }
-      // Arrow Int64 values come through as BigInt — coerce to number
-      if (typeof val === "bigint") val = safeNumber(val);
+      // Arrow Int64 arrives as bigint. Narrow when lossless, keep the
+      // bigint when not — see narrowArgValue.
+      val = narrowArgValue(val);
       // Enforce declared constraints at bind (table args are all bind-time).
       const constraints = config.argConstraints?.[spec.name];
       if (constraints) validateConstConstraints(spec.name, constraints, val);

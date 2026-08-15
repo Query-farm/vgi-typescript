@@ -70,7 +70,7 @@ import type {
  * Works with any RpcClient transport (subprocess or HTTP):
  * ```ts
  * import { subprocessConnect } from "@query-farm/vgi-rpc";
- * import { VgiClient, Arguments } from "vgi";
+ * import { VgiClient, Arguments } from "@query-farm/vgi";
  *
  * const rpc = subprocessConnect(["./my-worker"]);
  * const client = new VgiClient(rpc);

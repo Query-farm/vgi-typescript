@@ -33,9 +33,43 @@ export interface VgiSchema {
   readonly metadata: Map<string, string>;
 }
 
-/** Column view. Generic dropped: arrow-js parameterizes on DataType, flechette
- *  on value type, so the facade exposes an erased shape. Callers cast at the
- *  use site (the column's static schema makes the value type known there). */
+/**
+ * Column view over one column of a batch.
+ *
+ * The value type is erased by default: arrow-js parameterizes on DataType and
+ * flechette on value type, so the facade cannot name one without picking a
+ * backend. Supply `T` at the use site — the column's declared type makes it
+ * known there — and the cast disappears:
+ *
+ * ```ts
+ * const ns = batch.getChildAt(0)! as Iterable<bigint | null>;
+ * for (const v of ns) { ... }        // v: bigint | null
+ * ```
+ *
+ * A type parameter here would read better, but it cannot be had cheaply: both
+ * backends' native batches are assigned to VgiBatch structurally, and a
+ * concrete `get(): unknown` does not satisfy a generic `get(): T`. Adding one
+ * would mean casting at ~25 internal sites to remove one cast in user code.
+ *
+ * **These are the backend's own values, not codec output.** `get()` and
+ * iteration return whatever the Arrow implementation stores, which for some
+ * types is not the value the SDK documents:
+ *
+ * | Arrow type       | here                          | {@link iterRows}      |
+ * | ---------------- | ----------------------------- | --------------------- |
+ * | `int64`          | `bigint`                      | `bigint`   (same)     |
+ * | `utf8`, `float64`| `string`, `number`            | same                  |
+ * | `decimal128`     | backend limbs (`DecimalBigNum`)| `bigint`, unscaled    |
+ * | `timestamp[us]`  | millisecond `number`          | microsecond `bigint`  |
+ * | `date32`         | millisecond `number`          | `Date`                |
+ *
+ * `repr: "raw"` on a function selects the *codec's* representation and has no
+ * effect on this path.
+ *
+ * So: reach for `getChildAt` on integer, float, boolean, string and binary
+ * columns, where it is the cheapest correct thing. For temporal, decimal and
+ * nested types go through {@link iterRows}, which runs the codec.
+ */
 export interface VgiColumn {
   readonly type: VgiDataType;
   readonly length: number;
@@ -46,7 +80,9 @@ export interface VgiColumn {
 export interface VgiBatch {
   readonly schema: VgiSchema;
   readonly numRows: number;
+  /** See {@link VgiColumn} — this does NOT run the codec. */
   getChild(name: string): VgiColumn | null;
+  /** See {@link VgiColumn} — this does NOT run the codec. */
   getChildAt(index: number): VgiColumn | null;
 }
 

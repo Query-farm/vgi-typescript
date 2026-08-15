@@ -40,6 +40,7 @@ import type {
   FunctionExample,
 } from "./types.js";
 import type { ArgumentSpec } from "../arguments/argument-spec.js";
+import { assertArrowType, assertArrowTypes } from "../arguments/argument-spec.js";
 import { batchToScalarDict, batchToSecretDict, projectSchema } from "../util/arrow/index.js";
 import { batchFromColumns, readCanonicalValue } from "../arrow/index.js";
 import { codecFor } from "../arrow/codec/registry.js";
@@ -182,6 +183,8 @@ export function defineTableBufferingFunction<
   TArgs = Record<string, any>,
   TState = any,
 >(config: TableBufferingConfig<TArgs, TState>): TableBufferingVgiFunction {
+  assertArrowTypes((config as any).args, `defineTableBufferingFunction("${config.name}"): args`);
+
   if (config.sinkOrderDependent && config.requiresInputBatchIndex) {
     throw new Error(
       `${config.name}: sinkOrderDependent and requiresInputBatchIndex are ` +
