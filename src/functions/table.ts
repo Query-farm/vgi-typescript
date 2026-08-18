@@ -16,6 +16,10 @@ import { codecFor } from "../arrow/codec/registry.js";
 import type { OutputCollector } from "@query-farm/vgi-rpc";
 import { DEFAULT_MAX_WORKERS } from "../types.js";
 import type {
+  PlanResult,
+  TableFunctionPlanRequest,
+} from "../protocol/serializers/splits.js";
+import type {
   BindRequest,
   BindResponse,
   InitRequest,
@@ -229,6 +233,42 @@ export interface TableFunctionConfig<
   ) => void | Promise<void>;
   /** Cardinality hints */
   cardinality?: (params: TableBindParams<TArgs>) => TableCardinality | Promise<TableCardinality>;
+
+  /**
+   * Divide this scan into named, independently redeemable splits.
+   *
+   * Declaring it (together with `meta.supportsSplits`) is what opts a function
+   * into the split path; omitting it means the whole scan is one unit of work.
+   *
+   * A split *names* work rather than describing it. "These three files at
+   * version 47" survives a retry; "rows 0-999 of whatever this returns now"
+   * does not — and a distributed engine WILL retry, so the difference is
+   * correctness, not tidiness. The same split may also be redeemed more than
+   * once (recursive CTEs, re-collected DataFrames, task retry) and may be
+   * abandoned mid-stream (LIMIT, TopK, an empty join build side); neither is an
+   * error.
+   *
+   * Set only `payload` on each split. The framework stamps the consistency
+   * anchor, the bind fingerprint and (where a key exists) the seal.
+   *
+   * Size splits into comparable units of work and honour `targetSplitBytes`: a
+   * claiming client treats them as interchangeable because it cannot see
+   * per-split cost, so wildly uneven splits leave its makespan bounded by the
+   * largest one.
+   */
+  plan?: (request: TableFunctionPlanRequest) => PlanResult | Promise<PlanResult>;
+
+  /**
+   * Called on a split init with the VERIFIED payloads for the splits this
+   * connection claimed — the envelope is already opened and stripped, so
+   * unverified bytes never reach here.
+   *
+   * Any state carried from planning to reading must live in cross-process
+   * storage keyed by `execution_id`: the process that plans is, in the general
+   * case, not the process that reads — and under a distributed engine it is not
+   * even the same host.
+   */
+  onSplit?: (payloads: Uint8Array[], params: TableBindParams<TArgs>) => void | Promise<void>;
   /**
    * Per-column statistics for the function's output. Returned to DuckDB via
    * the `table_function_statistics` RPC; the optimizer uses min/max to

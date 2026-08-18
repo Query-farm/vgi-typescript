@@ -103,6 +103,38 @@ export interface FunctionMeta {
    */
   supportsBatchIndex?: boolean;
   /**
+   * table (generator): the scan divides into named, independently redeemable
+   * splits (see the `plan` / `onSplit` hooks). Surfaces as FunctionInfo
+   * `supports_splits`.
+   *
+   * The declaration is what a distributed engine reads to decide whether it can
+   * retry a task: a split NAMES its work, so re-running one reads exactly the
+   * same rows. Without it, the division lives behind an opaque worker-side queue
+   * and a retry reads neither what it read before nor what it missed.
+   */
+  supportsSplits?: boolean;
+  /**
+   * table (generator): the worker applies every pushed filter EXACTLY, so the
+   * engine may drop its own copy rather than re-filtering. Wrong answers if
+   * declared falsely — leave unset unless certain.
+   */
+  filtersExactlyApplied?: boolean;
+  /**
+   * table (generator): addressable positions in the data, for incremental and
+   * streaming reads. The engine owns the checkpoint; this declares only that
+   * positions are meaningful to externalize.
+   */
+  supportsPositions?: boolean;
+  /**
+   * table (generator): how long a split token stays redeemable.
+   *
+   * UNSET MEANS UNBOUNDED, not "expires immediately" — a client must not assume
+   * a TTL exists, or long-running streams are foreclosed. A client rejects a
+   * plan whose TTL is below its own planning-to-task-start horizon, which on a
+   * busy cluster is hours rather than seconds.
+   */
+  splitTokenTtlSeconds?: number;
+  /**
    * table (generator): Hive-style partition-columns mode. Functions declare
    * a PartitionKind and annotate bind-schema fields; emitted batches carry
    * `vgi_partition_values#b64` metadata. Surfaces as FunctionInfo
@@ -180,6 +212,14 @@ export interface VgiFunction {
     accumulatedState?: any,
   ): StreamHandlers;
   cardinality?(request: TableFunctionCardinalityRequest): TableCardinality | Promise<TableCardinality>;
+  /**
+   * Divide a scan into named, independently redeemable splits. Absent means the
+   * function is not split-capable: the whole scan is one unit of work, and the
+   * framework answers with a single empty-payload split.
+   */
+  plan?(request: import("../protocol/serializers/splits.js").TableFunctionPlanRequest):
+    | import("../protocol/serializers/splits.js").PlanResult
+    | Promise<import("../protocol/serializers/splits.js").PlanResult>;
   /**
    * Per-column statistics for this table function's output given the user's
    * bind-time arguments. Returns null/[] when stats are unknown. Wired to the

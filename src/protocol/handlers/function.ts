@@ -30,6 +30,17 @@ import {
   recoverFinalizeState,
 } from "./shared.js";
 import { openAttach } from "./catalog/shared.js";
+import { batchFromColumns, serializeBatch } from "../../util/arrow/index.js";
+import {
+  deserializePlanRequest,
+  fingerprintInputs,
+  planResponseRow,
+  scanSplitRow,
+  PLAN_RESPONSE_SCHEMA,
+  SCAN_SPLIT_SCHEMA,
+  type PlanResult,
+} from "../serializers/splits.js";
+import { bindFingerprint, buildSplitToken, splitAnchor } from "../../split-token.js";
 
 export interface FunctionHandlerConfig {
   registry: FunctionRegistry;
@@ -272,6 +283,76 @@ export function registerFunctionMethods(protocol: Protocol, config: FunctionHand
         cardResult = { estimate: null, max: null };
       }
       return wrapResult(cardResult, TableFunctionCardinalityResultSchema);
+    },
+  });
+
+  // --------------------------------------------------------------------------
+  // table_function_plan (unary)
+  // --------------------------------------------------------------------------
+  // Divide a scan into named, independently redeemable splits, so a distributed
+  // engine can retry a task without re-reading or skipping rows.
+  //
+  // A function that declares no `plan` hook gets the framework default: a SINGLE
+  // empty-payload split, which is what "not split-capable" means — the whole scan
+  // is one unit of work. That keeps every existing worker serving unchanged under
+  // protocol 1.4.0, so splits stay opt-in rather than something every worker must
+  // now implement.
+  protocol.unary("table_function_plan", {
+    params: REQUEST_PARAMS_SCHEMA,
+    result: RESULT_BINARY_SCHEMA,
+    handler: async (params) => {
+      const innerParams = unwrapRequest(params.request);
+      const request = deserializePlanRequest(innerParams);
+      const func = registry.get(
+        request.bind_call.function_name,
+        await strippedContext(request.bind_call),
+      );
+
+      const plan: PlanResult = func.plan
+        ? await func.plan(request)
+        : { splits: [{ payload: new Uint8Array(0) }] };
+
+      // The framework stamps every token: an author cannot forget the
+      // consistency anchor, cannot mis-bind the fingerprint, and never writes
+      // crypto — and the envelope stays a private implementation detail whose
+      // layout can change without touching worker code in five languages.
+      const fp = fingerprintInputs(toUint8Array(innerParams.bind_call));
+      const fingerprint = await bindFingerprint(
+        fp.schemaName,
+        fp.functionName,
+        fp.args,
+        fp.settings,
+        // projection_ids is not a bind-call field (it rides the init request),
+        // so it feeds in empty — matching the reference implementation, which
+        // reads it off the bind call and likewise finds nothing.
+        new Uint8Array(0),
+      );
+      const anchor = splitAnchor(plan.catalogVersion ?? 0);
+
+      const blobs: Uint8Array[] = [];
+      for (const split of plan.splits) {
+        const token = await buildSplitToken({
+          payload: split.payload,
+          fingerprint,
+          anchor,
+          signingKey,
+        });
+        blobs.push(
+          serializeBatch(
+            batchFromColumns(
+              Object.fromEntries(
+                SCAN_SPLIT_SCHEMA.fields.map((f) => [
+                  f.name,
+                  [scanSplitRow(split, token)[f.name] ?? null],
+                ]),
+              ),
+              SCAN_SPLIT_SCHEMA,
+            ),
+          ),
+        );
+      }
+
+      return wrapResult(planResponseRow(plan, blobs), PLAN_RESPONSE_SCHEMA);
     },
   });
 

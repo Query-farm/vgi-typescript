@@ -473,6 +473,22 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
           supports_batch_index:
             ((f.kind as string) === "table_buffering" && f.meta.requiresInputBatchIndex === true) ||
             ((f.kind as string) === "table" && f.meta.supportsBatchIndex === true),
+          // Split-based scan planning (protocol 1.4.0). A function opts in by
+          // declaring `supportsSplits` AND implementing plan()/onSplit(): the
+          // declaration is what a distributed engine reads to decide it can
+          // retry a task, because a split NAMES its work and re-running one
+          // reads exactly the same rows.
+          supports_splits: (f.kind as string) === "table" && f.meta.supportsSplits === true,
+          // The worker applies pushed filters EXACTLY, so the engine may drop
+          // its own copy. Wrong answers if declared falsely.
+          filters_exactly_applied:
+            (f.kind as string) === "table" && f.meta.filtersExactlyApplied === true,
+          // Addressable positions in the data, for incremental/streaming reads.
+          supports_positions: (f.kind as string) === "table" && f.meta.supportsPositions === true,
+          // null means UNBOUNDED, not "expires immediately" — a client must not
+          // assume a TTL exists, or long-running streams are foreclosed.
+          split_token_ttl_seconds:
+            (f.kind as string) === "table" ? (f.meta.splitTokenTtlSeconds ?? null) : null,
           partition_kind:
             (f.kind as string) === "table" && f.meta.partitionKind
               ? f.meta.partitionKind
