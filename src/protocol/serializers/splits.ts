@@ -174,7 +174,11 @@ export function scanSplitRow(split: ScanSplit, token: Uint8Array): Record<string
   const asBigInt = (v: number | bigint | null | undefined): bigint | null =>
     v == null ? null : typeof v === "bigint" ? v : BigInt(v);
   return {
-    payload: split.payload,
+    // Cleared, not forwarded. The payload is sealed INTO the token, and shipping
+    // the plaintext in the field beside the ciphertext made the seal decorative.
+    // No client reads it — the C++ side pulls `token` alone — and redemption
+    // recovers the payload from inside the envelope.
+    payload: new Uint8Array(0),
     token,
     estimated_rows: asBigInt(split.estimatedRows),
     rows_exact: split.rowsExact === true,
