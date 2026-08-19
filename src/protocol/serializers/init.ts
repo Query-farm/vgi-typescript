@@ -175,6 +175,20 @@ export function deserializeInitRequest(
     finalize_state_id: params.finalize_state_id
       ? toUint8Array(params.finalize_state_id)
       : null,
+    // The envelopes this init redeems. Read defensively: the column is absent
+    // on a pre-1.4.0 client and null on every non-split scan, and neither is an
+    // error — only a present, non-empty list means "this is a split init".
+    split_tokens: (() => {
+      const raw = params.split_tokens;
+      if (raw == null) return null;
+      const iter: Iterable<unknown> = Array.isArray(raw)
+        ? raw
+        : typeof (raw as { [Symbol.iterator]?: unknown })[Symbol.iterator] === "function"
+          ? (raw as Iterable<unknown>)
+          : [];
+      const tokens = [...iter].filter((e) => e != null).map((e) => toUint8Array(e));
+      return tokens.length > 0 ? tokens : null;
+    })(),
     execution_id: params.execution_id
       ? toUint8Array(params.execution_id)
       : null,

@@ -40,7 +40,12 @@ import {
   SCAN_SPLIT_SCHEMA,
   type PlanResult,
 } from "../serializers/splits.js";
-import { bindFingerprint, buildSplitToken, splitAnchor } from "../../split-token.js";
+import {
+  bindFingerprint,
+  buildSplitToken,
+  openSplitToken,
+  splitAnchor,
+} from "../../split-token.js";
 
 export interface FunctionHandlerConfig {
   registry: FunctionRegistry;
@@ -131,6 +136,28 @@ export function registerFunctionMethods(protocol: Protocol, config: FunctionHand
       // Exchange init has no ctx; on subprocess (no signing key) openAttach is a
       // pass-through strip that needs no auth. HTTP carries auth via the bind path.
       request.bind_call.attach_opaque_data = await stripAttach(request.bind_call.attach_opaque_data, undefined);
+
+      // Verify and strip the split envelopes BEFORE any user code runs, so an
+      // unverified token can never be acted on. This is the layer that holds the
+      // signing key — a function does not — which is why redemption is opened
+      // here and only the payloads are handed down.
+      if (request.split_tokens) {
+        const fp = fingerprintInputs(toUint8Array(innerParams.bind_call));
+        const expected = await bindFingerprint(
+          fp.schemaName,
+          fp.functionName,
+          fp.args,
+          fp.settings,
+          new Uint8Array(0),
+        );
+        request.split_payloads = [];
+        for (const token of request.split_tokens) {
+          request.split_payloads.push(
+            await openSplitToken(token, { signingKey, expectedFingerprint: expected }),
+          );
+        }
+      }
+
       const func = registry.get(request.bind_call.function_name, overloadContext(request.bind_call, catalogInterface));
 
       // globalInit is async — table function onInit may touch HTTP-backed
@@ -300,7 +327,7 @@ export function registerFunctionMethods(protocol: Protocol, config: FunctionHand
   protocol.unary("table_function_plan", {
     params: REQUEST_PARAMS_SCHEMA,
     result: RESULT_BINARY_SCHEMA,
-    handler: async (params) => {
+    handler: async (params, ctx?: any) => {
       const innerParams = unwrapRequest(params.request);
       const request = deserializePlanRequest(innerParams);
       const func = registry.get(
@@ -336,6 +363,10 @@ export function registerFunctionMethods(protocol: Protocol, config: FunctionHand
           fingerprint,
           anchor,
           signingKey,
+          // Bind the caller. Without it every token seals under the anonymous
+          // identity, so one tenant's splits are replayable by another — the
+          // exact replay the AAD exists to stop.
+          auth: ctx?.auth,
         });
         blobs.push(
           serializeBatch(

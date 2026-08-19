@@ -125,6 +125,24 @@ export interface InitRequest {
    * bytes the worker's combine() chose.
    */
   finalize_state_id: Uint8Array | null;
+  /**
+   * The framework-stamped split envelopes this init redeems, or null when this
+   * is not a split init.
+   *
+   * A LIST because an engine whose partition count IS its concurrency bin-packs
+   * at planning time and reads a whole group per partition; DuckDB always sends
+   * exactly one. A worker handed several concatenates them in the order given.
+   */
+  split_tokens: Uint8Array[] | null;
+  /**
+   * The VERIFIED payloads behind `split_tokens` — the worker's own bytes, with
+   * the envelope already opened and stripped.
+   *
+   * Populated by the protocol handler, which is what holds the signing key, so
+   * an unverified token never reaches a function. Null when this is not a split
+   * init.
+   */
+  split_payloads?: Uint8Array[] | null;
   execution_id: Uint8Array | null;
   init_opaque_data: Uint8Array | null;
   /**

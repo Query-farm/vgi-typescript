@@ -150,6 +150,15 @@ export interface TableProcessParams<TArgs = Record<string, any>> {
   settings: Record<string, any>;
   secrets: Record<string, Record<string, any>>;
   pushdownFilters?: PushdownFilters;
+  /**
+   * The verified payloads of the splits this init claimed, in the order given,
+   * or undefined when this is not a split scan.
+   *
+   * Undefined is meaningfully different from an empty array: undefined means
+   * the client did not plan (a split-only function should fail loudly rather
+   * than answer the same query differently), empty means a claim of no work.
+   */
+  splitPayloads?: Uint8Array[];
   storage?: BoundStorage;
   /**
    * AT (TIMESTAMP|VERSION) clause for this scan, or `undefined` when the scan
@@ -423,6 +432,28 @@ export function defineTableFunction<
       const executionId = new Uint8Array(16);
       crypto.getRandomValues(executionId);
 
+      // A SPLIT init is neither primary nor secondary. It carries an
+      // execution_id like a secondary, so it must not re-run global init — but
+      // unlike a secondary it MUST run user code, because the payload is what
+      // names the work. The secondary branch below runs none, which is why this
+      // is a third branch rather than a flag on that one.
+      if (request.split_payloads) {
+        if (config.onSplit) {
+          await config.onSplit(request.split_payloads, {
+            args: extractArgs(request.bind_call),
+            bindCall: request.bind_call,
+            settings: batchToScalarDict(request.bind_call.settings),
+            secrets: batchToSecretDict(request.bind_call.secrets),
+            resolvedSecretsProvided: request.bind_call.resolved_secrets_provided ?? false,
+          });
+        }
+        return {
+          max_workers: config.maxWorkers ?? 1,
+          execution_id: request.execution_id ?? executionId,
+          opaque_data: null,
+        };
+      }
+
       if (request.execution_id) {
         // Secondary init - reuse execution ID
         return {
@@ -485,6 +516,7 @@ export function defineTableFunction<
         settings,
         secrets,
         pushdownFilters,
+        splitPayloads: request.split_payloads ?? undefined,
         storage: boundStorage,
         atUnit: request.bind_call.at_unit ?? undefined,
         atValue: request.bind_call.at_value ?? undefined,
