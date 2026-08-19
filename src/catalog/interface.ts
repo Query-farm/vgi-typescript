@@ -164,7 +164,7 @@ export const encodeAttachCatalogInfo = (v: AttachCatalogInfo): Uint8Array =>
 import { deserializeBatch, serializeBatch, batchFromColumns } from "../util/arrow/index.js";
 import { schema as schema_, field as field_, type VgiDataType, type VgiField } from "../arrow/index.js";
 import { toUint8Array } from "../util/bytes.js";
-import { ScanBranchSchema } from "../generated/vgi-protocol-schemas.js";
+import { ScanBranchSchema, ScanFunctionResultSchema } from "../generated/vgi-protocol-schemas.js";
 
 /**
  * Result from `tableScanFunctionGet` — tells the VGI DuckDB extension which
@@ -179,6 +179,37 @@ export interface ScanFunctionResult {
   namedArguments: Record<string, unknown>;
   /** DuckDB extensions to load before calling the function. */
   requiredExtensions: string[];
+}
+
+/**
+ * Encode a ScanFunctionResult wire record — the single-row batch shape
+ * `{ function_name, arguments, required_extensions }` that
+ * `catalog_table_scan_function_get` returns and that a function-backed table
+ * inlines into `TableInfo.scan_function`.
+ *
+ * It exists so there is exactly one place that names those columns. The
+ * inline-scan path used to restate the schema locally even though codegen
+ * emits it; a hand-written wire schema is how four SDKs ended up disagreeing
+ * about which columns were binary and which were large_binary.
+ *
+ * `argumentsBytes` is the already-serialized inner arguments batch (one column
+ * per argument: `arg_<index>` positional, bare name for named).
+ */
+export function encodeScanFunctionResult(
+  functionName: string,
+  argumentsBytes: Uint8Array,
+  requiredExtensions: string[] = [],
+): Uint8Array {
+  return serializeBatch(
+    batchFromColumns(
+      {
+        function_name: [functionName],
+        arguments: [argumentsBytes],
+        required_extensions: [requiredExtensions],
+      },
+      ScanFunctionResultSchema as any,
+    ),
+  );
 }
 
 /**
@@ -237,22 +268,55 @@ export function decodeScanFunctionResult(inner: Record<string, unknown>): ScanFu
 export function singleBranchResult(
   legacy: { function_name: string; arguments: unknown; required_extensions?: string[] },
 ): { branches: Uint8Array[]; required_extensions: string[] } {
-  const branchBatch = batchFromColumns(
-    {
-      function_name: [legacy.function_name],
-      arguments: [toUint8Array(legacy.arguments)],
-      branch_filter: [null],
-      writable: [false],
-      source_catalog: [null],
-      source_schema: [null],
-      source_table: [null],
-    },
-    ScanBranchSchema as any,
-  );
   return {
-    branches: [serializeBatch(branchBatch)],
+    branches: [
+      encodeScanBranch({ function_name: legacy.function_name, arguments: toUint8Array(legacy.arguments) }),
+    ],
     required_extensions: legacy.required_extensions ?? [],
   };
+}
+
+/**
+ * The ONE place `ScanBranch`'s columns are named.
+ *
+ * Both branch builders used to carry their own copy of this key list, and both
+ * copies were missing `format_name` / `format_locations` after those fields
+ * were added to the schema. `format_locations` is a LIST, and Arrow's assembler
+ * dereferences a list's `children[0]` while writing, so the omission did not
+ * degrade anything — it killed every scan through those builders with
+ * "Cannot read properties of undefined (reading 'slice')", including tables
+ * that predated format branches entirely. One key list is the fix; the
+ * completeness test in src/__tests__ pins it against ScanBranchSchema.
+ *
+ * Every column the schema declares must appear here, null included.
+ */
+function encodeScanBranch(cols: {
+  function_name: string;
+  arguments: Uint8Array;
+  branch_filter?: string | null;
+  writable?: boolean;
+  source_catalog?: string | null;
+  source_schema?: string | null;
+  source_table?: string | null;
+  format_name?: string | null;
+  format_locations?: string[] | null;
+}): Uint8Array {
+  return serializeBatch(
+    batchFromColumns(
+      {
+        function_name: [cols.function_name],
+        arguments: [cols.arguments],
+        branch_filter: [cols.branch_filter ?? null],
+        writable: [cols.writable ?? false],
+        source_catalog: [cols.source_catalog ?? null],
+        source_schema: [cols.source_schema ?? null],
+        source_table: [cols.source_table ?? null],
+        format_name: [cols.format_name ?? null],
+        format_locations: [cols.format_locations ?? null],
+      },
+      ScanBranchSchema as any,
+    ),
+  );
 }
 
 /**
@@ -332,29 +396,19 @@ export function buildScanBranchesResult(
   branches: ScanBranchInput[],
   requiredExtensions: string[] = [],
 ): { branches: Uint8Array[]; required_extensions: string[] } {
-  const serializedBranches = branches.map((branch) => {
-    const branchBatch = batchFromColumns(
-      {
-        function_name: [branch.functionName],
-        arguments: [serializeBranchArguments(branch)],
-        branch_filter: [branch.branchFilter ?? null],
-        writable: [branch.writable ?? false],
-        source_catalog: [branch.sourceCatalog ?? null],
-        source_schema: [branch.sourceSchema ?? null],
-        source_table: [branch.sourceTable ?? null],
-        // The format-branch fields. Omitting them left `format_locations` — a
-        // LIST column — with no data at all, and Arrow's assembler dereferences
-        // `children[0]` of it while writing: every multi-branch table in this
-        // worker died with "Cannot read properties of undefined (reading
-        // 'slice')", including ones that predate format branches entirely.
-        // A column declared by the schema has to be supplied even when null.
-        format_name: [branch.formatName ?? null],
-        format_locations: [branch.formatLocations ?? null],
-      },
-      ScanBranchSchema as any,
-    );
-    return serializeBatch(branchBatch);
-  });
+  const serializedBranches = branches.map((branch) =>
+    encodeScanBranch({
+      function_name: branch.functionName,
+      arguments: serializeBranchArguments(branch),
+      branch_filter: branch.branchFilter,
+      writable: branch.writable,
+      source_catalog: branch.sourceCatalog,
+      source_schema: branch.sourceSchema,
+      source_table: branch.sourceTable,
+      format_name: branch.formatName,
+      format_locations: branch.formatLocations,
+    }),
+  );
   return {
     branches: serializedBranches,
     required_extensions: requiredExtensions,

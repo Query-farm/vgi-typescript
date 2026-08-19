@@ -24,7 +24,6 @@ import {
 import {
   type GetCatalog,
   emptyResultSchema,
-  attachOpaqueDataSchemaNameTxnParams,
   catalogUnary,
 } from "./shared.js";
 

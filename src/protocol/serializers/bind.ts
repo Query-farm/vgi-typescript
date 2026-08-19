@@ -3,7 +3,7 @@
 // ArrowSerializableDataclass field declaration order so the format is
 // positional-compatible with the Python reader.
 
-import { type VgiSchema, schema, type VgiField, field, type VgiBatch, type VgiDataType, utf8, binary, bool, list, struct } from "../../arrow/index.js";
+import { type VgiSchema, schema, type VgiField, field, type VgiBatch, type VgiDataType, utf8, binary, bool, struct } from "../../arrow/index.js";
 import { Arguments } from "../../arguments/arguments.js";
 import { FunctionType } from "../../types.js";
 import type { BindRequest, BindResponse, CopyFromContext, CopyToContext } from "../types.js";
@@ -58,14 +58,6 @@ const COPY_TO_STRUCT_TYPE = struct([
   field("file_path", utf8(), false),
 ]);
 const COPY_TO_FIELD = field("copy_to", COPY_TO_STRUCT_TYPE, true);
-
-const BIND_RESPONSE_SCHEMA = schema([
-  field("output_schema", binary(), false),
-  field("opaque_data", binary(), true),
-  field("lookup_secret_types", list(field("item", utf8(), true)), false),
-  field("lookup_scopes", list(field("item", utf8(), true)), false),
-  field("lookup_names", list(field("item", utf8(), true)), false),
-]);
 
 export function serializeBindRequest(req: BindRequest): VgiBatch {
   const row: Record<string, any> = {
@@ -218,4 +210,13 @@ export function deserializeBindResponse(
   };
 }
 
-export { BIND_REQUEST_SCHEMA, BIND_RESPONSE_SCHEMA };
+// BIND_REQUEST_SCHEMA has no codegen counterpart — the generated
+// BindParamsSchema is only the `{request: binary}` envelope, so the inner
+// record is spelled out above. The BindResponse copy that used to sit beside
+// it did have one, and the two had already drifted: this file called
+// `opaque_data` nullable where the generated BindResultSchema calls it
+// non-null. Nobody read the copy (handlers/function.ts wraps with the
+// generated schema), which is exactly how a duplicate goes stale unnoticed —
+// and a stale copy is how a *correct* client ends up rejected at its first
+// call. Use BindResultSchema from src/generated/vgi-protocol-schemas.ts.
+export { BIND_REQUEST_SCHEMA };

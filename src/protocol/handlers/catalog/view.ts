@@ -20,10 +20,6 @@ import {
 import {
   type GetCatalog,
   emptyResultSchema,
-  attachOpaqueDataSchemaNameTxnParams,
-  schemaNameIgnoreNotFoundTxnParams,
-  schemaNameRenameParams,
-  schemaNameCommentParams,
   catalogUnary,
 } from "./shared.js";
 

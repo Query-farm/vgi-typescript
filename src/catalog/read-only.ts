@@ -17,6 +17,7 @@ import {
   type IndexConstraintType,
   type CopyFromFormatInfo,
   encodeAttachCatalogInfo,
+  encodeScanFunctionResult,
   encodeFunctionInfo,
 } from "./interface.js";
 import type { CatalogDescriptor, SchemaDescriptor, TableDescriptor, ViewDescriptor, MacroDescriptor, SettingDescriptor, SecretTypeDescriptor, ForeignKeyDef, DefaultValue } from "./descriptors.js";
@@ -1009,22 +1010,5 @@ function inlineScanFunction(
 ): Uint8Array {
   const argSchema = argumentSpecsToSchema(func.argumentSpecs);
   const argBytes = serializeArgsBatch(args ?? new Arguments(), argSchema);
-  const scanSchema = schema_([
-    field("function_name", utf8(), false),
-    field("arguments", binary(), false),
-    field(
-      "required_extensions",
-      list(field("item", utf8(), true)),
-      false,
-    ),
-  ]);
-  const batch = batchFromColumns(
-    {
-      function_name: [func.meta.name],
-      arguments: [argBytes],
-      required_extensions: [[] as string[]],
-    },
-    scanSchema,
-  );
-  return serializeBatch(batch);
+  return encodeScanFunctionResult(func.meta.name, argBytes);
 }

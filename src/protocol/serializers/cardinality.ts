@@ -1,16 +1,11 @@
 // Copyright 2025, 2026 Query Farm LLC - https://query.farm
 // TableFunctionCardinalityRequest / TableCardinality wire serialization.
 
-import { type VgiSchema, schema, type VgiField, field, type VgiDataType, binary, int64 } from "../../arrow/index.js";
+import { type VgiSchema, schema, type VgiField, field, type VgiDataType, binary } from "../../arrow/index.js";
 import type { TableFunctionCardinalityRequest, TableCardinality } from "../types.js";
 import { deserializeBatch, batchToScalarDict } from "../../util/arrow/index.js";
 import { toUint8Array } from "./shared.js";
 import { deserializeBindRequest } from "./bind.js";
-
-const TABLE_CARDINALITY_SCHEMA = schema([
-  field("estimate", int64(), true),
-  field("max", int64(), true),
-]);
 
 const TABLE_FUNCTION_CARDINALITY_REQUEST_SCHEMA = schema([
   field("bind_call", binary(), false),
@@ -42,4 +37,9 @@ export function serializeTableCardinality(
   };
 }
 
-export { TABLE_CARDINALITY_SCHEMA, TABLE_FUNCTION_CARDINALITY_REQUEST_SCHEMA };
+// The TableCardinality result shape used to be restated here as well; it is
+// generated as TableFunctionCardinalityResultSchema, which is what
+// handlers/function.ts already wraps with. Only the request shape stays hand-
+// written, because codegen emits no schema for the inner request record (the
+// generated Params schema is just the `{request: binary}` envelope).
+export { TABLE_FUNCTION_CARDINALITY_REQUEST_SCHEMA };

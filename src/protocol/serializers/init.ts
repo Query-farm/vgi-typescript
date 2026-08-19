@@ -68,6 +68,13 @@ const INIT_REQUEST_SCHEMA = makeSchema([
   field("finalize_state_id", binary(), true),
 ]);
 
+// The init stream's header. Codegen emits nothing for it (the generated
+// InitParamsSchema covers only the request envelope), so it is hand-written —
+// which is exactly why it must be hand-written ONCE. It used to be restated at
+// the `protocol.exchange("init", ...)` registration in handlers/function.ts,
+// and two copies of a wire schema is how a *correct* client ends up rejected:
+// the copies disagree on some field's nullability and neither is wrong on its
+// own terms.
 const GLOBAL_INIT_RESPONSE_SCHEMA = makeSchema([
   field("execution_id", binary(), false),
   field("opaque_data", binary(), true),

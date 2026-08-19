@@ -1,7 +1,7 @@
 // Copyright 2025, 2026 Query Farm LLC - https://query.farm
 // Shared param schemas and helpers for catalog protocol handlers.
 
-import { type VgiSchema, schema, type VgiField, field, type VgiDataType, binary, utf8, bool, iterRows } from "../../../arrow/index.js";
+import { type VgiSchema, schema, iterRows } from "../../../arrow/index.js";
 import { Protocol, type AuthContext, type CallContext } from "@query-farm/vgi-rpc";
 import type { CatalogInterface } from "../../../catalog/interface.js";
 import { NoCatalogError } from "../../../errors.js";
@@ -233,59 +233,12 @@ export function decodeOptionsBatch(bytes: any): Record<string, unknown> {
 
 export const emptyResultSchema = schema([]);
 
-export const attachOpaqueDataParam = schema([
-  field("attach_opaque_data", binary(), true),
-]);
-
-export const attachOpaqueDataTxnParams = schema([
-  field("attach_opaque_data", binary(), true),
-  field("transaction_opaque_data", binary(), true),
-]);
-
-export const attachOpaqueDataNameTxnParams = schema([
-  field("attach_opaque_data", binary(), true),
-  field("name", utf8(), false),
-  field("transaction_opaque_data", binary(), true),
-]);
-
-export const attachOpaqueDataSchemaNameTxnParams = schema([
-  field("attach_opaque_data", binary(), true),
-  field("schema_name", utf8(), false),
-  field("name", utf8(), false),
-  field("transaction_opaque_data", binary(), true),
-]);
-
-export const schemaNameIgnoreNotFoundTxnParams = schema([
-  field("attach_opaque_data", binary(), true),
-  field("schema_name", utf8(), false),
-  field("name", utf8(), false),
-  field("ignore_not_found", bool(), true),
-  field("transaction_opaque_data", binary(), true),
-]);
-
-export const schemaNameCommentParams = schema([
-  field("attach_opaque_data", binary(), true),
-  field("schema_name", utf8(), false),
-  field("name", utf8(), false),
-  field("comment", utf8(), true),
-  field("ignore_not_found", bool(), true),
-  field("transaction_opaque_data", binary(), true),
-]);
-
-export const schemaNameRenameParams = schema([
-  field("attach_opaque_data", binary(), true),
-  field("schema_name", utf8(), false),
-  field("name", utf8(), false),
-  field("new_name", utf8(), false),
-  field("ignore_not_found", bool(), true),
-  field("transaction_opaque_data", binary(), true),
-]);
-
-export const columnOpParams = schema([
-  field("attach_opaque_data", binary(), true),
-  field("schema_name", utf8(), false),
-  field("name", utf8(), false),
-  field("column_name", utf8(), false),
-  field("ignore_not_found", bool(), true),
-  field("transaction_opaque_data", binary(), true),
-]);
+// Eight hand-written catalog param schemas used to live here, restating shapes
+// codegen already emits. Every `params:` slot now points at a generated
+// `…ParamsSchema` and these were left behind, referenced by nothing but their
+// own import lines. A stale duplicate is worse than no duplicate: the copies
+// this SDK kept had drifted on `attach_opaque_data` nullability (45 generated
+// schemas say non-null, every copy said nullable) and on `type` being
+// dictionary-encoded utf8 rather than plain utf8, and the result was that a
+// CORRECT client got rejected at the very first catalog call. Import from
+// src/generated/vgi-protocol-schemas.ts instead of reviving one.

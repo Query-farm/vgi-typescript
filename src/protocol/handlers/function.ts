@@ -39,6 +39,7 @@ import {
   overloadContext,
   recoverFinalizeState,
 } from "./shared.js";
+import { GLOBAL_INIT_RESPONSE_SCHEMA } from "../serializers/init.js";
 import { openAttach } from "./catalog/shared.js";
 import { batchFromColumns, serializeBatch } from "../../util/arrow/index.js";
 import {
@@ -152,11 +153,9 @@ export function registerFunctionMethods(protocol: Protocol, config: FunctionHand
     return overloadContext({ ...bindCall, attach_opaque_data: attach }, catalogInterface);
   }
 
-  const initHeaderSchema = schema([
-    field("execution_id", binary(), false),
-    field("opaque_data", binary(), true),
-    field("max_workers", int64(), false),
-  ]);
+  // Shared with the serializer that actually emits the header, so the
+  // advertised shape and the emitted shape cannot drift apart.
+  const initHeaderSchema = GLOBAL_INIT_RESPONSE_SCHEMA;
 
   const emptySchema = schema([]);
 
