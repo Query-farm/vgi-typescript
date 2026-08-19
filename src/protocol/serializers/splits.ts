@@ -54,8 +54,11 @@ export interface PlanResult {
   splits: ScanSplit[];
   /**
    * Continued enumeration. More than one MUST partition the remaining
-   * enumeration disjointly and exhaustively — the client dedups by token
-   * regardless, because violating it produces duplicate ROWS.
+   * enumeration disjointly and exhaustively. No client checks this: a dedup was
+   * tried and removed (it needed a set holding a copy of every token, it compared
+   * token bytes so it could never work on a keyed worker where each mint uses a
+   * fresh nonce, and the most a client can do with a duplicate is refuse anyway).
+   * Violating it returns DUPLICATE ROWS, silently.
    */
   nextCursors?: Uint8Array[];
   /** NORMATIVE cap on redemption concurrency, not advisory. */
