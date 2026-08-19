@@ -5,7 +5,10 @@
 // exactly, and the extension rejects a response whose schema disagrees.
 
 import { type VgiSchema, schema, field, binary, bool, int64, list } from "../../arrow/index.js";
-import { TableFunctionPlanResultSchema } from "../../generated/vgi-protocol-schemas.js";
+import {
+  ScanSplitSchema,
+  TableFunctionPlanResultSchema,
+} from "../../generated/vgi-protocol-schemas.js";
 import type { BindRequest } from "../types.js";
 import { deserializeBatch, batchToScalarDict } from "../../util/arrow/index.js";
 import { toUint8Array } from "./shared.js";
@@ -94,18 +97,15 @@ export interface TableFunctionPlanRequest {
   cursor: Uint8Array | null;
 }
 
-export const SCAN_SPLIT_SCHEMA: VgiSchema = schema([
-  field("payload", binary(), false),
-  field("token", binary(), false),
-  field("estimated_rows", int64(), true),
-  field("rows_exact", bool(), false),
-  field("estimated_bytes", int64(), true),
-  field("partition_bounds", binary(), true),
-  field("column_statistics", binary(), true),
-  field("location_ids", list(field("item", int64(), true)), true),
-  field("start_position", binary(), true),
-  field("end_position", binary(), true),
-]);
+/**
+ * The ScanSplit shape, from codegen rather than hand-written.
+ *
+ * It used to be spelled out here, and hand-written is how four SDKs ended up
+ * disagreeing about which of these columns were binary and which were
+ * large_binary — a disagreement the client surfaced as "the worker bypassed the
+ * framework", on every scan.
+ */
+export const SCAN_SPLIT_SCHEMA: VgiSchema = ScanSplitSchema as VgiSchema;
 
 /**
  * The PlanResponse shape, taken from codegen rather than hand-written: it is
