@@ -1304,7 +1304,7 @@ export class VgiClient {
     transactionOpaqueData?: TransactionOpaqueData,
   ): Promise<void> {
     const schema = schema_([
-      field("attach_opaque_data", binary(), true),
+      field("attach_opaque_data", binary(), false),
       field("schema_name", utf8(), false),
       field("name", utf8(), false),
       field("macro_type", utf8(), false),

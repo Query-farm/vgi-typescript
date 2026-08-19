@@ -5,7 +5,11 @@ import { type VgiSchema, schema, type VgiField, field, type VgiDataType, binary,
 import { Protocol } from "@query-farm/vgi-rpc";
 import { encodeMacroInfo } from "../../../generated/vgi-client.js";
 import {
+  CatalogMacroCreateParamsSchema,
+  CatalogMacroDropParamsSchema,
+  CatalogMacroGetParamsSchema,
   CatalogMacroGetResultSchema,
+  CatalogSchemaContentsMacrosParamsSchema,
   CatalogSchemaContentsMacrosResultSchema,
 } from "../../../generated/vgi-protocol-schemas.js";
 import type { MacroType } from "../../../catalog/interface.js";
@@ -27,7 +31,7 @@ import {
 export function registerCatalogMacroMethods(protocol: Protocol, getCatalog: GetCatalog, signingKey?: Uint8Array): void {
   // catalog_macro_get
   catalogUnary(protocol, signingKey, "catalog_macro_get", {
-    params: attachOpaqueDataSchemaNameTxnParams,
+    params: CatalogMacroGetParamsSchema,
     result: RESULT_BINARY_SCHEMA,
     handler: async (params) => {
       const cat = getCatalog();
@@ -45,7 +49,7 @@ export function registerCatalogMacroMethods(protocol: Protocol, getCatalog: GetC
 
   // catalog_macro_create
   catalogUnary(protocol, signingKey, "catalog_macro_create", {
-    params: REQUEST_PARAMS_SCHEMA,
+    params: CatalogMacroCreateParamsSchema,
     result: emptyResultSchema,
     handler: async (params) => {
       const cat = getCatalog();
@@ -68,13 +72,7 @@ export function registerCatalogMacroMethods(protocol: Protocol, getCatalog: GetC
 
   // catalog_macro_drop
   catalogUnary(protocol, signingKey, "catalog_macro_drop", {
-    params: schema([
-      field("attach_opaque_data", binary(), true),
-      field("schema_name", utf8(), false),
-      field("name", utf8(), false),
-      field("ignore_not_found", bool(), true),
-      field("transaction_opaque_data", binary(), true),
-    ]),
+    params: CatalogMacroDropParamsSchema,
     result: emptyResultSchema,
     handler: async (params) => {
       const cat = getCatalog();
@@ -91,12 +89,7 @@ export function registerCatalogMacroMethods(protocol: Protocol, getCatalog: GetC
 
   // catalog_schema_contents_macros
   catalogUnary(protocol, signingKey, "catalog_schema_contents_macros", {
-    params: schema([
-      field("attach_opaque_data", binary(), true),
-      field("name", utf8(), false),
-      field("type", utf8(), false),
-      field("transaction_opaque_data", binary(), true),
-    ]),
+    params: CatalogSchemaContentsMacrosParamsSchema,
     result: RESULT_BINARY_SCHEMA,
     handler: async (params) => {
       const cat = getCatalog();

@@ -265,7 +265,10 @@ export interface TableFunctionConfig<
    * per-split cost, so wildly uneven splits leave its makespan bounded by the
    * largest one.
    */
-  plan?: (request: TableFunctionPlanRequest) => PlanResult | Promise<PlanResult>;
+  plan?: (
+    params: TableBindParams<TArgs>,
+    request: TableFunctionPlanRequest,
+  ) => PlanResult | Promise<PlanResult>;
 
   /**
    * Called on a split init with the VERIFIED payloads for the splits this
@@ -326,6 +329,25 @@ export interface TableFunctionConfig<
   supportsBatchIndex?: boolean;
   /** Hive-style partition-columns mode; FunctionInfo.partition_kind. */
   partitionKind?: "NOT_PARTITIONED" | "SINGLE_VALUE_PARTITIONS" | "OVERLAPPING_PARTITIONS" | "DISJOINT_PARTITIONS";
+  /**
+   * This function divides its scan into named, independently redeemable splits;
+   * FunctionInfo.supports_splits. Declare it together with `plan` and `onSplit`.
+   *
+   * It is what a distributed engine reads to decide it can retry a task against
+   * this function, and what makes the client call `plan()` at all — without it a
+   * split-capable function is scanned as one undivided unit, silently.
+   */
+  supportsSplits?: boolean;
+  /**
+   * How long a minted split token stays redeemable, or undefined for UNBOUNDED
+   * (NOT "expires immediately"); FunctionInfo.split_token_ttl_seconds.
+   *
+   * A client refuses a plan whose TTL is below its own scheduling horizon,
+   * because an expired token is a failed query rather than a degradation:
+   * nothing re-plans when one expires, since a distributed engine retries the
+   * serialized task it was handed and has no path back to the planner.
+   */
+  splitTokenTtlSeconds?: number;
 }
 
 export function defineTableFunction<
@@ -378,6 +400,8 @@ export function defineTableFunction<
     distinctDependent: config.distinctDependent,
     supportsBatchIndex: config.supportsBatchIndex,
     partitionKind: config.partitionKind,
+    supportsSplits: config.supportsSplits,
+    splitTokenTtlSeconds: config.splitTokenTtlSeconds,
   };
 
   function extractArgs(request: BindRequest): TArgs {
@@ -597,6 +621,32 @@ export function defineTableFunction<
             secrets,
             resolvedSecretsProvided: request.bind_call.resolved_secrets_provided ?? false,
           });
+        }
+      : undefined,
+
+    // Wired through with decoded arguments, exactly as cardinality and
+    // statistics are.
+    //
+    // It was previously declared on the config type and never passed to the
+    // returned function, so the hook was DEAD: a worker could declare
+    // `supportsSplits` and a `plan`, advertise split capability on the wire, and
+    // silently serve the framework default of one empty-payload split. Nothing
+    // failed — the scan just quietly stopped being divided.
+    plan: config.plan
+      ? (request: TableFunctionPlanRequest) => {
+          const args = extractArgs(request.bind_call);
+          const settings = batchToScalarDict(request.bind_call.settings);
+          const secrets = batchToSecretDict(request.bind_call.secrets);
+          return config.plan!(
+            {
+              args,
+              bindCall: request.bind_call,
+              settings,
+              secrets,
+              resolvedSecretsProvided: request.bind_call.resolved_secrets_provided ?? false,
+            },
+            request,
+          );
         }
       : undefined,
 

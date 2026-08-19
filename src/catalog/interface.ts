@@ -275,6 +275,10 @@ export interface ScanBranchInput {
   branchFilter?: string | null;
   /** Declares this branch as the INSERT target (at most one per table). */
   writable?: boolean;
+  /** Custom file FORMAT this branch reads, for a format-backed branch. */
+  formatName?: string | null;
+  /** Locations the format branch reads. */
+  formatLocations?: string[] | null;
   /**
    * Catalog-table branch (lakehouse federation): leave `functionName` empty and
    * set these to scan the base table
@@ -338,6 +342,14 @@ export function buildScanBranchesResult(
         source_catalog: [branch.sourceCatalog ?? null],
         source_schema: [branch.sourceSchema ?? null],
         source_table: [branch.sourceTable ?? null],
+        // The format-branch fields. Omitting them left `format_locations` — a
+        // LIST column — with no data at all, and Arrow's assembler dereferences
+        // `children[0]` of it while writing: every multi-branch table in this
+        // worker died with "Cannot read properties of undefined (reading
+        // 'slice')", including ones that predate format branches entirely.
+        // A column declared by the schema has to be supplied even when null.
+        format_name: [branch.formatName ?? null],
+        format_locations: [branch.formatLocations ?? null],
       },
       ScanBranchSchema as any,
     );

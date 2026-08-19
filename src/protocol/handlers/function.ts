@@ -4,7 +4,7 @@
 // implements VgiFunction.bind/globalInit/createStreamHandlers.
 
 import { type VgiSchema, schema, type VgiField, field, type VgiDataType, binary, int64 } from "../../arrow/index.js";
-import { Protocol } from "@query-farm/vgi-rpc";
+import { Protocol, type AuthContext } from "@query-farm/vgi-rpc";
 import type { FunctionRegistry } from "../../functions/registry.js";
 import type { StreamHandlers, HandlerState } from "../../functions/types.js";
 import {
@@ -19,7 +19,17 @@ import type { GlobalInitResponse } from "../types.js";
 import { batchToScalarDict, deserializeBatch, adoptArrowJsShape } from "../../util/arrow/index.js";
 import { toUint8Array } from "../../util/bytes.js";
 import { serializeColumnStatistics } from "../../util/statistics.js";
-import { BindResultSchema, TableFunctionCardinalityResultSchema, TableFunctionDynamicToStringResultSchema } from "../../generated/vgi-protocol-schemas.js";
+import {
+  BindParamsSchema,
+  BindResultSchema,
+  InitParamsSchema,
+  TableFunctionCardinalityParamsSchema,
+  TableFunctionCardinalityResultSchema,
+  TableFunctionDynamicToStringParamsSchema,
+  TableFunctionDynamicToStringResultSchema,
+  TableFunctionPlanParamsSchema,
+  TableFunctionStatisticsParamsSchema,
+} from "../../generated/vgi-protocol-schemas.js";
 import {
   REQUEST_PARAMS_SCHEMA,
   RESULT_BINARY_SCHEMA,
@@ -56,7 +66,61 @@ export interface FunctionHandlerConfig {
    * be scoped when two catalogs declare the same schema and function name.
    * Optional — without it, resolution falls back to (schema, name).
    */
-  catalogInterface?: { catalogNameForAttach(a: Uint8Array): string | null };
+  catalogInterface?: {
+    catalogNameForAttach(a: Uint8Array): string | null;
+    /**
+     * The catalog's current version, which is the consistency anchor every split
+     * token is stamped with AND checked against.
+     *
+     * Both sides read it from here on purpose. Minting from a different value
+     * than redemption compares against is not a subtle bug: it refuses every
+     * token, and the documented response to SPLIT_SNAPSHOT_EXPIRED is "re-run
+     * the query", which re-plans, mints the same mismatch and fails again — a
+     * livelock returning no rows, blaming the data for moving when it has not.
+     */
+    version?(attach: Uint8Array, txn?: Uint8Array): number | Promise<number>;
+  };
+}
+
+/**
+ * The live anchor a split token must still name, or undefined when this worker's
+ * catalog reports no version.
+ *
+ * Undefined means "skip the staleness check" rather than "fail" — a check that
+ * cannot be made must not become a check that always fails, which would refuse
+ * every split token on every unversioned catalog.
+ */
+async function liveSplitAnchor(
+  catalogInterface: FunctionHandlerConfig["catalogInterface"],
+  bindCall: { attach_opaque_data?: Uint8Array | null; transaction_opaque_data?: Uint8Array | null },
+  auth: AuthContext | undefined,
+  signingKey: Uint8Array | undefined,
+): Promise<Uint8Array | undefined> {
+  if (!catalogInterface?.version || bindCall.attach_opaque_data == null) return undefined;
+  const raw = toUint8Array(bindCall.attach_opaque_data);
+  const txn = bindCall.transaction_opaque_data
+    ? toUint8Array(bindCall.transaction_opaque_data)
+    : undefined;
+
+  // The two call sites see the attach envelope at DIFFERENT processing stages —
+  // `plan` receives it with the framework's 16-byte UUID prefix still attached,
+  // `init` receives it already stripped — so neither form alone works for both.
+  // Try each. Getting this wrong is not a degraded check but a total one: if
+  // mint resolves a version and redemption does not (or vice versa) then every
+  // token fails SPLIT_SNAPSHOT_EXPIRED, and the documented response to that is
+  // "re-run the query", which re-plans and reproduces the same mismatch.
+  for (const attach of [raw, await openAttach(raw, auth, signingKey)]) {
+    try {
+      return splitAnchor(await catalogInterface.version(attach, txn));
+    } catch {
+      // try the next form
+    }
+  }
+  // A catalog that cannot report a version means "skip the staleness check",
+  // never "fail it" — a check that cannot be made must not become a check that
+  // always fails, which would refuse every split token on every unversioned
+  // catalog.
+  return undefined;
 }
 
 export function registerFunctionMethods(protocol: Protocol, config: FunctionHandlerConfig): void {
@@ -108,7 +172,7 @@ export function registerFunctionMethods(protocol: Protocol, config: FunctionHand
   // bind (unary)
   // --------------------------------------------------------------------------
   protocol.unary("bind", {
-    params: REQUEST_PARAMS_SCHEMA,
+    params: BindParamsSchema,
     result: RESULT_BINARY_SCHEMA,
     handler: async (params, ctx) => {
       const innerParams = unwrapRequest(params.request);
@@ -125,10 +189,10 @@ export function registerFunctionMethods(protocol: Protocol, config: FunctionHand
   // init (streaming) - dynamically produces either producer or exchange streams
   // --------------------------------------------------------------------------
   protocol.exchange("init", {
-    params: REQUEST_PARAMS_SCHEMA,
+    params: InitParamsSchema,
     inputSchema: dummyInputSchema,
     outputSchema: emptySchema,
-    init: async (params) => {
+    init: async (params, ctx?: any) => {
       // Preserve raw request IPC bytes for exchange reconstruction
       const requestIpcBytes = toUint8Array(params.request);
       const innerParams = unwrapRequest(params.request);
@@ -151,9 +215,18 @@ export function registerFunctionMethods(protocol: Protocol, config: FunctionHand
           new Uint8Array(0),
         );
         request.split_payloads = [];
+        // The anchor is CHECKED, not skipped. Omitting it meant a plan that
+        // outlived its snapshot was redeemed happily, so SPLIT_SNAPSHOT_EXPIRED —
+        // the one error whose purpose is telling an operator the query is
+        // re-runnable — could never be raised by this SDK.
+        const currentAnchor = await liveSplitAnchor(catalogInterface, request.bind_call as any, ctx?.auth, signingKey);
         for (const token of request.split_tokens) {
           request.split_payloads.push(
-            await openSplitToken(token, { signingKey, expectedFingerprint: expected }),
+            await openSplitToken(token, {
+              signingKey,
+              expectedFingerprint: expected,
+              currentAnchor,
+            }),
           );
         }
       }
@@ -297,7 +370,7 @@ export function registerFunctionMethods(protocol: Protocol, config: FunctionHand
   // table_function_cardinality (unary)
   // --------------------------------------------------------------------------
   protocol.unary("table_function_cardinality", {
-    params: REQUEST_PARAMS_SCHEMA,
+    params: TableFunctionCardinalityParamsSchema,
     result: RESULT_BINARY_SCHEMA,
     handler: async (params) => {
       const innerParams = unwrapRequest(params.request);
@@ -325,7 +398,7 @@ export function registerFunctionMethods(protocol: Protocol, config: FunctionHand
   // protocol 1.4.0, so splits stay opt-in rather than something every worker must
   // now implement.
   protocol.unary("table_function_plan", {
-    params: REQUEST_PARAMS_SCHEMA,
+    params: TableFunctionPlanParamsSchema,
     result: RESULT_BINARY_SCHEMA,
     handler: async (params, ctx?: any) => {
       const innerParams = unwrapRequest(params.request);
@@ -354,7 +427,16 @@ export function registerFunctionMethods(protocol: Protocol, config: FunctionHand
         // reads it off the bind call and likewise finds nothing.
         new Uint8Array(0),
       );
-      const anchor = splitAnchor(plan.catalogVersion ?? 0);
+      // A worker that names its version is taken at its word — it knows which
+      // snapshot it planned against. One that leaves it unset gets the LIVE
+      // version, never 0: minting 0 while redemption compares against the live
+      // counter refuses every token, and is invisible on a catalog whose version
+      // happens to be 0, which is most fixtures.
+      const anchor =
+        plan.catalogVersion != null
+          ? splitAnchor(plan.catalogVersion)
+          : ((await liveSplitAnchor(catalogInterface, request.bind_call as any, ctx?.auth, signingKey)) ??
+            splitAnchor(0));
 
       const blobs: Uint8Array[] = [];
       for (const split of plan.splits) {
@@ -395,7 +477,7 @@ export function registerFunctionMethods(protocol: Protocol, config: FunctionHand
   // list, else null. DuckDB uses the bounds for plan-time filter elimination
   // (folds impossible filters to EMPTY_RESULT).
   protocol.unary("table_function_statistics", {
-    params: REQUEST_PARAMS_SCHEMA,
+    params: TableFunctionStatisticsParamsSchema,
     result: RESULT_BINARY_NULLABLE_SCHEMA,
     handler: async (params) => {
       const innerParams = unwrapRequest(params.request);
@@ -418,7 +500,7 @@ export function registerFunctionMethods(protocol: Protocol, config: FunctionHand
   // declare dynamicToString, return empty maps so the C++ side falls back
   // to intrinsics only.
   protocol.unary("table_function_dynamic_to_string", {
-    params: REQUEST_PARAMS_SCHEMA,
+    params: TableFunctionDynamicToStringParamsSchema,
     result: RESULT_BINARY_SCHEMA,
     handler: async (params) => {
       const innerParams = unwrapRequest(params.request);

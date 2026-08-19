@@ -20,8 +20,13 @@ import { deserializeArguments } from "../serialize.js";
 import { deserializeSchema, serializeSchema, batchToSecretDict } from "../../util/arrow/index.js";
 import { toUint8Array } from "../../util/bytes.js";
 import {
+  AggregateBindParamsSchema,
   AggregateBindResultSchema,
+  AggregateCombineParamsSchema,
+  AggregateDestructorParamsSchema,
+  AggregateFinalizeParamsSchema,
   AggregateFinalizeResultSchema,
+  AggregateUpdateParamsSchema,
 } from "../../generated/vgi-protocol-schemas.js";
 import {
   getExecutionState,
@@ -65,7 +70,7 @@ export function registerAggregateMethods(protocol: Protocol, registry: FunctionR
   // aggregate_bind — allocate execution_id, return output schema
   // ------------------------------------------------------------------------
   protocol.unary("aggregate_bind", {
-    params: REQUEST_PARAMS_SCHEMA,
+    params: AggregateBindParamsSchema,
     result: RESULT_BINARY_SCHEMA,
     handler: async (params) => {
       const innerParams = unwrapRequest(params.request);
@@ -115,7 +120,7 @@ export function registerAggregateMethods(protocol: Protocol, registry: FunctionR
   // aggregate_update — fold the incoming batch into per-group state
   // ------------------------------------------------------------------------
   protocol.unary("aggregate_update", {
-    params: REQUEST_PARAMS_SCHEMA,
+    params: AggregateUpdateParamsSchema,
     result: RESULT_BINARY_SCHEMA,
     handler: (params) => {
       const innerParams = unwrapRequest(params.request);
@@ -182,7 +187,7 @@ export function registerAggregateMethods(protocol: Protocol, registry: FunctionR
   // aggregate_combine — merge (source_group_id, target_group_id) pairs
   // ------------------------------------------------------------------------
   protocol.unary("aggregate_combine", {
-    params: REQUEST_PARAMS_SCHEMA,
+    params: AggregateCombineParamsSchema,
     result: RESULT_BINARY_SCHEMA,
     handler: (params) => {
       const innerParams = unwrapRequest(params.request);
@@ -231,7 +236,7 @@ export function registerAggregateMethods(protocol: Protocol, registry: FunctionR
   // aggregate_finalize — emit one result row per requested group_id
   // ------------------------------------------------------------------------
   protocol.unary("aggregate_finalize", {
-    params: REQUEST_PARAMS_SCHEMA,
+    params: AggregateFinalizeParamsSchema,
     result: RESULT_BINARY_SCHEMA,
     handler: (params) => {
       const innerParams = unwrapRequest(params.request);
@@ -281,7 +286,7 @@ export function registerAggregateMethods(protocol: Protocol, registry: FunctionR
   // up when the worker process exits).
   // ------------------------------------------------------------------------
   protocol.unary("aggregate_destructor", {
-    params: REQUEST_PARAMS_SCHEMA,
+    params: AggregateDestructorParamsSchema,
     result: RESULT_BINARY_SCHEMA,
     handler: (params) => {
       const innerParams = unwrapRequest(params.request);

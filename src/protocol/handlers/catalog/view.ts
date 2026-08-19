@@ -4,7 +4,14 @@
 import { type VgiSchema, schema, type VgiField, field, type VgiDataType, binary, utf8 } from "../../../arrow/index.js";
 import { Protocol } from "@query-farm/vgi-rpc";
 import { encodeViewInfo } from "../../../generated/vgi-client.js";
-import { CatalogViewGetResultSchema } from "../../../generated/vgi-protocol-schemas.js";
+import {
+  CatalogViewCommentSetParamsSchema,
+  CatalogViewCreateParamsSchema,
+  CatalogViewDropParamsSchema,
+  CatalogViewGetParamsSchema,
+  CatalogViewGetResultSchema,
+  CatalogViewRenameParamsSchema,
+} from "../../../generated/vgi-protocol-schemas.js";
 import { toUint8Array } from "../../../util/bytes.js";
 import {
   RESULT_BINARY_SCHEMA,
@@ -23,7 +30,7 @@ import {
 export function registerCatalogViewMethods(protocol: Protocol, getCatalog: GetCatalog, signingKey?: Uint8Array): void {
   // catalog_view_get
   catalogUnary(protocol, signingKey, "catalog_view_get", {
-    params: attachOpaqueDataSchemaNameTxnParams,
+    params: CatalogViewGetParamsSchema,
     result: RESULT_BINARY_SCHEMA,
     handler: async (params) => {
       const cat = getCatalog();
@@ -41,14 +48,7 @@ export function registerCatalogViewMethods(protocol: Protocol, getCatalog: GetCa
 
   // catalog_view_create
   catalogUnary(protocol, signingKey, "catalog_view_create", {
-    params: schema([
-      field("attach_opaque_data", binary(), true),
-      field("schema_name", utf8(), false),
-      field("name", utf8(), false),
-      field("definition", utf8(), false),
-      field("on_conflict", utf8(), false),
-      field("transaction_opaque_data", binary(), true),
-    ]),
+    params: CatalogViewCreateParamsSchema,
     result: emptyResultSchema,
     handler: async (params) => {
       const cat = getCatalog();
@@ -66,7 +66,7 @@ export function registerCatalogViewMethods(protocol: Protocol, getCatalog: GetCa
 
   // catalog_view_drop
   catalogUnary(protocol, signingKey, "catalog_view_drop", {
-    params: schemaNameIgnoreNotFoundTxnParams,
+    params: CatalogViewDropParamsSchema,
     result: emptyResultSchema,
     handler: async (params) => {
       const cat = getCatalog();
@@ -83,7 +83,7 @@ export function registerCatalogViewMethods(protocol: Protocol, getCatalog: GetCa
 
   // catalog_view_rename
   catalogUnary(protocol, signingKey, "catalog_view_rename", {
-    params: schemaNameRenameParams,
+    params: CatalogViewRenameParamsSchema,
     result: emptyResultSchema,
     handler: async (params) => {
       const cat = getCatalog();
@@ -101,7 +101,7 @@ export function registerCatalogViewMethods(protocol: Protocol, getCatalog: GetCa
 
   // catalog_view_comment_set
   catalogUnary(protocol, signingKey, "catalog_view_comment_set", {
-    params: schemaNameCommentParams,
+    params: CatalogViewCommentSetParamsSchema,
     result: emptyResultSchema,
     handler: async (params) => {
       const cat = getCatalog();

@@ -21,6 +21,7 @@ import {
   resolveTtVersion, TT_SCHEMA,
   RFF_SIMPLE_SCHEMA, RFF_STRUCT_SCHEMA, RFF_NESTED_SCHEMA, RFF_MULTI_SCHEMA, RFF_NONE_SCHEMA, RFF_ROWID_SCHEMA,
 } from "./table.js";
+import { splitFunctions } from "./splits.js";
 import { tableInOutFunctions } from "./table_in_out.js";
 import { tableBufferingFunctions } from "./table_buffering.js";
 import { aggregateFunctions } from "./aggregate.js";
@@ -119,6 +120,7 @@ const GEO_POINTS_STATS = await statisticsFromDuckDB(
 const colorsScanFunction = tableFunctions.find((f) => f.meta.name === "colors_scan");
 
 export const allFunctions = [
+  ...splitFunctions,
   ...scalarFunctions,
   ...tableFunctions,
   ...cacheTableFunctions,
@@ -529,6 +531,12 @@ export const catalog: CatalogDescriptor = {
           name: "multi_branch_nopushdown",
           columns: new Schema([new Field("n", new Int64(), true)]),
           comment: "Multi-branch: VGI + read_csv — used by multi_branch_pushdown_incapable.test",
+        },
+        {
+          name: "multi_branch_split",
+          columns: new Schema([new Field("n", new Int64(), true)]),
+          comment:
+            "Multi-branch: split_sequence(30 over 6 splits) + sequence(20) — used by splits/multi_branch.test",
         },
         {
           name: "multi_branch_empty",
@@ -1157,6 +1165,20 @@ export function createExampleCatalog(base: ReadOnlyCatalogInterface): ReadOnlyCa
             ],
             ["iceberg"],
           );
+        case "multi_branch_split":
+          // One split-capable arm plus one ordinary arm. The split arm's plan
+          // call happens at THAT arm's own InitGlobal, independently of the plain
+          // arm beside it — the two parallelism axes (branches divide a table
+          // across functions, splits divide one function's scan across readers)
+          // compose without either planning on the other's behalf.
+          return buildScanBranchesResult([
+            {
+              functionName: "split_sequence",
+              namedArguments: { n: i64(30), splits: i64(6) },
+            },
+            // The ordinary arm, which never sees a plan call at all.
+            seq(20),
+          ]);
         case "multi_branch_empty":
           return buildScanBranchesResult([]);
         case "multi_branch_two_writable":

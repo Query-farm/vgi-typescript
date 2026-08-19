@@ -70,7 +70,12 @@ export class SplitTokenError extends Error {
   readonly kind: string;
 
   constructor(kind: string, message: string) {
-    super(message);
+    // The message carries the stable KIND, because the kind is the part a caller
+    // acts on: only SPLIT_SNAPSHOT_EXPIRED means "re-run the query", and a
+    // connector several layers up sees the message string rather than this
+    // class. Without it the three failures are indistinguishable to everyone
+    // downstream.
+    super(`[${kind}] ${message}`);
     this.name = "SplitTokenError";
     this.kind = kind;
   }

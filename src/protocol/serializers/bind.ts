@@ -23,7 +23,7 @@ const BIND_REQUEST_SCHEMA = schema([
   field("input_schema", binary(), true),
   field("settings", binary(), true),
   field("secrets", binary(), true),
-  field("attach_opaque_data", binary(), true),
+  field("attach_opaque_data", binary(), false),
   field("transaction_opaque_data", binary(), true),
   field("resolved_secrets_provided", bool(), false),
   // Time travel AT clause (additive, nullable, name-keyed -> wire-compatible).

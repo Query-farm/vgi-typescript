@@ -7,16 +7,33 @@ import { Protocol, type CallContext } from "@query-farm/vgi-rpc";
 import { encodeSchemaInfo, encodeTableInfo, encodeViewInfo, encodeFunctionInfo, encodeCatalogInfo } from "../../../generated/vgi-client.js";
 import { encodeCopyFromFormatInfo } from "../../../catalog/interface.js";
 import {
-  CatalogCatalogsResultSchema,
+  CatalogAttachParamsSchema,
   CatalogAttachResultSchema,
-  CatalogVersionResultSchema,
-  CatalogTransactionBeginResultSchema,
-  CatalogSchemasResultSchema,
-  CatalogSchemaGetResultSchema,
-  CatalogSchemaContentsTablesResultSchema,
-  CatalogSchemaContentsViewsResultSchema,
-  CatalogSchemaContentsFunctionsResultSchema,
+  CatalogCatalogsParamsSchema,
+  CatalogCatalogsResultSchema,
+  CatalogCopyFromFormatsParamsSchema,
   CatalogCopyFromFormatsResultSchema,
+  CatalogCreateParamsSchema,
+  CatalogDetachParamsSchema,
+  CatalogDropParamsSchema,
+  CatalogSchemaContentsFunctionsParamsSchema,
+  CatalogSchemaContentsFunctionsResultSchema,
+  CatalogSchemaContentsTablesParamsSchema,
+  CatalogSchemaContentsTablesResultSchema,
+  CatalogSchemaContentsViewsParamsSchema,
+  CatalogSchemaContentsViewsResultSchema,
+  CatalogSchemaCreateParamsSchema,
+  CatalogSchemaDropParamsSchema,
+  CatalogSchemaGetParamsSchema,
+  CatalogSchemaGetResultSchema,
+  CatalogSchemasParamsSchema,
+  CatalogSchemasResultSchema,
+  CatalogTransactionBeginParamsSchema,
+  CatalogTransactionBeginResultSchema,
+  CatalogTransactionCommitParamsSchema,
+  CatalogTransactionRollbackParamsSchema,
+  CatalogVersionParamsSchema,
+  CatalogVersionResultSchema,
 } from "../../../generated/vgi-protocol-schemas.js";
 import { toUint8Array } from "../../../util/bytes.js";
 import { decodeDictValue } from "../../../util/arrow/index.js";
@@ -42,7 +59,7 @@ import {
 export function registerCatalogAdminMethods(protocol: Protocol, getCatalog: GetCatalog, signingKey?: Uint8Array): void {
   // catalog_catalogs
   catalogUnary(protocol, signingKey, "catalog_catalogs", {
-    params: emptyResultSchema,
+    params: CatalogCatalogsParamsSchema,
     result: RESULT_BINARY_SCHEMA,
     handler: async () => {
       const cat = getCatalog();
@@ -66,7 +83,7 @@ export function registerCatalogAdminMethods(protocol: Protocol, getCatalog: GetC
 
   // catalog_attach (params wrapped in request: Binary like bind/init)
   protocol.unary("catalog_attach", {
-    params: REQUEST_PARAMS_SCHEMA,
+    params: CatalogAttachParamsSchema,
     result: RESULT_BINARY_SCHEMA,
     handler: async (params, ctx) => {
       const innerParams = unwrapRequest(params.request);
@@ -122,7 +139,7 @@ export function registerCatalogAdminMethods(protocol: Protocol, getCatalog: GetC
 
   // catalog_detach
   catalogUnary(protocol, signingKey, "catalog_detach", {
-    params: attachOpaqueDataParam,
+    params: CatalogDetachParamsSchema,
     result: emptyResultSchema,
     handler: async (params) => {
       const cat = getCatalog();
@@ -133,11 +150,7 @@ export function registerCatalogAdminMethods(protocol: Protocol, getCatalog: GetC
 
   // catalog_create
   catalogUnary(protocol, signingKey, "catalog_create", {
-    params: schema([
-      field("name", utf8(), false),
-      field("on_conflict", utf8(), false),
-      field("options", binary(), true),
-    ]),
+    params: CatalogCreateParamsSchema,
     result: emptyResultSchema,
     handler: async (params) => {
       const cat = getCatalog();
@@ -148,7 +161,7 @@ export function registerCatalogAdminMethods(protocol: Protocol, getCatalog: GetC
 
   // catalog_drop
   catalogUnary(protocol, signingKey, "catalog_drop", {
-    params: schema([field("name", utf8(), false)]),
+    params: CatalogDropParamsSchema,
     result: emptyResultSchema,
     handler: async (params) => {
       const cat = getCatalog();
@@ -159,7 +172,7 @@ export function registerCatalogAdminMethods(protocol: Protocol, getCatalog: GetC
 
   // catalog_version
   catalogUnary(protocol, signingKey, "catalog_version", {
-    params: attachOpaqueDataTxnParams,
+    params: CatalogVersionParamsSchema,
     result: RESULT_BINARY_SCHEMA,
     handler: async (params) => {
       const cat = getCatalog();
@@ -175,7 +188,7 @@ export function registerCatalogAdminMethods(protocol: Protocol, getCatalog: GetC
   // envelope to bind the transaction envelope's AAD, so it cannot route
   // through catalogUnary (which would replace it with plaintext).
   protocol.unary("catalog_transaction_begin", {
-    params: attachOpaqueDataParam,
+    params: CatalogTransactionBeginParamsSchema,
     result: RESULT_BINARY_SCHEMA,
     handler: async (params, ctx) => {
       const auth = (ctx as CallContext | undefined)?.auth;
@@ -194,7 +207,7 @@ export function registerCatalogAdminMethods(protocol: Protocol, getCatalog: GetC
 
   // catalog_transaction_commit
   catalogUnary(protocol, signingKey, "catalog_transaction_commit", {
-    params: attachOpaqueDataTxnParams,
+    params: CatalogTransactionCommitParamsSchema,
     result: emptyResultSchema,
     handler: async (params) => {
       const cat = getCatalog();
@@ -208,7 +221,7 @@ export function registerCatalogAdminMethods(protocol: Protocol, getCatalog: GetC
 
   // catalog_transaction_rollback
   catalogUnary(protocol, signingKey, "catalog_transaction_rollback", {
-    params: attachOpaqueDataTxnParams,
+    params: CatalogTransactionRollbackParamsSchema,
     result: emptyResultSchema,
     handler: async (params) => {
       const cat = getCatalog();
@@ -222,7 +235,7 @@ export function registerCatalogAdminMethods(protocol: Protocol, getCatalog: GetC
 
   // catalog_schemas
   catalogUnary(protocol, signingKey, "catalog_schemas", {
-    params: attachOpaqueDataTxnParams,
+    params: CatalogSchemasParamsSchema,
     result: RESULT_BINARY_SCHEMA,
     handler: async (params) => {
       const cat = getCatalog();
@@ -239,7 +252,7 @@ export function registerCatalogAdminMethods(protocol: Protocol, getCatalog: GetC
   // catalog_copy_from_formats — catalog-level (not schema-scoped). Lists the
   // custom COPY ... FROM formats this catalog advertises; empty list when none.
   catalogUnary(protocol, signingKey, "catalog_copy_from_formats", {
-    params: attachOpaqueDataTxnParams,
+    params: CatalogCopyFromFormatsParamsSchema,
     result: RESULT_BINARY_SCHEMA,
     handler: async (params) => {
       const cat = getCatalog();
@@ -255,7 +268,7 @@ export function registerCatalogAdminMethods(protocol: Protocol, getCatalog: GetC
 
   // catalog_schema_get
   catalogUnary(protocol, signingKey, "catalog_schema_get", {
-    params: attachOpaqueDataNameTxnParams,
+    params: CatalogSchemaGetParamsSchema,
     result: RESULT_BINARY_SCHEMA,
     handler: async (params) => {
       const cat = getCatalog();
@@ -272,13 +285,7 @@ export function registerCatalogAdminMethods(protocol: Protocol, getCatalog: GetC
 
   // catalog_schema_create
   catalogUnary(protocol, signingKey, "catalog_schema_create", {
-    params: schema([
-      field("attach_opaque_data", binary(), true),
-      field("name", utf8(), false),
-      field("comment", utf8(), true),
-      field("tags", binary(), true),
-      field("transaction_opaque_data", binary(), true),
-    ]),
+    params: CatalogSchemaCreateParamsSchema,
     result: emptyResultSchema,
     handler: async (params) => {
       const cat = getCatalog();
@@ -295,13 +302,7 @@ export function registerCatalogAdminMethods(protocol: Protocol, getCatalog: GetC
 
   // catalog_schema_drop
   catalogUnary(protocol, signingKey, "catalog_schema_drop", {
-    params: schema([
-      field("attach_opaque_data", binary(), true),
-      field("name", utf8(), false),
-      field("ignore_not_found", bool(), true),
-      field("cascade", bool(), true),
-      field("transaction_opaque_data", binary(), true),
-    ]),
+    params: CatalogSchemaDropParamsSchema,
     result: emptyResultSchema,
     handler: async (params) => {
       const cat = getCatalog();
@@ -318,7 +319,7 @@ export function registerCatalogAdminMethods(protocol: Protocol, getCatalog: GetC
 
   // catalog_schema_contents_tables
   catalogUnary(protocol, signingKey, "catalog_schema_contents_tables", {
-    params: attachOpaqueDataNameTxnParams,
+    params: CatalogSchemaContentsTablesParamsSchema,
     result: RESULT_BINARY_SCHEMA,
     handler: async (params) => {
       const cat = getCatalog();
@@ -335,7 +336,7 @@ export function registerCatalogAdminMethods(protocol: Protocol, getCatalog: GetC
 
   // catalog_schema_contents_views
   catalogUnary(protocol, signingKey, "catalog_schema_contents_views", {
-    params: attachOpaqueDataNameTxnParams,
+    params: CatalogSchemaContentsViewsParamsSchema,
     result: RESULT_BINARY_SCHEMA,
     handler: async (params) => {
       const cat = getCatalog();
@@ -352,12 +353,7 @@ export function registerCatalogAdminMethods(protocol: Protocol, getCatalog: GetC
 
   // catalog_schema_contents_functions
   catalogUnary(protocol, signingKey, "catalog_schema_contents_functions", {
-    params: schema([
-      field("attach_opaque_data", binary(), true),
-      field("name", utf8(), false),
-      field("type", utf8(), false),
-      field("transaction_opaque_data", binary(), true),
-    ]),
+    params: CatalogSchemaContentsFunctionsParamsSchema,
     result: RESULT_BINARY_SCHEMA,
     handler: async (params) => {
       const cat = getCatalog();

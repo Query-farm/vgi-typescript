@@ -15,9 +15,12 @@ import type { FunctionRegistry } from "../../functions/registry.js";
 import { toUint8Array } from "../../util/bytes.js";
 import { batchToScalarDict, batchToSecretDict } from "../../util/arrow/index.js";
 import {
-  TableBufferingProcessResultSchema,
+  TableBufferingCombineParamsSchema,
   TableBufferingCombineResultSchema,
+  TableBufferingDestructorParamsSchema,
   TableBufferingDestructorResultSchema,
+  TableBufferingProcessParamsSchema,
+  TableBufferingProcessResultSchema,
 } from "../../generated/vgi-protocol-schemas.js";
 import {
   REQUEST_PARAMS_SCHEMA,
@@ -121,7 +124,7 @@ export function registerTableBufferingMethods(
   // table_buffering_process — sink one batch, return state_id (unary)
   // ------------------------------------------------------------------------
   protocol.unary("table_buffering_process", {
-    params: REQUEST_PARAMS_SCHEMA,
+    params: TableBufferingProcessParamsSchema,
     result: RESULT_BINARY_SCHEMA,
     handler: async (rpcParams, ctx?: any) => {
       const inner = unwrapRequest(rpcParams.request);
@@ -145,7 +148,7 @@ export function registerTableBufferingMethods(
   // table_buffering_combine — group/merge state_ids (unary)
   // ------------------------------------------------------------------------
   protocol.unary("table_buffering_combine", {
-    params: REQUEST_PARAMS_SCHEMA,
+    params: TableBufferingCombineParamsSchema,
     result: RESULT_BINARY_SCHEMA,
     handler: async (rpcParams, ctx?: any) => {
       const inner = unwrapRequest(rpcParams.request);
@@ -172,7 +175,7 @@ export function registerTableBufferingMethods(
   // table_buffering_destructor — best-effort end-of-query cleanup (unary)
   // ------------------------------------------------------------------------
   protocol.unary("table_buffering_destructor", {
-    params: REQUEST_PARAMS_SCHEMA,
+    params: TableBufferingDestructorParamsSchema,
     result: RESULT_BINARY_SCHEMA,
     handler: async (rpcParams) => {
       try {

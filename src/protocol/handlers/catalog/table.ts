@@ -6,9 +6,25 @@ import { type VgiSchema, schema, type VgiField, field, type VgiDataType, binary,
 import { Protocol } from "@query-farm/vgi-rpc";
 import { encodeTableInfo } from "../../../generated/vgi-client.js";
 import {
+  CatalogTableColumnAddParamsSchema,
+  CatalogTableColumnDefaultDropParamsSchema,
+  CatalogTableColumnDefaultSetParamsSchema,
+  CatalogTableColumnDropParamsSchema,
+  CatalogTableColumnRenameParamsSchema,
+  CatalogTableColumnStatisticsGetParamsSchema,
+  CatalogTableColumnTypeChangeParamsSchema,
+  CatalogTableCommentSetParamsSchema,
+  CatalogTableCreateParamsSchema,
+  CatalogTableDropParamsSchema,
+  CatalogTableGetParamsSchema,
   CatalogTableGetResultSchema,
-  ScanFunctionResultSchema,
+  CatalogTableNotNullDropParamsSchema,
+  CatalogTableNotNullSetParamsSchema,
+  CatalogTableRenameParamsSchema,
+  CatalogTableScanBranchesGetParamsSchema,
+  CatalogTableScanFunctionGetParamsSchema,
   ScanBranchesResultSchema,
+  ScanFunctionResultSchema,
 } from "../../../generated/vgi-protocol-schemas.js";
 import { toUint8Array } from "../../../util/bytes.js";
 import {
@@ -29,14 +45,7 @@ import {
 export function registerCatalogTableMethods(protocol: Protocol, getCatalog: GetCatalog, signingKey?: Uint8Array): void {
   // catalog_table_get
   catalogUnary(protocol, signingKey, "catalog_table_get", {
-    params: schema([
-      field("attach_opaque_data", binary(), true),
-      field("schema_name", utf8(), false),
-      field("name", utf8(), false),
-      field("at_unit", utf8(), true),
-      field("at_value", utf8(), true),
-      field("transaction_opaque_data", binary(), true),
-    ]),
+    params: CatalogTableGetParamsSchema,
     result: RESULT_BINARY_SCHEMA,
     handler: async (params) => {
       const cat = getCatalog();
@@ -56,17 +65,7 @@ export function registerCatalogTableMethods(protocol: Protocol, getCatalog: GetC
 
   // catalog_table_create
   catalogUnary(protocol, signingKey, "catalog_table_create", {
-    params: schema([
-      field("attach_opaque_data", binary(), true),
-      field("schema_name", utf8(), false),
-      field("name", utf8(), false),
-      field("columns", binary(), false),
-      field("on_conflict", utf8(), false),
-      field("not_null_constraints", list(field("item", int32(), false)), true),
-      field("unique_constraints", list(field("item", list(field("item", int32(), false)), false)), true),
-      field("check_constraints", list(field("item", utf8(), false)), true),
-      field("transaction_opaque_data", binary(), true),
-    ]),
+    params: CatalogTableCreateParamsSchema,
     result: emptyResultSchema,
     handler: async (params) => {
       const cat = getCatalog();
@@ -87,13 +86,7 @@ export function registerCatalogTableMethods(protocol: Protocol, getCatalog: GetC
 
   // catalog_table_drop
   catalogUnary(protocol, signingKey, "catalog_table_drop", {
-    params: schema([
-      field("attach_opaque_data", binary(), true),
-      field("schema_name", utf8(), false),
-      field("name", utf8(), false),
-      field("ignore_not_found", bool(), true),
-      field("transaction_opaque_data", binary(), true),
-    ]),
+    params: CatalogTableDropParamsSchema,
     result: emptyResultSchema,
     handler: async (params) => {
       const cat = getCatalog();
@@ -110,12 +103,7 @@ export function registerCatalogTableMethods(protocol: Protocol, getCatalog: GetC
 
   // catalog_table_column_statistics_get
   catalogUnary(protocol, signingKey, "catalog_table_column_statistics_get", {
-    params: schema([
-      field("attach_opaque_data", binary(), true),
-      field("schema_name", utf8(), false),
-      field("name", utf8(), false),
-      field("transaction_opaque_data", binary(), true),
-    ]),
+    params: CatalogTableColumnStatisticsGetParamsSchema,
     result: RESULT_BINARY_NULLABLE_SCHEMA,
     handler: async (params) => {
       const cat = getCatalog();
@@ -131,14 +119,7 @@ export function registerCatalogTableMethods(protocol: Protocol, getCatalog: GetC
 
   // catalog_table_scan_function_get
   catalogUnary(protocol, signingKey, "catalog_table_scan_function_get", {
-    params: schema([
-      field("attach_opaque_data", binary(), true),
-      field("schema_name", utf8(), false),
-      field("name", utf8(), false),
-      field("at_unit", utf8(), true),
-      field("at_value", utf8(), true),
-      field("transaction_opaque_data", binary(), true),
-    ]),
+    params: CatalogTableScanFunctionGetParamsSchema,
     result: RESULT_BINARY_SCHEMA,
     handler: async (params) => {
       const cat = getCatalog();
@@ -158,14 +139,7 @@ export function registerCatalogTableMethods(protocol: Protocol, getCatalog: GetC
   // scan_function_get. The branches-aware C++ extension calls this for every
   // table scan; single-source catalogs synthesise a one-branch result.
   catalogUnary(protocol, signingKey, "catalog_table_scan_branches_get", {
-    params: schema([
-      field("attach_opaque_data", binary(), true),
-      field("schema_name", utf8(), false),
-      field("name", utf8(), false),
-      field("at_unit", utf8(), true),
-      field("at_value", utf8(), true),
-      field("transaction_opaque_data", binary(), true),
-    ]),
+    params: CatalogTableScanBranchesGetParamsSchema,
     result: RESULT_BINARY_SCHEMA,
     handler: async (params) => {
       const cat = getCatalog();
@@ -183,7 +157,7 @@ export function registerCatalogTableMethods(protocol: Protocol, getCatalog: GetC
 
   // catalog_table_comment_set
   catalogUnary(protocol, signingKey, "catalog_table_comment_set", {
-    params: schemaNameCommentParams,
+    params: CatalogTableCommentSetParamsSchema,
     result: emptyResultSchema,
     handler: async (params) => {
       const cat = getCatalog();
@@ -201,7 +175,7 @@ export function registerCatalogTableMethods(protocol: Protocol, getCatalog: GetC
 
   // catalog_table_rename
   catalogUnary(protocol, signingKey, "catalog_table_rename", {
-    params: schemaNameRenameParams,
+    params: CatalogTableRenameParamsSchema,
     result: emptyResultSchema,
     handler: async (params) => {
       const cat = getCatalog();
@@ -219,16 +193,7 @@ export function registerCatalogTableMethods(protocol: Protocol, getCatalog: GetC
 
   // catalog_table_column_add
   catalogUnary(protocol, signingKey, "catalog_table_column_add", {
-    params: schema([
-      field("attach_opaque_data", binary(), true),
-      field("schema_name", utf8(), false),
-      field("name", utf8(), false),
-      field("column_name", utf8(), false),
-      field("column_type", utf8(), false),
-      field("default_value", utf8(), true),
-      field("ignore_not_found", bool(), true),
-      field("transaction_opaque_data", binary(), true),
-    ]),
+    params: CatalogTableColumnAddParamsSchema,
     result: emptyResultSchema,
     handler: async (params) => {
       const cat = getCatalog();
@@ -248,7 +213,7 @@ export function registerCatalogTableMethods(protocol: Protocol, getCatalog: GetC
 
   // catalog_table_column_drop
   catalogUnary(protocol, signingKey, "catalog_table_column_drop", {
-    params: columnOpParams,
+    params: CatalogTableColumnDropParamsSchema,
     result: emptyResultSchema,
     handler: async (params) => {
       const cat = getCatalog();
@@ -266,15 +231,7 @@ export function registerCatalogTableMethods(protocol: Protocol, getCatalog: GetC
 
   // catalog_table_column_rename
   catalogUnary(protocol, signingKey, "catalog_table_column_rename", {
-    params: schema([
-      field("attach_opaque_data", binary(), true),
-      field("schema_name", utf8(), false),
-      field("name", utf8(), false),
-      field("column_name", utf8(), false),
-      field("new_name", utf8(), false),
-      field("ignore_not_found", bool(), true),
-      field("transaction_opaque_data", binary(), true),
-    ]),
+    params: CatalogTableColumnRenameParamsSchema,
     result: emptyResultSchema,
     handler: async (params) => {
       const cat = getCatalog();
@@ -293,15 +250,7 @@ export function registerCatalogTableMethods(protocol: Protocol, getCatalog: GetC
 
   // catalog_table_column_default_set
   catalogUnary(protocol, signingKey, "catalog_table_column_default_set", {
-    params: schema([
-      field("attach_opaque_data", binary(), true),
-      field("schema_name", utf8(), false),
-      field("name", utf8(), false),
-      field("column_name", utf8(), false),
-      field("default_value", utf8(), false),
-      field("ignore_not_found", bool(), true),
-      field("transaction_opaque_data", binary(), true),
-    ]),
+    params: CatalogTableColumnDefaultSetParamsSchema,
     result: emptyResultSchema,
     handler: async (params) => {
       const cat = getCatalog();
@@ -320,7 +269,7 @@ export function registerCatalogTableMethods(protocol: Protocol, getCatalog: GetC
 
   // catalog_table_column_default_drop
   catalogUnary(protocol, signingKey, "catalog_table_column_default_drop", {
-    params: columnOpParams,
+    params: CatalogTableColumnDefaultDropParamsSchema,
     result: emptyResultSchema,
     handler: async (params) => {
       const cat = getCatalog();
@@ -338,15 +287,7 @@ export function registerCatalogTableMethods(protocol: Protocol, getCatalog: GetC
 
   // catalog_table_column_type_change
   catalogUnary(protocol, signingKey, "catalog_table_column_type_change", {
-    params: schema([
-      field("attach_opaque_data", binary(), true),
-      field("schema_name", utf8(), false),
-      field("name", utf8(), false),
-      field("column_name", utf8(), false),
-      field("new_type", utf8(), false),
-      field("ignore_not_found", bool(), true),
-      field("transaction_opaque_data", binary(), true),
-    ]),
+    params: CatalogTableColumnTypeChangeParamsSchema,
     result: emptyResultSchema,
     handler: async (params) => {
       const cat = getCatalog();
@@ -365,7 +306,7 @@ export function registerCatalogTableMethods(protocol: Protocol, getCatalog: GetC
 
   // catalog_table_not_null_set
   catalogUnary(protocol, signingKey, "catalog_table_not_null_set", {
-    params: columnOpParams,
+    params: CatalogTableNotNullSetParamsSchema,
     result: emptyResultSchema,
     handler: async (params) => {
       const cat = getCatalog();
@@ -383,7 +324,7 @@ export function registerCatalogTableMethods(protocol: Protocol, getCatalog: GetC
 
   // catalog_table_not_null_drop
   catalogUnary(protocol, signingKey, "catalog_table_not_null_drop", {
-    params: columnOpParams,
+    params: CatalogTableNotNullDropParamsSchema,
     result: emptyResultSchema,
     handler: async (params) => {
       const cat = getCatalog();
