@@ -235,6 +235,7 @@ const CASES: WireRecordCase[] = [
           writable: true,
           formatName: "acme_csv",
           formatLocations: ["s3://bucket/a.csv"],
+          formatOptions: new Uint8Array([1, 2, 3]),
           sourceCatalog: "lake",
           sourceSchema: "main",
           sourceTable: "events",
@@ -263,6 +264,7 @@ const CASES: WireRecordCase[] = [
       "source_table",
       "format_name",
       "format_locations",
+      "format_options",
     ],
   },
   {

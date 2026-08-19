@@ -300,6 +300,7 @@ function encodeScanBranch(cols: {
   source_table?: string | null;
   format_name?: string | null;
   format_locations?: string[] | null;
+  format_options?: Uint8Array | null;
 }): Uint8Array {
   return serializeBatch(
     batchFromColumns(
@@ -313,6 +314,7 @@ function encodeScanBranch(cols: {
         source_table: [cols.source_table ?? null],
         format_name: [cols.format_name ?? null],
         format_locations: [cols.format_locations ?? null],
+        format_options: [cols.format_options ?? null],
       },
       ScanBranchSchema as any,
     ),
@@ -343,6 +345,12 @@ export interface ScanBranchInput {
   formatName?: string | null;
   /** Locations the format branch reads. */
   formatLocations?: string[] | null;
+  /** Reader options for a format branch, as a 1-row IPC batch whose COLUMN
+   *  NAMES are the option names — the same shape `arguments` uses, because an
+   *  option value may be any Arrow type. These BECOME the reader's named
+   *  arguments, so without them a format branch cannot pass its reader a
+   *  delimiter, a header flag, or anything else. */
+  formatOptions?: Uint8Array | null;
   /**
    * Catalog-table branch (lakehouse federation): leave `functionName` empty and
    * set these to scan the base table
@@ -407,6 +415,7 @@ export function buildScanBranchesResult(
       source_table: branch.sourceTable,
       format_name: branch.formatName,
       format_locations: branch.formatLocations,
+      format_options: branch.formatOptions,
     }),
   );
   return {
