@@ -368,6 +368,26 @@ export interface ScanBranchInput {
  * positional args, the bare name for named args. Mirrors Python's
  * `ScanBranch.to_row_dict` argument handling.
  */
+/**
+ * Encode a format branch's reader options.
+ *
+ * Same shape as a branch's `arguments` blob — a 1-row batch whose COLUMN NAMES
+ * are the option names — because an option value may be any Arrow type, so no
+ * static schema could describe the map. Exported because a worker building a
+ * format branch needs it and has no other way to produce those bytes.
+ */
+export function encodeFormatOptions(
+  options: Record<string, { value: unknown; type: VgiDataType }>,
+): Uint8Array {
+  const fields: VgiField[] = [];
+  const values: Record<string, unknown[]> = {};
+  for (const [name, arg] of Object.entries(options)) {
+    fields.push(field_(name, arg.type, true));
+    values[name] = [arg.value];
+  }
+  return serializeBatch(batchFromColumns(values, schema_(fields)));
+}
+
 function serializeBranchArguments(branch: ScanBranchInput): Uint8Array {
   const fields: VgiField[] = [];
   const values: Record<string, unknown[]> = {};

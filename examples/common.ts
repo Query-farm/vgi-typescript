@@ -9,7 +9,7 @@ import {
   serializeBatch, batchFromColumns,
   ReadOnlyCatalogInterface, TableInfo,
   type AttachOpaqueData, type TransactionOpaqueData,
-  buildScanBranchesResult, type ScanBranchInput,
+  buildScanBranchesResult, encodeFormatOptions, type ScanBranchInput,
   functionStorage,
 } from "../src/index.js";
 import { serializeSchema } from "../src/util/arrow/index.js";
@@ -531,6 +531,15 @@ export const catalog: CatalogDescriptor = {
           name: "multi_branch_nopushdown",
           columns: new Schema([new Field("n", new Int64(), true)]),
           comment: "Multi-branch: VGI + read_csv — used by multi_branch_pushdown_incapable.test",
+        },
+        {
+          name: "multi_branch_format",
+          columns: new Schema([
+            new Field("n", new Int64(), true),
+            new Field("label", new Utf8(), true),
+          ]),
+          comment:
+            "Format branch: read_csv with delim/header options — used by multi_branch_format.test",
         },
         {
           name: "multi_branch_split",
@@ -1165,6 +1174,23 @@ export function createExampleCatalog(base: ReadOnlyCatalogInterface): ReadOnlyCa
             ],
             ["iceberg"],
           );
+        case "multi_branch_format":
+          // A FORMAT branch: name the format and the locations, and let the
+          // client resolve the reader. The options BECOME the reader's named
+          // arguments — `nullstr` is the load-bearing one, since DuckDB's CSV
+          // sniffer works out the delimiter and header unaided.
+          return buildScanBranchesResult([
+            {
+              functionName: "",
+              formatName: "csv",
+              formatLocations: ["/tmp/vgi_format_branch.csv"],
+              formatOptions: encodeFormatOptions({
+                delim: { value: "|", type: new Utf8() },
+                header: { value: true, type: new Bool() },
+                nullstr: { value: "row_2", type: new Utf8() },
+              }),
+            },
+          ]);
         case "multi_branch_split":
           // One split-capable arm plus one ordinary arm. The split arm's plan
           // call happens at THAT arm's own InitGlobal, independently of the plain
