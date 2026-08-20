@@ -545,7 +545,7 @@ export const catalog: CatalogDescriptor = {
           name: "multi_branch_split",
           columns: new Schema([new Field("n", new Int64(), true)]),
           comment:
-            "Multi-branch: split_sequence(30 over 6 splits) + sequence(20) — used by splits/multi_branch.test",
+            "Multi-branch: split_sequence(30, splits=6) + sequence(20) — used by splits/multi_branch.test",
         },
         {
           name: "multi_branch_empty",

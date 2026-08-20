@@ -6,7 +6,7 @@
 //   bind_opaque_data: binary (nullable)
 //   projection_ids: list<int64> (nullable)
 //   pushdown_filters: large_binary (nullable) — nested IPC of filter batch
-//   join_keys: list<large_binary> (non-null list of IPC-serialized batches)
+//   join_keys: list<large_binary> (nullable list of IPC-serialized batches)
 //   phase: utf8 (nullable) — dictionary(int16,string) in Python
 //   execution_id: binary (nullable)
 //   init_opaque_data: binary (nullable)
@@ -49,7 +49,7 @@ const INIT_REQUEST_SCHEMA = makeSchema([
   field("bind_opaque_data", binary(), true),
   field("projection_ids", list(field("item", int64(), false)), true),
   field("pushdown_filters", binary(), true),
-  field("join_keys", list(field("item", binary(), true)), false),
+  field("join_keys", list(field("item", binary(), true)), true),
   field("phase", utf8(), true),
   field("execution_id", binary(), true),
   field("init_opaque_data", binary(), true),
