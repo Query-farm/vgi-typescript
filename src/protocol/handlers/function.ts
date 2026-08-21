@@ -110,9 +110,21 @@ async function liveSplitAnchor(
   // mint resolves a version and redemption does not (or vice versa) then every
   // token fails SPLIT_SNAPSHOT_EXPIRED, and the documented response to that is
   // "re-run the query", which re-plans and reproduces the same mismatch.
-  for (const attach of [raw, await openAttach(raw, auth, signingKey)]) {
+  // Each form is produced LAZILY, inside the try. Built as an array literal —
+  // `[raw, await openAttach(...)]` — the unseal is evaluated before the loop
+  // begins, so it throws from OUTSIDE the try and escapes the function instead
+  // of falling through to the next candidate. `init` hands this function
+  // already-stripped plaintext, which openAttach rejects, so the first form
+  // never got a turn: every split scan died with OpaqueDataRejectedError, on
+  // HTTP only (sealing is a pass-through when there is no signing key, which is
+  // every non-HTTP transport).
+  const forms: Array<() => Promise<Uint8Array>> = [
+    async () => raw,
+    async () => openAttach(raw, auth, signingKey),
+  ];
+  for (const form of forms) {
     try {
-      return splitAnchor(await catalogInterface.version(attach, txn));
+      return splitAnchor(await catalogInterface.version(await form(), txn));
     } catch {
       // try the next form
     }
