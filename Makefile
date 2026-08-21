@@ -71,23 +71,18 @@ TEST_LOG := /tmp/vgi-typescript-test.log
 #                                        the test's LIKE pattern matches set_kind=table
 #                                        AND set_kind=table_function ambiguously
 #
-# HTTP-only exclusions (subprocess runs them fine):
-#   filter_echo_partitioned            — asserts COUNT(DISTINCT worker_pid) > 1; an
-#                                        HTTP worker is one OS process, so worker_pid
-#                                        collapses to a single value (test's own
-#                                        docstring spells this out). Python HTTP
-#                                        auto-skips this via sqllogictest's default
-#                                        ignore_error_messages={"HTTP", ...}; TS gets
-#                                        farther so we exclude explicitly.
-#   partitioned_sequence               — same root cause: asserts >=2 distinct conn=
-#                                        in batch_received logs under threads=4. The
-#                                        C++ HTTP transport's parallel-scan connection
-#                                        accounting is what's tested, not the worker.
-#   order_preservation_modes           — its FIXED_ORDER -> distinct-conn assertion
-#                                        relies on VGI batch_received logs, which don't
-#                                        stream over HTTP (0 log rows). Meaningful only
-#                                        on subprocess transport; already excluded from
-#                                        the launcher patterns for the same reason.
+# HTTP-only exclusions: NONE. This block listed three, and every reason was
+# wrong — verified 2026-08-21 by running each against this worker over HTTP:
+#   filter_echo_partitioned  "asserts COUNT(DISTINCT worker_pid) > 1" — stale;
+#                            the test moved to the transport-neutral conn= form.
+#   partitioned_sequence     inherited that misdiagnosis.
+#   order_preservation_modes "batch_received logs don't stream over HTTP (0 log
+#                            rows)" — measured 199 rows. The scan really was
+#                            collapsing to ONE connection, because this SDK's
+#                            HTTP turn loop packed a whole producer stream into
+#                            a single response (fixed in vgi-rpc-typescript).
+# The exclusions were hiding a real bug in this SDK for months. Before adding
+# one here, measure the claim.
 TEST_PATTERNS := "test/sql/*" \
 	"~test/sql/integration/writable/*" \
 	"~test/sql/integration/schema_reconcile.test" \
@@ -129,10 +124,6 @@ HTTP_TEST_PATTERNS := "test/sql/integration/*" \
 	"~test/sql/integration/schema_reconcile.test" \
 	"~test/sql/integration/table/constant_columns_types.test" \
 	"~test/sql/integration/catalog/zero_count_bypass.test" \
-	"~test/sql/integration/table/filter_echo_partitioned.test" \
-	"~test/sql/integration/table/partitioned_sequence.test" \
-	"~test/sql/integration/table/batch_index.test" \
-	"~test/sql/integration/table/order_preservation_modes.test" \
 	$(EXTRA_HTTP_EXCLUDES)
 
 # Parallelism for the per-test runner. Default 8 locally; CI sets JOBS=1 to

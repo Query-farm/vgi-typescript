@@ -113,29 +113,22 @@ EXCLUDED=(
 AWK_HTTP=0
 if [ "$TRANSPORT" = "http" ]; then
   AWK_HTTP=1
-  # Dropped on the http lane only. Each of these asserts something about the
-  # *subprocess* worker pool that a single long-lived HTTP server cannot model;
-  # they mirror the Makefile's HTTP_TEST_PATTERNS, with the reasons kept here so
-  # the two lists stay legible side by side:
-  #   * filter_echo_partitioned.test — asserts COUNT(DISTINCT worker_pid) > 1;
-  #     an HTTP worker is one OS process, so worker_pid collapses to one value.
-  #   * partitioned_sequence.test — same root cause, via distinct conn= ids in
-  #     the batch_received logs under threads=4.
-  #   * batch_index.test / order_preservation_modes.test — both read VGI
-  #     batch_received log rows, which don't stream over HTTP (0 log rows).
-  #   * dynamic_filter.test — the Top-N + dynamic-filter continuation terminates
-  #     early over http, so the tightened pushdown never reaches the worker and
-  #     COUNT(DISTINCT pushed_filters) stays at 1. Same drop, same reason, as
-  #     vgi-go's and vgi-python's http lanes; verified still failing against a
-  #     from-source vgi build, so it is not prebuilt-extension skew.
-  EXCLUDED+=(
-    'table/dynamic_filter.test'
-    'table/filter_echo_partitioned.test'
-    'table/partitioned_sequence.test'
-    'table/batch_index.test'
-    'table/order_preservation_modes.test'
-  )
-fi
+  # No http-lane exclusions. This block used to drop five tests, each with a
+  # plausible reason, and all five reasons were wrong:
+  #   * batch_index / order_preservation_modes — "batch_received log rows don't
+  #     stream over HTTP (0 log rows)". Measured 199 rows; the scan really was
+  #     collapsing to one connection, because this SDK's HTTP turn loop packed
+  #     an entire producer stream into one response (fixed in vgi-rpc-ts).
+  #   * filter_echo_partitioned — "asserts COUNT(DISTINCT worker_pid) > 1".
+  #     That test moved to the transport-neutral conn= form; the reason was
+  #     stale, not just wrong.
+  #   * partitioned_sequence — inherited the same misdiagnosis.
+  #   * dynamic_filter — real, and not this SDK's fault: every worker SDK's
+  #     HTTP server discarded a continuation turn's tick metadata, so DuckDB's
+  #     tightening Top-N filter never reached the worker. Fixed across the SDKs.
+  # All five verified passing over HTTP on 2026-08-21. If you are tempted to add
+  # an exclusion here, measure the claim first — every one of these was written
+  # in good faith and none survived being checked.
 # Caller-supplied exclusions (integration-relative paths) — an escape hatch for a
 # test that is skewed against a particular published extension build. CI sets it
 # to nothing: every real exclusion belongs in EXCLUDED above, next to its reason.
