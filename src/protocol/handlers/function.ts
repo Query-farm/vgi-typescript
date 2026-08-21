@@ -41,6 +41,7 @@ import {
 } from "./shared.js";
 import { GLOBAL_INIT_RESPONSE_SCHEMA } from "../serializers/init.js";
 import { openAttach } from "./catalog/shared.js";
+import { currentRequestAuth } from "../../request-auth.js";
 import { batchFromColumns, serializeBatch } from "../../util/arrow/index.js";
 import {
   deserializePlanRequest,
@@ -136,6 +137,67 @@ async function liveSplitAnchor(
   return undefined;
 }
 
+/**
+ * Open this request's split envelopes into `request.split_payloads`.
+ *
+ * `split_payloads` is DERIVED, not wire state: the tokens ride the request, the
+ * payloads are what falls out of opening them. Only this layer holds the
+ * signing key — a function does not — so redemption happens here and only the
+ * payloads are handed down.
+ *
+ * It must run on continuation turns too. The HTTP exchange path rebuilds the
+ * *wire* request from the cursor, which carries `split_tokens` but of course no
+ * derived field, so a split-capable function used to see `splitPayloads:
+ * undefined` on every turn after the first and could not tell that from "the
+ * planner gave me no splits". Over HTTP that made every split scan fail on its
+ * second turn; subprocess never noticed because it holds the handlers in memory
+ * and never rebuilds anything.
+ *
+ * `checkAnchor` is false on a continuation, deliberately. The consistency
+ * anchor answers "is this plan still redeemable", which is a question about
+ * REDEMPTION — asked once, when the split is admitted. Re-asking it mid-stream
+ * would let a catalog version bump kill an in-flight scan that had already been
+ * accepted, turning a successful query into SPLIT_SNAPSHOT_EXPIRED halfway
+ * through its rows.
+ */
+async function resolveSplitPayloads(
+  request: any,
+  innerParams: any,
+  opts: {
+    auth: any;
+    signingKey: Uint8Array | undefined;
+    catalogInterface: any;
+    checkAnchor: boolean;
+  },
+): Promise<void> {
+  if (!request.split_tokens) return;
+  const fp = fingerprintInputs(toUint8Array(innerParams.bind_call));
+  const expected = await bindFingerprint(
+    fp.schemaName,
+    fp.functionName,
+    fp.args,
+    fp.settings,
+    new Uint8Array(0),
+  );
+  const currentAnchor = opts.checkAnchor
+    ? await liveSplitAnchor(opts.catalogInterface, request.bind_call as any, opts.auth, opts.signingKey)
+    : undefined;
+  request.split_payloads = [];
+  for (const token of request.split_tokens) {
+    request.split_payloads.push(
+      await openSplitToken(token, {
+        signingKey: opts.signingKey,
+        // Same principal `table_function_plan` sealed under. Omitting it opens
+        // under the anonymous tail, so an authenticated caller's own tokens
+        // fail authentication.
+        auth: opts.auth,
+        expectedFingerprint: expected,
+        currentAnchor,
+      }),
+    );
+  }
+}
+
 export function registerFunctionMethods(protocol: Protocol, config: FunctionHandlerConfig): void {
   const { registry, signingKey, catalogInterface } = config;
 
@@ -143,11 +205,17 @@ export function registerFunctionMethods(protocol: Protocol, config: FunctionHand
   // HTTP, plaintext on subprocess). Function bodies — like catalog bodies —
   // must see the catalog's own bytes, so unseal (when keyed) and strip the
   // framework UUID prefix before the user function reads attach_opaque_data.
+  // `ctx` is the CallContext when the dispatcher supplies one (every unary
+  // method) and absent otherwise (stream init); `currentRequestAuth()` is the
+  // ambient per-request fallback the HTTP entry point publishes, so both reach
+  // the same principal. Getting an authenticated caller's identity wrong here
+  // is not a degraded lookup but a hard `OpaqueDataRejectedError`: the envelope
+  // is sealed under `attachAad(auth)`.
   async function stripAttach(attach: any, ctx: any): Promise<Uint8Array | null> {
     if (attach == null) return null;
     const env = toUint8Array(attach);
     if (env.length === 0) return env;
-    return openAttach(env, ctx?.auth, signingKey);
+    return openAttach(env, ctx?.auth ?? currentRequestAuth(), signingKey);
   }
 
   // Build an overload context whose attach has been unsealed, so catalog
@@ -208,39 +276,37 @@ export function registerFunctionMethods(protocol: Protocol, config: FunctionHand
       const requestIpcBytes = toUint8Array(params.request);
       const innerParams = unwrapRequest(params.request);
       const request = deserializeInitRequest(innerParams);
-      // Exchange init has no ctx; on subprocess (no signing key) openAttach is a
-      // pass-through strip that needs no auth. HTTP carries auth via the bind path.
-      request.bind_call.attach_opaque_data = await stripAttach(request.bind_call.attach_opaque_data, undefined);
+      // The caller's identity, and the load-bearing line of this handler.
+      //
+      // vgi-rpc types stream init as `(params) => state`, so unlike every unary
+      // method there is no CallContext to read `auth` off — `ctx` is only ever
+      // populated by a caller that has one (the in-process client). The HTTP
+      // entry point therefore publishes the dispatching principal on an ambient
+      // per-request scope, the same shape vgi-python's `current_auth()`
+      // ContextVar and vgi-go's `handleInit(callCtx)` give those ports.
+      //
+      // It has to be the REAL principal, not `undefined`: `attach_opaque_data`
+      // is sealed by `catalog_attach` under `attachAad(auth)` and every split
+      // token by `table_function_plan` under `splitTokenAad(body, auth)`, both
+      // of which are unary and so seal under the authenticated caller. Opening
+      // them here under the anonymous tail matches only for an anonymous
+      // caller; an authenticated one got `OpaqueDataRejectedError:
+      // attach_opaque_data not recognized` on its first scan, i.e. this worker
+      // could not serve authenticated traffic at all.
+      const auth = ctx?.auth ?? currentRequestAuth();
+      request.bind_call.attach_opaque_data = await stripAttach(
+        request.bind_call.attach_opaque_data,
+        ctx,
+      );
 
       // Verify and strip the split envelopes BEFORE any user code runs, so an
-      // unverified token can never be acted on. This is the layer that holds the
-      // signing key — a function does not — which is why redemption is opened
-      // here and only the payloads are handed down.
-      if (request.split_tokens) {
-        const fp = fingerprintInputs(toUint8Array(innerParams.bind_call));
-        const expected = await bindFingerprint(
-          fp.schemaName,
-          fp.functionName,
-          fp.args,
-          fp.settings,
-          new Uint8Array(0),
-        );
-        request.split_payloads = [];
-        // The anchor is CHECKED, not skipped. Omitting it meant a plan that
-        // outlived its snapshot was redeemed happily, so SPLIT_SNAPSHOT_EXPIRED —
-        // the one error whose purpose is telling an operator the query is
-        // re-runnable — could never be raised by this SDK.
-        const currentAnchor = await liveSplitAnchor(catalogInterface, request.bind_call as any, ctx?.auth, signingKey);
-        for (const token of request.split_tokens) {
-          request.split_payloads.push(
-            await openSplitToken(token, {
-              signingKey,
-              expectedFingerprint: expected,
-              currentAnchor,
-            }),
-          );
-        }
-      }
+      // unverified token can never be acted on.
+      await resolveSplitPayloads(request, innerParams, {
+        auth,
+        signingKey,
+        catalogInterface,
+        checkAnchor: true,
+      });
 
       const func = registry.get(request.bind_call.function_name, overloadContext(request.bind_call, catalogInterface));
 
@@ -321,6 +387,28 @@ export function registerFunctionMethods(protocol: Protocol, config: FunctionHand
         const initRequestBatch = deserializeBatch(state.initRequestIpc);
         const initRequestDict = batchToScalarDict(initRequestBatch);
         const request = deserializeInitRequest(initRequestDict);
+        // Re-derive the split payloads. The cursor carries the wire request,
+        // which has `split_tokens` but not the opened `split_payloads` — that
+        // field only ever existed in memory on the init turn. Without this a
+        // split-capable function sees `splitPayloads: undefined` from the
+        // second turn onward, indistinguishable from "the planner gave me no
+        // splits at all". checkAnchor is false: redemption was already decided
+        // on the init turn, and re-checking here would let a mid-scan catalog
+        // bump fail a query that had already been admitted.
+        // fingerprintInputs hashes the RAW bind_call bytes, so pass the
+        // pre-deserialization blob from the cursor — handing it the decoded
+        // object hashes a different shape and every token fails as
+        // SPLIT_TOKEN_INVALID "minted for a different bind".
+        await resolveSplitPayloads(request, { bind_call: initRequestDict.bind_call }, {
+          // Same principal the tokens were sealed under. The exchange dispatch
+          // gets no ctx (see stripAttach above), so the request-scoped identity
+          // is the only source — opening under the anonymous tail would fail
+          // authentication for every authenticated caller's own tokens.
+          auth: currentRequestAuth(),
+          signingKey,
+          catalogInterface,
+          checkAnchor: false,
+        });
         const func = registry.get(state.functionName, await strippedContext(request.bind_call));
         const executionId = state.executionId;
         const opaqueData = state.opaqueData ?? null;

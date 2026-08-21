@@ -40,8 +40,15 @@ interface Range {
 }
 
 interface SplitState {
-  ranges: Range[];
-  ordinals: number[];
+  // userState may hold only scalars, byte arrays and plain objects — see
+  // src/protocol/state-serializer.ts, which rejects arrays with "convert to a
+  // serializable form first". Only HTTP serialises userState (it rides the
+  // continuation cursor), so violating this is invisible on every other
+  // transport. It was invisible on HTTP too until producer turns started
+  // ending after each cycle, because a stream that completed in ONE turn never
+  // minted a cursor and so never serialised its state at all.
+  rangesJson: string;
+  ordinalsJson: string;
   idx: number;
   cur: number;
   emittedInSplit: number;
@@ -137,13 +144,23 @@ function seedState(
     }
   }
   return {
-    ranges,
-    ordinals,
+    rangesJson: JSON.stringify(ranges),
+    ordinalsJson: JSON.stringify(ordinals),
     idx: 0,
     cur: ranges.length > 0 ? ranges[0].lo : 0,
     emittedInSplit: 0,
     cacheAdvertised: false,
   };
+}
+
+/** The ranges this reader claimed, decoded from their serialized form. */
+function claimedRanges(state: SplitState): Range[] {
+  return JSON.parse(state.rangesJson) as Range[];
+}
+
+/** The split ordinals this reader claimed, decoded from their serialized form. */
+function claimedOrdinals(state: SplitState): number[] {
+  return JSON.parse(state.ordinalsJson) as number[];
 }
 
 /**
@@ -161,15 +178,15 @@ function emitNext(
 ): void {
   const maxBatch = opts.maxBatch ?? 1024;
   for (;;) {
-    if (state.idx >= state.ranges.length) {
+    if (state.idx >= claimedRanges(state).length) {
       out.finish();
       return;
     }
-    const r = state.ranges[state.idx];
+    const r = claimedRanges(state)[state.idx];
     if (state.cur >= r.hi) {
       state.idx += 1;
       state.emittedInSplit = 0;
-      if (state.idx < state.ranges.length) state.cur = state.ranges[state.idx].lo;
+      if (state.idx < claimedRanges(state).length) state.cur = claimedRanges(state)[state.idx].lo;
       continue;
     }
     const size = Math.min(r.hi - state.cur, maxBatch);
@@ -187,7 +204,7 @@ function emitNext(
       meta = cacheControlMetadata({ ttl: opts.cacheTtl });
     }
     if (opts.batchStride !== undefined) {
-      const ordinal = state.ordinals[state.idx] ?? state.idx;
+      const ordinal = claimedOrdinals(state)[state.idx] ?? state.idx;
       const index = ordinal * opts.batchStride + state.emittedInSplit;
       state.emittedInSplit += 1;
       meta = new Map([...(meta ?? new Map()), ["vgi_batch_index", String(index)]]);
@@ -498,19 +515,19 @@ export const splitFailAt = defineTableFunction<SplitFailArgs, FailState>({
   }),
   process: (params, state, out) => {
     for (;;) {
-      if (state.idx >= state.ranges.length) {
+      if (state.idx >= claimedRanges(state).length) {
         out.finish();
         return;
       }
-      const r = state.ranges[state.idx];
+      const r = claimedRanges(state)[state.idx];
       if (state.cur >= r.hi) {
         state.idx += 1;
-        if (state.idx < state.ranges.length) state.cur = state.ranges[state.idx].lo;
+        if (state.idx < claimedRanges(state).length) state.cur = claimedRanges(state)[state.idx].lo;
         continue;
       }
       // Mid-stream: emit some rows first, so the capture is genuinely partial
       // when it dies rather than empty.
-      if (state.ordinals[state.idx] === state.failAt && state.cur > r.lo) {
+      if (claimedOrdinals(state)[state.idx] === state.failAt && state.cur > r.lo) {
         throw new Error(`split ${state.failAt} failed mid-stream (fixture)`);
       }
       const size = Math.min(r.hi - state.cur, 8);
@@ -562,8 +579,15 @@ const ECHO_SCHEMA = new Schema([
 interface EchoArgs {
   splits: number;
 }
+/** The per-split pushdown rows, decoded from their serialized form. */
+function echoRows(state: EchoState): Array<[number, boolean, number]> {
+  return JSON.parse(state.rowsJson) as Array<[number, boolean, number]>;
+}
+
 interface EchoState {
-  rows: Array<[number, boolean, number]>;
+  // Serialized for the same reason as SplitState above: userState may hold only
+  // scalars, byte arrays and plain objects.
+  rowsJson: string;
   done: boolean;
 }
 
@@ -605,10 +629,10 @@ export const splitEchoFilters = defineTableFunction<EchoArgs, EchoState>({
       throw new Error("split_echo_filters is split-only but was initialized with no split tokens");
     }
     return {
-      rows: params.splitPayloads.map((p) => {
+      rowsJson: JSON.stringify(params.splitPayloads.map((p) => {
         const [ordinal, r] = decodeOrdinal(p);
         return [ordinal, r.lo === 1, r.hi] as [number, boolean, number];
-      }),
+      })),
       done: false,
     };
   },
@@ -621,9 +645,9 @@ export const splitEchoFilters = defineTableFunction<EchoArgs, EchoState>({
     out.emit(
       batchFromColumns(
         {
-          split_ordinal: state.rows.map((r) => BigInt(r[0])),
-          saw_filters: state.rows.map((r) => r[1]),
-          n_projection: state.rows.map((r) => BigInt(r[2])),
+          split_ordinal: echoRows(state).map((r) => BigInt(r[0])),
+          saw_filters: echoRows(state).map((r) => r[1]),
+          n_projection: echoRows(state).map((r) => BigInt(r[2])),
         },
         params.outputSchema,
       ),
@@ -665,7 +689,9 @@ interface PartArgs {
   rows_per_country: number;
 }
 interface PartState {
-  indices: number[];
+  // Serialized for the same reason as SplitState above: userState may hold only
+  // scalars, byte arrays and plain objects.
+  indicesJson: string;
   at: number;
   rows: number;
 }
@@ -708,7 +734,7 @@ export const splitPartitioned = defineTableFunction<PartArgs, PartState>({
       throw new Error("split_partitioned is split-only but was initialized with no split tokens");
     }
     return {
-      indices: params.splitPayloads.map((p) => decode(p).lo),
+      indicesJson: JSON.stringify(params.splitPayloads.map((p) => decode(p).lo)),
       at: 0,
       rows: Number(params.args.rows_per_country ?? 5),
     };
@@ -718,11 +744,12 @@ export const splitPartitioned = defineTableFunction<PartArgs, PartState>({
     // end-of-stream — the same rule every split fixture follows, and here it is
     // reachable through `rows_per_country := 0`.
     for (;;) {
-      if (state.at >= state.indices.length) {
+      const indices = JSON.parse(state.indicesJson) as number[];
+      if (state.at >= indices.length) {
         out.finish();
         return;
       }
-      const ci = state.indices[state.at];
+      const ci = indices[state.at];
       state.at += 1;
       if (state.rows <= 0 || ci < 0 || ci >= PARTITION_COUNTRIES.length) continue;
       // Each partition's values are offset by its own index, so swapping two
@@ -880,14 +907,14 @@ export const splitDynamicFilter = defineTableFunction<SplitArgs, SplitState>({
   process: (params, state, out) => {
     const rendered = renderFiltersCanonical(params.pushdownFilters);
     for (;;) {
-      if (state.idx >= state.ranges.length) {
+      if (state.idx >= claimedRanges(state).length) {
         out.finish();
         return;
       }
-      const r = state.ranges[state.idx];
+      const r = claimedRanges(state)[state.idx];
       if (state.cur >= r.hi) {
         state.idx += 1;
-        if (state.idx < state.ranges.length) state.cur = state.ranges[state.idx].lo;
+        if (state.idx < claimedRanges(state).length) state.cur = claimedRanges(state)[state.idx].lo;
         continue;
       }
       const size = Math.min(r.hi - state.cur, 4);

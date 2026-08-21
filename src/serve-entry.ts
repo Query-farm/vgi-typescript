@@ -23,6 +23,7 @@
 
 import type { CatalogInterface } from "./catalog/interface.js";
 import type { FunctionRegistry } from "./functions/registry.js";
+import type { AuthenticateFn } from "@query-farm/vgi-rpc";
 import { createVgiFetch } from "./http/fetch.js";
 
 /** Environment variables `serveVgiWorker` reads. Injectable for testing. */
@@ -68,6 +69,9 @@ export interface ServeVgiWorkerOptions {
   quiet?: boolean;
   /** Environment source (default `process.env`). */
   env?: ServeEnv;
+  /** Authenticates each request, returning the caller's `AuthContext`.
+   *  Omit for an anonymous worker (the default). */
+  authenticate?: AuthenticateFn;
 }
 
 /** The slice of `Bun.serve`'s return value this module uses. */
@@ -194,6 +198,7 @@ export function createVgiWorkerFetch(
     corsOrigins,
     repositoryUrl: opts.repositoryUrl,
     landingInfo: { name: opts.name, doc: opts.doc, version: opts.version },
+    authenticate: opts.authenticate,
   });
 }
 

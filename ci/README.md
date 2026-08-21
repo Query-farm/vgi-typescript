@@ -125,7 +125,6 @@ Dropped on the **http** lane only:
 | `table/partitioned_sequence.test` | same root cause, via distinct `conn=` ids under `threads=4` |
 | `table/batch_index.test`, `table/order_preservation_modes.test` | both read VGI `batch_received` log rows, which don't stream over HTTP |
 | `table/dynamic_filter.test` | Top-N + dynamic-filter continuation terminates early over http, so the tightened pushdown never reaches the worker. Same drop as vgi-go/vgi-python; verified still failing against a from-source vgi build, so it is not prebuilt-extension skew |
-| `cache/identity_isolation.test` | asserts the *worker-visible* auth principal (`alice`/`bob`). The Python fixture server maps `vgi-test-alice`→`alice`; the TypeScript example HTTP worker has no token→principal resolver and reports `anonymous`. A gap in the example fixture, not the harness — `cache/partition_scope_identity.test` still runs and covers the isolation property itself, since the C++ side folds the bearer-token fingerprint into the cache key regardless of the principal name |
 
 ## Expected skips
 

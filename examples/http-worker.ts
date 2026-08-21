@@ -12,6 +12,7 @@ import { projectionReproCatalog, projectionReproFunctions } from "./projection_r
 import { accumulateFunctions, createAccumulateCatalog } from "./accumulate.js";
 import { narrowBindCatalog, narrowBindFunctions } from "./narrow_bind.js";
 import { twinACatalog, twinBCatalog, twinCatalogFunctions } from "./twin_catalogs.js";
+import { optionalTestBearerAuthenticate } from "./optional-bearer.js";
 
 const registry = new FunctionRegistry();
 for (const func of [
@@ -58,6 +59,12 @@ const server = serveVgiWorker({
   serverId: "vgi-example-http",
   port: 0,
   quiet: true,
+  // OPTIONAL bearer identity: `vgi-test-alice` -> alice, `vgi-test-bob` -> bob,
+  // anything else (including no header) -> anonymous, never a 401. The whole
+  // HTTP suite shares this one server, so it has to stay anonymous by default;
+  // cache/identity_isolation.test is the test that needs real principals. Same
+  // fixture the Python, Go and Rust example workers ship.
+  authenticate: optionalTestBearerAuthenticate(),
 });
 
 // The Makefile's test-http target reads this line off stdout to discover the port.

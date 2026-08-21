@@ -123,13 +123,6 @@ if [ "$TRANSPORT" = "http" ]; then
   #     the batch_received logs under threads=4.
   #   * batch_index.test / order_preservation_modes.test — both read VGI
   #     batch_received log rows, which don't stream over HTTP (0 log rows).
-  #   * cache/identity_isolation.test — asserts the WORKER-visible auth principal
-  #     ("alice"/"bob"). The Python fixture server maps vgi-test-alice→alice; the
-  #     TypeScript example HTTP worker has no token→principal resolver, so it
-  #     reports "anonymous". A genuine port gap in the *fixture*, not the harness
-  #     — the sibling test cache/partition_scope_identity.test still runs here and
-  #     covers the isolation property itself (the C++ side folds the bearer-token
-  #     fingerprint into the cache key regardless of the principal name).
   #   * dynamic_filter.test — the Top-N + dynamic-filter continuation terminates
   #     early over http, so the tightened pushdown never reaches the worker and
   #     COUNT(DISTINCT pushed_filters) stays at 1. Same drop, same reason, as
@@ -141,7 +134,6 @@ if [ "$TRANSPORT" = "http" ]; then
     'table/partitioned_sequence.test'
     'table/batch_index.test'
     'table/order_preservation_modes.test'
-    'cache/identity_isolation.test'
   )
 fi
 # Caller-supplied exclusions (integration-relative paths) — an escape hatch for a
