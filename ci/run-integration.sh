@@ -97,17 +97,20 @@ command -v bun >/dev/null 2>&1 || { echo "::error::bun not on PATH (the workers 
 #     the TypeScript port has no fixture worker for it.
 #   schema_reconcile.test — writable-style fixture, likewise not ported.
 #   table/constant_columns_types.test — arrow-js has no TIMESTAMP_NS.
-#   catalog/zero_count_bypass.test — broken upstream (its LIKE pattern matches
-#     set_kind=table AND set_kind=table_function ambiguously); fails against the
-#     Python worker too.
 #   table_in_out/echo/nested_type_combinations.test — segfaults the prebuilt
 #     standalone runner (a property of that C++ build, not the worker, which
 #     passes it against a locally-built unittest). Same drop as vgi-go/-python.
+#
+# catalog/zero_count_bypass.test is NO LONGER excluded (removed 2026-08-21). The
+# old reason ("broken upstream; its LIKE pattern matches set_kind=table AND
+# set_kind=table_function ambiguously") correctly diagnosed a bug that has since
+# been fixed centrally — the test now anchors on the field separator,
+# LIKE '%set_kind=table,%'. Verified against this SDK's worker on subprocess,
+# launch: and http: 23 assertions pass on each.
 EXCLUDED=(
   'writable/*'
   'schema_reconcile.test'
   'table/constant_columns_types.test'
-  'catalog/zero_count_bypass.test'
   'table_in_out/echo/nested_type_combinations.test'
 )
 AWK_HTTP=0
@@ -129,6 +132,8 @@ if [ "$TRANSPORT" = "http" ]; then
   # All five verified passing over HTTP on 2026-08-21. If you are tempted to add
   # an exclusion here, measure the claim first — every one of these was written
   # in good faith and none survived being checked.
+fi
+
 # Caller-supplied exclusions (integration-relative paths) — an escape hatch for a
 # test that is skewed against a particular published extension build. CI sets it
 # to nothing: every real exclusion belongs in EXCLUDED above, next to its reason.

@@ -67,9 +67,13 @@ TEST_LOG := /tmp/vgi-typescript-test.log
 #   writable/                          — writable fixture worker not ported
 #   schema_reconcile                   — writable-style fixture, also skipped
 #   constant_columns_types             — arrow-js doesn't support TIMESTAMP_NS
-#   zero_count_bypass                  — broken upstream, fails against Python worker too;
-#                                        the test's LIKE pattern matches set_kind=table
-#                                        AND set_kind=table_function ambiguously
+#
+# zero_count_bypass is NO LONGER excluded (removed 2026-08-21). The old reason
+# ("broken upstream; its LIKE pattern matches set_kind=table AND
+# set_kind=table_function ambiguously") was a correct diagnosis of a bug that has
+# since been fixed centrally: the test now anchors on the field separator,
+# LIKE '%set_kind=table,%'. Verified against THIS worker on all three lanes —
+# subprocess, launch:, and http — 23 assertions pass on each.
 #
 # HTTP-only exclusions: NONE. This block listed three, and every reason was
 # wrong — verified 2026-08-21 by running each against this worker over HTTP:
@@ -86,25 +90,28 @@ TEST_LOG := /tmp/vgi-typescript-test.log
 TEST_PATTERNS := "test/sql/*" \
 	"~test/sql/integration/writable/*" \
 	"~test/sql/integration/schema_reconcile.test" \
-	"~test/sql/integration/table/constant_columns_types.test" \
-	"~test/sql/integration/catalog/zero_count_bypass.test"
+	"~test/sql/integration/table/constant_columns_types.test"
 
-# Launcher transport excludes a few extra tests that assert subprocess-pool
-# semantics — `launch:` workers are pooled by the AF_UNIX socket, not by
-# DuckDB's per-process subprocess pool, so these intentionally don't apply.
-# Mirrors vgi's own test_launcher target.
+# Launcher transport excludes vgi_worker_pool.test, which asserts subprocess-pool
+# semantics: `launch:` workers are pooled by the AF_UNIX socket, not by DuckDB's
+# per-process subprocess pool, so vgi_worker_pool() legitimately returns no rows
+# there (documented in vgi's CLAUDE.md). Mirrors vgi's own test_launcher target.
 #
-# order_preservation_modes is also excluded: its FIXED_ORDER → 1-distinct-conn
-# assertion is meaningful only on the subprocess transport. Under launcher
-# (and HTTP), DuckDB allocates one FunctionConnection per worker thread
-# eagerly during InitLocalState, so all N pre-allocated conns appear in the
-# per-batch logs even when the planner has serialised execution onto a
-# single producer. Reproduces with the upstream Python worker too.
+# Three more tests used to be excluded here and were removed 2026-08-21, having
+# never been excluded on this repo's own CI `launch` lane (ci/run-integration.sh),
+# which runs the same transport — the Makefile lane was the stale copy. Each was
+# re-verified over launch: against this worker before removal:
+#   filter_echo_partitioned  36 assertions pass. The stale reason was the old
+#                            COUNT(DISTINCT worker_pid) > 1 form; the test now
+#                            counts transport-neutral conn= ids.
+#   versioned_tables_impl    35 assertions pass (with VGI_VERSIONED_TABLES_WORKER
+#                            set, as this lane sets it below).
+#   order_preservation_modes 16 assertions pass. The FIXED_ORDER → 1-distinct-conn
+#                            claim is a real HTTP limitation, but it does not
+#                            apply to launch:, which collapses to one connection
+#                            like plain subprocess.
 LAUNCHER_TEST_PATTERNS := $(TEST_PATTERNS) \
-	"~test/sql/vgi_worker_pool.test" \
-	"~test/sql/integration/table/filter_echo_partitioned.test" \
-	"~test/sql/integration/attach/versioned_tables_impl.test" \
-	"~test/sql/integration/table/order_preservation_modes.test"
+	"~test/sql/vgi_worker_pool.test"
 
 # Idle-timeout for launcher-spawned workers. The C++ launcher passes
 # --idle-timeout 300 by default; src/worker.ts honours
@@ -123,7 +130,6 @@ HTTP_TEST_PATTERNS := "test/sql/integration/*" \
 	"~test/sql/integration/writable/*" \
 	"~test/sql/integration/schema_reconcile.test" \
 	"~test/sql/integration/table/constant_columns_types.test" \
-	"~test/sql/integration/catalog/zero_count_bypass.test" \
 	$(EXTRA_HTTP_EXCLUDES)
 
 # Parallelism for the per-test runner. Default 8 locally; CI sets JOBS=1 to
@@ -168,9 +174,9 @@ test:
 	exit $$rc
 
 # Plain subprocess transport — one worker per DuckDB process, pooled.
-# Same suite as `test` plus three tests the launcher path can't satisfy
-# (vgi_worker_pool, filter_echo_partitioned, versioned_tables_impl assert
-# per-process pool semantics — meaningful only under subprocess transport).
+# Same suite as `test` plus vgi_worker_pool.test, the one file the launcher path
+# can't satisfy (it asserts per-process subprocess-pool semantics; launch:
+# workers are pooled by the AF_UNIX socket, so vgi_worker_pool() has no rows).
 test-subprocess:
 	@cd $(VGI_DIR) && \
 	export VGI_TEST_WORKER="$(WORKER)"; \
