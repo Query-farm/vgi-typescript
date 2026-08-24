@@ -22,7 +22,7 @@ export {
   int8, int16, int32, int64,
   uint8, uint16, uint32, uint64,
   float16, float32, float64,
-  utf8, binary, fixedSizeBinary,
+  utf8, largeUtf8, binary, largeBinary, fixedSizeBinary,
   decimal, decimal128, decimal256,
   date, dateDay, dateMillisecond,
   time, timeSecond, timeMillisecond, timeMicrosecond, timeNanosecond,

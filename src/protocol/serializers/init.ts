@@ -21,6 +21,9 @@ import {
   int64,
   float64,
   list,
+  largeBinary,
+  dictionary,
+  int16,
 } from "../../arrow/index.js";
 // RecordBatch type alias kept for the joinKeys closure below — it's a runtime
 // value that lands in BindRequest, not a wire shape.
@@ -43,14 +46,31 @@ import { toUint8Array, buildSingleRowBatch } from "./shared.js";
 import { serializeBindRequest, deserializeBindRequest } from "./bind.js";
 import { decodeDictValue } from "../../util/arrow/index.js";
 
+// The InitRequest wire record. This must equal `InitRequestSchema` in
+// src/generated/vgi-protocol-schemas.ts EXACTLY — see the note on
+// BIND_REQUEST_SCHEMA in bind.ts for why "reads by name, so close enough" is
+// not good enough (vgi-rpc-go compares with `arrow.Schema.Equal`).
+//
+// This declaration had drifted in six ways at once, none of which any test
+// could see: it was missing `split_tokens` and `row_limit` entirely, typed
+// `pushdown_filters` and the `join_keys` items as 32-bit binary where the
+// protocol says large, typed `phase` and the two order-by enums as plain utf8
+// where the protocol says dictionary, and put `finalize_state_id` last instead
+// of ninth.
 const INIT_REQUEST_SCHEMA = makeSchema([
   field("bind_call", binary(), false),
   field("output_schema", binary(), false),
   field("bind_opaque_data", binary(), true),
-  field("projection_ids", list(field("item", int64(), false)), true),
-  field("pushdown_filters", binary(), true),
-  field("join_keys", list(field("item", binary(), true)), true),
-  field("phase", utf8(), true),
+  field("projection_ids", list(field("item", int64(), true)), true),
+  // Large: a serialized filter tree, a set of join keys, or a batch of split
+  // tokens can exceed the 2 GiB that 32-bit offsets address.
+  field("pushdown_filters", largeBinary(), true),
+  field("join_keys", list(field("item", largeBinary(), true)), true),
+  field("split_tokens", list(field("item", largeBinary(), true)), true),
+  field("row_limit", int64(), true),
+  field("phase", dictionary(utf8(), int16()), true),
+  // Buffered-table finalize stream identifier.
+  field("finalize_state_id", binary(), true),
   field("execution_id", binary(), true),
   field("init_opaque_data", binary(), true),
   // Per-substream identity for parallel streaming table-in-out (client-minted,
@@ -58,14 +78,12 @@ const INIT_REQUEST_SCHEMA = makeSchema([
   field("substream_id", binary(), true),
   // Order pushdown hints from DuckDB's RowGroupPruner (all null when no hint).
   field("order_by_column_name", utf8(), true),
-  field("order_by_direction", utf8(), true),
-  field("order_by_null_order", utf8(), true),
+  field("order_by_direction", dictionary(utf8(), int16()), true),
+  field("order_by_null_order", dictionary(utf8(), int16()), true),
   field("order_by_limit", int64(), true),
   // TABLESAMPLE pushdown hints from DuckDB's SamplingPushdown optimizer.
   field("tablesample_percentage", float64(), true),
   field("tablesample_seed", int64(), true),
-  // Buffered-table finalize stream identifier — C++ appends this last.
-  field("finalize_state_id", binary(), true),
 ]);
 
 // The init stream's header. Codegen emits nothing for it (the generated
@@ -94,7 +112,10 @@ export function serializeInitRequest(req: InitRequest): VgiBatch {
       ? serializeBatch(req.pushdown_filters)
       : null,
     join_keys: (req.join_keys ?? []).map((b) => serializeBatch(b)),
+    split_tokens: req.split_tokens ?? null,
+    row_limit: req.row_limit ?? null,
     phase: req.phase ?? null,
+    finalize_state_id: req.finalize_state_id ?? null,
     execution_id: req.execution_id ?? null,
     init_opaque_data: req.init_opaque_data ?? null,
     substream_id: req.substream_id ?? null,
@@ -104,7 +125,6 @@ export function serializeInitRequest(req: InitRequest): VgiBatch {
     order_by_limit: req.order_by_limit ?? null,
     tablesample_percentage: req.tablesample_percentage ?? null,
     tablesample_seed: req.tablesample_seed ?? null,
-    finalize_state_id: req.finalize_state_id ?? null,
   };
   return buildSingleRowBatch(INIT_REQUEST_SCHEMA, row);
 }
@@ -174,6 +194,7 @@ export function deserializeInitRequest(
       ? toUint8Array(params.bind_opaque_data)
       : null,
     projection_ids: projectionIds,
+    row_limit: params.row_limit == null ? null : Number(params.row_limit),
     pushdown_filters: params.pushdown_filters
       ? deserializeBatch(toUint8Array(params.pushdown_filters))
       : null,

@@ -157,8 +157,10 @@ export class VgiClient {
       bind_call: bindRequest,
       output_schema: bindResponse.output_schema,
       bind_opaque_data: bindResponse.opaque_data,
-      // This client does not plan scans, so it never redeems a split.
+      // This client does not plan scans, so it never redeems a split, and it
+      // pushes no limit down.
       split_tokens: null,
+      row_limit: null,
       projection_ids: opts?.projectionIds ?? null,
       pushdown_filters: opts?.pushdownFilters ?? null,
       join_keys: opts?.joinKeys ?? [],

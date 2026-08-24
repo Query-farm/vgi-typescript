@@ -154,6 +154,33 @@ EXTRA_HTTP_EXCLUDES ?=
 #
 # Use `make test-subprocess` if you specifically need per-process subprocess
 # semantics (e.g. debugging a worker startup issue).
+# Coverage gates — see the note in vgi/Makefile (VGI_EXPECTED_SKIPS). A lane
+# that stops running tests reports green, so a floor on executed tests and an
+# allow-list of expected skip reasons are what keep a silently-shrinking lane
+# from passing. TypeScript runs 293 today.
+TS_MIN_EXECUTED ?= 290
+COVERAGE_GATE := --min-executed $(TS_MIN_EXECUTED) \
+	--allow-skip 'require spatial' \
+	--allow-skip 'require-env VGI_DOCKER_IMAGE' \
+	--allow-skip 'require-env VGI_DOCKER_TCP_IMAGE' \
+	--allow-skip 'require-env VGI_GITHUB_NETWORK_TESTS' \
+	--allow-skip 'require-env VGI_TEST_ICEBERG' \
+	--allow-skip 'require-env VGI_TEST_COMPANION_TARGET' \
+	--allow-skip 'require-env VGI_TEST_BEARER_TOKEN' \
+	--allow-skip 'require-env VGI_TEST_DEDICATED_WORKER' \
+	--allow-skip 'require-env VGI_HTTP_TRANSPORT' \
+	--allow-skip 'require-env VGI_HTTP_DISABLE_ZSTD' \
+	--allow-skip 'require-env VGI_HTTP_NO_COMPRESSION' \
+	--allow-skip 'require-env VGI_VERSIONED_HTTP_WORKER' \
+	--allow-skip 'require-env VGI_VERSIONED_TABLES_HTTP_WORKER' \
+	--allow-skip 'require-env VGI_WORKER_SUPPORTS_DYNAMIC_CODE' \
+	--allow-skip 'require-env VGI_SIMPLE_WRITABLE_WORKER' \
+	--allow-skip 'require-env VGI_SCHEMA_RECONCILE_DB' \
+	--allow-skip 'require-env VGI_RULES_WORKER' \
+	--allow-skip 'require-env VGI_ATTACH_OPTIONS_REQUIRED_WORKER' \
+	--allow-skip 'require-env VGI_BAD_ENUM_WORKER' \
+	--allow-skip 'require-env VGI_BAD_PROTOCOL_WORKER'
+
 test:
 	@cd $(VGI_DIR) && \
 	export VGI_TEST_WORKER="launch:$(WORKER)"; \
@@ -162,7 +189,7 @@ test:
 	export VGI_ATTACH_OPTIONS_WORKER="launch:$(ATTACH_OPTIONS_WORKER)"; \
 	export VGI_REQUIRE_LAUNCHER_TRANSPORT=1; \
 	export VGI_WORKER_IDLE_TIMEOUT=$(LAUNCHER_IDLE_TIMEOUT); \
-	python3 scripts/run_tests.py -j $(JOBS) $(LAUNCHER_TEST_PATTERNS) > $(TEST_LOG) 2>&1; \
+	python3 scripts/run_tests.py -j $(JOBS) $(COVERAGE_GATE) $(LAUNCHER_TEST_PATTERNS) > $(TEST_LOG) 2>&1; \
 	rc=$$?; \
 	tail -n 20 $(TEST_LOG); \
 	echo ""; \

@@ -59,6 +59,11 @@ import {
   singleBranchResult,
 } from "../catalog/interface.js";
 import { scanSplitRow, SCAN_SPLIT_SCHEMA } from "../protocol/serializers/splits.js";
+import { serializeBindRequest } from "../protocol/serializers/bind.js";
+import { serializeInitRequest, serializeGlobalInitResponse, GLOBAL_INIT_RESPONSE_SCHEMA } from "../protocol/serializers/init.js";
+import { Arguments } from "../arguments/arguments.js";
+import { FunctionType } from "../types.js";
+import { OrderByDirection, OrderByNullOrder, type BindRequest } from "../protocol/types.js";
 
 // --------------------------------------------------------------------------- //
 // Fixtures
@@ -289,7 +294,144 @@ const CASES: WireRecordCase[] = [
         SCAN_SPLIT_SCHEMA,
       ),
   },
+
+  // ---- Request records ------------------------------------------------- //
+  //
+  // These are the records this SDK sends rather than returns, and until the
+  // generator started emitting request schemas there was nothing to compare
+  // them against — a method's params schema is the outer `request: binary`
+  // envelope, and the record rides inside as an opaque blob. Both builders had
+  // drifted, and neither drift was reachable from any behavioural test:
+  //
+  //   * serializeBindRequest appended `copy_from` / `copy_to` only for a COPY
+  //     bind, so it emitted 12, 13 or 14 columns depending on the call, put
+  //     `schema_name` before them instead of last, and typed `function_type`
+  //     as plain utf8 rather than a dictionary.
+  //   * serializeInitRequest was missing `split_tokens` and `row_limit`
+  //     entirely, typed four columns 32-bit where the protocol says large or
+  //     dictionary, and put `finalize_state_id` last instead of ninth.
+  //
+  // The COPY shapes get their own variants because the bind defect was
+  // shape-DEPENDENT: a single-shape case would have passed on whichever shape
+  // it happened to pick.
+  {
+    origin: "BindRequest",
+    variant: "plain",
+    schema: generated.BindRequestSchema,
+    build: () => serializeBatch(serializeBindRequest(sampleBindRequest())),
+    // No COPY context on an ordinary bind, and no AT clause. They must still be
+    // PRESENT as null columns — that is the whole point of the fix.
+    allowNull: ["input_schema", "settings", "secrets", "attach_opaque_data",
+                "transaction_opaque_data", "at_unit", "at_value",
+                "copy_from", "copy_to"],
+  },
+  {
+    origin: "BindRequest",
+    variant: "copy_from",
+    schema: generated.BindRequestSchema,
+    build: () =>
+      serializeBatch(
+        serializeBindRequest({
+          ...sampleBindRequest(),
+          copy_from: {
+            format: "acme.lines",
+            file_path: "/tmp/in.txt",
+            expected_schema: makeSchema([makeField("v", utf8(), true)]),
+          },
+        }),
+      ),
+    allowNull: ["input_schema", "settings", "secrets", "attach_opaque_data",
+                "transaction_opaque_data", "at_unit", "at_value", "copy_to"],
+  },
+  {
+    origin: "BindRequest",
+    variant: "copy_to",
+    schema: generated.BindRequestSchema,
+    build: () =>
+      serializeBatch(
+        serializeBindRequest({
+          ...sampleBindRequest(),
+          copy_to: { format: "acme.lines", file_path: "/tmp/out.txt" },
+        }),
+      ),
+    allowNull: ["input_schema", "settings", "secrets", "attach_opaque_data",
+                "transaction_opaque_data", "at_unit", "at_value", "copy_from"],
+  },
+  {
+    origin: "InitRequest",
+    schema: generated.InitRequestSchema,
+    build: () =>
+      serializeBatch(
+        serializeInitRequest({
+          bind_call: sampleBindRequest(),
+          output_schema: makeSchema([makeField("v", utf8(), true)]),
+          bind_opaque_data: new Uint8Array([0x01]),
+          projection_ids: [0, 1],
+          pushdown_filters: null,
+          join_keys: [],
+          split_tokens: [new Uint8Array([0x02])],
+          row_limit: 100,
+          phase: null,
+          finalize_state_id: new Uint8Array([0x03]),
+          execution_id: new Uint8Array([0x04]),
+          init_opaque_data: new Uint8Array([0x05]),
+          substream_id: new Uint8Array([0x06]),
+          order_by_column_name: "v",
+          order_by_direction: OrderByDirection.ASC,
+          order_by_null_order: OrderByNullOrder.NULLS_FIRST,
+          order_by_limit: 10n,
+          tablesample_percentage: 5,
+          tablesample_seed: 7n,
+        }),
+      ),
+    // `pushdown_filters` takes a decoded VgiBatch, which this fixture has no
+    // meaningful value for; `phase` is null on a producer init, and `join_keys`
+    // serializes an empty list rather than a null.
+    allowNull: ["pushdown_filters", "phase"],
+  },
+  {
+    // A response, not a request — but it sits in the same file, its schema was
+    // hand-written for the same reason, and it was already restated in two
+    // places once (see the note on GLOBAL_INIT_RESPONSE_SCHEMA).
+    origin: "GlobalInitResponse",
+    schema: generated.GlobalInitResponseSchema,
+    build: () =>
+      batchFromRowDict(
+        serializeGlobalInitResponse({
+          execution_id: new Uint8Array([0x01]),
+          opaque_data: new Uint8Array([0x02]),
+          max_workers: 4,
+        }),
+        GLOBAL_INIT_RESPONSE_SCHEMA,
+      ),
+  },
 ];
+
+/**
+ * A BindRequest with every scalar field populated.
+ *
+ * Not derived from the schema like `sampleRow`, because `serializeBindRequest`
+ * takes a typed BindRequest rather than a row dict — the values have to be real
+ * Arguments / Schema objects, not the schema-shaped placeholders.
+ */
+function sampleBindRequest(): BindRequest {
+  return {
+    function_name: "read_lines",
+    arguments: new Arguments([], new Map()),
+    function_type: FunctionType.TABLE,
+    input_schema: null,
+    settings: null,
+    secrets: null,
+    attach_opaque_data: null,
+    transaction_opaque_data: null,
+    resolved_secrets_provided: false,
+    at_unit: null,
+    at_value: null,
+    copy_from: null,
+    copy_to: null,
+    schema_name: "main",
+  };
+}
 
 /**
  * Records the generator emits that this SDK never builds, with the reason.
@@ -297,7 +439,35 @@ const CASES: WireRecordCase[] = [
  * coverage guard: adding a record to the protocol forces a deliberate choice
  * between covering it and writing down why not.
  */
-const NOT_BUILT_BY_TYPESCRIPT: Record<string, string> = {};
+const NOT_BUILT_BY_TYPESCRIPT: Record<string, string> = {
+  // Request records the CLIENT builds and this worker SDK only ever reads.
+  // Deserialization is by name and forgiving, so there is no builder here whose
+  // column set could drift — the schema these are validated against is the
+  // client's, not ours.
+  CatalogAttachRequest:
+    "read at attach; only the client builds it (deserializeAttachRequest reads by name)",
+  TableFunctionCardinalityRequest:
+    "read in deserializeCardinalityRequest; no builder — the worker answers with TableCardinality",
+  TableFunctionPlanRequest:
+    "read in deserializePlanRequest; no builder — the worker answers with PlanResponse",
+  AggregateBindRequest: "aggregate RPCs are client-initiated; the worker only decodes them",
+  AggregateUpdateRequest: "aggregate RPCs are client-initiated; the worker only decodes them",
+  AggregateCombineRequest: "aggregate RPCs are client-initiated; the worker only decodes them",
+  AggregateFinalizeRequest: "aggregate RPCs are client-initiated; the worker only decodes them",
+  AggregateDestructorRequest: "aggregate RPCs are client-initiated; the worker only decodes them",
+  TableBufferingProcessRequest:
+    "buffered-table RPCs are client-initiated; the worker only decodes them",
+  TableBufferingCombineRequest:
+    "buffered-table RPCs are client-initiated; the worker only decodes them",
+  TableBufferingDestructorRequest:
+    "buffered-table RPCs are client-initiated; the worker only decodes them",
+  // These two never appear as standalone records — only as the nested struct
+  // columns of BindRequest.copy_from / .copy_to — so there is no builder to
+  // give a WireRecordCase. `nested copy contexts match their own schemas`
+  // below checks them where they actually live.
+  CopyFromContext: "only ever a nested struct column of BindRequest.copy_from",
+  CopyToContext: "only ever a nested struct column of BindRequest.copy_to",
+};
 
 // --------------------------------------------------------------------------- //
 // Tests
@@ -388,4 +558,50 @@ describe("every generated record schema is covered", () => {
       expect(covered.has(origin), `"${origin}" is both covered by a case and excused in NOT_BUILT_BY_TYPESCRIPT`).toBe(false);
     }
   });
+});
+
+// --------------------------------------------------------------------------- //
+// The nested copy contexts
+// --------------------------------------------------------------------------- //
+
+describe("nested copy contexts match their own schemas", () => {
+  // CopyFromContext and CopyToContext are excused from the coverage guard above
+  // because nothing builds them as records. That excuse is only honest if the
+  // place they DO appear is checked, which is here: the struct type of
+  // BindRequest's copy_from / copy_to column must equal the generated schema
+  // for that context, field for field.
+  //
+  // A nested struct is the easiest thing in a schema to get wrong quietly — the
+  // outer record's column list looks right, and a child that has drifted only
+  // surfaces when a peer decodes it.
+  const cases = [
+    { column: "copy_from", schema: generated.CopyFromContextSchema },
+    { column: "copy_to", schema: generated.CopyToContextSchema },
+  ];
+
+  for (const c of cases) {
+    test(`BindRequest.${c.column}`, () => {
+      const outer = generated.BindRequestSchema.fields.find((f) => f.name === c.column);
+      expect(outer, `BindRequestSchema declares no ${c.column} column`).toBeDefined();
+
+      const children = (outer!.type as any).children ?? [];
+      expect(
+        children.map((f: any) => f.name),
+        `BindRequest.${c.column}: nested field names must match the ${c.column} schema`,
+      ).toEqual(c.schema.fields.map((f) => f.name));
+
+      for (let i = 0; i < c.schema.fields.length; i++) {
+        const want = c.schema.fields[i];
+        const got = children[i];
+        expect(
+          typeSignature(got.type),
+          `BindRequest.${c.column}.${want.name}: type must match`,
+        ).toBe(typeSignature(want.type));
+        expect(
+          got.nullable,
+          `BindRequest.${c.column}.${want.name}: nullability must match`,
+        ).toBe(want.nullable);
+      }
+    });
+  }
 });

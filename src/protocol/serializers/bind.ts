@@ -3,7 +3,7 @@
 // ArrowSerializableDataclass field declaration order so the format is
 // positional-compatible with the Python reader.
 
-import { type VgiSchema, schema, type VgiField, field, type VgiBatch, type VgiDataType, utf8, binary, bool, struct } from "../../arrow/index.js";
+import { type VgiSchema, schema, field, type VgiBatch, type VgiDataType, utf8, binary, bool, struct, dictionary, int16 } from "../../arrow/index.js";
 import { Arguments } from "../../arguments/arguments.js";
 import { FunctionType } from "../../types.js";
 import type { BindRequest, BindResponse, CopyFromContext, CopyToContext } from "../types.js";
@@ -16,51 +16,58 @@ import {
 import { toUint8Array, buildSingleRowBatch } from "./shared.js";
 import { serializeArguments, deserializeArguments } from "./arguments.js";
 
+// The BindRequest wire record. This must equal `BindRequestSchema` in
+// src/generated/vgi-protocol-schemas.ts EXACTLY — same columns, same order,
+// same types, same nullability — and src/__tests__/wire-schema-completeness.ts
+// asserts that it does.
+//
+// Exactly, not approximately. It is tempting to reason that every peer reads
+// these columns by name, so a nullable column with nothing to say can be left
+// out and a bind that opens no COPY scan can keep a shorter "legacy" shape.
+// That is what this file used to do, and it is wrong: vgi-rpc-go validates a
+// request against its declared parameter contract with `arrow.Schema.Equal`,
+// which is order-, name-, type- AND nullability-sensitive. A record short one
+// nullable column fails EVERY call of that shape, with a message that prints
+// two schemas in full and leaves the reader to diff them by eye.
+//
+// So `copy_from` and `copy_to` are always present and null on a non-COPY bind,
+// `schema_name` is LAST (not before them), and `function_type` is a dictionary
+// rather than plain utf8.
+const COPY_FROM_STRUCT_TYPE = struct([
+  field("format", utf8(), false),
+  field("file_path", utf8(), false),
+  field("expected_schema", binary(), false),
+]);
+
+const COPY_TO_STRUCT_TYPE = struct([
+  field("format", utf8(), false),
+  field("file_path", utf8(), false),
+]);
+
 const BIND_REQUEST_SCHEMA = schema([
   field("function_name", utf8(), false),
   field("arguments", binary(), false),
-  field("function_type", utf8(), false),
+  field("function_type", dictionary(utf8(), int16()), false),
   field("input_schema", binary(), true),
   field("settings", binary(), true),
   field("secrets", binary(), true),
   field("attach_opaque_data", binary(), true),
   field("transaction_opaque_data", binary(), true),
   field("resolved_secrets_provided", bool(), false),
-  // Time travel AT clause (additive, nullable, name-keyed -> wire-compatible).
-  // Both null when the scan has no AT clause. See BindRequest.at_unit.
+  // Time travel AT clause. Both null when the scan has no AT clause.
   field("at_unit", utf8(), true),
   field("at_value", utf8(), true),
+  // Null unless this bind opens a COPY scan / sink.
+  field("copy_from", COPY_FROM_STRUCT_TYPE, true),
+  field("copy_to", COPY_TO_STRUCT_TYPE, true),
   // Catalog schema owning the function. A worker may register one name in
   // several schemas, so the bare name is not a unique key — resolution is by
   // (schema_name, function_name). Null for callers with no catalog context.
   field("schema_name", utf8(), true),
 ]);
 
-// COPY ... FROM context — a nullable nested struct<format, file_path,
-// expected_schema>. Byte-for-byte the shape the C++ extension builds in
-// vgi_rpc_types.cpp (BuildBindRequest's copy_from branch) and the Python
-// BindRequest.copy_from field. Only appended to the serialized batch when the
-// bind actually opens a COPY scan, so ordinary scans keep the legacy wire shape.
-const COPY_FROM_STRUCT_TYPE = struct([
-  field("format", utf8(), false),
-  field("file_path", utf8(), false),
-  field("expected_schema", binary(), false),
-]);
-const COPY_FROM_FIELD = field("copy_from", COPY_FROM_STRUCT_TYPE, true);
-
-// COPY ... TO context — a nullable nested struct<format, file_path>.
-// Byte-for-byte the shape the C++ extension builds in vgi_rpc_types.cpp
-// (BuildBindRequest's copy_to branch) and the Python BindRequest.copy_to field.
-// Only appended to the serialized batch when the bind actually opens a COPY TO
-// sink, so ordinary scans keep the legacy wire shape.
-const COPY_TO_STRUCT_TYPE = struct([
-  field("format", utf8(), false),
-  field("file_path", utf8(), false),
-]);
-const COPY_TO_FIELD = field("copy_to", COPY_TO_STRUCT_TYPE, true);
-
 export function serializeBindRequest(req: BindRequest): VgiBatch {
-  const row: Record<string, any> = {
+  return buildSingleRowBatch(BIND_REQUEST_SCHEMA, {
     function_name: req.function_name,
     arguments: serializeArguments(req.arguments),
     function_type: req.function_type,
@@ -72,33 +79,18 @@ export function serializeBindRequest(req: BindRequest): VgiBatch {
     resolved_secrets_provided: req.resolved_secrets_provided ?? false,
     at_unit: req.at_unit ?? null,
     at_value: req.at_value ?? null,
+    copy_from: req.copy_from
+      ? {
+          format: req.copy_from.format,
+          file_path: req.copy_from.file_path,
+          expected_schema: serializeSchema(req.copy_from.expected_schema),
+        }
+      : null,
+    copy_to: req.copy_to
+      ? { format: req.copy_to.format, file_path: req.copy_to.file_path }
+      : null,
     schema_name: req.schema_name ?? null,
-  };
-  // Append the copy_from / copy_to struct columns only for COPY scans/sinks, so
-  // non-COPY binds serialize to the exact legacy shape (fields matched by name
-  // on the reader). At most one is present in practice, but both are handled
-  // generically so the wire stays additive either way.
-  const extraFields: VgiField[] = [];
-  if (req.copy_from) {
-    extraFields.push(COPY_FROM_FIELD);
-    row.copy_from = {
-      format: req.copy_from.format,
-      file_path: req.copy_from.file_path,
-      expected_schema: serializeSchema(req.copy_from.expected_schema),
-    };
-  }
-  if (req.copy_to) {
-    extraFields.push(COPY_TO_FIELD);
-    row.copy_to = {
-      format: req.copy_to.format,
-      file_path: req.copy_to.file_path,
-    };
-  }
-  if (extraFields.length > 0) {
-    const schemaWithCopy = schema([...BIND_REQUEST_SCHEMA.fields, ...extraFields]);
-    return buildSingleRowBatch(schemaWithCopy, row);
-  }
-  return buildSingleRowBatch(BIND_REQUEST_SCHEMA, row);
+  });
 }
 
 function parseCopyFromContext(raw: any): CopyFromContext | null {

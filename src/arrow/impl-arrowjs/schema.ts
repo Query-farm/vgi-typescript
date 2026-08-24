@@ -20,7 +20,9 @@ import {
   Float32 as A_Float32,
   Float64 as A_Float64,
   Utf8 as A_Utf8,
+  LargeUtf8 as A_LargeUtf8,
   Binary as A_Binary,
+  LargeBinary as A_LargeBinary,
   Decimal as A_Decimal,
   Date_ as A_Date,
   Time as A_Time,
@@ -134,7 +136,9 @@ export const float32 = (): VgiDataType => new A_Float32() as unknown as VgiDataT
 export const float64 = (): VgiDataType => new A_Float64() as unknown as VgiDataType;
 
 export const utf8 = (): VgiDataType => new A_Utf8() as unknown as VgiDataType;
+export const largeUtf8 = (): VgiDataType => new A_LargeUtf8() as unknown as VgiDataType;
 export const binary = (): VgiDataType => new A_Binary() as unknown as VgiDataType;
+export const largeBinary = (): VgiDataType => new A_LargeBinary() as unknown as VgiDataType;
 export const fixedSizeBinary = (byteWidth: number): VgiDataType =>
   new A_FixedSizeBinary(byteWidth) as unknown as VgiDataType;
 

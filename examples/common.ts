@@ -15,6 +15,33 @@ import {
 import { serializeSchema } from "../src/util/arrow/index.js";
 import { argumentSpecsToSchema } from "../src/arguments/argument-spec.js";
 import { scalarFunctions } from "./scalar.js";
+import * as os from "node:os";
+
+/**
+ * Scratch directory the multi-branch fixtures share with the `.test` files.
+ *
+ * The tests write their parquet / csv arms to `${VGI_TEST_BRANCH_DIR}` and this
+ * worker bakes the same paths into its branch definitions, so BOTH have to
+ * resolve it the same way — which is why every other SDK's fixture worker reads
+ * this exact variable (vgi-python worker.py, vgi-rust catalog_def.rs, vgi-go
+ * main.go, vgi-java Main.java).
+ *
+ * This one used to hard-code `/tmp`. On macOS the runner's default is
+ * `os.tmpdir()` — `/var/folders/...`, not `/tmp` — so the worker looked for
+ * files the tests had written somewhere else. It passed anyway for as long as a
+ * stale `/tmp/vgi_*.csv` from some earlier run happened to still be there, and
+ * broke the moment the machine cleared /tmp. Six multi-branch tests were
+ * effectively asserting against leftovers.
+ */
+const BRANCH_DIR = (process.env.VGI_TEST_BRANCH_DIR || os.tmpdir())
+  .replace(/\\/g, "/")
+  .replace(/\/+$/, "");
+
+/** A path inside the shared branch scratch directory. */
+function branchPath(name: string): string {
+  return `${BRANCH_DIR}/${name}`;
+}
+
 import {
   tableFunctions, resolveVersion, getVersionedSchema,
   resolveVersionedConstraintsVersion, getVersionedConstraintsSchema,
@@ -1092,7 +1119,7 @@ export function createExampleCatalog(base: ReadOnlyCatalogInterface): ReadOnlyCa
     // rff_parquet — single-file native read_parquet delegation.
     if (schemaName.toLowerCase() === "data" && name.toLowerCase() === "rff_parquet") {
       const args = serializeBatch(batchFromColumns(
-        { arg_0: ["/tmp/rff_seg.parquet"] },
+        { arg_0: [branchPath("rff_seg.parquet")] },
         new Schema([new Field("arg_0", new Utf8(), true)]),
       ));
       return { function_name: "read_parquet", arguments: args, required_extensions: [] };
@@ -1100,7 +1127,7 @@ export function createExampleCatalog(base: ReadOnlyCatalogInterface): ReadOnlyCa
     // rff_hive / rff_hive_mixed — native read_parquet over a Hive glob.
     if (schemaName.toLowerCase() === "data" && ["rff_hive", "rff_hive_mixed"].includes(name.toLowerCase())) {
       const args = serializeBatch(batchFromColumns(
-        { arg_0: ["/tmp/rff_hive/*/*/*.parquet"], hive_partitioning: [true] },
+        { arg_0: [branchPath("rff_hive/*/*/*.parquet")], hive_partitioning: [true] },
         new Schema([new Field("arg_0", new Utf8(), true), new Field("hive_partitioning", new Bool(), true)]),
       ));
       return { function_name: "read_parquet", arguments: args, required_extensions: [] };
@@ -1164,13 +1191,13 @@ export function createExampleCatalog(base: ReadOnlyCatalogInterface): ReadOnlyCa
         case "multi_branch_hetero":
           return buildScanBranchesResult([
             seq(50),
-            { functionName: "read_parquet", positionalArguments: [str("/tmp/vgi_hetero_branch.parquet")] },
+            { functionName: "read_parquet", positionalArguments: [str(branchPath("vgi_hetero_branch.parquet"))] },
           ]);
         case "multi_branch_iceberg":
           return buildScanBranchesResult(
             [
               seq(50),
-              { functionName: "iceberg_scan", positionalArguments: [str("/tmp/vgi_iceberg_branch")] },
+              { functionName: "iceberg_scan", positionalArguments: [str(branchPath("vgi_iceberg_branch"))] },
             ],
             ["iceberg"],
           );
@@ -1183,7 +1210,7 @@ export function createExampleCatalog(base: ReadOnlyCatalogInterface): ReadOnlyCa
             {
               functionName: "",
               formatName: "csv",
-              formatLocations: ["/tmp/vgi_format_branch.csv"],
+              formatLocations: [branchPath("vgi_format_branch.csv")],
               formatOptions: encodeFormatOptions({
                 delim: { value: "|", type: new Utf8() },
                 header: { value: true, type: new Bool() },
@@ -1215,13 +1242,13 @@ export function createExampleCatalog(base: ReadOnlyCatalogInterface): ReadOnlyCa
         case "multi_branch_nopushdown":
           return buildScanBranchesResult([
             seq(50),
-            { functionName: "read_csv_auto", positionalArguments: [str("/tmp/vgi_nopushdown_branch.csv")] },
+            { functionName: "read_csv_auto", positionalArguments: [str(branchPath("vgi_nopushdown_branch.csv"))] },
           ]);
         case "multi_branch_recon":
           return buildScanBranchesResult([
-            { functionName: "read_parquet", positionalArguments: [str("/tmp/vgi_recon_a_b.parquet")] },
-            { functionName: "read_parquet", positionalArguments: [str("/tmp/vgi_recon_b_a.parquet")] },
-            { functionName: "read_parquet", positionalArguments: [str("/tmp/vgi_recon_a_only.parquet")] },
+            { functionName: "read_parquet", positionalArguments: [str(branchPath("vgi_recon_a_b.parquet"))] },
+            { functionName: "read_parquet", positionalArguments: [str(branchPath("vgi_recon_b_a.parquet"))] },
+            { functionName: "read_parquet", positionalArguments: [str(branchPath("vgi_recon_a_only.parquet"))] },
           ]);
       }
     }

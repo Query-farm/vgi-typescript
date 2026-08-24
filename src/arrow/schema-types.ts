@@ -25,7 +25,9 @@ import type {
   IntType,
   FloatType,
   Utf8Type,
+  LargeUtf8Type,
   BinaryType,
+  LargeBinaryType,
   FixedSizeBinaryType,
   DecimalType,
   Date32Type, Date64Type,
@@ -83,7 +85,9 @@ export const float32 = (): FloatType => impl.float32() as unknown as FloatType;
 export const float64 = (): FloatType => impl.float64() as unknown as FloatType;
 
 export const utf8 = (): Utf8Type => impl.utf8() as unknown as Utf8Type;
+export const largeUtf8 = (): LargeUtf8Type => impl.largeUtf8() as unknown as LargeUtf8Type;
 export const binary = (): BinaryType => impl.binary() as unknown as BinaryType;
+export const largeBinary = (): LargeBinaryType => impl.largeBinary() as unknown as LargeBinaryType;
 export const fixedSizeBinary = (byteWidth: number): FixedSizeBinaryType =>
   impl.fixedSizeBinary(byteWidth) as unknown as FixedSizeBinaryType;
 

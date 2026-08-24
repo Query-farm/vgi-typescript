@@ -23,7 +23,9 @@ import {
   float32 as f_float32,
   float64 as f_float64,
   utf8 as f_utf8,
+  largeUtf8 as f_largeUtf8,
   binary as f_binary,
+  largeBinary as f_largeBinary,
   fixedSizeBinary as f_fixedSizeBinary,
   decimal as f_decimal,
   decimal128 as f_decimal128,
@@ -111,7 +113,9 @@ export const float32 = (): VgiDataType => f_float32() as unknown as VgiDataType;
 export const float64 = (): VgiDataType => f_float64() as unknown as VgiDataType;
 
 export const utf8 = (): VgiDataType => f_utf8() as unknown as VgiDataType;
+export const largeUtf8 = (): VgiDataType => f_largeUtf8() as unknown as VgiDataType;
 export const binary = (): VgiDataType => f_binary() as unknown as VgiDataType;
+export const largeBinary = (): VgiDataType => f_largeBinary() as unknown as VgiDataType;
 export const fixedSizeBinary = (stride: number): VgiDataType =>
   f_fixedSizeBinary(stride) as unknown as VgiDataType;
 

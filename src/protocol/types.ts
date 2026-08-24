@@ -143,6 +143,15 @@ export interface InitRequest {
    * init.
    */
   split_payloads?: Uint8Array[] | null;
+  /**
+   * A plain fetch limit, when the engine can supply one.
+   *
+   * Always null from DuckDB — `TableFunctionInitInput` carries no limit, and
+   * the Top-N `order_by_limit` means something different ("top K by that
+   * column"). DataFusion supplies a real value via `TableProvider::scan(limit)`.
+   * Over-producing is legal; the engine re-applies the limit above the scan.
+   */
+  row_limit: number | null;
   execution_id: Uint8Array | null;
   init_opaque_data: Uint8Array | null;
   /**
