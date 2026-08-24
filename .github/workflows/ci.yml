@@ -86,12 +86,22 @@ jobs:
           # throws on the `tableFromIPC` passthroughs every table-in-out exchange
           # produces — so it drops per-batch metadata, throws, or hangs. Measured
           # here: 23 of 295 files failed on this transport, all table-in-out /
-          # exchange, against 0 on arrow-js. @query-farm/vgi-rpc 0.15.3 makes that
-          # an enforced boundary: a worker refuses to start on stdio / AF_UNIX /
-          # TCP under flechette, so such a lane could only ever fail. Consequence
-          # worth knowing: the six http-excluded files below are never exercised
-          # against flechette. Revisit if flechette's assembleRecordBatch learns
-          # to walk those tables.
+          # exchange, against 0 on arrow-js.
+          #
+          # As of @query-farm/vgi-rpc 0.22.0 that boundary is NOT enforced by a
+          # refusal (an older note here claimed 0.15.3 made a flechette worker
+          # refuse to start on a byte-stream transport; it does not). It fails
+          # later and less legibly: IpcStreamReader decodes the request stream
+          # with a hard arrow-js import rather than the `#vgi-rpc-arrow`
+          # backend, so the worker rejects the FIRST method with a non-empty
+          # params schema — "expected type [object Object], got Binary". The
+          # http lane trips over this because it wires two *subprocess*
+          # versioned workers; ci/run-integration.sh's stdio_shim clears
+          # VGI_BUN_CONDITIONS for those. See the comment on stdio_shim.
+          #
+          # Consequence worth knowing: the six http-excluded files below are
+          # never exercised against flechette. Revisit if flechette's
+          # assembleRecordBatch learns to walk those tables.
     steps:
       - name: Checkout vgi-typescript
         uses: actions/checkout@v4

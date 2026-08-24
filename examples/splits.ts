@@ -40,13 +40,16 @@ interface Range {
 }
 
 interface SplitState {
-  // userState may hold only scalars, byte arrays and plain objects — see
-  // src/protocol/state-serializer.ts, which rejects arrays with "convert to a
-  // serializable form first". Only HTTP serialises userState (it rides the
-  // continuation cursor), so violating this is invisible on every other
-  // transport. It was invisible on HTTP too until producer turns started
-  // ending after each cycle, because a stream that completed in ONE turn never
-  // minted a cursor and so never serialised its state at all.
+  // Kept as JSON strings from when src/protocol/state-serializer.ts rejected
+  // arrays outright; it now infers an Arrow list, so `Range[]` and `number[]`
+  // would serialise directly. Left as-is deliberately — this fixture is the
+  // one that documents state serialisation, and a hand-encoded form is worth
+  // keeping visible for state Arrow genuinely cannot infer (a Map, a Date, a
+  // heterogeneous array). Only HTTP serialises userState (it rides the
+  // continuation cursor), so a state shape the serialiser rejects is invisible
+  // on every other transport. It was invisible on HTTP too until producer
+  // turns started ending after each cycle, because a stream that completed in
+  // ONE turn never minted a cursor and so never serialised its state at all.
   rangesJson: string;
   ordinalsJson: string;
   idx: number;

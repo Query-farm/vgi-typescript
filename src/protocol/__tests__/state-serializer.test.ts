@@ -48,8 +48,22 @@ describe("inferFieldType", () => {
     expect((type as any).children[1].name).toBe("b");
   });
 
-  test("Array throws", () => {
-    expect(() => inferFieldType([1, 2, 3])).toThrow(/arrays are not supported/);
+  test("array → List of the element type", () => {
+    const type = inferFieldType([1n, 2n, 3n]);
+    expect((type as any).children.length).toBe(1);
+    expect((type as any).children[0].name).toBe("item");
+  });
+
+  test("empty array → List (placeholder element type, never Null)", () => {
+    // A Null-typed list child is what an empty array "means", but flechette's
+    // column builder rejects it — so the placeholder must build on both
+    // backends. Asserted through a real round-trip below.
+    const type = inferFieldType([]);
+    expect((type as any).children.length).toBe(1);
+  });
+
+  test("heterogeneous array throws, naming both element types", () => {
+    expect(() => inferFieldType([1n, "a"])).toThrow(/must be homogeneous/);
   });
 
   test("Map throws", () => {
@@ -136,6 +150,91 @@ describe("arrowStateSerializer", () => {
     const bytes = arrowStateSerializer.serialize(state);
     const result = arrowStateSerializer.deserialize(bytes);
     expect(new Uint8Array(result.userState.blob)).toEqual(data);
+  });
+
+  // ------------------------------------------------------------------------
+  // Arrays. Every HTTP producer continuation serializes userState, so a
+  // producer holding an array in its state (a pending value buffer, a resolved
+  // key set, a row cursor) round-trips through here on every turn. Serialize
+  // then deserialize MUST give the same value back — a lossy round-trip
+  // silently resumes the producer with the wrong state instead of failing.
+  // ------------------------------------------------------------------------
+
+  test("bigint array userState round-trips", () => {
+    const state = { ...baseState, userState: { values: [1n, 2n, 3n], offset: 2 } };
+    const result = arrowStateSerializer.deserialize(arrowStateSerializer.serialize(state));
+    expect(result.userState.values).toEqual([1n, 2n, 3n]);
+    expect(result.userState.offset).toBe(2);
+  });
+
+  test("number array userState round-trips", () => {
+    const state = { ...baseState, userState: { values: [5, 50, 95] } };
+    const result = arrowStateSerializer.deserialize(arrowStateSerializer.serialize(state));
+    expect(result.userState.values).toEqual([5, 50, 95]);
+  });
+
+  test("string array with nulls round-trips", () => {
+    const state = { ...baseState, userState: { tags: ["i", null, "s"] } };
+    const result = arrowStateSerializer.deserialize(arrowStateSerializer.serialize(state));
+    expect(result.userState.tags).toEqual(["i", null, "s"]);
+  });
+
+  test("boolean array round-trips", () => {
+    const state = { ...baseState, userState: { flags: [true, false, true] } };
+    const result = arrowStateSerializer.deserialize(arrowStateSerializer.serialize(state));
+    expect(result.userState.flags).toEqual([true, false, true]);
+  });
+
+  test("empty array round-trips as an empty array", () => {
+    const state = { ...baseState, userState: { values: [], done: false } };
+    const result = arrowStateSerializer.deserialize(arrowStateSerializer.serialize(state));
+    expect(result.userState.values).toEqual([]);
+    expect(result.userState.done).toBe(false);
+  });
+
+  test("all-null array round-trips element-for-element", () => {
+    const state = { ...baseState, userState: { tags: [null, null] } };
+    const result = arrowStateSerializer.deserialize(arrowStateSerializer.serialize(state));
+    expect(result.userState.tags).toEqual([null, null]);
+  });
+
+  test("array of arrays round-trips (repeat_value's row buffer)", () => {
+    const state = { ...baseState, userState: { rows: [[1n, 2n], [3n, 4n]], offset: 0 } };
+    const result = arrowStateSerializer.deserialize(arrowStateSerializer.serialize(state));
+    expect(result.userState.rows).toEqual([[1n, 2n], [3n, 4n]]);
+  });
+
+  test("array of empty arrays round-trips", () => {
+    const state = { ...baseState, userState: { rows: [[], []] } };
+    const result = arrowStateSerializer.deserialize(arrowStateSerializer.serialize(state));
+    expect(result.userState.rows).toEqual([[], []]);
+  });
+
+  test("array of structs round-trips", () => {
+    const state = { ...baseState, userState: { items: [{ a: 1n }, { a: 2n }] } };
+    const result = arrowStateSerializer.deserialize(arrowStateSerializer.serialize(state));
+    expect(result.userState.items).toEqual([{ a: 1n }, { a: 2n }]);
+  });
+
+  test("array nested inside a struct round-trips", () => {
+    const state = { ...baseState, userState: { outer: { inner: [1n, 2n] } } };
+    const result = arrowStateSerializer.deserialize(arrowStateSerializer.serialize(state));
+    expect(result.userState.outer.inner).toEqual([1n, 2n]);
+  });
+
+  test("union_varargs-shaped state round-trips whole", () => {
+    // The exact state shape that broke the http lanes: three parallel arrays
+    // plus a done flag, serialized on the producer's continuation turn.
+    const userState = {
+      idx: [0n, 1n],
+      tags: ["i", "s"] as (string | null)[],
+      values: ["1", "x"],
+      done: false,
+    };
+    const result = arrowStateSerializer.deserialize(
+      arrowStateSerializer.serialize({ ...baseState, userState }),
+    );
+    expect(result.userState).toEqual(userState);
   });
 
   test("top-level fields round-trip correctly", () => {

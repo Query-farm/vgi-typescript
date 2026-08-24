@@ -14,7 +14,9 @@ import {
   bool,
   float64,
   utf8,
+  list as makeList,
   nullType,
+  typeSignature,
   isStruct,
   isBinary,
   serializeBatch,
@@ -40,6 +42,58 @@ export const EXCHANGE_STATE_SCHEMA = makeSchema([
 const TEXT_ENCODER = new TextEncoder();
 const TEXT_DECODER = new TextDecoder();
 
+/**
+ * Child field name for an inferred list. Arrow matches list children by
+ * position, not name, so this is cosmetic — but keeping it at Arrow's
+ * conventional `item` makes a dumped schema read the way people expect.
+ */
+const LIST_CHILD_NAME = "item";
+
+/**
+ * Element type for an array with nothing to infer from — `[]`, or an array
+ * whose every element is null.
+ *
+ * Deliberately NOT `nullType()`, which is the semantically honest choice:
+ * flechette's column builder rejects a Null-typed list child ("Unsupported
+ * data type: Null"), so a `[]` in userState would round-trip on arrow-js and
+ * throw on flechette. Utf8 builds on both backends and, with no non-null
+ * element to carry, is indistinguishable on the way back out: `[]` returns
+ * `[]` and `[null, null]` returns `[null, null]`.
+ */
+const emptyListElementType = (): VgiDataType => utf8();
+
+/**
+ * Infer the single Arrow element type an array's contents share.
+ *
+ * Arrow lists are homogeneous, so a genuinely mixed array (`[1, "a"]`,
+ * or structs with differing field sets) has no faithful representation and is
+ * rejected rather than silently coerced. Nulls are skipped — they are
+ * representable at any element type — and an array with no non-null element
+ * falls back to {@link emptyListElementType}.
+ */
+function inferElementType(values: any[]): VgiDataType {
+  let elementType: VgiDataType | null = null;
+  let elementSig = "";
+  for (const v of values) {
+    if (v === null || v === undefined) continue;
+    const t = inferFieldType(v);
+    const sig = typeSignature(t);
+    if (elementType === null) {
+      elementType = t;
+      elementSig = sig;
+      continue;
+    }
+    if (sig !== elementSig) {
+      throw new Error(
+        `inferFieldType: arrays in userState must be homogeneous; ` +
+          `found both '${elementSig}' and '${sig}' in the same array ` +
+          `(split the values into separate fields, or normalize them to one type)`,
+      );
+    }
+  }
+  return elementType ?? emptyListElementType();
+}
+
 /** Infer an Arrow DataType from a JS value for user state serialization. */
 export function inferFieldType(value: any): VgiDataType {
   if (value === null || value === undefined) return nullType();
@@ -52,7 +106,7 @@ export function inferFieldType(value: any): VgiDataType {
       if (value instanceof Uint8Array || value instanceof ArrayBuffer) return binary();
       if (ArrayBuffer.isView(value)) return binary();
       if (Array.isArray(value)) {
-        throw new Error(`inferFieldType: arrays are not supported in userState (convert to a serializable form first)`);
+        return makeList(field(LIST_CHILD_NAME, inferElementType(value), true));
       }
       if (value instanceof Map) {
         throw new Error(`inferFieldType: Map is not supported in userState (use a plain object instead)`);
