@@ -185,6 +185,79 @@ const substream_partial_sum = defineTableInOutFunction<Record<string, any>, Subs
 });
 
 // ============================================================================
+// 7b. multi_batch_finish — a streaming FINALIZE that emits MANY batches.
+//    Every other finalize fixture, in every SDK, emits exactly ONE batch — and
+//    one batch is the easy case: over HTTP a producer is strictly lock-step, so
+//    a single-batch flush completes inside its one turn and never needs a
+//    continuation. Two or more do, and that path was broken in two independent
+//    places (the Rust worker's flush producer and the DuckDB client's finalize
+//    drain) for as long as no fixture emitted a second batch.
+//
+//    It emits one batch per input row the substream saw: the first carries that
+//    substream's total, the rest carry 0. The split makes the two failure modes
+//    tell themselves apart — a wrong SUM means a batch's CONTENTS were lost, a
+//    wrong COUNT means a whole BATCH was, and a flush truncated after its first
+//    batch still sums correctly so only the count betrays it. Mirrors
+//    vgi-python's MultiBatchFinishFunction; backs
+//    vgi/test/sql/integration/table_in_out/multi_batch_finalize.test.
+// ============================================================================
+
+interface MultiBatchFinishState {
+  total: number;
+  rows: number;
+}
+
+const multi_batch_finish = defineTableInOutFunction<Record<string, any>, MultiBatchFinishState>({
+  name: "multi_batch_finish",
+  description: "Streaming finalize that emits one batch per input row (multi-batch flush)",
+  onBind: (params: TableInOutBindParams) => {
+    if (!params.bindCall.input_schema) {
+      throw new Error("input_schema is required");
+    }
+    const first = params.bindCall.input_schema.fields[0];
+    return { outputSchema: new Schema([new Field(first.name, new Int64(), true)]) };
+  },
+  initialState: () => ({ total: 0, rows: 0 }),
+  process: (
+    params: TableInOutProcessParams,
+    state: MultiBatchFinishState,
+    batch: RecordBatch,
+    out: OutputCollector,
+  ) => {
+    const col = batch.getChildAt(0);
+    if (col) {
+      for (let i = 0; i < col.length; i++) {
+        const v = col.get(i);
+        if (v === null || v === undefined) continue;
+        state.total += Number(v);
+      }
+    }
+    state.rows += batch.numRows;
+    // Accumulate only; emit nothing during processing (lockstep empty batch).
+    out.emit(emptyBatch(params.outputSchema));
+  },
+  finalize: (params: TableInOutProcessParams, states: MultiBatchFinishState[]) => {
+    // `states` are THIS substream's accumulated states; their totals and row
+    // counts sum to this substream's accumulation.
+    let total = 0;
+    let rows = 0;
+    for (const s of states) {
+      total += Number(s?.total ?? 0);
+      rows += Number(s?.rows ?? 0);
+    }
+    const name = params.outputSchema.fields[0].name;
+    const out: RecordBatch[] = [];
+    for (let i = 0; i < rows; i++) {
+      out.push(
+        batchFromColumns({ [name]: [BigInt(i === 0 ? total : 0)] }, params.outputSchema),
+      );
+    }
+    return out;
+  },
+  categories: ["testing", "aggregation"],
+});
+
+// ============================================================================
 // 8. filter_by_setting - Filters rows where value >= threshold setting
 // ============================================================================
 
@@ -969,6 +1042,7 @@ const cached_reval_double = defineRowTransformFunction({
 export const tableInOutFunctions: VgiFunction[] = [
   echo,
   repeat_inputs,
+  multi_batch_finish,
   substream_partial_sum,
   filter_by_setting,
   slow_cancellable_inout,
