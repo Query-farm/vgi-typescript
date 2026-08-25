@@ -157,7 +157,18 @@ EXTRA_HTTP_EXCLUDES ?=
 # Coverage gates — see the note in vgi/Makefile (VGI_EXPECTED_SKIPS). A lane
 # that stops running tests reports green, so a floor on executed tests and an
 # allow-list of expected skip reasons are what keep a silently-shrinking lane
-# from passing. TypeScript runs 293 today.
+# from passing.
+#
+# VGI_TEST_BRANCH_DIR is a scratch dir the multi_branch_* fixtures write into.
+# This lane never exported it, so seven tests skipped for an UNDECLARED reason
+# and the gate failed the run — on main, not just on a branch — while the
+# executed count sat at 288 under a floor of 290. The worker runs them fine
+# (measured 12 passed / 1 skipped, the skip being the iceberg case that wants
+# VGI_TEST_ICEBERG), so wire the var rather than allow-list the skip: seven
+# tests recovered instead of seven tests excused. vgi-java does the same.
+#
+# TypeScript runs 294 today.
+VGI_TEST_BRANCH_DIR ?= $(shell python3 -c 'import tempfile;print(tempfile.gettempdir())')
 TS_MIN_EXECUTED ?= 290
 COVERAGE_GATE := --min-executed $(TS_MIN_EXECUTED) \
 	--allow-skip 'require spatial' \
@@ -189,6 +200,7 @@ test:
 	export VGI_ATTACH_OPTIONS_WORKER="launch:$(ATTACH_OPTIONS_WORKER)"; \
 	export VGI_REQUIRE_LAUNCHER_TRANSPORT=1; \
 	export VGI_WORKER_IDLE_TIMEOUT=$(LAUNCHER_IDLE_TIMEOUT); \
+	export VGI_TEST_BRANCH_DIR="$(VGI_TEST_BRANCH_DIR)"; \
 	python3 scripts/run_tests.py -j $(JOBS) $(COVERAGE_GATE) $(LAUNCHER_TEST_PATTERNS) > $(TEST_LOG) 2>&1; \
 	rc=$$?; \
 	tail -n 20 $(TEST_LOG); \
