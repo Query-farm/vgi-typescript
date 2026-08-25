@@ -389,7 +389,21 @@ const crash_on_process = defineTableBufferingFunction<Record<string, any>, LogDr
   onBind: passthroughBind,
   process: () => {
     process.kill(process.pid, "SIGKILL");
-    return new Uint8Array(0); // unreachable
+    // Killing YOURSELF is not synchronous: the signal is delivered and the
+    // kernel tears the task down asynchronously, so RETURNING here hands that
+    // window to the framework, which then races to serialize and write the
+    // process response. How many bytes escape before the process actually dies
+    // decides what the client sees: nothing (the "RPC response stream EOF"
+    // these tests assert), a schema only, a truncated batch message, or the
+    // whole response — in which case the query SUCCEEDS with zero rows, which
+    // no expected-error assertion can ever be relaxed into passing. Measured in
+    // the Go SDK, whose fixture had the identical shape, that was a 23% failure
+    // rate (vgi-go 41f18d1). Park instead, so this worker can never write
+    // another byte. Atomics.wait blocks the thread outright rather than
+    // spinning; bounded so a platform where the kill silently fails reports an
+    // error instead of hanging the suite.
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5000);
+    throw new Error("crash_on_process: SIGKILL did not terminate the worker");
   },
   combine: async (_stateIds, params) => [params.executionId],
   initialFinalizeState: () => initBufDrain(),
