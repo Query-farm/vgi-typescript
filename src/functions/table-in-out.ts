@@ -3,7 +3,7 @@
 // Two-phase: INPUT phase receives and transforms batches,
 // FINALIZE phase emits final results.
 
-import { type VgiSchema, schema, type VgiField, type VgiDataType, type VgiBatch, nullType, withBatchMetadata } from "../arrow/index.js";
+import { type VgiSchema, schema, type VgiField, type VgiDataType, type VgiBatch, nullType, withBatchMetadata, serializeBatch, deserializeBatch } from "../arrow/index.js";
 import type { OutputCollector } from "@query-farm/vgi-rpc";
 import { DEFAULT_MAX_WORKERS, TableInOutPhase } from "../types.js";
 import type {
@@ -29,8 +29,16 @@ import {
   type PushdownFilters,
 } from "../filter-pushdown/index.js";
 import { FunctionStability } from "../types.js";
-import { BoundStorage, storage as defaultStorage } from "./storage.js";
+import { BoundStorage, storage as defaultStorage, FrameworkNS } from "./storage.js";
 import { serializeUserState, deserializeUserState } from "../protocol/state-serializer.js";
+
+/**
+ * State-log key the streaming FINALIZE drain uses within
+ * {@link FrameworkNS.STREAMING_FINALIZE}. There is exactly one flush per
+ * execution, so a single empty key is enough — matches vgi-python's
+ * `_STREAMING_FINALIZE_KEY = b""`.
+ */
+const STREAMING_FINALIZE_KEY = new Uint8Array(0);
 
 // ============================================================================
 // Table In-Out parameter bundles (reuse table function's)
@@ -306,18 +314,41 @@ export function defineTableInOutFunction<
       const phase = request.phase;
 
       if (phase === TableInOutPhase.FINALIZE) {
-        // FINALIZE phase: producer mode.
-        // The actual collect+finalize work is deferred into the first
-        // producerFn call so the (now-async) FunctionStorage can be awaited
-        // there. Storing the materialized batches on the per-call state.
+        // FINALIZE phase: producer mode, drained by cursor out of the
+        // execution-scoped state log.
+        //
+        // Over HTTP a producer stream is strictly LOCK-STEP: at most one data
+        // batch per response, after which the worker hands back a continuation
+        // token and the client comes back for the next batch. A finalize()
+        // returning N batches therefore has to survive N-1 continuations — and
+        // a continuation rebuilds these handlers from scratch, with nothing of
+        // the previous turn left in memory.
+        //
+        // The prior shape kept the materialized batches on the handler object
+        // (a `batches` field beside `state`), and only `state` rides the state
+        // token. So the continuation found `batches == null` and re-ran the
+        // user's finalize() — whose inputs `boundStorage.collect()` had already
+        // DESTRUCTIVELY drained (DELETE ... RETURNING). Second call: no states,
+        // zero batches, immediate finish. The stream truncated after its first
+        // batch, silently, and only over HTTP (a byte-stream transport runs
+        // every tick inside one process, so the field survived).
+        //
+        // Same fix as vgi-python's BufferedFinalizeState: call the user's
+        // finalize() exactly ONCE, append each returned batch's IPC bytes to
+        // the state log under FrameworkNS.STREAMING_FINALIZE, and have every
+        // tick drain exactly ONE row past a cursor. Only the POSITION rides the
+        // state token, never the rows. finalize() is never re-run: its contract
+        // is to DRAIN accumulated state, so a second call is not obliged to
+        // return the same rows.
+        const finalizeLogKey = STREAMING_FINALIZE_KEY;
         return {
           outputSchema,
-          producerInit: () => ({ state: { batchIdx: 0 }, batches: null as VgiBatch[] | null }),
+          producerInit: () => ({ state: { cursor: -1, materialized: false } }),
           producerFn: async (
-            pState: { state: { batchIdx: number }; batches: VgiBatch[] | null },
+            pState: { state: { cursor: number; materialized: boolean } },
             out: OutputCollector
           ) => {
-            if (pState.batches == null) {
+            if (!pState.state.materialized) {
               const finalizeStates: TState[] = [];
               if (accumulatedState != null) {
                 finalizeStates.push(accumulatedState as TState);
@@ -336,19 +367,34 @@ export function defineTableInOutFunction<
                     : (null as TState),
                 );
               }
-              pState.batches = config.finalize
+              const batches: VgiBatch[] = config.finalize
                 ? await config.finalize(processParams, finalizeStates)
                 : [];
+              for (const batch of batches) {
+                await boundStorage.stateAppend(
+                  FrameworkNS.STREAMING_FINALIZE,
+                  finalizeLogKey,
+                  serializeBatch(batch),
+                );
+              }
+              // Set before the first emit so the flag is part of the userState
+              // this turn serializes — a continuation must never re-run
+              // finalize(), even when the log came back empty.
+              pState.state.materialized = true;
             }
-            if (pState.state.batchIdx >= pState.batches.length) {
+            const rows = await boundStorage.stateLogScan(
+              FrameworkNS.STREAMING_FINALIZE,
+              finalizeLogKey,
+              pState.state.cursor,
+              1,
+            );
+            if (rows.length === 0) {
               out.finish();
               return;
             }
-            out.emit(pState.batches[pState.state.batchIdx]);
-            pState.state.batchIdx++;
-            if (pState.state.batchIdx >= pState.batches.length) {
-              out.finish();
-            }
+            const [logId, bytes] = rows[0];
+            out.emit(deserializeBatch(bytes) as unknown as VgiBatch);
+            pState.state.cursor = logId;
           },
         };
       }
