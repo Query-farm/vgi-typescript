@@ -1,4 +1,20 @@
-# @query-farm/vgi
+<p align="center">
+  <img src="https://raw.githubusercontent.com/Query-farm/vgi-typescript/main/docs/vgi-logo.png" alt="Vector Gateway Interface logo" width="320">
+</p>
+
+<h1 align="center">VGI for TypeScript</h1>
+
+<p align="center">
+  Add your own functions and tables to DuckDB with TypeScript and Apache Arrow.<br>
+  Built by <a href="https://query.farm">🚜 Query.Farm</a>
+</p>
+
+<p align="center">
+  <a href="https://github.com/Query-farm/vgi-typescript/actions/workflows/ci.yml"><img src="https://github.com/Query-farm/vgi-typescript/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://www.npmjs.com/package/@query-farm/vgi"><img src="https://img.shields.io/npm/v/%40query-farm%2Fvgi" alt="npm"></a>
+  <a href="https://www.npmjs.com/package/@query-farm/vgi"><img src="https://img.shields.io/npm/dm/%40query-farm%2Fvgi" alt="npm downloads"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-Query%20Farm%20Source--Available-blue" alt="License"></a>
+</p>
 
 TypeScript framework for extending [DuckDB](https://duckdb.org) with user-defined
 functions written in TypeScript, served to DuckDB over the **Vector Gateway
