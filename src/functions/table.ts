@@ -546,6 +546,20 @@ export function defineTableFunction<
         atValue: request.bind_call.at_value ?? undefined,
       };
 
+      if (request.phase != null) {
+        // Mirror image of the table-in-out guard: this is a plain producer
+        // (no input stream), but the caller sent a table-in-out init phase --
+        // i.e. drove it via table_in_out_function() instead of
+        // table_function(). Reject immediately rather than silently ignoring
+        // the phase/input stream and running as an ordinary producer while
+        // the caller is left feeding batches nobody reads.
+        throw new Error(
+          `${config.name}: is a plain table function (it takes no input row ` +
+            `stream) but was called with an init phase set -- call it via ` +
+            `table_function(), not table_in_out_function().`,
+        );
+      }
+
       const state = config.initialState
         ? config.initialState(processParams)
         : (null as TState);
