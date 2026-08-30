@@ -399,7 +399,23 @@ export function defineTableInOutFunction<
         };
       }
 
-      // INPUT phase: exchange mode
+      // INPUT phase: exchange mode. Any phase other than FINALIZE falls
+      // through to here, including a missing/undefined phase -- i.e. a
+      // caller that drove this function via table_function() instead of
+      // table_in_out_function(input=...). Reject that immediately rather
+      // than silently degrading to an empty inputSchema below, which
+      // disables the transport layer's own schema-conformance check and
+      // leaves both sides waiting on each other forever (confirmed live: a
+      // non-terminating exchange/continuation loop against a real deployed
+      // worker, not an error).
+      if (request.bind_call.input_schema == null) {
+        throw new Error(
+          `${config.name}: is a table-in-out function (it requires an input row ` +
+            `stream) but no input schema was supplied -- call it via ` +
+            `table_in_out_function(input=...), not table_function().`,
+        );
+      }
+
       const state = config.initialState
         ? config.initialState(processParams)
         : (null as TState);
@@ -418,7 +434,7 @@ export function defineTableInOutFunction<
 
       return {
         outputSchema,
-        inputSchema: request.bind_call.input_schema ?? undefined,
+        inputSchema: request.bind_call.input_schema,
         exchangeInit: () => ({ state, processParams }),
         exchangeFn: async (
           eState: {
@@ -874,9 +890,26 @@ export function defineRowTransformFunction<
         );
       }
 
+      if (request.bind_call.input_schema == null) {
+        // A caller drove this function via table_function() (or the bare
+        // producer path) instead of table_in_out_function(input=...) -- a
+        // blended row-transform function's positional args ARE its per-row
+        // input columns, so it cannot run with no input stream at all. Left
+        // unguarded, this doesn't fail here -- it silently degrades to an
+        // empty inputSchema, which disables the transport layer's own
+        // schema-conformance check downstream and leaves both sides waiting
+        // on each other forever: confirmed live, a non-terminating exchange/
+        // continuation loop against a real deployed worker, not an error.
+        throw new Error(
+          `${config.name}: is a table-in-out function (its positional args are ` +
+            `per-row input columns) but no input schema was supplied -- call it ` +
+            `via table_in_out_function(input=...), not table_function().`,
+        );
+      }
+
       return {
         outputSchema,
-        inputSchema: request.bind_call.input_schema ?? undefined,
+        inputSchema: request.bind_call.input_schema,
         exchangeInit: () => ({ state: null, processParams }),
         exchangeFn: async (
           eState: { state: null; processParams: RowTransformProcessParams<TArgs> },
