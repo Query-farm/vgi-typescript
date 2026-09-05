@@ -120,20 +120,28 @@ export function formatRange(
 /**
  * Encode raw {@link ArgumentConstraints} into the pre-computed constraint
  * fields of an {@link ArgumentSpec} (presence-only — absent constraints yield
- * no field). Mirrors Python's `_constraint_kwargs`.
+ * no field). `runtimeDefault`, when present, is authoritative for
+ * `defaultJson`, keeping runtime binding and discovery metadata in sync.
+ * Mirrors Python's `_constraint_kwargs`.
  */
 export function constraintSpecFields(
   constraints: ArgumentConstraints | undefined,
+  runtimeDefault?: unknown,
 ): Pick<ArgumentSpec, "defaultJson" | "choicesJson" | "rangeNotation" | "pattern"> {
   const fields: Pick<
     ArgumentSpec,
     "defaultJson" | "choicesJson" | "rangeNotation" | "pattern"
   > = {};
-  if (constraints === undefined) return fields;
-
-  if ("default" in constraints && constraints.default !== undefined) {
+  // argDefaults is the runtime source of truth. Surface that same value to
+  // discovery so callers do not have to duplicate it as
+  // argConstraints[name].default. Keep the latter as a backwards-compatible
+  // discovery-only fallback for APIs that do not have a runtime default.
+  if (runtimeDefault !== undefined) {
+    fields.defaultJson = safeJson(runtimeDefault);
+  } else if (constraints !== undefined && "default" in constraints && constraints.default !== undefined) {
     fields.defaultJson = safeJson(constraints.default);
   }
+  if (constraints === undefined) return fields;
   if (constraints.choices !== undefined) {
     fields.choicesJson = safeJson([...constraints.choices]);
   }

@@ -18,8 +18,14 @@ import type {
   StreamHandlers,
   FunctionExample,
 } from "./types.js";
-import type { ArgumentSpec } from "../arguments/argument-spec.js";
-import { assertArrowType, assertArrowTypes, narrowArgValue } from "../arguments/argument-spec.js";
+import type { ArgumentConstraints, ArgumentSpec } from "../arguments/argument-spec.js";
+import {
+  assertArrowType,
+  assertArrowTypes,
+  constraintSpecFields,
+  narrowArgValue,
+  validateConstConstraints,
+} from "../arguments/argument-spec.js";
 import { batchToScalarDict, batchToSecretDict, projectSchema, projectBatch, emptyBatch, safeNumber } from "../util/arrow/index.js";
 import { CACHE_IF_MODIFIED_SINCE_KEY, CACHE_IF_NONE_MATCH_KEY } from "../cache-control.js";
 import {
@@ -100,6 +106,10 @@ export interface TableInOutConfig<
   namedArgs?: Record<string, VgiDataType>;
   /** Argument defaults */
   argDefaults?: Record<string, any>;
+  /** Argument descriptions keyed by argument name. */
+  argDocs?: Record<string, string>;
+  /** Discovery constraints, also enforced for scalar arguments at bind. */
+  argConstraints?: Record<string, ArgumentConstraints>;
   /** Bind: default passes through input schema. May be async. */
   onBind?: (params: TableInOutBindParams<TArgs>) =>
     | { outputSchema: VgiSchema; opaqueData?: Uint8Array }
@@ -155,6 +165,11 @@ export function defineTableInOutFunction<
         name,
         position: posIdx++,
         arrowType: type,
+        doc: config.argDocs?.[name],
+        ...constraintSpecFields(
+          config.argConstraints?.[name],
+          config.argDefaults?.[name],
+        ),
       });
     }
   }
@@ -173,6 +188,11 @@ export function defineTableInOutFunction<
         name,
         position: name, // string position = named arg
         arrowType: type,
+        doc: config.argDocs?.[name],
+        ...constraintSpecFields(
+          config.argConstraints?.[name],
+          config.argDefaults?.[name],
+        ),
       });
     }
   }
@@ -206,6 +226,8 @@ export function defineTableInOutFunction<
       // Arrow Int64 arrives as bigint. Narrow when lossless, keep the
       // bigint when not — see narrowArgValue.
       val = narrowArgValue(val);
+      const constraints = config.argConstraints?.[spec.name];
+      if (constraints) validateConstConstraints(spec.name, constraints, val);
       args[spec.name] = val;
     }
     return args as TArgs;
@@ -683,6 +705,8 @@ export interface RowTransformConfig<TArgs = Record<string, any>> {
   argDefaults?: Record<string, any>;
   /** Per-argument descriptions keyed by arg name (surfaced as `vgi_doc`). */
   argDocs?: Record<string, string>;
+  /** Discovery constraints, also enforced for named scalar arguments at bind. */
+  argConstraints?: Record<string, ArgumentConstraints>;
   /** Bind: return the output schema. The input schema (the declared per-row
    *  columns, typed by the C++ bind) is on `params.bindCall.input_schema`. */
   onBind: (params: TableInOutBindParams<TArgs>) =>
@@ -749,6 +773,7 @@ export function defineRowTransformFunction<
         position: posIdx++,
         arrowType: type,
         doc: config.argDocs?.[name],
+        ...constraintSpecFields(config.argConstraints?.[name]),
       });
     }
   }
@@ -759,6 +784,7 @@ export function defineRowTransformFunction<
       arrowType: config.varargs.type,
       isVarargs: true,
       doc: config.varargs.doc ?? config.argDocs?.[config.varargs.name],
+      ...constraintSpecFields(config.argConstraints?.[config.varargs.name]),
     });
   }
   if (config.namedArgs) {
@@ -768,6 +794,10 @@ export function defineRowTransformFunction<
         position: name,
         arrowType: type,
         doc: config.argDocs?.[name],
+        ...constraintSpecFields(
+          config.argConstraints?.[name],
+          config.argDefaults?.[name],
+        ),
       });
     }
   }
@@ -802,6 +832,8 @@ export function defineRowTransformFunction<
           : undefined;
       let val = request.arguments.get(spec.position, defaultVal ?? null);
       val = narrowArgValue(val);
+      const constraints = config.argConstraints?.[spec.name];
+      if (constraints) validateConstConstraints(spec.name, constraints, val);
       args[spec.name] = val;
     }
     return args as TArgs;

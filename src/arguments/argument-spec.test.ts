@@ -121,6 +121,18 @@ describe("constraintSpecFields (raw -> encoded)", () => {
     expect(constraintSpecFields({ default: true })).toEqual({ defaultJson: "true" });
   });
 
+  test("runtime default is surfaced without a constraint declaration", () => {
+    expect(constraintSpecFields(undefined, "metric")).toEqual({
+      defaultJson: '"metric"',
+    });
+  });
+
+  test("runtime default is authoritative when both forms are present", () => {
+    expect(constraintSpecFields({ default: "legacy" }, "runtime")).toEqual({
+      defaultJson: '"runtime"',
+    });
+  });
+
   test("undefined default is omitted (required arg)", () => {
     expect(constraintSpecFields({}).defaultJson).toBeUndefined();
   });

@@ -39,8 +39,13 @@ import type {
   StreamHandlers,
   FunctionExample,
 } from "./types.js";
-import type { ArgumentSpec } from "../arguments/argument-spec.js";
-import { assertArrowType, assertArrowTypes } from "../arguments/argument-spec.js";
+import type { ArgumentConstraints, ArgumentSpec } from "../arguments/argument-spec.js";
+import {
+  assertArrowType,
+  assertArrowTypes,
+  constraintSpecFields,
+  validateConstConstraints,
+} from "../arguments/argument-spec.js";
 import { batchToScalarDict, batchToSecretDict, projectSchema } from "../util/arrow/index.js";
 import { batchFromColumns, readCanonicalValue } from "../arrow/index.js";
 import { codecFor } from "../arrow/codec/registry.js";
@@ -107,6 +112,10 @@ export interface TableBufferingConfig<
   args?: Record<string, VgiDataType>;
   namedArgs?: Record<string, VgiDataType>;
   argDefaults?: Record<string, any>;
+  /** Argument descriptions keyed by argument name. */
+  argDocs?: Record<string, string>;
+  /** Discovery constraints, also enforced for scalar arguments at bind. */
+  argConstraints?: Record<string, ArgumentConstraints>;
   /** Bind: default passes through input schema. May be async. Return non-empty
    *  `lookupSecret*` lists on the first pass to request DuckDB secrets; the
    *  connector then re-binds with `resolvedSecretsProvided` and the resolved
@@ -196,7 +205,16 @@ export function defineTableBufferingFunction<
   let posIdx = 0;
   if (config.args) {
     for (const [name, type] of Object.entries(config.args)) {
-      specs.push({ name, position: posIdx++, arrowType: type });
+      specs.push({
+        name,
+        position: posIdx++,
+        arrowType: type,
+        doc: config.argDocs?.[name],
+        ...constraintSpecFields(
+          config.argConstraints?.[name],
+          config.argDefaults?.[name],
+        ),
+      });
     }
   }
   specs.push({
@@ -207,7 +225,16 @@ export function defineTableBufferingFunction<
   });
   if (config.namedArgs) {
     for (const [name, type] of Object.entries(config.namedArgs)) {
-      specs.push({ name, position: name, arrowType: type });
+      specs.push({
+        name,
+        position: name,
+        arrowType: type,
+        doc: config.argDocs?.[name],
+        ...constraintSpecFields(
+          config.argConstraints?.[name],
+          config.argDefaults?.[name],
+        ),
+      });
     }
   }
 
@@ -242,6 +269,8 @@ export function defineTableBufferingFunction<
           : undefined;
       let val = request.arguments.get(spec.position, defaultVal);
       if (typeof val === "bigint") val = Number(val);
+      const constraints = config.argConstraints?.[spec.name];
+      if (constraints) validateConstConstraints(spec.name, constraints, val);
       args[spec.name] = val;
     }
     return args as TArgs;

@@ -356,7 +356,10 @@ export function defineAggregate<TArgs = Record<string, any>, TState = any>(
         isAnyType,
         isVarargs: varargsSet.has(name),
         isConst,
-        ...constraintSpecFields(config.argConstraints?.[name]),
+        ...constraintSpecFields(
+          config.argConstraints?.[name],
+          config.argDefaults?.[name],
+        ),
       });
     }
   }

@@ -373,7 +373,10 @@ export function defineTableFunction<
         isAnyType: isAny,
         isVarargs: varargsSet.has(name),
         doc: config.argDocs?.[name],
-        ...constraintSpecFields(config.argConstraints?.[name]),
+        ...constraintSpecFields(
+          config.argConstraints?.[name],
+          config.argDefaults?.[name],
+        ),
       });
     }
   }
