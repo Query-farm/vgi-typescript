@@ -46,19 +46,19 @@ import {
 } from "./shared.js";
 
 export function registerAggregateMethods(protocol: Protocol, registry: FunctionRegistry): void {
-  // `schemaName` scopes resolution to the schema the caller named. Every
+  // `schemaPath` scopes resolution to the schema the caller named. Every
   // aggregate RPC carries it (protocol 1.2.0), so an aggregate name declared in
   // two schemas dispatches to the one the request names rather than colliding
   // on the flat by-name index. `null` (no schema) keeps the cross-schema lookup.
   function resolveAggregate(
     name: string,
-    schemaName?: string | null,
+    schemaPath?: string[] | null,
   ): AggregateFunctionConfig<any, any> {
     const func = registry.get(name, {
       arguments: new Arguments(),
       inputSchema: null,
       isScalar: false,
-      schemaName: schemaName ?? null,
+      schemaPath: schemaPath ?? null,
     }) as any;
     if (!func || func.kind !== "aggregate") {
       throw new Error(`Function '${name}' is not an aggregate function`);
@@ -75,7 +75,7 @@ export function registerAggregateMethods(protocol: Protocol, registry: FunctionR
     handler: async (params) => {
       const innerParams = unwrapRequest(params.request);
       const functionName: string = innerParams.function_name;
-      const cfg = resolveAggregate(functionName, innerParams.schema_name ?? null);
+      const cfg = resolveAggregate(functionName, innerParams.schema_path ?? null);
       const argBytes = toUint8Array(innerParams.arguments);
       const args = deserializeArguments(argBytes);
       const inputSchema = innerParams.input_schema
@@ -126,7 +126,7 @@ export function registerAggregateMethods(protocol: Protocol, registry: FunctionR
       const innerParams = unwrapRequest(params.request);
       const functionName: string = innerParams.function_name;
       const executionId = toUint8Array(innerParams.execution_id);
-      const cfg = resolveAggregate(functionName, innerParams.schema_name ?? null);
+      const cfg = resolveAggregate(functionName, innerParams.schema_path ?? null);
       const batch = readSingleBatch(toUint8Array(innerParams.input_batch));
       if (!batch || batch.numRows === 0) return wrapResult({}, makeSchema([]));
 
@@ -193,7 +193,7 @@ export function registerAggregateMethods(protocol: Protocol, registry: FunctionR
       const innerParams = unwrapRequest(params.request);
       const functionName: string = innerParams.function_name;
       const executionId = toUint8Array(innerParams.execution_id);
-      const cfg = resolveAggregate(functionName, innerParams.schema_name ?? null);
+      const cfg = resolveAggregate(functionName, innerParams.schema_path ?? null);
       const batch = readSingleBatch(toUint8Array(innerParams.merge_batch));
       if (!batch || batch.numRows === 0) return wrapResult({}, makeSchema([]));
 
@@ -242,7 +242,7 @@ export function registerAggregateMethods(protocol: Protocol, registry: FunctionR
       const innerParams = unwrapRequest(params.request);
       const functionName: string = innerParams.function_name;
       const executionId = toUint8Array(innerParams.execution_id);
-      const cfg = resolveAggregate(functionName, innerParams.schema_name ?? null);
+      const cfg = resolveAggregate(functionName, innerParams.schema_path ?? null);
       const outputSchema = deserializeSchema(toUint8Array(innerParams.output_schema));
       const gidBatch = readSingleBatch(toUint8Array(innerParams.group_ids_batch));
       const groupIds: bigint[] = [];

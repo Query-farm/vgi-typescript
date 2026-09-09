@@ -74,7 +74,7 @@ class VersionedCatalog extends CatalogInterface {
     return 1;
   }
   schemas(_attachOpaqueData: AttachOpaqueData, _transactionOpaqueData?: TransactionOpaqueData): SchemaInfo[] {
-    return [{ attach_opaque_data: new Uint8Array(0), name: "main", comment: null, tags: {} }];
+    return [{ attach_opaque_data: new Uint8Array(0), path: ["main"], comment: null, tags: {} }];
   }
 }
 

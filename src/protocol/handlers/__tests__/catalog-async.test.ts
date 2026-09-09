@@ -54,15 +54,15 @@ class AsyncStubCatalog extends CatalogInterface {
   }
   async schemas(attachOpaqueData: AttachOpaqueData): Promise<SchemaInfo[]> {
     await Promise.resolve();
-    return [{ attach_opaque_data: attachOpaqueData, name: "main", comment: null, tags: {} }];
+    return [{ attach_opaque_data: attachOpaqueData, path: ["main"], comment: null, tags: {} }];
   }
-  override async tableGet(attachOpaqueData: AttachOpaqueData, schemaName: string, name: string): Promise<TableInfo | null> {
+  override async tableGet(attachOpaqueData: AttachOpaqueData, schemaPath: string[], name: string): Promise<TableInfo | null> {
     await Promise.resolve();
     return {
       comment: null,
       tags: {},
       name,
-      schema_name: schemaName,
+      schema_path: schemaPath,
       columns: serializeSchema(schema([field("x", int64(), true)])),
       not_null_constraints: [],
       unique_constraints: [],
@@ -109,7 +109,7 @@ describe("catalog dispatchers await async overrides", () => {
   test("catalog_table_get returns the resolved TableInfo", async () => {
     const m = findHandler("catalog_table_get");
     const result = await m.handler(
-      { attach_opaque_data: new Uint8Array([1, 2, 3]), schema_name: "main", name: "stub_table", at_unit: null, at_value: null, transaction_opaque_data: null },
+      { attach_opaque_data: new Uint8Array([1, 2, 3]), schema_path: ["main"], name: "stub_table", at_unit: null, at_value: null, transaction_opaque_data: null },
       {} as any,
     );
     // The handler awaited tableGet and called encodeTableInfo on the resolved

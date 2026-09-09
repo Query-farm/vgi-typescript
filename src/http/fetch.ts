@@ -18,6 +18,9 @@ import {
   type DispatchHook,
   type DispatchInfo,
   type HookToken,
+  type PeerAuthenticationPolicy,
+  type PeerIdentityProvider,
+  type PeerResolutionOptions,
   type Protocol,
 } from "@query-farm/vgi-rpc";
 import { arrowStateSerializer } from "../protocol/state-serializer.js";
@@ -76,6 +79,12 @@ export interface VgiFetchOptions {
    *  and the identity it returns is the one the worker seals `attach_opaque_data`
    *  and split tokens under. */
   authenticate?: AuthenticateFn;
+  /** Off-wire transport identities, including a trusted Iroh HTTP bridge. */
+  peerIdentityProviders?: readonly PeerIdentityProvider[];
+  /** Policy composing peer evidence with application authentication. */
+  peerAuthenticationPolicy?: PeerAuthenticationPolicy;
+  /** Host adapter supplying the physical peer and multiplicity-preserving headers. */
+  peerResolutionContext?: (request: Request) => PeerResolutionOptions | Promise<PeerResolutionOptions>;
 }
 
 // ---------------------------------------------------------------------------
@@ -207,6 +216,9 @@ export function createVgiFetch(opts: VgiFetchOptions): (req: Request) => Promise
     // can still open the identity-bound attach and split envelopes.
     dispatchHook: REQUEST_AUTH_DISPATCH_HOOK,
     authenticate: opts.authenticate,
+    peerIdentityProviders: opts.peerIdentityProviders,
+    peerAuthenticationPolicy: opts.peerAuthenticationPolicy,
+    peerResolutionContext: opts.peerResolutionContext,
     // `null` is the explicit opt-out; `undefined` (omitted) means "*".
     corsOrigins: opts.corsOrigins === null ? undefined : (opts.corsOrigins ?? "*"),
     repositoryUrl: opts.repositoryUrl,

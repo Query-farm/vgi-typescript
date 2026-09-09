@@ -152,6 +152,11 @@ mkdir -p "$STAGE/test/sql/integration"
     awk -v http="$AWK_HTTP" -v install="$PREPROCESS" \
         -f "$HERE/preprocess-require.awk" "$f" > "$STAGE/test/sql/integration/$f"
   done )
+# Database-worker packaging tests resolve their fixture relative to the staged
+# test root, so stage the shared support assets alongside the SQL files.
+if [ -d "$VGI_SRC/test/support" ]; then
+  cp -R "$VGI_SRC/test/support" "$STAGE/test/support"
+fi
 STAGED=$(find "$STAGE/test/sql/integration" -name '*.test' | wc -l | tr -d ' ')
 echo "Staged $STAGED test files."
 
@@ -271,6 +276,9 @@ EXPECTED_SKIP_REASONS=(
   'require-env VGI_BAD_PROTOCOL_WORKER'      # advertises an incompatible protocol_version
   'require-env VGI_BAD_ENUM_WORKER'          # advertises a malformed ENUM
   'require-env VGI_RULES_WORKER'             # vgi-rust multibatch repro worker
+  'require-env VGI_DATABASE_BUN_WORKER'      # external database-worker fixture, not provisioned here
+  'require-env VGI_DATABASE_PYTHON_WORKER'   # external database-worker fixture, not provisioned here
+  'require-env VGI_DATABASE_RUST_WORKER'     # external database-worker fixture, not provisioned here
   'require-env VGI_WORKER_SUPPORTS_DYNAMIC_CODE'  # dynamic-code registration, not implemented
   # Infrastructure this repo's CI deliberately does not stand up.
   'require-env VGI_DOCKER_IMAGE'             # containerised worker lane
@@ -310,6 +318,7 @@ case "$TRANSPORT" in
     ;;
   stdio)
     EXPECTED_SKIP_REASONS+=('require-env VGI_HTTP_TRANSPORT')
+    EXPECTED_SKIP_REASONS+=('require-env VGI_REQUIRE_LAUNCHER_TRANSPORT')
     ;;
 esac
 

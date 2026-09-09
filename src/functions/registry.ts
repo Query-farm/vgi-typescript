@@ -11,18 +11,19 @@ import type { VgiFunction } from "./types.js";
 import type { Arguments } from "../arguments/arguments.js";
 import type { ArgumentSpec } from "../arguments/argument-spec.js";
 import { FunctionNotFoundError } from "../errors.js";
+import { schemaPathDisplay, schemaPathKey } from "../schema-path.js";
 
 export interface OverloadContext {
   arguments?: Arguments;
   inputSchema?: VgiSchema | null;
   isScalar?: boolean;
   /**
-   * Catalog schema that declares the function, from `BindRequest.schema_name`.
+   * Catalog schema that declares the function, from `BindRequest.schema_path`.
    * A worker may register the same name in more than one schema, so the bare
    * name is not a unique key. When set, resolution is scoped to that schema and
    * never falls back to another one; when absent, every schema is searched.
    */
-  schemaName?: string | null;
+  schemaPath?: string[] | null;
   /**
    * Catalog that owns the function, resolved from the bind's
    * `attach_opaque_data`. Two catalogs served by one worker may each declare
@@ -205,13 +206,13 @@ function filterByArgumentTypes(
 }
 
 /** Key for the schema-scoped index: lowercased schema, then function name. */
-function schemaKey(schemaName: string, functionName: string): string {
-  return `${schemaName.toLowerCase()}\u0000${functionName}`;
+function schemaKey(schemaPath: string[], functionName: string): string {
+  return `${schemaPathKey(schemaPath)}\u0001${functionName}`;
 }
 
 /** Key for the catalog-scoped index: lowercased catalog, then the schema key. */
-function catalogKey(catalogName: string, schemaName: string, functionName: string): string {
-  return `${catalogName.toLowerCase()}\u0000${schemaKey(schemaName, functionName)}`;
+function catalogKey(catalogName: string, schemaPath: string[], functionName: string): string {
+  return `${catalogName.toLowerCase()}\u0000${schemaKey(schemaPath, functionName)}`;
 }
 
 export class FunctionRegistry {
@@ -234,12 +235,12 @@ export class FunctionRegistry {
   }
 
   /**
-   * Record that `func` is declared in `schemaName`, in addition to the flat
+   * Record that `func` is declared in `schemaPath`, in addition to the flat
    * by-name index. Idempotent, and independent of `register()` so a function
    * reachable from several schemas (e.g. a scan function referenced by tables in
    * more than one schema) resolves from any of them.
    */
-  registerInSchema(func: VgiFunction, schemaName: string, catalogName?: string): void {
+  registerInSchema(func: VgiFunction, schemaPath: string[], catalogName?: string): void {
     const add = (map: Map<string, VgiFunction[]>, key: string) => {
       const bucket = map.get(key);
       if (!bucket) {
@@ -248,20 +249,21 @@ export class FunctionRegistry {
       }
       if (!bucket.includes(func)) bucket.push(func);
     };
-    add(this._bySchema, schemaKey(schemaName, func.meta.name));
+    add(this._bySchema, schemaKey(schemaPath, func.meta.name));
     if (catalogName) {
-      add(this._byCatalog, catalogKey(catalogName, schemaName, func.meta.name));
+      add(this._byCatalog, catalogKey(catalogName, schemaPath, func.meta.name));
     }
   }
 
   /** Schemas that declare `functionName`, sorted — for error messages. */
-  schemasFor(functionName: string): string[] {
-    const out: string[] = [];
+  schemasFor(functionName: string): string[][] {
+    const out: string[][] = [];
     for (const key of this._bySchema.keys()) {
-      const [schema, name] = key.split("\u0000");
-      if (name === functionName) out.push(schema);
+      const separator = key.lastIndexOf("\u0001");
+      const name = key.slice(separator + 1);
+      if (name === functionName) out.push(key.slice(0, separator).split("\u0000"));
     }
-    return out.sort();
+    return out.sort((left, right) => schemaPathKey(left).localeCompare(schemaPathKey(right)));
   }
 
   get(name: string, context?: OverloadContext): VgiFunction {
@@ -273,23 +275,23 @@ export class FunctionRegistry {
     // Catalog first: it is the only key that separates two catalogs declaring
     // the same schema and name.
     const catalogName = context?.catalogName;
-    const schemaName = context?.schemaName;
-    if (catalogName && schemaName) {
-      const scoped = this._byCatalog.get(catalogKey(catalogName, schemaName, name));
+    const schemaPath = context?.schemaPath;
+    if (catalogName && schemaPath) {
+      const scoped = this._byCatalog.get(catalogKey(catalogName, schemaPath, name));
       if (scoped && scoped.length > 0) {
         return this._disambiguate(name, scoped, context);
       }
     }
-    if (schemaName) {
-      const scoped = this._bySchema.get(schemaKey(schemaName, name));
+    if (schemaPath) {
+      const scoped = this._bySchema.get(schemaKey(schemaPath, name));
       if (scoped && scoped.length > 0) {
         candidates = scoped;
       } else if (candidates && candidates.length > 0) {
         const schemas = this.schemasFor(name);
         if (schemas.length > 0) {
           throw new Error(
-            `Function '${name}' is not registered in schema '${schemaName}'. ` +
-              `It is available in: [${schemas.join(", ")}]`,
+            `Function '${name}' is not registered in schema ${schemaPathDisplay(schemaPath)}. ` +
+              `It is available in: [${schemas.map(schemaPathDisplay).join(", ")}]`,
           );
         }
       }

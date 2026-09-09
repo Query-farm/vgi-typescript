@@ -173,7 +173,7 @@ async function resolveSplitPayloads(
   if (!request.split_tokens) return;
   const fp = fingerprintInputs(toUint8Array(innerParams.bind_call));
   const expected = await bindFingerprint(
-    fp.schemaName,
+    fp.schemaPath,
     fp.functionName,
     fp.args,
     fp.settings,
@@ -517,7 +517,7 @@ export function registerFunctionMethods(protocol: Protocol, config: FunctionHand
       // layout can change without touching worker code in five languages.
       const fp = fingerprintInputs(toUint8Array(innerParams.bind_call));
       const fingerprint = await bindFingerprint(
-        fp.schemaName,
+        fp.schemaPath,
         fp.functionName,
         fp.args,
         fp.settings,

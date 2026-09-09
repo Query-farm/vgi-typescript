@@ -3,7 +3,6 @@
 // Used by both the IPC worker (worker.ts) and HTTP worker (http-worker.ts).
 
 import { Schema, Field, Int32, Int64, Float64, Float32, Bool, Utf8, Struct } from "@query-farm/apache-arrow";
-import { List } from "@query-farm/apache-arrow";
 import {
   type CatalogDescriptor, type MacroDescriptor, Arguments,
   serializeBatch, batchFromColumns,
@@ -16,6 +15,7 @@ import { serializeSchema } from "../src/util/arrow/index.js";
 import { argumentSpecsToSchema } from "../src/arguments/argument-spec.js";
 import { scalarFunctions } from "./scalar.js";
 import * as os from "node:os";
+import { ForeignKeyInfoSchema } from "../src/generated/vgi-protocol-schemas.js";
 
 /**
  * Scratch directory the multi-branch fixtures share with the `.test` files.
@@ -66,6 +66,13 @@ import {
   sameNameCachedMainFunctions,
   sameNameCachedDataFunctions,
 } from "./same_name_cached.js";
+import {
+  sameNameTableScanMainFunctions,
+  sameNameTableScanDataFunctions,
+  sameNameTableMainScan,
+  sameNameTableDataScan,
+  SAME_NAME_TABLE,
+} from "./same_name_schemas.js";
 import {
   globalProbeFunctions,
   global_scalar,
@@ -173,6 +180,13 @@ export const allFunctions = [
   // schema, so a cross-served cache entry reads as the wrong tag.
   ...sameNameCachedMainFunctions,
   ...sameNameCachedDataFunctions,
+  // Table-dispatch schema-disambiguation pair (test_same_name_table_scan),
+  // declared in both `main` and `data` and backing a declarative
+  // `test_same_name_table` in each. Probes the scan-function RPCs rather than
+  // direct dispatch, and is the end-to-end guard for protocol 2.0.0's
+  // schema_path field. See ./same_name_schemas.ts.
+  ...sameNameTableScanMainFunctions,
+  ...sameNameTableScanDataFunctions,
   // Global-registration probes, one per catalog function type. Registered in
   // `main` like any other function AND advertised on the catalog's
   // `globalFunctions` (below), so the client's system.main publication path is
@@ -193,6 +207,7 @@ const MAIN_SCHEMA_EXCLUDED = new Set([
   sameNameData,
   ...sameNameExchangeDataFunctions,
   ...sameNameCachedDataFunctions,
+  ...sameNameTableScanDataFunctions,
 ]);
 const catalogFunctions = allFunctions.filter(
   (f) => !CATALOG_HIDDEN_FUNCTIONS.has(f.meta.name) && !MAIN_SCHEMA_EXCLUDED.has(f),
@@ -260,6 +275,18 @@ export const catalog: CatalogDescriptor = {
         "vgi.description_md": "Example functions for testing VGI.",
       },
       functions: catalogFunctions,
+      tables: [
+        // Schema-disambiguation probe (table dispatch): same declared table
+        // name as the data-schema table below, backed by THIS schema's own
+        // scan-function implementation (test_same_name_table_scan, declared in
+        // both schemas — see ./same_name_schemas.ts). Driven by
+        // test/sql/integration/table/same_name_schemas.test.
+        {
+          name: SAME_NAME_TABLE,
+          function: sameNameTableMainScan,
+          comment: "Schema-disambiguation probe; the main-schema table",
+        },
+      ],
       views: [
         {
           name: "first_ten",
@@ -316,8 +343,17 @@ export const catalog: CatalogDescriptor = {
         sameNameData,
         ...sameNameExchangeDataFunctions,
         ...sameNameCachedDataFunctions,
+        ...sameNameTableScanDataFunctions,
       ],
       tables: [
+        // Schema-disambiguation probe (table dispatch): same declared table
+        // name as the main-schema table above, backed by THIS schema's own
+        // scan-function implementation.
+        {
+          name: SAME_NAME_TABLE,
+          function: sameNameTableDataScan,
+          comment: "Schema-disambiguation probe; the data-schema table",
+        },
         {
           name: "large_sequence",
           function: sequenceFunction,
@@ -967,21 +1003,13 @@ export const catalog: CatalogDescriptor = {
 
 const versionedDataScanFunction = tableFunctions.find((f) => f.meta.name === "versioned_data_scan");
 
-// FK serialization schema (matches Python wire format)
-const FK_BATCH_SCHEMA = new Schema([
-  new Field("fk_columns", new List(new Field("item", new Utf8(), true)), false),
-  new Field("pk_columns", new List(new Field("item", new Utf8(), true)), false),
-  new Field("referenced_table", new Utf8(), false),
-  new Field("referenced_schema", new Utf8(), false),
-]);
-
-function buildFkBytes(fkCols: string[], pkCols: string[], refTable: string, refSchema: string): Uint8Array {
+function buildFkBytes(fkCols: string[], pkCols: string[], refTable: string, refSchemaPath: string[]): Uint8Array {
   return serializeBatch(batchFromColumns({
     fk_columns: [fkCols],
     pk_columns: [pkCols],
     referenced_table: [refTable],
-    referenced_schema: [refSchema],
-  }, FK_BATCH_SCHEMA));
+    referenced_schema_path: [refSchemaPath],
+  }, ForeignKeyInfoSchema));
 }
 
 function buildVersionArgBytes(version: number): Uint8Array {
@@ -995,20 +1023,20 @@ export function createExampleCatalog(base: ReadOnlyCatalogInterface): ReadOnlyCa
 
   base.tableGet = (
     attachOpaqueData: AttachOpaqueData,
-    schemaName: string,
+    schemaPath: string[],
     name: string,
     atUnit?: string,
     atValue?: string,
     transactionOpaqueData?: TransactionOpaqueData,
   ): TableInfo | null => {
-    if (schemaName.toLowerCase() === "data" && name.toLowerCase() === "versioned_data" && atUnit) {
+    if (schemaPath.join(".").toLowerCase() === "data" && name.toLowerCase() === "versioned_data" && atUnit) {
       const version = resolveVersion(atUnit, atValue);
       const cols = getVersionedSchema(version);
       return {
         comment: "Versioned data table demonstrating time travel with schema evolution",
         tags: {},
         name,
-        schema_name: schemaName,
+        schema_path: schemaPath,
         columns: serializeSchema(cols),
         not_null_constraints: [],
         unique_constraints: [],
@@ -1029,7 +1057,7 @@ export function createExampleCatalog(base: ReadOnlyCatalogInterface): ReadOnlyCa
         required_filters: [],
       };
     }
-    if (schemaName.toLowerCase() === "data" && name.toLowerCase() === "versioned_constraints" && atUnit) {
+    if (schemaPath.join(".").toLowerCase() === "data" && name.toLowerCase() === "versioned_constraints" && atUnit) {
       const version = resolveVersionedConstraintsVersion(atUnit, atValue);
       const cols = getVersionedConstraintsSchema(version);
       // Constraints evolve: V1: NOT NULL(id), V2: +NOT NULL(name),PK(id),UNIQUE(email), V3: +FK
@@ -1045,13 +1073,13 @@ export function createExampleCatalog(base: ReadOnlyCatalogInterface): ReadOnlyCa
         unique.push([colNames.indexOf("email")]);
       }
       if (version >= 3) {
-        fk.push(buildFkBytes(["department_id"], ["id"], "departments", schemaName));
+        fk.push(buildFkBytes(["department_id"], ["id"], "departments", schemaPath));
       }
       return {
         comment: "Table with constraints that evolve across versions",
         tags: {},
         name,
-        schema_name: schemaName,
+        schema_path: schemaPath,
         columns: serializeSchema(cols),
         not_null_constraints: notNull,
         unique_constraints: unique,
@@ -1078,59 +1106,62 @@ export function createExampleCatalog(base: ReadOnlyCatalogInterface): ReadOnlyCa
     // branches.size() > 1 and throws BinderException with the documented
     // message before any scan. Mirrors vgi-python's fixture table_get.
     if (
-      schemaName.toLowerCase() === "data" &&
+      schemaPath.join(".").toLowerCase() === "data" &&
       ["multi_branch_numbers", "multi_branch_filtered_numbers"].includes(name.toLowerCase())
     ) {
-      return origTableGet(attachOpaqueData, schemaName, name, undefined, undefined, transactionOpaqueData);
+      return origTableGet(attachOpaqueData, schemaPath, name, undefined, undefined, transactionOpaqueData);
     }
-    return origTableGet(attachOpaqueData, schemaName, name, atUnit, atValue, transactionOpaqueData);
+    return origTableGet(attachOpaqueData, schemaPath, name, atUnit, atValue, transactionOpaqueData);
   };
 
   base.tableScanFunctionGet = (
     attachOpaqueData: AttachOpaqueData,
-    schemaName: string,
+    schemaPath: string[],
     name: string,
     atUnit?: string,
     atValue?: string,
     transactionOpaqueData?: TransactionOpaqueData,
   ): any => {
     // Time-travel tables
-    if (schemaName.toLowerCase() === "data" && name.toLowerCase() === "versioned_data") {
+    if (schemaPath.join(".").toLowerCase() === "data" && name.toLowerCase() === "versioned_data") {
       const version = resolveVersion(atUnit, atValue);
-      return { function_name: "versioned_data_scan", arguments: buildVersionArgBytes(version), required_extensions: [] };
+      return { function_name: "versioned_data_scan", arguments: buildVersionArgBytes(version), required_extensions: [], schema_path: ["main"] };
     }
-    if (schemaName.toLowerCase() === "data" && name.toLowerCase() === "versioned_constraints") {
+    if (schemaPath.join(".").toLowerCase() === "data" && name.toLowerCase() === "versioned_constraints") {
       const version = resolveVersionedConstraintsVersion(atUnit, atValue);
-      return { function_name: "versioned_constraints_scan", arguments: buildVersionArgBytes(version), required_extensions: [] };
+      return { function_name: "versioned_constraints_scan", arguments: buildVersionArgBytes(version), required_extensions: [], schema_path: ["main"] };
     }
     // cache_versioned: AT -> version arg, same as versioned_data but the scan
     // function advertises cache metadata (for the AT cache-isolation test).
-    if (schemaName.toLowerCase() === "data" && name.toLowerCase() === "cache_versioned") {
+    if (schemaPath.join(".").toLowerCase() === "data" && name.toLowerCase() === "cache_versioned") {
       const version = resolveVersion(atUnit, atValue);
-      return { function_name: "cache_versioned_scan", arguments: buildVersionArgBytes(version), required_extensions: [] };
+      return { function_name: "cache_versioned_scan", arguments: buildVersionArgBytes(version), required_extensions: [], schema_path: ["main"] };
     }
     // Columns-based time-travel + pushdown: resolve AT -> version and pass it as
     // a scan-function argument (the native columns-based AT mechanism).
-    if (schemaName.toLowerCase() === "data" && name.toLowerCase() === "tt_pushdown_cols") {
+    if (schemaPath.join(".").toLowerCase() === "data" && name.toLowerCase() === "tt_pushdown_cols") {
       const version = resolveTtVersion(atUnit, atValue);
-      return { function_name: "tt_pushdown_cols_scan", arguments: buildVersionArgBytes(version), required_extensions: [] };
+      return { function_name: "tt_pushdown_cols_scan", arguments: buildVersionArgBytes(version), required_extensions: [], schema_path: ["main"] };
     }
 
     // rff_parquet — single-file native read_parquet delegation.
-    if (schemaName.toLowerCase() === "data" && name.toLowerCase() === "rff_parquet") {
+    if (schemaPath.join(".").toLowerCase() === "data" && name.toLowerCase() === "rff_parquet") {
       const args = serializeBatch(batchFromColumns(
         { arg_0: [branchPath("rff_seg.parquet")] },
         new Schema([new Field("arg_0", new Utf8(), true)]),
       ));
-      return { function_name: "read_parquet", arguments: args, required_extensions: [] };
+      // read_parquet is a native DuckDB function delegated straight through —
+      // it has no VGI-side schema of its own to report.
+      return { function_name: "read_parquet", arguments: args, required_extensions: [], schema_path: null };
     }
     // rff_hive / rff_hive_mixed — native read_parquet over a Hive glob.
-    if (schemaName.toLowerCase() === "data" && ["rff_hive", "rff_hive_mixed"].includes(name.toLowerCase())) {
+    if (schemaPath.join(".").toLowerCase() === "data" && ["rff_hive", "rff_hive_mixed"].includes(name.toLowerCase())) {
       const args = serializeBatch(batchFromColumns(
         { arg_0: [branchPath("rff_hive/*/*/*.parquet")], hive_partitioning: [true] },
         new Schema([new Field("arg_0", new Utf8(), true), new Field("hive_partitioning", new Bool(), true)]),
       ));
-      return { function_name: "read_parquet", arguments: args, required_extensions: [] };
+      // Native read_parquet again — no VGI-side schema.
+      return { function_name: "read_parquet", arguments: args, required_extensions: [], schema_path: null };
     }
 
     // Static constraint tables
@@ -1149,11 +1180,11 @@ export function createExampleCatalog(base: ReadOnlyCatalogInterface): ReadOnlyCa
       rff_rowid: "rff_rowid_scan",
       filter_echo_table: "filter_echo_table_scan",
     };
-    if (schemaName.toLowerCase() === "data" && name.toLowerCase() in staticTables) {
-      return { function_name: staticTables[name.toLowerCase()], arguments: serializeBatch(batchFromColumns({}, new Schema([]))), required_extensions: [] };
+    if (schemaPath.join(".").toLowerCase() === "data" && name.toLowerCase() in staticTables) {
+      return { function_name: staticTables[name.toLowerCase()], arguments: serializeBatch(batchFromColumns({}, new Schema([]))), required_extensions: [], schema_path: ["main"] };
     }
 
-    return origTableScanFunctionGet(attachOpaqueData, schemaName, name, atUnit, atValue, transactionOpaqueData);
+    return origTableScanFunctionGet(attachOpaqueData, schemaPath, name, atUnit, atValue, transactionOpaqueData);
   };
 
   // Multi-branch scan plans for the multi_branch_* fixtures. Falls through to
@@ -1162,7 +1193,7 @@ export function createExampleCatalog(base: ReadOnlyCatalogInterface): ReadOnlyCa
   const origTableScanBranchesGet = base.tableScanBranchesGet.bind(base);
   base.tableScanBranchesGet = (
     attachOpaqueData: AttachOpaqueData,
-    schemaName: string,
+    schemaPath: string[],
     name: string,
     atUnit?: string,
     atValue?: string,
@@ -1176,10 +1207,13 @@ export function createExampleCatalog(base: ReadOnlyCatalogInterface): ReadOnlyCa
     const seq = (count: number, extra: Partial<ScanBranchInput> = {}): ScanBranchInput => ({
       functionName: "sequence",
       positionalArguments: [i64(count)],
+      // `sequence` is a VGI function this worker registers in `main` (protocol
+      // 1.5.0's schema_path); `extra` may still override it.
+      schemaPath: ["main"],
       ...extra,
     });
 
-    if (schemaName.toLowerCase() === "data") {
+    if (schemaPath.join(".").toLowerCase() === "data") {
       switch (name.toLowerCase()) {
         case "multi_branch_numbers":
           return buildScanBranchesResult([seq(50), seq(50)]);
@@ -1191,12 +1225,17 @@ export function createExampleCatalog(base: ReadOnlyCatalogInterface): ReadOnlyCa
         case "multi_branch_hetero":
           return buildScanBranchesResult([
             seq(50),
+            // read_parquet is a native DuckDB function delegated straight
+            // through — no VGI-side schema of its own, so schema_path stays
+            // unset. This is why the field is optional, not required.
             { functionName: "read_parquet", positionalArguments: [str(branchPath("vgi_hetero_branch.parquet"))] },
           ]);
         case "multi_branch_iceberg":
           return buildScanBranchesResult(
             [
               seq(50),
+              // Native iceberg_scan delegated straight through — no VGI-side
+              // schema of its own.
               { functionName: "iceberg_scan", positionalArguments: [str(branchPath("vgi_iceberg_branch"))] },
             ],
             ["iceberg"],
@@ -1208,6 +1247,8 @@ export function createExampleCatalog(base: ReadOnlyCatalogInterface): ReadOnlyCa
           // sniffer works out the delimiter and header unaided.
           return buildScanBranchesResult([
             {
+              // A FORMAT branch has no function at all, so schema_path (a
+              // function-branch-only field) doesn't apply here.
               functionName: "",
               formatName: "csv",
               formatLocations: [branchPath("vgi_format_branch.csv")],
@@ -1228,6 +1269,7 @@ export function createExampleCatalog(base: ReadOnlyCatalogInterface): ReadOnlyCa
             {
               functionName: "split_sequence",
               namedArguments: { n: i64(30), splits: i64(6) },
+              schemaPath: ["main"],
             },
             // The ordinary arm, which never sees a plan call at all.
             seq(20),
@@ -1242,9 +1284,12 @@ export function createExampleCatalog(base: ReadOnlyCatalogInterface): ReadOnlyCa
         case "multi_branch_nopushdown":
           return buildScanBranchesResult([
             seq(50),
+            // Native read_csv_auto delegated straight through — no VGI-side
+            // schema of its own.
             { functionName: "read_csv_auto", positionalArguments: [str(branchPath("vgi_nopushdown_branch.csv"))] },
           ]);
         case "multi_branch_recon":
+          // Three native read_parquet arms — none has a VGI-side schema.
           return buildScanBranchesResult([
             { functionName: "read_parquet", positionalArguments: [str(branchPath("vgi_recon_a_b.parquet"))] },
             { functionName: "read_parquet", positionalArguments: [str(branchPath("vgi_recon_b_a.parquet"))] },
@@ -1253,7 +1298,7 @@ export function createExampleCatalog(base: ReadOnlyCatalogInterface): ReadOnlyCa
       }
     }
 
-    return origTableScanBranchesGet(attachOpaqueData, schemaName, name, atUnit, atValue, transactionOpaqueData);
+    return origTableScanBranchesGet(attachOpaqueData, schemaPath, name, atUnit, atValue, transactionOpaqueData);
   };
 
   // Transaction support — required by tx_cached_value (transaction_storage).

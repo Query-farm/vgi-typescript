@@ -36,7 +36,7 @@ export function registerCatalogMacroMethods(protocol: Protocol, getCatalog: GetC
       const cat = getCatalog();
       const info = await cat.macroGet(
         toUint8Array(params.attach_opaque_data),
-        params.schema_name,
+        params.schema_path,
         params.name,
         params.transaction_opaque_data ? toUint8Array(params.transaction_opaque_data) : undefined
       );
@@ -55,7 +55,7 @@ export function registerCatalogMacroMethods(protocol: Protocol, getCatalog: GetC
       const innerParams = unwrapRequest(params.request);
       await cat.macroCreate(
         toUint8Array(innerParams.attach_opaque_data),
-        innerParams.schema_name,
+        innerParams.schema_path,
         innerParams.name,
         innerParams.macro_type as MacroType,
         innerParams.parameters ? (Array.isArray(innerParams.parameters) ? innerParams.parameters : [...innerParams.parameters]) : [],
@@ -77,7 +77,7 @@ export function registerCatalogMacroMethods(protocol: Protocol, getCatalog: GetC
       const cat = getCatalog();
       await cat.macroDrop(
         toUint8Array(params.attach_opaque_data),
-        params.schema_name,
+        params.schema_path,
         params.name,
         params.ignore_not_found,
         params.transaction_opaque_data ? toUint8Array(params.transaction_opaque_data) : undefined
@@ -94,7 +94,7 @@ export function registerCatalogMacroMethods(protocol: Protocol, getCatalog: GetC
       const cat = getCatalog();
       const macros = await cat.schemaContentsMacros(
         toUint8Array(params.attach_opaque_data),
-        params.name,
+        params.path,
         decodeDictValue(params.type),
         params.transaction_opaque_data ? toUint8Array(params.transaction_opaque_data) : undefined
       );

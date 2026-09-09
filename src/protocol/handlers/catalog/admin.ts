@@ -271,7 +271,7 @@ export function registerCatalogAdminMethods(protocol: Protocol, getCatalog: GetC
       const cat = getCatalog();
       const info = await cat.schemaGet(
         toUint8Array(params.attach_opaque_data),
-        params.name,
+        params.path,
         params.transaction_opaque_data ? toUint8Array(params.transaction_opaque_data) : undefined
       );
       return wrapResult({
@@ -288,7 +288,7 @@ export function registerCatalogAdminMethods(protocol: Protocol, getCatalog: GetC
       const cat = getCatalog();
       await cat.schemaCreate(
         toUint8Array(params.attach_opaque_data),
-        params.name,
+        params.path,
         params.comment,
         null, // tags
         params.transaction_opaque_data ? toUint8Array(params.transaction_opaque_data) : undefined
@@ -305,7 +305,7 @@ export function registerCatalogAdminMethods(protocol: Protocol, getCatalog: GetC
       const cat = getCatalog();
       await cat.schemaDrop(
         toUint8Array(params.attach_opaque_data),
-        params.name,
+        params.path,
         params.ignore_not_found,
         params.cascade,
         params.transaction_opaque_data ? toUint8Array(params.transaction_opaque_data) : undefined
@@ -322,7 +322,7 @@ export function registerCatalogAdminMethods(protocol: Protocol, getCatalog: GetC
       const cat = getCatalog();
       const tables = await cat.schemaContentsTables(
         toUint8Array(params.attach_opaque_data),
-        params.name,
+        params.path,
         params.transaction_opaque_data ? toUint8Array(params.transaction_opaque_data) : undefined
       );
       return wrapResult({
@@ -339,7 +339,7 @@ export function registerCatalogAdminMethods(protocol: Protocol, getCatalog: GetC
       const cat = getCatalog();
       const views = await cat.schemaContentsViews(
         toUint8Array(params.attach_opaque_data),
-        params.name,
+        params.path,
         params.transaction_opaque_data ? toUint8Array(params.transaction_opaque_data) : undefined
       );
       return wrapResult({
@@ -356,7 +356,7 @@ export function registerCatalogAdminMethods(protocol: Protocol, getCatalog: GetC
       const cat = getCatalog();
       const funcs = await cat.schemaContentsFunctions(
         toUint8Array(params.attach_opaque_data),
-        params.name,
+        params.path,
         decodeDictValue(params.type),
         params.transaction_opaque_data ? toUint8Array(params.transaction_opaque_data) : undefined
       );

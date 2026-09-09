@@ -7,6 +7,7 @@ import type { CatalogInterface } from "../../../catalog/interface.js";
 import { NoCatalogError } from "../../../errors.js";
 import { deserializeBatch } from "../../../util/arrow/index.js";
 import { toUint8Array } from "../../../util/bytes.js";
+import { normalizeRequestSchemaPaths } from "../shared.js";
 import {
   sealBytes,
   openBytes,
@@ -194,6 +195,7 @@ export function catalogUnary(
     result: config.result as any,
     doc: config.doc,
     handler: async (params: Record<string, any>, ctx: any) => {
+      normalizeRequestSchemaPaths(params);
       await unwrapParamsOpaque(params, ctx, signingKey);
       return config.handler(params, ctx);
     },

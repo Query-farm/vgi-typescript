@@ -7,6 +7,7 @@ import { batchToScalarDict, deserializeBatch, serializeBatch, batchFromColumns }
 import { toUint8Array } from "../../util/bytes.js";
 import { TableInOutPhase } from "../../types.js";
 import type { InitRequest } from "../types.js";
+import { normalizeSchemaPath } from "../../schema-path.js";
 
 // The Python vgi-rpc framework wraps ALL non-void unary results in a single
 // "result" column. For ArrowSerializableDataclass types, the result is serialized
@@ -31,7 +32,15 @@ export const RESULT_BINARY_NULLABLE_SCHEMA = schema([
 export function unwrapRequest(requestBytes: any): Record<string, any> {
   const bytes = toUint8Array(requestBytes);
   const innerBatch = deserializeBatch(bytes);
-  return batchToScalarDict(innerBatch);
+  const params = batchToScalarDict(innerBatch);
+  normalizeRequestSchemaPaths(params);
+  return params;
+}
+
+/** Convert Arrow list scalars at RPC boundaries into ordinary string arrays. */
+export function normalizeRequestSchemaPaths(params: Record<string, any>): void {
+  if (params.path != null) params.path = normalizeSchemaPath(params.path);
+  if (params.schema_path != null) params.schema_path = normalizeSchemaPath(params.schema_path);
 }
 
 /**
@@ -57,7 +66,7 @@ export function overloadContext(
     arguments: any;
     input_schema: any;
     function_type: any;
-    schema_name?: string | null;
+    schema_path?: string[] | null;
     attach_opaque_data?: Uint8Array | null;
   },
   catalogInterface?: { catalogNameForAttach(a: Uint8Array): string | null },
@@ -78,7 +87,7 @@ export function overloadContext(
     isScalar: String(req.function_type).toLowerCase() === "scalar",
     // Scopes resolution when the caller named a schema; a name registered in
     // several schemas is otherwise ambiguous.
-    schemaName: req.schema_name ?? null,
+    schemaPath: req.schema_path ?? null,
     catalogName,
   };
 }

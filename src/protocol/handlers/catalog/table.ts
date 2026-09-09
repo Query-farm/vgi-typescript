@@ -47,7 +47,7 @@ export function registerCatalogTableMethods(protocol: Protocol, getCatalog: GetC
       const cat = getCatalog();
       const info = await cat.tableGet(
         toUint8Array(params.attach_opaque_data),
-        params.schema_name,
+        params.schema_path,
         params.name,
         params.at_unit,
         params.at_value,
@@ -67,7 +67,7 @@ export function registerCatalogTableMethods(protocol: Protocol, getCatalog: GetC
       const cat = getCatalog();
       await cat.tableCreate(
         toUint8Array(params.attach_opaque_data),
-        params.schema_name,
+        params.schema_path,
         params.name,
         toUint8Array(params.columns),
         params.on_conflict,
@@ -88,7 +88,7 @@ export function registerCatalogTableMethods(protocol: Protocol, getCatalog: GetC
       const cat = getCatalog();
       await cat.tableDrop(
         toUint8Array(params.attach_opaque_data),
-        params.schema_name,
+        params.schema_path,
         params.name,
         params.ignore_not_found,
         params.transaction_opaque_data ? toUint8Array(params.transaction_opaque_data) : undefined
@@ -105,7 +105,7 @@ export function registerCatalogTableMethods(protocol: Protocol, getCatalog: GetC
       const cat = getCatalog();
       const stats = await cat.tableColumnStatisticsGet(
         toUint8Array(params.attach_opaque_data),
-        params.schema_name,
+        params.schema_path,
         params.name,
         params.transaction_opaque_data ? toUint8Array(params.transaction_opaque_data) : undefined,
       );
@@ -121,7 +121,7 @@ export function registerCatalogTableMethods(protocol: Protocol, getCatalog: GetC
       const cat = getCatalog();
       const scanResult = await cat.tableScanFunctionGet(
         toUint8Array(params.attach_opaque_data),
-        params.schema_name,
+        params.schema_path,
         params.name,
         params.at_unit,
         params.at_value,
@@ -141,7 +141,7 @@ export function registerCatalogTableMethods(protocol: Protocol, getCatalog: GetC
       const cat = getCatalog();
       const branchesResult = await cat.tableScanBranchesGet(
         toUint8Array(params.attach_opaque_data),
-        params.schema_name,
+        params.schema_path,
         params.name,
         params.at_unit,
         params.at_value,
@@ -159,7 +159,7 @@ export function registerCatalogTableMethods(protocol: Protocol, getCatalog: GetC
       const cat = getCatalog();
       await cat.tableCommentSet(
         toUint8Array(params.attach_opaque_data),
-        params.schema_name,
+        params.schema_path,
         params.name,
         params.comment,
         params.ignore_not_found,
@@ -177,7 +177,7 @@ export function registerCatalogTableMethods(protocol: Protocol, getCatalog: GetC
       const cat = getCatalog();
       await cat.tableRename(
         toUint8Array(params.attach_opaque_data),
-        params.schema_name,
+        params.schema_path,
         params.name,
         params.new_name,
         params.ignore_not_found,
@@ -195,7 +195,7 @@ export function registerCatalogTableMethods(protocol: Protocol, getCatalog: GetC
       const cat = getCatalog();
       await cat.tableColumnAdd(
         toUint8Array(params.attach_opaque_data),
-        params.schema_name,
+        params.schema_path,
         params.name,
         params.column_name,
         params.column_type,
@@ -215,7 +215,7 @@ export function registerCatalogTableMethods(protocol: Protocol, getCatalog: GetC
       const cat = getCatalog();
       await cat.tableColumnDrop(
         toUint8Array(params.attach_opaque_data),
-        params.schema_name,
+        params.schema_path,
         params.name,
         params.column_name,
         params.ignore_not_found,
@@ -233,7 +233,7 @@ export function registerCatalogTableMethods(protocol: Protocol, getCatalog: GetC
       const cat = getCatalog();
       await cat.tableColumnRename(
         toUint8Array(params.attach_opaque_data),
-        params.schema_name,
+        params.schema_path,
         params.name,
         params.column_name,
         params.new_name,
@@ -252,7 +252,7 @@ export function registerCatalogTableMethods(protocol: Protocol, getCatalog: GetC
       const cat = getCatalog();
       await cat.tableColumnDefaultSet(
         toUint8Array(params.attach_opaque_data),
-        params.schema_name,
+        params.schema_path,
         params.name,
         params.column_name,
         params.default_value,
@@ -271,7 +271,7 @@ export function registerCatalogTableMethods(protocol: Protocol, getCatalog: GetC
       const cat = getCatalog();
       await cat.tableColumnDefaultDrop(
         toUint8Array(params.attach_opaque_data),
-        params.schema_name,
+        params.schema_path,
         params.name,
         params.column_name,
         params.ignore_not_found,
@@ -289,7 +289,7 @@ export function registerCatalogTableMethods(protocol: Protocol, getCatalog: GetC
       const cat = getCatalog();
       await cat.tableColumnTypeChange(
         toUint8Array(params.attach_opaque_data),
-        params.schema_name,
+        params.schema_path,
         params.name,
         params.column_name,
         params.new_type,
@@ -308,7 +308,7 @@ export function registerCatalogTableMethods(protocol: Protocol, getCatalog: GetC
       const cat = getCatalog();
       await cat.tableNotNullSet(
         toUint8Array(params.attach_opaque_data),
-        params.schema_name,
+        params.schema_path,
         params.name,
         params.column_name,
         params.ignore_not_found,
@@ -326,7 +326,7 @@ export function registerCatalogTableMethods(protocol: Protocol, getCatalog: GetC
       const cat = getCatalog();
       await cat.tableNotNullDrop(
         toUint8Array(params.attach_opaque_data),
-        params.schema_name,
+        params.schema_path,
         params.name,
         params.column_name,
         params.ignore_not_found,

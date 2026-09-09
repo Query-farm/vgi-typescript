@@ -48,6 +48,8 @@ export interface CatalogAttachOptions {
   optionsBytes?: Uint8Array;
   dataVersionSpec?: string | null;
   implementationVersion?: string | null;
+  /** Engine capabilities serialized into the protocol's named inner record. */
+  clientCapabilities?: import("../generated/vgi-client.js").ClientCapabilities | null;
 }
 
 /** Conflict resolution strategy for create operations. */

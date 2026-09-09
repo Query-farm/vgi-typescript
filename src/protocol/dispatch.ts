@@ -37,7 +37,7 @@ export interface ProtocolConfig {
 }
 
 export function buildVgiProtocol(config: ProtocolConfig): Protocol {
-  const protocol = new Protocol("vgi");
+  const protocol = new Protocol("vgi", { protocolVersion: "2.0.0" });
 
   registerFunctionMethods(protocol, {
     registry: config.registry,

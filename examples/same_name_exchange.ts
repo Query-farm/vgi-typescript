@@ -12,7 +12,7 @@
 //     the bind established, so schema disambiguation happens at bind.
 //   * table-buffering (`test_same_name_buffered`) — shares that bind site, but
 //     its SINK-phase process() runs a stateless pooled unary RPC that carries
-//     its own schema_name (protocol 1.2.0). It tags in the SINK phase so a
+//     its own schema_path (protocol 1.2.0). It tags in the SINK phase so a
 //     mis-routed process() reads as the wrong tag.
 //   * aggregate (`test_same_name_agg`) — every aggregate RPC (bind / update /
 //     combine / finalize, and the window fallback that reuses them) resolves
@@ -53,13 +53,13 @@ const AGG_NAME = "test_same_name_agg";
 // The single VARCHAR column every implementation here emits.
 const TAG_SCHEMA = new Schema([new Field("tag", new Utf8(), true)]);
 
-/** Render `<schemaName>:<value>` for every row of column 0, preserving nulls. */
-function tagBatch(schemaName: string, batch: RecordBatch): RecordBatch {
+/** Render `<schemaPath>:<value>` for every row of column 0, preserving nulls. */
+function tagBatch(schemaPath: string[], batch: RecordBatch): RecordBatch {
   const col = batch.getChildAt(0);
   const tags: (string | null)[] = [];
   for (let i = 0; i < batch.numRows; i++) {
     const v = col?.get(i);
-    tags.push(v === null || v === undefined ? null : `${schemaName}:${v}`);
+    tags.push(v === null || v === undefined ? null : `${schemaPath}:${v}`);
   }
   return batchFromColumns({ tag: tags }, TAG_SCHEMA);
 }
@@ -151,7 +151,7 @@ export const sameNameDataBuffered = makeBuffered("data");
 // Aggregate pair. A running sum tagged with the owning schema at finalize.
 // The window fallback (OVER without a window() callback) reuses this same
 // update / combine / finalize path, so schema disambiguation there rides the
-// aggregate RPCs' schema_name too.
+// aggregate RPCs' schema_path too.
 // ---------------------------------------------------------------------------
 
 interface AggState {

@@ -20,7 +20,7 @@ import {
   encodeScanFunctionResult,
   encodeFunctionInfo,
 } from "./interface.js";
-import type { CatalogDescriptor, SchemaDescriptor, TableDescriptor, ViewDescriptor, MacroDescriptor, SettingDescriptor, SecretTypeDescriptor, ForeignKeyDef, DefaultValue } from "./descriptors.js";
+import { schemaDescriptorPath, type CatalogDescriptor, type SchemaDescriptor, type TableDescriptor, type ViewDescriptor, type MacroDescriptor, type SettingDescriptor, type SecretTypeDescriptor, type ForeignKeyDef, type DefaultValue } from "./descriptors.js";
 import { serializeColumnStatistics } from "../util/statistics.js";
 import type { VgiFunction } from "../functions/types.js";
 import type { FunctionRegistry } from "../functions/registry.js";
@@ -30,6 +30,8 @@ import { resolveMetadata } from "../metadata/resolve.js";
 import { type AttachOptionSpec, validateRequiredAttachOptions } from "./attach-option.js";
 import { FunctionStability, NullHandling, OrderPreservation, DEFAULT_MAX_WORKERS } from "../types.js";
 import { Arguments } from "../arguments/arguments.js";
+import { normalizeSchemaPath, schemaPathDisplay, schemaPathsEqual } from "../schema-path.js";
+import { ForeignKeyInfoSchema } from "../generated/vgi-protocol-schemas.js";
 
 export class ReadOnlyCatalogInterface extends CatalogInterface {
   private _descriptor: CatalogDescriptor;
@@ -46,14 +48,37 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
     // is declared in more than one schema. Table-backing functions are indexed
     // under their table's schema for the same reason.
     for (const sch of descriptor.schemas ?? []) {
-      for (const fn of sch.functions ?? []) registry.registerInSchema(fn, sch.name, descriptor.name);
+      for (const fn of sch.functions ?? []) registry.registerInSchema(fn, schemaDescriptorPath(sch), descriptor.name);
       for (const tbl of sch.tables ?? []) {
         for (const key of ["function", "insertFunction", "updateFunction", "deleteFunction"] as const) {
           const fn = (tbl as any)[key];
-          if (fn) registry.registerInSchema(fn, sch.name, descriptor.name);
+          if (fn) registry.registerInSchema(fn, schemaDescriptorPath(sch), descriptor.name);
         }
       }
     }
+  }
+
+  /**
+   * Which schema declares `fn`, by object identity, or null if no schema does.
+   *
+   * A table's backing function is NOT necessarily declared in the table's own
+   * schema — `data.large_sequence` scans via `sequence`, which the example
+   * catalog declares in `main`. Populating `ScanFunctionResult.schemaPath` /
+   * `ScanBranch.schemaPath` (protocol 2.0.0) correctly needs this reverse
+   * lookup, not the `schemaPath` parameter of the call being served.
+   *
+   * Identity, not name: the whole point of the field is to disambiguate one
+   * name declared in several schemas, so a name match would answer the very
+   * question being asked. Null when the function is deliberately unadvertised
+   * (`cache_multicol`) — it has no schema to report and the client falls back
+   * to its own heuristic, which is exactly the pre-1.5.0 behaviour.
+   * Mirrors vgi-python's `ReadOnlyCatalogInterface._schema_for_function`.
+   */
+  private _schemaForFunction(fn: VgiFunction): string[] | null {
+    for (const sch of this._descriptor.schemas ?? []) {
+      if ((sch.functions ?? []).includes(fn)) return schemaDescriptorPath(sch);
+    }
+    return null;
   }
 
   catalogs(): string[] {
@@ -168,7 +193,7 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
   schemas(attachOpaqueData: AttachOpaqueData, transactionOpaqueData?: TransactionOpaqueData): SchemaInfo[] {
     return this._descriptor.schemas.map((s) => ({
       attach_opaque_data: attachOpaqueData,
-      name: s.name,
+      path: schemaDescriptorPath(s),
       comment: s.comment ?? null,
       tags: s.tags ?? {},
       estimated_object_count: this._estimatedObjectCount(s),
@@ -199,14 +224,14 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
 
   override schemaGet(
     attachOpaqueData: AttachOpaqueData,
-    name: string,
+    path: string[],
     transactionOpaqueData?: TransactionOpaqueData
   ): SchemaInfo | null {
-    const desc = this._descriptor.schemas.find((s) => s.name === name);
+    const desc = this._descriptor.schemas.find((s) => schemaPathsEqual(schemaDescriptorPath(s), path));
     if (!desc) return null;
     return {
       attach_opaque_data: attachOpaqueData,
-      name: desc.name,
+      path: schemaDescriptorPath(desc),
       comment: desc.comment ?? null,
       tags: desc.tags ?? {},
       estimated_object_count: this._estimatedObjectCount(desc),
@@ -215,10 +240,10 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
 
   override async schemaContentsTables(
     attachOpaqueData: AttachOpaqueData,
-    name: string,
+    path: string[],
     transactionOpaqueData?: TransactionOpaqueData
   ): Promise<TableInfo[]> {
-    const schema = this._descriptor.schemas.find((s) => s.name === name);
+    const schema = this._descriptor.schemas.find((s) => schemaPathsEqual(schemaDescriptorPath(s), path));
     if (!schema || !schema.tables) return [];
 
     return await Promise.all(schema.tables.map(async (t) => {
@@ -273,7 +298,7 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
       const notNullIndices = resolveIndices(colSchema, t.notNull);
       const uniqueIndices = resolveIndexGroups(colSchema, t.unique);
       const pkIndices = resolveIndexGroups(colSchema, t.primaryKey);
-      const fkBytes = serializeForeignKeys(t.foreignKey, name);
+      const fkBytes = serializeForeignKeys(t.foreignKey, path);
 
       // Validate required_filters: an AND (outer list) of OR-groups (inner
       // lists). Each OR-group must be non-empty, and the leading dotted segment
@@ -311,7 +336,7 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
         comment: t.comment ?? null,
         tags: t.tags ?? {},
         name: t.name,
-        schema_name: name,
+        schema_path: normalizeSchemaPath(path),
         columns,
         not_null_constraints: notNullIndices,
         unique_constraints: uniqueIndices,
@@ -329,7 +354,7 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
         // shadow the per-call dispatch and prevent workers from varying
         // the scan function (e.g. version-resolved time-travel).
         scan_function: t.function && !t.columns
-          ? inlineScanFunction(t.function, t.arguments)
+          ? inlineScanFunction(t.function, t.arguments, this._schemaForFunction(t.function))
           : null,
         insert_function: null,
         update_function: null,
@@ -347,11 +372,11 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
 
   override tableColumnStatisticsGet(
     attachOpaqueData: AttachOpaqueData,
-    schemaName: string,
+    schemaPath: string[],
     name: string,
     transactionOpaqueData?: TransactionOpaqueData,
   ): { bytes: Uint8Array; cacheMaxAgeSeconds: number | null } | null {
-    const schema = this._descriptor.schemas.find((s) => s.name === schemaName);
+    const schema = this._descriptor.schemas.find((s) => schemaPathsEqual(schemaDescriptorPath(s), schemaPath));
     if (!schema || !schema.tables) return null;
     const table = schema.tables.find((t) => t.name === name);
     if (!table || !table.statistics) return null;
@@ -365,17 +390,17 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
 
   override schemaContentsViews(
     attachOpaqueData: AttachOpaqueData,
-    name: string,
+    path: string[],
     transactionOpaqueData?: TransactionOpaqueData
   ): ViewInfo[] {
-    const schema = this._descriptor.schemas.find((s) => s.name === name);
+    const schema = this._descriptor.schemas.find((s) => schemaPathsEqual(schemaDescriptorPath(s), path));
     if (!schema || !schema.views) return [];
 
     return schema.views.map((v) => ({
       comment: v.comment ?? null,
       tags: v.tags ?? {},
       name: v.name,
-      schema_name: name,
+      schema_path: normalizeSchemaPath(path),
       definition: v.definition,
       column_comments: v.columnComments ?? {},
     }));
@@ -383,11 +408,11 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
 
   override schemaContentsFunctions(
     attachOpaqueData: AttachOpaqueData,
-    name: string,
+    path: string[],
     type: string,
     transactionOpaqueData?: TransactionOpaqueData
   ): FunctionInfo[] {
-    const schema = this._descriptor.schemas.find((s) => s.name === name);
+    const schema = this._descriptor.schemas.find((s) => schemaPathsEqual(schemaDescriptorPath(s), path));
     if (!schema || !schema.functions) return [];
 
     return schema.functions
@@ -401,18 +426,18 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
         if (t === "AGGREGATE_FUNCTION") return (f.kind as string) === "aggregate";
         return true;
       })
-      .map((f) => this._functionToInfo(f, name));
+      .map((f) => this._functionToInfo(f, path));
   }
 
   /**
    * Build the wire `FunctionInfo` for one declared function.
    *
-   * `schemaName` is the schema the function actually lives in — it is the
+   * `schemaPath` is the schema the function actually lives in — it is the
    * bind-dispatch key, so a function advertised through more than one route
    * (schema contents *and* `global_functions`) must carry the same value in
    * both. Shared by `schemaContentsFunctions` and `_globalFunctionInfos`.
    */
-  private _functionToInfo(f: VgiFunction, name: string): FunctionInfo {
+  private _functionToInfo(f: VgiFunction, path: string[]): FunctionInfo {
         const meta = resolveMetadata(f);
         const argSchema = argumentSpecsToSchema(f.argumentSpecs);
         const argBytes = serializeSchema(argSchema);
@@ -443,7 +468,7 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
           comment: null,
           tags,
           name: f.meta.name,
-          schema_name: name,
+          schema_path: normalizeSchemaPath(path),
           function_type: meta.functionType.toUpperCase() as "SCALAR" | "TABLE" | "TABLE_BUFFERING" | "AGGREGATE",
           arguments: argBytes,
           output_schema: outputSchemaBytes,
@@ -533,7 +558,7 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
   /**
    * Build `FunctionInfo` records for `CatalogDescriptor.globalFunctions`.
    *
-   * Each entry's `schema_name` is the schema it actually lives in — the
+   * Each entry's `schema_path` is the schema it actually lives in — the
    * globally visible name is derived client-side from
    * `global_function_prefix`, so `name` stays unprefixed here. An entry not
    * declared in any schema is a descriptor bug, so it throws rather than
@@ -544,32 +569,32 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
     const globals = this._descriptor.globalFunctions ?? [];
     if (globals.length === 0) return [];
 
-    const schemaOf = new Map<VgiFunction, string>();
+    const schemaOf = new Map<VgiFunction, string[]>();
     for (const sch of this._descriptor.schemas) {
       for (const fn of sch.functions ?? []) {
-        if (!schemaOf.has(fn)) schemaOf.set(fn, sch.name);
+        if (!schemaOf.has(fn)) schemaOf.set(fn, schemaDescriptorPath(sch));
       }
     }
 
     return globals.map((fn) => {
-      const schemaName = schemaOf.get(fn);
-      if (schemaName === undefined) {
+      const schemaPath = schemaOf.get(fn);
+      if (schemaPath === undefined) {
         throw new Error(
           `Catalog '${this._descriptor.name}': '${fn.meta.name}' is listed in ` +
             `globalFunctions but is not declared in any schema.`,
         );
       }
-      return this._functionToInfo(fn, schemaName);
+      return this._functionToInfo(fn, schemaPath);
     });
   }
 
   override schemaContentsMacros(
     attachOpaqueData: AttachOpaqueData,
-    name: string,
+    path: string[],
     type: string,
     transactionOpaqueData?: TransactionOpaqueData
   ): MacroInfo[] {
-    const schema = this._descriptor.schemas.find((s) => s.name === name);
+    const schema = this._descriptor.schemas.find((s) => schemaPathsEqual(schemaDescriptorPath(s), path));
     if (!schema || !schema.macros) return [];
 
     return schema.macros
@@ -584,7 +609,7 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
         comment: m.comment ?? null,
         tags: m.tags ?? {},
         name: m.name,
-        schema_name: name,
+        schema_path: normalizeSchemaPath(path),
         macro_type: (m.macroType === "scalar" ? "SCALAR" : "TABLE") as "SCALAR" | "TABLE",
         parameters: m.parameters,
         parameter_default_values: m.parameterDefaultValues ?? new Uint8Array(0),
@@ -601,16 +626,16 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
 
   override schemaContentsIndexes(
     attachOpaqueData: AttachOpaqueData,
-    name: string,
+    path: string[],
     transactionOpaqueData?: TransactionOpaqueData
   ): IndexInfo[] {
-    const schema = this._descriptor.schemas.find((s) => s.name === name);
+    const schema = this._descriptor.schemas.find((s) => schemaPathsEqual(schemaDescriptorPath(s), path));
     if (!schema || !schema.indexes) return [];
     return schema.indexes.map((idx) => ({
       comment: idx.comment ?? null,
       tags: idx.tags ?? {},
       name: idx.name,
-      schema_name: name,
+      schema_path: normalizeSchemaPath(path),
       table_name: idx.tableName,
       index_type: idx.indexType ?? "ART",
       constraint_type: (idx.constraintType ?? "NONE") as IndexConstraintType,
@@ -621,29 +646,29 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
 
   override indexGet(
     attachOpaqueData: AttachOpaqueData,
-    schemaName: string,
+    schemaPath: string[],
     name: string,
     transactionOpaqueData?: TransactionOpaqueData
   ): IndexInfo | null {
-    const all = this.schemaContentsIndexes(attachOpaqueData, schemaName, transactionOpaqueData);
+    const all = this.schemaContentsIndexes(attachOpaqueData, schemaPath, transactionOpaqueData);
     return all.find((i) => i.name === name) ?? null;
   }
 
   override macroGet(
     attachOpaqueData: AttachOpaqueData,
-    schemaName: string,
+    schemaPath: string[],
     name: string,
     transactionOpaqueData?: TransactionOpaqueData
   ): MacroInfo | null {
-    const macros = this.schemaContentsMacros(attachOpaqueData, schemaName, "SCALAR_MACRO", transactionOpaqueData);
-    const tableMacros = this.schemaContentsMacros(attachOpaqueData, schemaName, "TABLE_MACRO", transactionOpaqueData);
+    const macros = this.schemaContentsMacros(attachOpaqueData, schemaPath, "SCALAR_MACRO", transactionOpaqueData);
+    const tableMacros = this.schemaContentsMacros(attachOpaqueData, schemaPath, "TABLE_MACRO", transactionOpaqueData);
     const all = [...macros, ...tableMacros];
     return all.find((m) => m.name.toLowerCase() === name.toLowerCase()) ?? null;
   }
 
   override tableScanFunctionGet(
     attachOpaqueData: AttachOpaqueData,
-    schemaName: string,
+    schemaPath: string[],
     name: string,
     atUnit?: string,
     atValue?: string,
@@ -652,18 +677,18 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
     validateAtParams(atUnit, atValue);
 
     // Find the table descriptor
-    const schema = this._descriptor.schemas.find((s) => s.name === schemaName);
+    const schema = this._descriptor.schemas.find((s) => schemaPathsEqual(schemaDescriptorPath(s), schemaPath));
     if (!schema || !schema.tables) {
-      throw new Error(`Table '${name}' not found in schema '${schemaName}'`);
+      throw new Error(`Table '${name}' not found in schema ${schemaPathDisplay(schemaPath)}`);
     }
     const table = schema.tables.find((t) => t.name === name);
     if (!table) {
-      throw new Error(`Table '${name}' not found in schema '${schemaName}'`);
+      throw new Error(`Table '${name}' not found in schema ${schemaPathDisplay(schemaPath)}`);
     }
 
     // Reject AT clause on tables that don't support time travel
     if (atUnit && !table.supportsTimeTravel) {
-      throw new Error(`Table '${schemaName}.${name}' does not support time travel queries`);
+      throw new Error(`Table ${schemaPathDisplay(schemaPath)}.${name} does not support time travel queries`);
     }
 
     if (table.function) {
@@ -675,6 +700,7 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
         function_name: table.function.meta.name,
         arguments: argBytes,
         required_extensions: [],
+        schema_path: this._schemaForFunction(table.function),
       };
     }
 
@@ -683,7 +709,7 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
 
   override async tableGet(
     attachOpaqueData: AttachOpaqueData,
-    schemaName: string,
+    schemaPath: string[],
     name: string,
     atUnit?: string,
     atValue?: string,
@@ -692,25 +718,25 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
     validateAtParams(atUnit, atValue);
 
     // Find the table descriptor to check supports_time_travel
-    const schema = this._descriptor.schemas.find((s) => s.name === schemaName);
+    const schema = this._descriptor.schemas.find((s) => schemaPathsEqual(schemaDescriptorPath(s), schemaPath));
     if (schema?.tables) {
       const tableDesc = schema.tables.find((t) => t.name === name);
       if (tableDesc && atUnit && !tableDesc.supportsTimeTravel) {
-        throw new Error(`Table '${schemaName}.${name}' does not support time travel queries`);
+        throw new Error(`Table ${schemaPathDisplay(schemaPath)}.${name} does not support time travel queries`);
       }
     }
 
-    const tables = await this.schemaContentsTables(attachOpaqueData, schemaName, transactionOpaqueData);
+    const tables = await this.schemaContentsTables(attachOpaqueData, schemaPath, transactionOpaqueData);
     return tables.find((t) => t.name === name) ?? null;
   }
 
   override viewGet(
     attachOpaqueData: AttachOpaqueData,
-    schemaName: string,
+    schemaPath: string[],
     name: string,
     transactionOpaqueData?: TransactionOpaqueData
   ): ViewInfo | null {
-    const views = this.schemaContentsViews(attachOpaqueData, schemaName, transactionOpaqueData);
+    const views = this.schemaContentsViews(attachOpaqueData, schemaPath, transactionOpaqueData);
     return views.find((v) => v.name === name) ?? null;
   }
 
@@ -786,14 +812,7 @@ function resolveIndexGroups(schema: VgiSchema, groups?: string[][]): number[][] 
   return groups.map((group) => resolveIndices(schema, group));
 }
 
-const FK_SCHEMA = schema_([
-  field("fk_columns", list(field("item", utf8(), true)), false),
-  field("pk_columns", list(field("item", utf8(), true)), false),
-  field("referenced_table", utf8(), false),
-  field("referenced_schema", utf8(), false),
-]);
-
-function serializeForeignKeys(fks?: ForeignKeyDef[], schemaName?: string): Uint8Array[] {
+function serializeForeignKeys(fks?: ForeignKeyDef[], schemaPath?: string[]): Uint8Array[] {
   if (!fks || fks.length === 0) return [];
   return fks.map((fk) =>
     serializeBatch(
@@ -802,9 +821,9 @@ function serializeForeignKeys(fks?: ForeignKeyDef[], schemaName?: string): Uint8
           fk_columns: [fk.columns],
           pk_columns: [fk.referencedColumns],
           referenced_table: [fk.referencedTable],
-          referenced_schema: [fk.referencedSchema ?? schemaName ?? "main"],
+          referenced_schema_path: [fk.referencedSchemaPath ?? schemaPath ?? ["main"]],
         },
-        FK_SCHEMA
+        ForeignKeyInfoSchema
       )
     )
   );
@@ -1001,14 +1020,16 @@ function inferScalarType(val: any): VgiDataType {
 
 // Build the inlined `scan_function` payload for a function-backed table.
 // Mirrors python's _inline_function_result: a serialized one-row batch of
-// ScanFunctionResultSchema (function_name, arguments, required_extensions).
-// The C++ extension uses these bytes verbatim and skips the
-// catalog_table_scan_function_get RPC.
+// ScanFunctionResultSchema (function_name, arguments, required_extensions,
+// schema_path). The C++ extension uses these bytes verbatim and skips the
+// catalog_table_scan_function_get RPC, so the schema this inlines has to agree
+// with what that RPC would have answered.
 function inlineScanFunction(
   func: VgiFunction,
   args: Arguments | undefined,
+  schemaPath: string[] | null,
 ): Uint8Array {
   const argSchema = argumentSpecsToSchema(func.argumentSpecs);
   const argBytes = serializeArgsBatch(args ?? new Arguments(), argSchema);
-  return encodeScanFunctionResult(func.meta.name, argBytes);
+  return encodeScanFunctionResult(func.meta.name, argBytes, [], schemaPath);
 }

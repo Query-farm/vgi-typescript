@@ -1,12 +1,19 @@
 // Copyright 2025, 2026 Query Farm LLC - https://query.farm
 // VGI Worker: main entry point for running a VGI function server.
 
-import { VgiRpcServer, serveUnix, serveTcp, serveStream as serveStreamRpc } from "@query-farm/vgi-rpc";
+import {
+  VgiRpcServer,
+  observePeerIdentity,
+  peerIdentityPrimary,
+  serveUnix,
+  serveTcp,
+  serveStream as serveStreamRpc,
+} from "@query-farm/vgi-rpc";
 import { FunctionRegistry } from "./functions/registry.js";
 import type { VgiFunction } from "./functions/types.js";
 import { buildVgiProtocol } from "./protocol/dispatch.js";
 import type { Protocol } from "@query-farm/vgi-rpc";
-import type { CatalogDescriptor } from "./catalog/descriptors.js";
+import { schemaDescriptorPath, type CatalogDescriptor } from "./catalog/descriptors.js";
 import type { CatalogInterface } from "./catalog/interface.js";
 import { ReadOnlyCatalogInterface } from "./catalog/read-only.js";
 
@@ -41,6 +48,10 @@ interface LauncherArgs {
   /** TCP bind port; present iff `--tcp` was passed. */
   tcpPort?: number;
   idleTimeout?: number;
+  irohRawUpstream?: boolean;
+  irohIssuer?: string;
+  irohTrustedProxyAddresses: string[];
+  irohAuthenticate: boolean;
 }
 
 // Parse a `[HOST:]PORT` --tcp bind spec into a LauncherArgs. A bare PORT (no
@@ -58,7 +69,7 @@ function parseTcpSpec(spec: string, out: LauncherArgs): void {
 }
 
 function parseLauncherArgs(argv: readonly string[]): LauncherArgs {
-  const out: LauncherArgs = {};
+  const out: LauncherArgs = { irohTrustedProxyAddresses: [], irohAuthenticate: true };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--unix" && i + 1 < argv.length) {
@@ -73,6 +84,22 @@ function parseLauncherArgs(argv: readonly string[]): LauncherArgs {
       out.idleTimeout = Number(argv[++i]);
     } else if (a.startsWith("--idle-timeout=")) {
       out.idleTimeout = Number(a.slice("--idle-timeout=".length));
+    } else if (a === "--iroh-raw-upstream" && i + 1 < argv.length) {
+      parseTcpSpec(argv[++i], out);
+      out.irohRawUpstream = true;
+    } else if (a.startsWith("--iroh-raw-upstream=")) {
+      parseTcpSpec(a.slice("--iroh-raw-upstream=".length), out);
+      out.irohRawUpstream = true;
+    } else if (a === "--iroh-issuer" && i + 1 < argv.length) {
+      out.irohIssuer = argv[++i];
+    } else if (a.startsWith("--iroh-issuer=")) {
+      out.irohIssuer = a.slice("--iroh-issuer=".length);
+    } else if (a === "--iroh-trusted-proxy" && i + 1 < argv.length) {
+      out.irohTrustedProxyAddresses.push(...argv[++i].split(",").filter(Boolean));
+    } else if (a.startsWith("--iroh-trusted-proxy=")) {
+      out.irohTrustedProxyAddresses.push(...a.slice("--iroh-trusted-proxy=".length).split(",").filter(Boolean));
+    } else if (a === "--iroh-observe") {
+      out.irohAuthenticate = false;
     }
   }
   return out;
@@ -122,7 +149,7 @@ export class Worker {
             this._registry.register(func);
             // Also index by owning schema + catalog so a schema-qualified bind
             // resolves when one name is declared in more than one schema.
-            this._registry.registerInSchema(func, schema.name, config.catalog.name);
+            this._registry.registerInSchema(func, schemaDescriptorPath(schema), config.catalog.name);
           }
         }
       }
@@ -149,6 +176,12 @@ export class Worker {
       debug(() => `[worker] protocol built`);
 
       const launcher = parseLauncherArgs(argv);
+      if (launcher.irohRawUpstream) {
+        if (!launcher.irohIssuer) throw new TypeError("--iroh-raw-upstream requires --iroh-issuer");
+        if (!["127.0.0.1", "::1", "localhost"].includes(launcher.tcpHost ?? "")) {
+          throw new TypeError("--iroh-raw-upstream must bind loopback");
+        }
+      }
       if (launcher.unixPath !== undefined) {
         // VGI_WORKER_IDLE_TIMEOUT overrides whatever the C++ launcher
         // appended via --idle-timeout. Useful in test setups where the
@@ -191,6 +224,18 @@ export class Worker {
           host: launcher.tcpHost,
           port: launcher.tcpPort,
           idleTimeout,
+          ...(launcher.irohRawUpstream
+            ? {
+                proxyProtocolV2Required: true,
+                trustedProxyAddresses: launcher.irohTrustedProxyAddresses.length > 0
+                  ? launcher.irohTrustedProxyAddresses
+                  : ["127.0.0.1"],
+                irohProxyIssuer: launcher.irohIssuer,
+                peerAuthenticationPolicy: launcher.irohAuthenticate
+                  ? peerIdentityPrimary("iroh")
+                  : observePeerIdentity,
+              }
+            : {}),
         }).then((handle) => handle.done).then(() => {
           debug(() => `[worker] serveTcp done (idle shutdown)`);
         }).catch((err: any) => {

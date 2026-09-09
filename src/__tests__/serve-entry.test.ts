@@ -200,6 +200,36 @@ describe("serveVgiWorker", () => {
 });
 
 describe("serveVgiWorker environment handling", () => {
+  test("Iroh bridge mode authenticates only a canonical forwarded EndpointId", async () => {
+    const { registry, catalogInterface } = buildParts();
+    const server = serveVgiWorker({
+      name: "demo",
+      doc: "d",
+      version: "0",
+      registry,
+      catalogInterface,
+      port: 0,
+      quiet: true,
+      signingKey: new Uint8Array(SIGNING_KEY_BYTES).fill(9),
+      irohBridge: { issuer: "test-mesh" },
+    });
+    try {
+      const base = `http://127.0.0.1:${server.port}`;
+      const anonymous = new VgiClient(httpConnect(base, { prefix: "" }));
+      await expect(anonymous.catalogs()).rejects.toThrow();
+
+      const bridgeFetch: typeof fetch = (input, init) => {
+        const headers = new Headers(init?.headers);
+        headers.set("VGI-Forwarded-Iroh-Endpoint", "01".repeat(32));
+        return fetch(input, { ...init, headers });
+      };
+      const authenticated = new VgiClient(httpConnect(base, { prefix: "", fetch: bridgeFetch }));
+      expect(await authenticated.catalogs()).toContain("demo");
+    } finally {
+      server.stop(true);
+    }
+  });
+
   test("rejects a non-numeric PORT rather than binding something surprising", () => {
     const { registry, catalogInterface } = buildParts();
     expect(() =>

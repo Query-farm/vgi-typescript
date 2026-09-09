@@ -32,7 +32,7 @@ export function registerCatalogViewMethods(protocol: Protocol, getCatalog: GetCa
       const cat = getCatalog();
       const info = await cat.viewGet(
         toUint8Array(params.attach_opaque_data),
-        params.schema_name,
+        params.schema_path,
         params.name,
         params.transaction_opaque_data ? toUint8Array(params.transaction_opaque_data) : undefined
       );
@@ -50,7 +50,7 @@ export function registerCatalogViewMethods(protocol: Protocol, getCatalog: GetCa
       const cat = getCatalog();
       await cat.viewCreate(
         toUint8Array(params.attach_opaque_data),
-        params.schema_name,
+        params.schema_path,
         params.name,
         params.definition,
         params.on_conflict,
@@ -68,7 +68,7 @@ export function registerCatalogViewMethods(protocol: Protocol, getCatalog: GetCa
       const cat = getCatalog();
       await cat.viewDrop(
         toUint8Array(params.attach_opaque_data),
-        params.schema_name,
+        params.schema_path,
         params.name,
         params.ignore_not_found,
         params.transaction_opaque_data ? toUint8Array(params.transaction_opaque_data) : undefined
@@ -85,7 +85,7 @@ export function registerCatalogViewMethods(protocol: Protocol, getCatalog: GetCa
       const cat = getCatalog();
       await cat.viewRename(
         toUint8Array(params.attach_opaque_data),
-        params.schema_name,
+        params.schema_path,
         params.name,
         params.new_name,
         params.ignore_not_found,
@@ -103,7 +103,7 @@ export function registerCatalogViewMethods(protocol: Protocol, getCatalog: GetCa
       const cat = getCatalog();
       await cat.viewCommentSet(
         toUint8Array(params.attach_opaque_data),
-        params.schema_name,
+        params.schema_path,
         params.name,
         params.comment,
         params.ignore_not_found,

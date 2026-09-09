@@ -3,7 +3,7 @@
 // ArrowSerializableDataclass field declaration order so the format is
 // positional-compatible with the Python reader.
 
-import { type VgiSchema, schema, field, type VgiBatch, type VgiDataType, utf8, binary, bool, struct, dictionary, int16 } from "../../arrow/index.js";
+import { type VgiSchema, schema, field, type VgiBatch, type VgiDataType, utf8, binary, bool, struct, dictionary, int16, list } from "../../arrow/index.js";
 import { Arguments } from "../../arguments/arguments.js";
 import { FunctionType } from "../../types.js";
 import type { BindRequest, BindResponse, CopyFromContext, CopyToContext } from "../types.js";
@@ -31,7 +31,7 @@ import { serializeArguments, deserializeArguments } from "./arguments.js";
 // two schemas in full and leaves the reader to diff them by eye.
 //
 // So `copy_from` and `copy_to` are always present and null on a non-COPY bind,
-// `schema_name` is LAST (not before them), and `function_type` is a dictionary
+// `schema_path` is LAST (not before them), and `function_type` is a dictionary
 // rather than plain utf8.
 const COPY_FROM_STRUCT_TYPE = struct([
   field("format", utf8(), false),
@@ -62,8 +62,8 @@ const BIND_REQUEST_SCHEMA = schema([
   field("copy_to", COPY_TO_STRUCT_TYPE, true),
   // Catalog schema owning the function. A worker may register one name in
   // several schemas, so the bare name is not a unique key — resolution is by
-  // (schema_name, function_name). Null for callers with no catalog context.
-  field("schema_name", utf8(), true),
+  // (schema_path, function_name). Null for callers with no catalog context.
+  field("schema_path", list(field("item", utf8(), true)), true),
 ]);
 
 export function serializeBindRequest(req: BindRequest): VgiBatch {
@@ -89,7 +89,7 @@ export function serializeBindRequest(req: BindRequest): VgiBatch {
     copy_to: req.copy_to
       ? { format: req.copy_to.format, file_path: req.copy_to.file_path }
       : null,
-    schema_name: req.schema_name ?? null,
+    schema_path: req.schema_path ?? null,
   });
 }
 
@@ -164,7 +164,9 @@ export function deserializeBindRequest(
     at_unit: params.at_unit ? String(params.at_unit) : null,
     at_value: params.at_value ? String(params.at_value) : null,
     // Empty string -> null, same convention as at_unit/at_value.
-    schema_name: params.schema_name ? String(params.schema_name) : null,
+    schema_path: params.schema_path
+      ? (Array.isArray(params.schema_path) ? params.schema_path : [...params.schema_path]).map(String)
+      : null,
     // COPY ... FROM context — absent for ordinary scans (params.copy_from
     // undefined -> null). The struct column decodes to a plain object.
     copy_from: parseCopyFromContext(params.copy_from),

@@ -23,7 +23,14 @@
 
 import type { CatalogInterface } from "./catalog/interface.js";
 import type { FunctionRegistry } from "./functions/registry.js";
-import type { AuthenticateFn } from "@query-farm/vgi-rpc";
+import {
+  irohForwardedHeaderIdentityProvider,
+  IROH_FORWARDED_ENDPOINT_HEADER,
+  observePeerIdentity,
+  peerIdentityPrimary,
+  type AuthenticateFn,
+  type PeerResolutionOptions,
+} from "@query-farm/vgi-rpc";
 import { createVgiFetch } from "./http/fetch.js";
 
 /** Environment variables `serveVgiWorker` reads. Injectable for testing. */
@@ -38,6 +45,21 @@ export const DEFAULT_PORT = 8787;
 export const DEFAULT_TOKEN_TTL = 3600;
 /** Bytes of HMAC key `createHttpHandler` expects; 64 hex characters. */
 export const SIGNING_KEY_BYTES = 32;
+
+/** HTTP trust boundary for a colocated `vgi-iroh-bridge`. */
+export interface IrohHttpBridgeOptions {
+  /** Worker-local namespace for EndpointId principals. */
+  issuer: string;
+  /** Exact bridge IP addresses. No CIDRs or hostnames. */
+  trustedProxyAddresses?: readonly string[];
+  /** Authenticate the EndpointId (default) or expose evidence only. */
+  authenticate?: boolean;
+  /**
+   * Host-specific physical peer and raw-header adapter. Required because a
+   * Fetch Request alone does not preserve duplicate header fields.
+   */
+  peerResolutionContext?: (request: Request) => PeerResolutionOptions | Promise<PeerResolutionOptions>;
+}
 
 export interface ServeVgiWorkerOptions {
   /** Short worker name shown on the landing page, e.g. "ishares". */
@@ -55,6 +77,8 @@ export interface ServeVgiWorkerOptions {
   repositoryUrl?: string;
   /** Overrides `$PORT` (default 8787). Pass 0 to bind an ephemeral port. */
   port?: number;
+  /** Bind address. Iroh bridge mode defaults to loopback; otherwise Bun's default. */
+  hostname?: string;
   /** Overrides `$VGI_SIGNING_KEY`. 32 bytes. */
   signingKey?: Uint8Array;
   /** Overrides `$VGI_TOKEN_TTL` (default 3600 seconds). */
@@ -72,6 +96,8 @@ export interface ServeVgiWorkerOptions {
   /** Authenticates each request, returning the caller's `AuthContext`.
    *  Omit for an anonymous worker (the default). */
   authenticate?: AuthenticateFn;
+  /** Preserve authenticated Iroh identity forwarded by an adjacent HTTP bridge. */
+  irohBridge?: IrohHttpBridgeOptions;
 }
 
 /** The slice of `Bun.serve`'s return value this module uses. */
@@ -79,11 +105,13 @@ export interface VgiHttpServer {
   readonly port: number;
   readonly url: URL;
   stop(closeActiveConnections?: boolean): void;
+  requestIP?(request: Request): { address: string } | null;
 }
 
 interface BunLike {
   serve(options: {
     port: number;
+    hostname?: string;
     fetch: (req: Request) => Promise<Response>;
   }): VgiHttpServer;
 }
@@ -188,6 +216,13 @@ export function createVgiWorkerFetch(
   // mean "off" would silently re-enable it. `undefined` falls through to the env
   // var and then to that same default.
   const corsOrigins = opts.corsOrigins === null ? null : (opts.corsOrigins ?? env.CORS_ORIGINS);
+  const bridge = opts.irohBridge;
+  if (bridge && !bridge.peerResolutionContext) {
+    throw new Error(
+      "irohBridge requires a peerResolutionContext when createVgiWorkerFetch is used without serveVgiWorker",
+    );
+  }
+  const trustedProxyAddresses = bridge?.trustedProxyAddresses ?? ["127.0.0.1"];
 
   return createVgiFetch({
     protocol: { registry: opts.registry, catalogInterface: opts.catalogInterface },
@@ -199,6 +234,13 @@ export function createVgiWorkerFetch(
     repositoryUrl: opts.repositoryUrl,
     landingInfo: { name: opts.name, doc: opts.doc, version: opts.version },
     authenticate: opts.authenticate,
+    peerIdentityProviders: bridge
+      ? [irohForwardedHeaderIdentityProvider({ issuer: bridge.issuer, trustedProxyAddresses })]
+      : undefined,
+    peerAuthenticationPolicy: bridge
+      ? (bridge.authenticate === false ? observePeerIdentity : peerIdentityPrimary("iroh"))
+      : undefined,
+    peerResolutionContext: bridge?.peerResolutionContext,
   });
 }
 
@@ -220,8 +262,28 @@ export function serveVgiWorker(opts: ServeVgiWorkerOptions): VgiHttpServer {
 
   const env = opts.env ?? (process.env as ServeEnv);
   const port = resolvePort(opts.port, env);
-  const fetch = createVgiWorkerFetch(opts);
-  const server = runtime.serve({ port, fetch });
+  const hostname = opts.hostname ?? (opts.irohBridge ? "127.0.0.1" : undefined);
+  if (opts.irohBridge && !["127.0.0.1", "::1", "localhost"].includes(hostname ?? "")) {
+    throw new Error("an Iroh HTTP bridge upstream must bind loopback");
+  }
+  let server: VgiHttpServer;
+  const bridge = opts.irohBridge && !opts.irohBridge.peerResolutionContext
+    ? {
+        ...opts.irohBridge,
+        peerResolutionContext(request: Request): PeerResolutionOptions {
+          const immediatePeer = server.requestIP?.(request)?.address;
+          const forwarded = request.headers.get(IROH_FORWARDED_ENDPOINT_HEADER);
+          return {
+            immediatePeer,
+            headers: forwarded === null
+              ? {}
+              : { [IROH_FORWARDED_ENDPOINT_HEADER]: [forwarded] },
+          };
+        },
+      }
+    : opts.irohBridge;
+  const fetch = createVgiWorkerFetch({ ...opts, irohBridge: bridge });
+  server = runtime.serve({ port, hostname, fetch });
 
   if (!opts.quiet) {
     const base = `http://localhost:${server.port}`;

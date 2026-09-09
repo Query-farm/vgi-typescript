@@ -47,6 +47,9 @@ import { wrapRequest, unwrapResult } from "./protocol.js";
 import { toUint8Array } from "../util/bytes.js";
 import { serializeAttachOptions } from "../catalog/attach-options.js";
 import { VgiClientError, wrapRpcWithErrorEnrichment } from "./errors.js";
+import { normalizeSchemaPath } from "../schema-path.js";
+import { encodeASD } from "../codec/asd.js";
+import { ClientCapabilitiesSchema, MacroCreateRequestSchema } from "../generated/vgi-protocol-schemas.js";
 import { deserializeInfoList, deserializeTags, toAsyncIterator } from "./helpers.js";
 
 export { VgiClientError };
@@ -100,6 +103,32 @@ export class VgiClient {
   constructor(rpc: RpcClient, options?: VgiClientOptions) {
     this.rpc = wrapRpcWithErrorEnrichment(rpc);
     this.defaultAttachOpaqueData = options?.attachOpaqueData ?? null;
+  }
+
+  /**
+   * Connect the high-level client to a canonical `iroh://` or `httpi://`
+   * endpoint. Native Node/Bun connectors are selected from the URI scheme.
+   * Browser callers may inject the connector exported by the browser Iroh
+   * package without changing the VGI client API.
+   */
+  static async fromIroh(
+    endpoint: string,
+    options: Record<string, unknown> = {},
+    clientOptions?: VgiClientOptions,
+    connector?: (endpoint: string, options: Record<string, unknown>) => Promise<RpcClient>,
+  ): Promise<VgiClient> {
+    if (!/^(iroh|httpi):\/\//.test(endpoint)) {
+      throw new TypeError("VgiClient.fromIroh requires an iroh:// or httpi:// endpoint");
+    }
+    let selected = connector;
+    if (!selected) {
+      const rpc = await import("@query-farm/vgi-rpc");
+      selected = endpoint.startsWith("iroh://")
+        ? (rpc.irohConnect as unknown as NonNullable<typeof selected>)
+        : (rpc.httpiConnect as unknown as NonNullable<typeof selected>);
+    }
+    if (!selected) throw new TypeError("no Iroh connector is available in this runtime");
+    return new VgiClient(await selected(endpoint, options), clientOptions);
   }
 
   // ==========================================================================
@@ -599,6 +628,7 @@ export class VgiClient {
       field("options", binary(), true),
       field("data_version_spec", utf8(), true),
       field("implementation_version", utf8(), true),
+      field("client_capabilities", binary(), true),
     ]);
     const innerBatch = batchFromColumns(
       {
@@ -606,6 +636,9 @@ export class VgiClient {
         options: [wireOptions],
         data_version_spec: [opts?.dataVersionSpec ?? null],
         implementation_version: [opts?.implementationVersion ?? null],
+        client_capabilities: [opts?.clientCapabilities
+          ? encodeASD(ClientCapabilitiesSchema, opts.clientCapabilities)
+          : null],
       },
       schema,
     );
@@ -757,12 +790,12 @@ export class VgiClient {
   /** Get a schema by name, or null if not found. */
   async schemaGet(
     attachOpaqueData: AttachOpaqueData,
-    name: string,
+    path: string[] | string,
     transactionOpaqueData?: TransactionOpaqueData,
   ): Promise<SchemaInfo | null> {
     const result = await this.rpc.call("catalog_schema_get", {
       attach_opaque_data: attachOpaqueData,
-      name,
+      path: normalizeSchemaPath(path),
       transaction_opaque_data: transactionOpaqueData ?? null,
     });
     if (!result) return null;
@@ -774,7 +807,7 @@ export class VgiClient {
   /** Create a new schema. */
   async schemaCreate(
     attachOpaqueData: AttachOpaqueData,
-    name: string,
+    path: string[] | string,
     opts?: {
       onConflict?: OnCreateConflict;
       comment?: string | null;
@@ -787,7 +820,7 @@ export class VgiClient {
       : null;
     await this.rpc.call("catalog_schema_create", {
       attach_opaque_data: attachOpaqueData,
-      name,
+      path: normalizeSchemaPath(path),
       on_conflict: opts?.onConflict ?? "error",
       comment: opts?.comment ?? null,
       tags: tagsMap,
@@ -798,14 +831,14 @@ export class VgiClient {
   /** Drop a schema by name. */
   async schemaDrop(
     attachOpaqueData: AttachOpaqueData,
-    name: string,
+    path: string[] | string,
     ignoreNotFound?: boolean,
     cascade?: boolean,
     transactionOpaqueData?: TransactionOpaqueData,
   ): Promise<void> {
     await this.rpc.call("catalog_schema_drop", {
       attach_opaque_data: attachOpaqueData,
-      name,
+      path: normalizeSchemaPath(path),
       ignore_not_found: ignoreNotFound ?? false,
       cascade: cascade ?? false,
       transaction_opaque_data: transactionOpaqueData ?? null,
@@ -815,12 +848,12 @@ export class VgiClient {
   /** List tables in a schema. */
   async schemaContentsTables(
     attachOpaqueData: AttachOpaqueData,
-    name: string,
+    path: string[] | string,
     transactionOpaqueData?: TransactionOpaqueData,
   ): Promise<TableInfo[]> {
     const result = await this.rpc.call("catalog_schema_contents_tables", {
       attach_opaque_data: attachOpaqueData,
-      name,
+      path: normalizeSchemaPath(path),
       transaction_opaque_data: transactionOpaqueData ?? null,
     });
     if (!result) return [];
@@ -831,12 +864,12 @@ export class VgiClient {
   /** List views in a schema. */
   async schemaContentsViews(
     attachOpaqueData: AttachOpaqueData,
-    name: string,
+    path: string[] | string,
     transactionOpaqueData?: TransactionOpaqueData,
   ): Promise<ViewInfo[]> {
     const result = await this.rpc.call("catalog_schema_contents_views", {
       attach_opaque_data: attachOpaqueData,
-      name,
+      path: normalizeSchemaPath(path),
       transaction_opaque_data: transactionOpaqueData ?? null,
     });
     if (!result) return [];
@@ -847,13 +880,13 @@ export class VgiClient {
   /** List functions in a schema, filtered by type. */
   async schemaContentsFunctions(
     attachOpaqueData: AttachOpaqueData,
-    name: string,
+    path: string[] | string,
     type: CatalogFunctionType,
     transactionOpaqueData?: TransactionOpaqueData,
   ): Promise<FunctionInfo[]> {
     const result = await this.rpc.call("catalog_schema_contents_functions", {
       attach_opaque_data: attachOpaqueData,
-      name,
+      path: normalizeSchemaPath(path),
       type,
       transaction_opaque_data: transactionOpaqueData ?? null,
     });
@@ -865,13 +898,13 @@ export class VgiClient {
   /** Get a table by name, or null if not found. */
   async tableGet(
     attachOpaqueData: AttachOpaqueData,
-    schemaName: string,
+    schemaPath: string[] | string,
     name: string,
     transactionOpaqueData?: TransactionOpaqueData,
   ): Promise<TableInfo | null> {
     const result = await this.rpc.call("catalog_table_get", {
       attach_opaque_data: attachOpaqueData,
-      schema_name: schemaName,
+      schema_path: normalizeSchemaPath(schemaPath),
       name,
       transaction_opaque_data: transactionOpaqueData ?? null,
     });
@@ -884,7 +917,7 @@ export class VgiClient {
   /** Create a new table. */
   async tableCreate(
     attachOpaqueData: AttachOpaqueData,
-    schemaName: string,
+    schemaPath: string[] | string,
     name: string,
     columns: Uint8Array,
     onConflict: OnCreateConflict,
@@ -895,7 +928,7 @@ export class VgiClient {
   ): Promise<void> {
     await this.rpc.call("catalog_table_create", {
       attach_opaque_data: attachOpaqueData,
-      schema_name: schemaName,
+      schema_path: normalizeSchemaPath(schemaPath),
       name,
       columns,
       on_conflict: onConflict,
@@ -909,7 +942,7 @@ export class VgiClient {
   /** Drop a table by name. */
   async tableDrop(
     attachOpaqueData: AttachOpaqueData,
-    schemaName: string,
+    schemaPath: string[] | string,
     name: string,
     ignoreNotFound?: boolean,
     cascade?: boolean,
@@ -917,7 +950,7 @@ export class VgiClient {
   ): Promise<void> {
     await this.rpc.call("catalog_table_drop", {
       attach_opaque_data: attachOpaqueData,
-      schema_name: schemaName,
+      schema_path: normalizeSchemaPath(schemaPath),
       name,
       ignore_not_found: ignoreNotFound ?? false,
       cascade: cascade ?? false,
@@ -932,7 +965,7 @@ export class VgiClient {
    */
   async tableScanFunctionGet(
     attachOpaqueData: AttachOpaqueData,
-    schemaName: string,
+    schemaPath: string[] | string,
     name: string,
     atUnit?: string | null,
     atValue?: string | null,
@@ -940,7 +973,7 @@ export class VgiClient {
   ): Promise<ScanFunctionResult> {
     const result = await this.rpc.call("catalog_table_scan_function_get", {
       attach_opaque_data: attachOpaqueData,
-      schema_name: schemaName,
+      schema_path: normalizeSchemaPath(schemaPath),
       name,
       at_unit: atUnit ?? null,
       at_value: atValue ?? null,
@@ -953,7 +986,7 @@ export class VgiClient {
   /** Set or clear the comment on a table. */
   async tableCommentSet(
     attachOpaqueData: AttachOpaqueData,
-    schemaName: string,
+    schemaPath: string[] | string,
     name: string,
     comment?: string | null,
     ignoreNotFound?: boolean,
@@ -961,7 +994,7 @@ export class VgiClient {
   ): Promise<void> {
     await this.rpc.call("catalog_table_comment_set", {
       attach_opaque_data: attachOpaqueData,
-      schema_name: schemaName,
+      schema_path: normalizeSchemaPath(schemaPath),
       name,
       comment: comment ?? null,
       ignore_not_found: ignoreNotFound ?? null,
@@ -972,7 +1005,7 @@ export class VgiClient {
   /** Rename a table. */
   async tableRename(
     attachOpaqueData: AttachOpaqueData,
-    schemaName: string,
+    schemaPath: string[] | string,
     name: string,
     newName: string,
     ignoreNotFound?: boolean,
@@ -980,7 +1013,7 @@ export class VgiClient {
   ): Promise<void> {
     await this.rpc.call("catalog_table_rename", {
       attach_opaque_data: attachOpaqueData,
-      schema_name: schemaName,
+      schema_path: normalizeSchemaPath(schemaPath),
       name,
       new_name: newName,
       ignore_not_found: ignoreNotFound ?? null,
@@ -991,7 +1024,7 @@ export class VgiClient {
   /** Add a column to a table. */
   async tableColumnAdd(
     attachOpaqueData: AttachOpaqueData,
-    schemaName: string,
+    schemaPath: string[] | string,
     name: string,
     columnName: string,
     columnType: string,
@@ -1001,7 +1034,7 @@ export class VgiClient {
   ): Promise<void> {
     await this.rpc.call("catalog_table_column_add", {
       attach_opaque_data: attachOpaqueData,
-      schema_name: schemaName,
+      schema_path: normalizeSchemaPath(schemaPath),
       name,
       column_name: columnName,
       column_type: columnType,
@@ -1014,7 +1047,7 @@ export class VgiClient {
   /** Drop a column from a table. */
   async tableColumnDrop(
     attachOpaqueData: AttachOpaqueData,
-    schemaName: string,
+    schemaPath: string[] | string,
     name: string,
     columnName: string,
     ignoreNotFound?: boolean,
@@ -1022,7 +1055,7 @@ export class VgiClient {
   ): Promise<void> {
     await this.rpc.call("catalog_table_column_drop", {
       attach_opaque_data: attachOpaqueData,
-      schema_name: schemaName,
+      schema_path: normalizeSchemaPath(schemaPath),
       name,
       column_name: columnName,
       ignore_not_found: ignoreNotFound ?? null,
@@ -1033,7 +1066,7 @@ export class VgiClient {
   /** Rename a column in a table. */
   async tableColumnRename(
     attachOpaqueData: AttachOpaqueData,
-    schemaName: string,
+    schemaPath: string[] | string,
     name: string,
     columnName: string,
     newName: string,
@@ -1042,7 +1075,7 @@ export class VgiClient {
   ): Promise<void> {
     await this.rpc.call("catalog_table_column_rename", {
       attach_opaque_data: attachOpaqueData,
-      schema_name: schemaName,
+      schema_path: normalizeSchemaPath(schemaPath),
       name,
       column_name: columnName,
       new_name: newName,
@@ -1054,7 +1087,7 @@ export class VgiClient {
   /** Set the default value for a column. */
   async tableColumnDefaultSet(
     attachOpaqueData: AttachOpaqueData,
-    schemaName: string,
+    schemaPath: string[] | string,
     name: string,
     columnName: string,
     defaultValue: string,
@@ -1063,7 +1096,7 @@ export class VgiClient {
   ): Promise<void> {
     await this.rpc.call("catalog_table_column_default_set", {
       attach_opaque_data: attachOpaqueData,
-      schema_name: schemaName,
+      schema_path: normalizeSchemaPath(schemaPath),
       name,
       column_name: columnName,
       default_value: defaultValue,
@@ -1075,7 +1108,7 @@ export class VgiClient {
   /** Remove the default value from a column. */
   async tableColumnDefaultDrop(
     attachOpaqueData: AttachOpaqueData,
-    schemaName: string,
+    schemaPath: string[] | string,
     name: string,
     columnName: string,
     ignoreNotFound?: boolean,
@@ -1083,7 +1116,7 @@ export class VgiClient {
   ): Promise<void> {
     await this.rpc.call("catalog_table_column_default_drop", {
       attach_opaque_data: attachOpaqueData,
-      schema_name: schemaName,
+      schema_path: normalizeSchemaPath(schemaPath),
       name,
       column_name: columnName,
       ignore_not_found: ignoreNotFound ?? null,
@@ -1100,7 +1133,7 @@ export class VgiClient {
    */
   async tableColumnTypeChange(
     attachOpaqueData: AttachOpaqueData,
-    schemaName: string,
+    schemaPath: string[] | string,
     name: string,
     columnDefinition: Uint8Array,
     expression?: string | null,
@@ -1109,7 +1142,7 @@ export class VgiClient {
   ): Promise<void> {
     await this.rpc.call("catalog_table_column_type_change", {
       attach_opaque_data: attachOpaqueData,
-      schema_name: schemaName,
+      schema_path: normalizeSchemaPath(schemaPath),
       name,
       column_definition: columnDefinition,
       expression: expression ?? null,
@@ -1121,7 +1154,7 @@ export class VgiClient {
   /** Set a NOT NULL constraint on a column. */
   async tableNotNullSet(
     attachOpaqueData: AttachOpaqueData,
-    schemaName: string,
+    schemaPath: string[] | string,
     name: string,
     columnName: string,
     ignoreNotFound?: boolean,
@@ -1129,7 +1162,7 @@ export class VgiClient {
   ): Promise<void> {
     await this.rpc.call("catalog_table_not_null_set", {
       attach_opaque_data: attachOpaqueData,
-      schema_name: schemaName,
+      schema_path: normalizeSchemaPath(schemaPath),
       name,
       column_name: columnName,
       ignore_not_found: ignoreNotFound ?? null,
@@ -1140,7 +1173,7 @@ export class VgiClient {
   /** Remove a NOT NULL constraint from a column. */
   async tableNotNullDrop(
     attachOpaqueData: AttachOpaqueData,
-    schemaName: string,
+    schemaPath: string[] | string,
     name: string,
     columnName: string,
     ignoreNotFound?: boolean,
@@ -1148,7 +1181,7 @@ export class VgiClient {
   ): Promise<void> {
     await this.rpc.call("catalog_table_not_null_drop", {
       attach_opaque_data: attachOpaqueData,
-      schema_name: schemaName,
+      schema_path: normalizeSchemaPath(schemaPath),
       name,
       column_name: columnName,
       ignore_not_found: ignoreNotFound ?? null,
@@ -1159,13 +1192,13 @@ export class VgiClient {
   /** Get a view by name, or null if not found. */
   async viewGet(
     attachOpaqueData: AttachOpaqueData,
-    schemaName: string,
+    schemaPath: string[] | string,
     name: string,
     transactionOpaqueData?: TransactionOpaqueData,
   ): Promise<ViewInfo | null> {
     const result = await this.rpc.call("catalog_view_get", {
       attach_opaque_data: attachOpaqueData,
-      schema_name: schemaName,
+      schema_path: normalizeSchemaPath(schemaPath),
       name,
       transaction_opaque_data: transactionOpaqueData ?? null,
     });
@@ -1178,7 +1211,7 @@ export class VgiClient {
   /** Create a new view. */
   async viewCreate(
     attachOpaqueData: AttachOpaqueData,
-    schemaName: string,
+    schemaPath: string[] | string,
     name: string,
     definition: string,
     onConflict: OnCreateConflict,
@@ -1186,7 +1219,7 @@ export class VgiClient {
   ): Promise<void> {
     await this.rpc.call("catalog_view_create", {
       attach_opaque_data: attachOpaqueData,
-      schema_name: schemaName,
+      schema_path: normalizeSchemaPath(schemaPath),
       name,
       definition,
       on_conflict: onConflict,
@@ -1197,7 +1230,7 @@ export class VgiClient {
   /** Drop a view by name. */
   async viewDrop(
     attachOpaqueData: AttachOpaqueData,
-    schemaName: string,
+    schemaPath: string[] | string,
     name: string,
     ignoreNotFound?: boolean,
     cascade?: boolean,
@@ -1205,7 +1238,7 @@ export class VgiClient {
   ): Promise<void> {
     await this.rpc.call("catalog_view_drop", {
       attach_opaque_data: attachOpaqueData,
-      schema_name: schemaName,
+      schema_path: normalizeSchemaPath(schemaPath),
       name,
       ignore_not_found: ignoreNotFound ?? false,
       cascade: cascade ?? false,
@@ -1216,7 +1249,7 @@ export class VgiClient {
   /** Rename a view. */
   async viewRename(
     attachOpaqueData: AttachOpaqueData,
-    schemaName: string,
+    schemaPath: string[] | string,
     name: string,
     newName: string,
     ignoreNotFound?: boolean,
@@ -1224,7 +1257,7 @@ export class VgiClient {
   ): Promise<void> {
     await this.rpc.call("catalog_view_rename", {
       attach_opaque_data: attachOpaqueData,
-      schema_name: schemaName,
+      schema_path: normalizeSchemaPath(schemaPath),
       name,
       new_name: newName,
       ignore_not_found: ignoreNotFound ?? null,
@@ -1235,7 +1268,7 @@ export class VgiClient {
   /** Set or clear the comment on a view. */
   async viewCommentSet(
     attachOpaqueData: AttachOpaqueData,
-    schemaName: string,
+    schemaPath: string[] | string,
     name: string,
     comment?: string | null,
     ignoreNotFound?: boolean,
@@ -1243,7 +1276,7 @@ export class VgiClient {
   ): Promise<void> {
     await this.rpc.call("catalog_view_comment_set", {
       attach_opaque_data: attachOpaqueData,
-      schema_name: schemaName,
+      schema_path: normalizeSchemaPath(schemaPath),
       name,
       comment: comment ?? null,
       ignore_not_found: ignoreNotFound ?? null,
@@ -1258,13 +1291,13 @@ export class VgiClient {
   /** Get a macro by name, or null if not found. */
   async macroGet(
     attachOpaqueData: AttachOpaqueData,
-    schemaName: string,
+    schemaPath: string[] | string,
     name: string,
     transactionOpaqueData?: TransactionOpaqueData,
   ): Promise<MacroInfo | null> {
     const result = await this.rpc.call("catalog_macro_get", {
       attach_opaque_data: attachOpaqueData,
-      schema_name: schemaName,
+      schema_path: normalizeSchemaPath(schemaPath),
       name,
       transaction_opaque_data: transactionOpaqueData ?? null,
     });
@@ -1277,13 +1310,13 @@ export class VgiClient {
   /** List macros in a schema, filtered by type. */
   async schemaContentsMacros(
     attachOpaqueData: AttachOpaqueData,
-    name: string,
+    path: string[] | string,
     type: CatalogMacroType,
     transactionOpaqueData?: TransactionOpaqueData,
   ): Promise<MacroInfo[]> {
     const result = await this.rpc.call("catalog_schema_contents_macros", {
       attach_opaque_data: attachOpaqueData,
-      name,
+      path: normalizeSchemaPath(path),
       type,
       transaction_opaque_data: transactionOpaqueData ?? null,
     });
@@ -1295,7 +1328,7 @@ export class VgiClient {
   /** Create a new macro. */
   async macroCreate(
     attachOpaqueData: AttachOpaqueData,
-    schemaName: string,
+    schemaPath: string[] | string,
     name: string,
     macroType: MacroType,
     parameters: string[],
@@ -1305,22 +1338,10 @@ export class VgiClient {
     argumentsSchema?: Uint8Array | null,
     transactionOpaqueData?: TransactionOpaqueData,
   ): Promise<void> {
-    const schema = schema_([
-      field("attach_opaque_data", binary(), false),
-      field("schema_name", utf8(), false),
-      field("name", utf8(), false),
-      field("macro_type", utf8(), false),
-      field("parameters", list(field("item", utf8(), false)), false),
-      field("definition", utf8(), false),
-      field("on_conflict", utf8(), false),
-      field("parameter_default_values", binary(), true),
-      field("arguments_schema", binary(), true),
-      field("transaction_opaque_data", binary(), true),
-    ]);
     const innerBatch = batchFromColumns(
       {
         attach_opaque_data: [attachOpaqueData],
-        schema_name: [schemaName],
+        schema_path: [normalizeSchemaPath(schemaPath)],
         name: [name],
         macro_type: [macroType],
         parameters: [parameters],
@@ -1330,7 +1351,7 @@ export class VgiClient {
         arguments_schema: [argumentsSchema ?? null],
         transaction_opaque_data: [transactionOpaqueData ?? null],
       },
-      schema,
+      MacroCreateRequestSchema,
     );
     await this.rpc.call("catalog_macro_create", wrapRequest(innerBatch));
   }
@@ -1338,14 +1359,14 @@ export class VgiClient {
   /** Drop a macro by name. */
   async macroDrop(
     attachOpaqueData: AttachOpaqueData,
-    schemaName: string,
+    schemaPath: string[] | string,
     name: string,
     ignoreNotFound?: boolean,
     transactionOpaqueData?: TransactionOpaqueData,
   ): Promise<void> {
     await this.rpc.call("catalog_macro_drop", {
       attach_opaque_data: attachOpaqueData,
-      schema_name: schemaName,
+      schema_path: normalizeSchemaPath(schemaPath),
       name,
       ignore_not_found: ignoreNotFound ?? false,
       transaction_opaque_data: transactionOpaqueData ?? null,
@@ -1357,4 +1378,3 @@ export class VgiClient {
     this.rpc.close();
   }
 }
-

@@ -37,14 +37,14 @@ describe("ASD codec", () => {
   test("SchemaInfo round-trip with tags Map", () => {
     const v: SchemaInfo = {
       attach_opaque_data: new Uint8Array([1, 2, 3, 4]),
-      name: "public",
+      path: ["analytics", "public"],
       comment: "hello",
       tags: { env: "prod", owner: "rusty" },
     };
     const bytes = encodeASD(SchemaInfoSchema, v);
     const back = decodeASD<SchemaInfo>(SchemaInfoSchema, bytes);
     expect(Array.from(back.attach_opaque_data)).toEqual([1, 2, 3, 4]);
-    expect(back.name).toBe("public");
+    expect(back.path).toEqual(["analytics", "public"]);
     expect(back.comment).toBe("hello");
     expect(back.tags).toEqual({ env: "prod", owner: "rusty" });
   });
@@ -52,7 +52,7 @@ describe("ASD codec", () => {
   test("SchemaInfo with empty tags", () => {
     const v: SchemaInfo = {
       attach_opaque_data: new Uint8Array([5]),
-      name: "main",
+      path: ["main"],
       comment: null,
       tags: {},
     };
@@ -67,7 +67,7 @@ describe("ASD codec", () => {
       comment: null,
       tags: {},
       name: "orders",
-      schema_name: "main",
+      schema_path: ["main"],
       columns: new Uint8Array([9, 9, 9]),
       not_null_constraints: [0, 1, 2],
       unique_constraints: [[0], [1, 2]],
@@ -98,7 +98,7 @@ describe("ASD codec", () => {
       comment: "a view",
       tags: { x: "y" },
       name: "v1",
-      schema_name: "s1",
+      schema_path: ["s1"],
       definition: "SELECT 1",
       column_comments: { n: "the only column" },
     };

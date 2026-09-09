@@ -307,3 +307,4 @@ export type {
 export { str, bytes, int, int32, float, float32, bool, toSchema, OutputCollector, AuthContext } from "@query-farm/vgi-rpc";
 export { subprocessConnect, httpConnect, tcpConnect } from "@query-farm/vgi-rpc";
 export type { RpcClient, StreamSession, LogMessage } from "@query-farm/vgi-rpc";
+export { normalizeSchemaPath, schemaPathDisplay, schemaPathKey, schemaPathsEqual, type SchemaPath } from "./schema-path.js";

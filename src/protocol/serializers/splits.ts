@@ -158,14 +158,16 @@ export function deserializePlanRequest(params: Record<string, any>): TableFuncti
  * bytes are.
  */
 export function fingerprintInputs(bindCallBytes: Uint8Array): {
-  schemaName: string;
+  schemaPath: string[];
   functionName: string;
   args: Uint8Array;
   settings: Uint8Array;
 } {
   const dict = batchToScalarDict(deserializeBatch(bindCallBytes));
   return {
-    schemaName: dict.schema_name == null ? "" : String(dict.schema_name),
+    schemaPath: dict.schema_path == null
+      ? []
+      : (Array.isArray(dict.schema_path) ? dict.schema_path : [...dict.schema_path]).map(String),
     functionName: String(dict.function_name ?? ""),
     args: dict.arguments ? toUint8Array(dict.arguments) : new Uint8Array(0),
     settings: dict.settings ? toUint8Array(dict.settings) : new Uint8Array(0),

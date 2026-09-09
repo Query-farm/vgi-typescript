@@ -29,7 +29,7 @@ export function registerCatalogIndexMethods(protocol: Protocol, getCatalog: GetC
       const cat = getCatalog();
       const indexes = await cat.schemaContentsIndexes(
         toUint8Array(params.attach_opaque_data),
-        params.name,
+        params.path,
         params.transaction_opaque_data ? toUint8Array(params.transaction_opaque_data) : undefined,
       );
       return wrapResult({
@@ -46,7 +46,7 @@ export function registerCatalogIndexMethods(protocol: Protocol, getCatalog: GetC
       const cat = getCatalog();
       const info = await cat.indexGet(
         toUint8Array(params.attach_opaque_data),
-        params.schema_name,
+        params.schema_path,
         params.name,
         params.transaction_opaque_data ? toUint8Array(params.transaction_opaque_data) : undefined,
       );

@@ -8,7 +8,7 @@
 //
 // Usage:
 //   import { VgiClient, Arguments } from "vgi/client";
-//   import { httpConnect } from "@query-farm/vgi-rpc";      // or your own RpcClient
+//   import { httpConnect } from "@query-farm/vgi-rpc";      // or VgiClient.fromIroh(...)
 //
 //   const rpc = httpConnect("https://my-vgi-server/");
 //   const client = new VgiClient(rpc);

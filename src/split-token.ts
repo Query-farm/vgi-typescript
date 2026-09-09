@@ -112,7 +112,7 @@ function equalBytes(a: Uint8Array, b: Uint8Array): boolean {
  * browser and Cloudflare Workers builds.
  */
 export async function bindFingerprint(
-  schemaName: string,
+  schemaPath: string[],
   functionName: string,
   args: Uint8Array,
   settings: Uint8Array,
@@ -123,7 +123,7 @@ export async function bindFingerprint(
   const field = (label: string, value: Uint8Array) => concat(enc.encode(label), zero, value, zero);
   const message = concat(
     AAD_PREFIX,
-    field("schema_name", enc.encode(schemaName)),
+    field("schema_path", enc.encode(JSON.stringify(schemaPath))),
     field("function_name", enc.encode(functionName)),
     field("arguments", args),
     field("settings", settings),

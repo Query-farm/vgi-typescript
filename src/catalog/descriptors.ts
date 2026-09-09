@@ -19,7 +19,7 @@ export interface ForeignKeyDef {
   columns: string[];
   referencedTable: string;
   referencedColumns: string[];
-  referencedSchema?: string;
+  referencedSchemaPath?: string[];
 }
 
 export type DefaultValue = string | number | boolean | null;
@@ -137,7 +137,10 @@ export interface IndexDescriptor {
 }
 
 export interface SchemaDescriptor {
-  name: string;
+  /** Raw identifier components, from the catalog root to this schema. */
+  path?: string[];
+  /** @deprecated Protocol 1.x compatibility; prefer `path: [name]`. */
+  name?: string;
   tables?: TableDescriptor[];
   views?: ViewDescriptor[];
   macros?: MacroDescriptor[];
@@ -145,6 +148,12 @@ export interface SchemaDescriptor {
   indexes?: IndexDescriptor[];
   comment?: string;
   tags?: Record<string, string>;
+}
+
+export function schemaDescriptorPath(schema: SchemaDescriptor): string[] {
+  if (schema.path) return schema.path;
+  if (schema.name) return [schema.name];
+  throw new Error("SchemaDescriptor requires a non-empty path");
 }
 
 export interface SecretTypeDescriptor {
@@ -180,7 +189,7 @@ export interface CatalogDescriptor {
    * records on `catalog_attach.global_functions`.
    *
    * Every entry must also be declared in exactly one of this catalog's
-   * schemas — the `FunctionInfo.schema_name` it carries is the bind-dispatch
+   * schemas — the `FunctionInfo.schema_path` it carries is the bind-dispatch
    * key, not a sentinel. Mirrors vgi-python's `Catalog.global_functions`.
    */
   globalFunctions?: VgiFunction[];

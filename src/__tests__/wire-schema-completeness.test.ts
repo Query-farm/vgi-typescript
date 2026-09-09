@@ -64,6 +64,7 @@ import { serializeInitRequest, serializeGlobalInitResponse, GLOBAL_INIT_RESPONSE
 import { Arguments } from "../arguments/arguments.js";
 import { FunctionType } from "../types.js";
 import { OrderByDirection, OrderByNullOrder, type BindRequest } from "../protocol/types.js";
+import { encodeASD } from "../codec/asd.js";
 
 // --------------------------------------------------------------------------- //
 // Fixtures
@@ -214,9 +215,19 @@ const CASES: WireRecordCase[] = [
     build: () => encodeAttachCatalogInfo(sampleRow(generated.AttachCatalogInfoSchema) as any),
   },
   {
+    origin: "ClientCapabilities",
+    schema: generated.ClientCapabilitiesSchema,
+    build: () => encodeASD(generated.ClientCapabilitiesSchema, sampleRow(generated.ClientCapabilitiesSchema)),
+  },
+  {
+    origin: "ForeignKeyInfo",
+    schema: generated.ForeignKeyInfoSchema,
+    build: () => encodeASD(generated.ForeignKeyInfoSchema, sampleRow(generated.ForeignKeyInfoSchema)),
+  },
+  {
     origin: "ScanFunctionResult",
     schema: generated.ScanFunctionResultSchema,
-    build: () => encodeScanFunctionResult("read_parquet", ARGUMENTS_BYTES, ["parquet"]),
+    build: () => encodeScanFunctionResult("read_parquet", ARGUMENTS_BYTES, ["parquet"], ["main"]),
   },
   {
     origin: "ScanBranchesResult",
@@ -242,8 +253,9 @@ const CASES: WireRecordCase[] = [
           formatLocations: ["s3://bucket/a.csv"],
           formatOptions: new Uint8Array([1, 2, 3]),
           sourceCatalog: "lake",
-          sourceSchema: "main",
+          sourceSchemaPath: ["main"],
           sourceTable: "events",
+          schemaPath: ["main"],
         },
       ]).branches[0],
   },
@@ -259,13 +271,14 @@ const CASES: WireRecordCase[] = [
         function_name: "read_parquet",
         arguments: ARGUMENTS_BYTES,
         required_extensions: ["parquet"],
+        schema_path: ["main"],
       }).branches[0],
     // The legacy wire result it adapts has a function name and arguments and
     // nothing else — there is no branch predicate or format to carry.
     allowNull: [
       "branch_filter",
       "source_catalog",
-      "source_schema",
+      "source_schema_path",
       "source_table",
       "format_name",
       "format_locations",
@@ -305,7 +318,7 @@ const CASES: WireRecordCase[] = [
   //
   //   * serializeBindRequest appended `copy_from` / `copy_to` only for a COPY
   //     bind, so it emitted 12, 13 or 14 columns depending on the call, put
-  //     `schema_name` before them instead of last, and typed `function_type`
+  //     `schema_path` before them instead of last, and typed `function_type`
   //     as plain utf8 rather than a dictionary.
   //   * serializeInitRequest was missing `split_tokens` and `row_limit`
   //     entirely, typed four columns 32-bit where the protocol says large or
@@ -429,7 +442,7 @@ function sampleBindRequest(): BindRequest {
     at_value: null,
     copy_from: null,
     copy_to: null,
-    schema_name: "main",
+    schema_path: ["main"],
   };
 }
 
@@ -455,12 +468,25 @@ const NOT_BUILT_BY_TYPESCRIPT: Record<string, string> = {
   AggregateCombineRequest: "aggregate RPCs are client-initiated; the worker only decodes them",
   AggregateFinalizeRequest: "aggregate RPCs are client-initiated; the worker only decodes them",
   AggregateDestructorRequest: "aggregate RPCs are client-initiated; the worker only decodes them",
+  AggregateStreamingChunkRequest: "aggregate RPCs are client-initiated; the worker only decodes them",
+  AggregateStreamingCloseRequest: "aggregate RPCs are client-initiated; the worker only decodes them",
+  AggregateStreamingOpenRequest: "aggregate RPCs are client-initiated; the worker only decodes them",
+  AggregateWindowBatchRequest: "aggregate RPCs are client-initiated; the worker only decodes them",
+  AggregateWindowDestructorRequest: "aggregate RPCs are client-initiated; the worker only decodes them",
+  AggregateWindowInitRequest: "aggregate RPCs are client-initiated; the worker only decodes them",
+  AggregateWindowRequest: "aggregate RPCs are client-initiated; the worker only decodes them",
   TableBufferingProcessRequest:
     "buffered-table RPCs are client-initiated; the worker only decodes them",
   TableBufferingCombineRequest:
     "buffered-table RPCs are client-initiated; the worker only decodes them",
   TableBufferingDestructorRequest:
     "buffered-table RPCs are client-initiated; the worker only decodes them",
+  CatalogCreateRequest: "catalog_create is client-initiated; the worker only decodes it",
+  IndexCreateRequest: "catalog_index_create is client-initiated; the worker only decodes it",
+  MacroCreateRequest: "catalog_macro_create is client-initiated; the worker only decodes it",
+  TableCreateRequest: "catalog_table_create is client-initiated; the worker only decodes it",
+  TableFunctionDynamicToStringRequest: "dynamic-to-string is client-initiated; the worker only decodes it",
+  TableFunctionStatisticsRequest: "statistics is client-initiated; the worker only decodes it",
   // These two never appear as standalone records — only as the nested struct
   // columns of BindRequest.copy_from / .copy_to — so there is no builder to
   // give a WireRecordCase. `nested copy contexts match their own schemas`

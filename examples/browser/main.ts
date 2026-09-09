@@ -40,18 +40,18 @@ async function main() {
     for (const s of schemas) log(`  ${s.name}`);
 
     // --- Functions (table) ---
-    const schemaName = schemas[0]?.name ?? "main";
-    log(`\n=== Table functions in '${schemaName}' ===`);
+    const schemaPath = schemas[0]?.name ?? "main";
+    log(`\n=== Table functions in '${schemaPath}' ===`);
     const funcs = await client.schemaContentsFunctions(
       attachOpaqueData,
-      schemaName,
+      schemaPath,
       "TABLE_FUNCTION",
     );
     for (const f of funcs) log(`  ${f.name}: ${f.description ?? ""}`);
 
     // --- Tables ---
-    log(`\n=== Tables in '${schemaName}' ===`);
-    const tables = await client.schemaContentsTables(attachOpaqueData, schemaName);
+    log(`\n=== Tables in '${schemaPath}' ===`);
+    const tables = await client.schemaContentsTables(attachOpaqueData, schemaPath);
     for (const t of tables) {
       log(`  ${t.name}${t.comment ? ": " + t.comment : ""}`);
     }

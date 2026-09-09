@@ -122,14 +122,14 @@ describe.skipIf(skip)("VgiClient — tables", () => {
       expect(names).toContain(expected);
     }
     // Schema name round-trip
-    for (const t of tables) expect(t.schema_name).toBe("data");
+    for (const t of tables) expect(t.schema_path).toBe("data");
   });
 
   test("tableGet('data', 'numbers') returns a populated TableInfo", async () => {
     const t = await client.tableGet(attachOpaqueData, "data", "numbers");
     expect(t).not.toBeNull();
     expect(t!.name).toBe("numbers");
-    expect(t!.schema_name).toBe("data");
+    expect(t!.schema_path).toBe("data");
     expect(t!.columns).toBeInstanceOf(Uint8Array);
     expect(t!.columns.byteLength).toBeGreaterThan(0);
   });
@@ -191,7 +191,7 @@ describe.skipIf(skip)("VgiClient — functions", () => {
     const fns = await client.schemaContentsFunctions(attachOpaqueData, "main", "SCALAR_FUNCTION");
     const d = fns.find((f) => f.name === "double")!;
     expect(d).toBeDefined();
-    expect(d.schema_name).toBe("main");
+    expect(d.schema_path).toBe("main");
     expect(Array.isArray(d.examples ?? [])).toBe(true);
     expect(Array.isArray(d.categories ?? [])).toBe(true);
     expect(d.arguments).toBeInstanceOf(Uint8Array);

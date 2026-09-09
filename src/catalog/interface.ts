@@ -3,6 +3,7 @@
 // Matching Python's vgi/catalog/catalog_interface.py
 
 import { CatalogReadOnlyError } from "../errors.js";
+import { schemaPathsEqual } from "../schema-path.js";
 
 export type AttachOpaqueData = Uint8Array;
 export type TransactionOpaqueData = Uint8Array;
@@ -179,11 +180,20 @@ export interface ScanFunctionResult {
   namedArguments: Record<string, unknown>;
   /** DuckDB extensions to load before calling the function. */
   requiredExtensions: string[];
+  /**
+   * Catalog schema path `functionName` is registered in (protocol 2.0.0). A function
+   * name is unique only within a schema, so a client that doesn't know this
+   * cannot tell which implementation a colliding name refers to — set it
+   * whenever the resolving code already knows the schema. `null` for a
+   * pre-1.5.0 peer, or when the resolved function is a native DuckDB function
+   * with no VGI-side schema of its own (e.g. `read_parquet`).
+   */
+  schemaPath: string[] | null;
 }
 
 /**
  * Encode a ScanFunctionResult wire record — the single-row batch shape
- * `{ function_name, arguments, required_extensions }` that
+ * `{ function_name, arguments, required_extensions, schema_path }` that
  * `catalog_table_scan_function_get` returns and that a function-backed table
  * inlines into `TableInfo.scan_function`.
  *
@@ -194,11 +204,15 @@ export interface ScanFunctionResult {
  *
  * `argumentsBytes` is the already-serialized inner arguments batch (one column
  * per argument: `arg_<index>` positional, bare name for named).
+ *
+ * `schemaPath` (protocol 2.0.0) identifies the schema that registers `functionName`;
+ * leave it null when the caller has no VGI-side schema to report.
  */
 export function encodeScanFunctionResult(
   functionName: string,
   argumentsBytes: Uint8Array,
   requiredExtensions: string[] = [],
+  schemaPath: string[] | null = null,
 ): Uint8Array {
   return serializeBatch(
     batchFromColumns(
@@ -206,6 +220,7 @@ export function encodeScanFunctionResult(
         function_name: [functionName],
         arguments: [argumentsBytes],
         required_extensions: [requiredExtensions],
+        schema_path: [schemaPath],
       },
       ScanFunctionResultSchema as any,
     ),
@@ -216,9 +231,10 @@ export function encodeScanFunctionResult(
  * Decode a ScanFunctionResult from a wire-shape inner result dict.
  *
  * The wire shape (per ScanFunctionResultSchema) is
- * `{ function_name: utf8, arguments: binary, required_extensions: list<utf8> }`,
- * where `arguments` is a serialized single-row batch with one column per
- * argument: `arg_<index>` for positional args, the bare name for named args.
+ * `{ function_name: utf8, arguments: binary, required_extensions: list<utf8>,
+ * schema_path: list<utf8>? }`, where `arguments` is a serialized single-row batch
+ * with one column per argument: `arg_<index>` for positional args, the bare
+ * name for named args.
  */
 export function decodeScanFunctionResult(inner: Record<string, unknown>): ScanFunctionResult {
   const argsBytes = inner.arguments;
@@ -252,6 +268,13 @@ export function decodeScanFunctionResult(inner: Record<string, unknown>): ScanFu
     positionalArguments,
     namedArguments,
     requiredExtensions,
+    // Absent for a pre-1.5.0 peer — the column itself won't be on the wire in
+    // that case, which reads the same as "present but null".
+    schemaPath: inner.schema_path == null
+      ? null
+      : (Array.isArray(inner.schema_path) ? inner.schema_path : [...(inner.schema_path as Iterable<unknown>)])
+          .filter((value) => value != null)
+          .map(String),
   };
 }
 
@@ -266,11 +289,23 @@ export function decodeScanFunctionResult(inner: Record<string, unknown>): ScanFu
  * `ScanBranch` expects, so it passes through untouched.
  */
 export function singleBranchResult(
-  legacy: { function_name: string; arguments: unknown; required_extensions?: string[] },
+  legacy: {
+    function_name: string;
+    arguments: unknown;
+    required_extensions?: string[];
+    schema_path?: string[] | null;
+  },
 ): { branches: Uint8Array[]; required_extensions: string[] } {
   return {
     branches: [
-      encodeScanBranch({ function_name: legacy.function_name, arguments: toUint8Array(legacy.arguments) }),
+      encodeScanBranch({
+        function_name: legacy.function_name,
+        arguments: toUint8Array(legacy.arguments),
+        // This shim has no independent way to know the function's own schema;
+        // propagate whatever `tableScanFunctionGet` already resolved rather
+        // than dropping a value the legacy response carries.
+        schema_path: legacy.schema_path ?? null,
+      }),
     ],
     required_extensions: legacy.required_extensions ?? [],
   };
@@ -296,11 +331,12 @@ function encodeScanBranch(cols: {
   branch_filter?: string | null;
   writable?: boolean;
   source_catalog?: string | null;
-  source_schema?: string | null;
+  source_schema_path?: string[] | null;
   source_table?: string | null;
   format_name?: string | null;
   format_locations?: string[] | null;
   format_options?: Uint8Array | null;
+  schema_path?: string[] | null;
 }): Uint8Array {
   return serializeBatch(
     batchFromColumns(
@@ -310,11 +346,12 @@ function encodeScanBranch(cols: {
         branch_filter: [cols.branch_filter ?? null],
         writable: [cols.writable ?? false],
         source_catalog: [cols.source_catalog ?? null],
-        source_schema: [cols.source_schema ?? null],
+        source_schema_path: [cols.source_schema_path ?? null],
         source_table: [cols.source_table ?? null],
         format_name: [cols.format_name ?? null],
         format_locations: [cols.format_locations ?? null],
         format_options: [cols.format_options ?? null],
+        schema_path: [cols.schema_path ?? null],
       },
       ScanBranchSchema as any,
     ),
@@ -354,12 +391,25 @@ export interface ScanBranchInput {
   /**
    * Catalog-table branch (lakehouse federation): leave `functionName` empty and
    * set these to scan the base table
-   * `sourceCatalog.sourceSchema.sourceTable` in a companion catalog instead of
+   * `sourceCatalog.sourceSchemaPath.sourceTable` in a companion catalog instead of
    * calling a table function.
    */
   sourceCatalog?: string | null;
-  sourceSchema?: string | null;
+  sourceSchemaPath?: string[] | null;
   sourceTable?: string | null;
+  /**
+   * Function branch only — the catalog schema that registers `functionName`
+   * (protocol 2.0.0). Without it a client has to guess (the table's own
+   * schema, then the catalog's default schema) which implementation
+   * `functionName` refers to when the same name is registered in more than
+   * one schema. Leave unset for a catalog-table or FORMAT branch, and for a
+   * branch that delegates straight to a native DuckDB function
+   * (`read_parquet`, `read_csv_auto`, `iceberg_scan`, …) — neither has a
+   * VGI-side schema of its own to report, which is why the field is optional
+   * rather than required. Not to be confused with `sourceSchemaPath` above, which
+   * names a catalog-table branch's *source table's* schema.
+   */
+  schemaPath?: string[] | null;
 }
 
 /**
@@ -431,11 +481,12 @@ export function buildScanBranchesResult(
       branch_filter: branch.branchFilter,
       writable: branch.writable,
       source_catalog: branch.sourceCatalog,
-      source_schema: branch.sourceSchema,
+      source_schema_path: branch.sourceSchemaPath,
       source_table: branch.sourceTable,
       format_name: branch.formatName,
       format_locations: branch.formatLocations,
       format_options: branch.formatOptions,
+      schema_path: branch.schemaPath,
     }),
   );
   return {
@@ -517,18 +568,18 @@ export abstract class CatalogInterface {
   }
   schemaGet(
     attachOpaqueData: AttachOpaqueData,
-    name: string,
+    path: string[],
     transactionOpaqueData?: TransactionOpaqueData
   ): Awaitable<SchemaInfo | null> {
     const all = this.schemas(attachOpaqueData, transactionOpaqueData);
     if (isPromise(all)) {
-      return all.then((arr) => arr.find((s) => s.name === name) ?? null);
+      return all.then((arr) => arr.find((s) => schemaPathsEqual(s.path, path)) ?? null);
     }
-    return all.find((s) => s.name === name) ?? null;
+    return all.find((s) => schemaPathsEqual(s.path, path)) ?? null;
   }
   schemaCreate(
     attachOpaqueData: AttachOpaqueData,
-    name: string,
+    path: string[],
     comment?: string | null,
     tags?: any,
     transactionOpaqueData?: TransactionOpaqueData
@@ -537,7 +588,7 @@ export abstract class CatalogInterface {
   }
   schemaDrop(
     attachOpaqueData: AttachOpaqueData,
-    name: string,
+    path: string[],
     ignoreNotFound?: boolean,
     cascade?: boolean,
     transactionOpaqueData?: TransactionOpaqueData
@@ -546,21 +597,21 @@ export abstract class CatalogInterface {
   }
   schemaContentsTables(
     attachOpaqueData: AttachOpaqueData,
-    name: string,
+    path: string[],
     transactionOpaqueData?: TransactionOpaqueData
   ): Awaitable<TableInfo[]> {
     return [];
   }
   schemaContentsViews(
     attachOpaqueData: AttachOpaqueData,
-    name: string,
+    path: string[],
     transactionOpaqueData?: TransactionOpaqueData
   ): Awaitable<ViewInfo[]> {
     return [];
   }
   schemaContentsFunctions(
     attachOpaqueData: AttachOpaqueData,
-    name: string,
+    path: string[],
     type: string,
     transactionOpaqueData?: TransactionOpaqueData
   ): Awaitable<FunctionInfo[]> {
@@ -568,7 +619,7 @@ export abstract class CatalogInterface {
   }
   tableGet(
     attachOpaqueData: AttachOpaqueData,
-    schemaName: string,
+    schemaPath: string[],
     name: string,
     atUnit?: string,
     atValue?: string,
@@ -578,7 +629,7 @@ export abstract class CatalogInterface {
   }
   tableCreate(
     attachOpaqueData: AttachOpaqueData,
-    schemaName: string,
+    schemaPath: string[],
     name: string,
     columns: Uint8Array,
     onConflict: string,
@@ -591,7 +642,7 @@ export abstract class CatalogInterface {
   }
   tableDrop(
     attachOpaqueData: AttachOpaqueData,
-    schemaName: string,
+    schemaPath: string[],
     name: string,
     ignoreNotFound?: boolean,
     transactionOpaqueData?: TransactionOpaqueData
@@ -600,7 +651,7 @@ export abstract class CatalogInterface {
   }
   tableScanFunctionGet(
     attachOpaqueData: AttachOpaqueData,
-    schemaName: string,
+    schemaPath: string[],
     name: string,
     atUnit?: string,
     atValue?: string,
@@ -616,14 +667,14 @@ export abstract class CatalogInterface {
    */
   tableScanBranchesGet(
     attachOpaqueData: AttachOpaqueData,
-    schemaName: string,
+    schemaPath: string[],
     name: string,
     atUnit?: string,
     atValue?: string,
     transactionOpaqueData?: TransactionOpaqueData
   ): Awaitable<any> {
     const legacy = this.tableScanFunctionGet(
-      attachOpaqueData, schemaName, name, atUnit, atValue, transactionOpaqueData,
+      attachOpaqueData, schemaPath, name, atUnit, atValue, transactionOpaqueData,
     );
     return isPromise(legacy)
       ? legacy.then((r) => singleBranchResult(r))
@@ -639,7 +690,7 @@ export abstract class CatalogInterface {
    */
   tableColumnStatisticsGet(
     attachOpaqueData: AttachOpaqueData,
-    schemaName: string,
+    schemaPath: string[],
     name: string,
     transactionOpaqueData?: TransactionOpaqueData,
   ): Awaitable<{ bytes: Uint8Array; cacheMaxAgeSeconds: number | null } | null> {
@@ -647,7 +698,7 @@ export abstract class CatalogInterface {
   }
   tableCommentSet(
     attachOpaqueData: AttachOpaqueData,
-    schemaName: string,
+    schemaPath: string[],
     name: string,
     comment?: string | null,
     ignoreNotFound?: boolean,
@@ -657,7 +708,7 @@ export abstract class CatalogInterface {
   }
   tableRename(
     attachOpaqueData: AttachOpaqueData,
-    schemaName: string,
+    schemaPath: string[],
     name: string,
     newName: string,
     ignoreNotFound?: boolean,
@@ -667,7 +718,7 @@ export abstract class CatalogInterface {
   }
   tableColumnAdd(
     attachOpaqueData: AttachOpaqueData,
-    schemaName: string,
+    schemaPath: string[],
     name: string,
     columnName: string,
     columnType: string,
@@ -679,7 +730,7 @@ export abstract class CatalogInterface {
   }
   tableColumnDrop(
     attachOpaqueData: AttachOpaqueData,
-    schemaName: string,
+    schemaPath: string[],
     name: string,
     columnName: string,
     ignoreNotFound?: boolean,
@@ -689,7 +740,7 @@ export abstract class CatalogInterface {
   }
   tableColumnRename(
     attachOpaqueData: AttachOpaqueData,
-    schemaName: string,
+    schemaPath: string[],
     name: string,
     columnName: string,
     newName: string,
@@ -700,7 +751,7 @@ export abstract class CatalogInterface {
   }
   tableColumnDefaultSet(
     attachOpaqueData: AttachOpaqueData,
-    schemaName: string,
+    schemaPath: string[],
     name: string,
     columnName: string,
     defaultValue: string,
@@ -711,7 +762,7 @@ export abstract class CatalogInterface {
   }
   tableColumnDefaultDrop(
     attachOpaqueData: AttachOpaqueData,
-    schemaName: string,
+    schemaPath: string[],
     name: string,
     columnName: string,
     ignoreNotFound?: boolean,
@@ -721,7 +772,7 @@ export abstract class CatalogInterface {
   }
   tableColumnTypeChange(
     attachOpaqueData: AttachOpaqueData,
-    schemaName: string,
+    schemaPath: string[],
     name: string,
     columnName: string,
     newType: string,
@@ -732,7 +783,7 @@ export abstract class CatalogInterface {
   }
   tableNotNullSet(
     attachOpaqueData: AttachOpaqueData,
-    schemaName: string,
+    schemaPath: string[],
     name: string,
     columnName: string,
     ignoreNotFound?: boolean,
@@ -742,7 +793,7 @@ export abstract class CatalogInterface {
   }
   tableNotNullDrop(
     attachOpaqueData: AttachOpaqueData,
-    schemaName: string,
+    schemaPath: string[],
     name: string,
     columnName: string,
     ignoreNotFound?: boolean,
@@ -752,7 +803,7 @@ export abstract class CatalogInterface {
   }
   viewGet(
     attachOpaqueData: AttachOpaqueData,
-    schemaName: string,
+    schemaPath: string[],
     name: string,
     transactionOpaqueData?: TransactionOpaqueData
   ): Awaitable<ViewInfo | null> {
@@ -760,7 +811,7 @@ export abstract class CatalogInterface {
   }
   viewCreate(
     attachOpaqueData: AttachOpaqueData,
-    schemaName: string,
+    schemaPath: string[],
     name: string,
     definition: string,
     onConflict: string,
@@ -770,7 +821,7 @@ export abstract class CatalogInterface {
   }
   viewDrop(
     attachOpaqueData: AttachOpaqueData,
-    schemaName: string,
+    schemaPath: string[],
     name: string,
     ignoreNotFound?: boolean,
     transactionOpaqueData?: TransactionOpaqueData
@@ -779,7 +830,7 @@ export abstract class CatalogInterface {
   }
   viewRename(
     attachOpaqueData: AttachOpaqueData,
-    schemaName: string,
+    schemaPath: string[],
     name: string,
     newName: string,
     ignoreNotFound?: boolean,
@@ -789,7 +840,7 @@ export abstract class CatalogInterface {
   }
   viewCommentSet(
     attachOpaqueData: AttachOpaqueData,
-    schemaName: string,
+    schemaPath: string[],
     name: string,
     comment?: string | null,
     ignoreNotFound?: boolean,
@@ -799,7 +850,7 @@ export abstract class CatalogInterface {
   }
   macroGet(
     attachOpaqueData: AttachOpaqueData,
-    schemaName: string,
+    schemaPath: string[],
     name: string,
     transactionOpaqueData?: TransactionOpaqueData
   ): Awaitable<MacroInfo | null> {
@@ -807,7 +858,7 @@ export abstract class CatalogInterface {
   }
   macroCreate(
     attachOpaqueData: AttachOpaqueData,
-    schemaName: string,
+    schemaPath: string[],
     name: string,
     macroType: MacroType,
     parameters: string[],
@@ -827,7 +878,7 @@ export abstract class CatalogInterface {
   }
   macroDrop(
     attachOpaqueData: AttachOpaqueData,
-    schemaName: string,
+    schemaPath: string[],
     name: string,
     ignoreNotFound?: boolean,
     transactionOpaqueData?: TransactionOpaqueData
@@ -836,7 +887,7 @@ export abstract class CatalogInterface {
   }
   schemaContentsMacros(
     attachOpaqueData: AttachOpaqueData,
-    name: string,
+    path: string[],
     type: string,
     transactionOpaqueData?: TransactionOpaqueData
   ): Awaitable<MacroInfo[]> {
@@ -844,14 +895,14 @@ export abstract class CatalogInterface {
   }
   schemaContentsIndexes(
     attachOpaqueData: AttachOpaqueData,
-    name: string,
+    path: string[],
     transactionOpaqueData?: TransactionOpaqueData
   ): Awaitable<IndexInfo[]> {
     return [];
   }
   indexGet(
     attachOpaqueData: AttachOpaqueData,
-    schemaName: string,
+    schemaPath: string[],
     name: string,
     transactionOpaqueData?: TransactionOpaqueData
   ): Awaitable<IndexInfo | null> {
@@ -882,4 +933,3 @@ export abstract class CatalogInterface {
     transactionOpaqueData: TransactionOpaqueData
   ): Awaitable<void> {}
 }
-

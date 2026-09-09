@@ -251,7 +251,7 @@ class VersionedTablesCatalog extends CatalogInterface {
   }
 
   schemas(_attachOpaqueData: AttachOpaqueData, _txn?: TransactionOpaqueData): SchemaInfo[] {
-    return [{ attach_opaque_data: new Uint8Array(0), name: "main", comment: null, tags: {} }];
+    return [{ attach_opaque_data: new Uint8Array(0), path: ["main"], comment: null, tags: {} }];
   }
 
   // -- table visibility, filtered by the resolved version in attach_opaque_data --
@@ -269,7 +269,7 @@ class VersionedTablesCatalog extends CatalogInterface {
       comment: null,
       tags: {},
       name,
-      schema_name: "main",
+      schema_path: ["main"],
       columns: serializeSchema(table.columns),
       not_null_constraints: [],
       unique_constraints: [],
@@ -293,31 +293,35 @@ class VersionedTablesCatalog extends CatalogInterface {
     };
   }
 
-  schemaContentsTables(attachOpaqueData: AttachOpaqueData, name: string): TableInfo[] {
-    if (name.toLowerCase() !== "main") return [];
+  schemaContentsTables(attachOpaqueData: AttachOpaqueData, path: string[]): TableInfo[] {
+    if (path.join(".").toLowerCase() !== "main") return [];
     const tables = this.tablesFor(attachOpaqueData);
     return Object.keys(tables)
       .sort()
       .map((n) => this.makeTableInfo(n, tables[n]));
   }
 
-  tableGet(attachOpaqueData: AttachOpaqueData, schemaName: string, name: string): TableInfo | null {
-    if (schemaName.toLowerCase() !== "main") return null;
+  tableGet(attachOpaqueData: AttachOpaqueData, schemaPath: string[], name: string): TableInfo | null {
+    if (schemaPath.join(".").toLowerCase() !== "main") return null;
     const table = this.tablesFor(attachOpaqueData)[name.toLowerCase()];
     return table ? this.makeTableInfo(name.toLowerCase(), table) : null;
   }
 
   // Returns the wire-shape scan result { function_name, arguments,
-  // required_extensions }; arguments is a serialized 1-row empty batch (no
-  // args). The base tableScanBranchesGet wraps this as a single branch.
-  tableScanFunctionGet(attachOpaqueData: AttachOpaqueData, schemaName: string, name: string) {
-    if (schemaName.toLowerCase() !== "main") throw new Error(`Unknown schema: ${schemaName}`);
+  // required_extensions, schema_path }; arguments is a serialized 1-row empty
+  // batch (no args). The base tableScanBranchesGet wraps this as a single
+  // branch, carrying schema_path through with it.
+  tableScanFunctionGet(attachOpaqueData: AttachOpaqueData, schemaPath: string[], name: string) {
+    if (schemaPath.join(".").toLowerCase() !== "main") throw new Error(`Unknown schema: ${schemaPath}`);
     const table = this.tablesFor(attachOpaqueData)[name.toLowerCase()];
-    if (!table) throw new Error(`Table ${schemaName}.${name} not visible at this data version`);
+    if (!table) throw new Error(`Table ${schemaPath}.${name} not visible at this data version`);
     return {
       function_name: table.functionName,
       arguments: serializeBatch(batchFromColumns({}, toSchema({}))),
       required_extensions: [],
+      // This catalog serves a single schema and registers every backing
+      // function in it (protocol 2.0.0).
+      schema_path: ["main"],
     };
   }
 }

@@ -565,6 +565,9 @@ Subpath exports:
 - **`vgi-python`** — the reference implementation. This package is a wire-compatible
   TypeScript port; workers from either side interoperate.
 
+See [Iroh operations](docs/iroh.md) for native Node/Bun and browser clients,
+and identity-preserving worker bridge setup.
+
 ## Development
 
 ```bash

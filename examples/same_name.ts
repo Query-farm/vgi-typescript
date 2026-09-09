@@ -18,14 +18,14 @@
 import { Int64, Utf8, RecordBatch } from "@query-farm/apache-arrow";
 import { defineScalarFunction } from "../src/index.js";
 
-/** Render `<schemaName>:<value>` for every row of column 0, preserving nulls. */
-function tag(schemaName: string, batch: RecordBatch): (string | null)[] {
+/** Render `<schemaPath>:<value>` for every row of column 0, preserving nulls. */
+function tag(schemaPath: string[], batch: RecordBatch): (string | null)[] {
   const col = batch.getChildAt(0);
   if (!col) return [];
   const out: (string | null)[] = [];
   for (let i = 0; i < col.length; i++) {
     const v = col.get(i);
-    out.push(v === null || v === undefined ? null : `${schemaName}:${v}`);
+    out.push(v === null || v === undefined ? null : `${schemaPath}:${v}`);
   }
   return out;
 }
