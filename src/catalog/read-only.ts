@@ -488,7 +488,16 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
           // The C++ extension only honours this for rowid-bearing tables.
           late_materialization:
             (f.kind as string) === "table" && f.meta.lateMaterialization === true ? true : null,
-          supported_expression_filters: meta.supportedExpressionFilters,
+          filter_semantic_profiles: meta.filterSemanticProfiles,
+          additional_filter_functions: meta.additionalFilterFunctions.map((value) => ({
+            namespace: value.namespace, name: value.name, version: BigInt(value.version) as any,
+          })),
+          runtime_filter_algorithms: meta.runtimeFilterAlgorithms.map((value) => ({
+            namespace: value.namespace, name: value.name, version: BigInt(value.version) as any,
+          })),
+          filter_evaluation_contexts: meta.filterEvaluationContexts.map((value) => ({
+            profile: value.profile, provider_fingerprint: value.providerFingerprint,
+          })),
           order_preservation: meta.preservesOrder as any,
           max_workers: meta.maxWorkers ?? DEFAULT_MAX_WORKERS,
           // Opt-in features the read-only catalog's functions do not use; the

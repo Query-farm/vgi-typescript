@@ -55,6 +55,19 @@ function specToParameterInfo(spec: ArgumentSpec): ParameterInfo {
 export function resolveMetadata(func: VgiFunction): ResolvedMetadata {
   const meta = func.meta;
 
+  if (meta.runtimeFilterAlgorithms?.length) {
+    throw new Error("TypeScript SDK has no registered runtime-filter artifact evaluator to advertise");
+  }
+  if (meta.filterEvaluationContexts?.length) {
+    throw new Error("TypeScript SDK has no isolated DuckDB session-context evaluator to advertise");
+  }
+  if (meta.filterSemanticProfiles?.some((value) => value !== "vgi.duckdb.standard.v1")) {
+    throw new Error("TypeScript SDK supports only vgi.duckdb.standard.v1 filter semantics");
+  }
+  if (meta.additionalFilterFunctions?.length) {
+    throw new Error("TypeScript SDK has no complete extension-filter evaluator to advertise");
+  }
+
   let functionType: CatalogFunctionType;
   switch (func.kind) {
     case "scalar":
@@ -100,7 +113,13 @@ export function resolveMetadata(func: VgiFunction): ResolvedMetadata {
     projectionPushdown: meta.projectionPushdown ?? false,
     filterPushdown: meta.filterPushdown ?? false,
     samplingPushdown: meta.samplingPushdown ?? false,
-    supportedExpressionFilters: meta.supportedExpressionFilters ?? [],
+    filterSemanticProfiles: meta.filterSemanticProfiles ?? (meta.filterPushdown ? ["vgi.duckdb.standard.v1"] : []),
+    additionalFilterFunctions: meta.additionalFilterFunctions ?? [],
+    runtimeFilterAlgorithms: meta.runtimeFilterAlgorithms ?? [],
+    filterEvaluationContexts: (meta.filterEvaluationContexts ?? []).map((value) => ({
+      profile: value.profile,
+      providerFingerprint: value.providerFingerprint ?? null,
+    })),
     preservesOrder: meta.preservesOrder ?? OrderPreservation.NO_ORDER_GUARANTEE,
     maxWorkers: maxWorkers === DEFAULT_MAX_WORKERS ? null : maxWorkers,
     orderDependent: meta.orderDependent ?? OrderDependence.NOT_ORDER_DEPENDENT,

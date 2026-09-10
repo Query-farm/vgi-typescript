@@ -29,7 +29,6 @@ import {
 import { batchToScalarDict, batchToSecretDict, projectSchema, projectBatch, emptyBatch, safeNumber } from "../util/arrow/index.js";
 import { CACHE_IF_MODIFIED_SINCE_KEY, CACHE_IF_NONE_MATCH_KEY } from "../cache-control.js";
 import {
-  buildJoinKeysLookup,
   deserializeFilters,
   FilteringOutputCollector,
   type PushdownFilters,
@@ -310,9 +309,14 @@ export function defineTableInOutFunction<
       // Deserialize pushdown filters. Pass a join-keys column lookup so that
       // filters DuckDB promoted to join_keys (IN/OR lists, etc.) are
       // materialized as InFilters rather than silently dropped.
-      const joinKeysLookup = buildJoinKeysLookup(request.join_keys);
       const pushdownFilters = request.pushdown_filters
-        ? deserializeFilters(request.pushdown_filters, joinKeysLookup)
+        ? deserializeFilters(request.pushdown_filters, {
+          outputSchema: request.output_schema,
+          joinKeyBatches: request.join_keys,
+          extensionFunctions: meta.additionalFilterFunctions,
+          runtimeAlgorithms: meta.runtimeFilterAlgorithms,
+          evaluationContexts: meta.filterEvaluationContexts,
+        })
         : undefined;
 
       // Create BoundStorage for cross-phase/cross-worker data sharing
@@ -470,6 +474,7 @@ export function defineTableInOutFunction<
           // custom metadata (attached by the C++ WriteInputBatch), so process()
           // can answer a 0-row `notModified` batch instead of recomputing.
           applyRevalidationValidators(eState.processParams, input);
+          applyDynamicFilterUpdate(eState.processParams, input);
           // Bake emit metadata onto the batch (0-row HTTP survival), then
           // reconcile emitted batches to the (possibly projected) output schema
           // by name — a process() may emit its full declared schema and let the
@@ -478,8 +483,9 @@ export function defineTableInOutFunction<
           if (projIds) {
             wrappedOut = makeSchemaReconcilingCollector(wrappedOut, outputSchema);
           }
-          if (config.autoApplyFilters && pushdownFilters) {
-            wrappedOut = new FilteringOutputCollector(wrappedOut, pushdownFilters) as unknown as OutputCollector;
+          const currentFilters = eState.processParams.pushdownFilters;
+          if (config.autoApplyFilters && currentFilters) {
+            wrappedOut = new FilteringOutputCollector(wrappedOut, currentFilters) as unknown as OutputCollector;
           }
           await processFn(eState.processParams, eState.state, input, wrappedOut);
 
@@ -515,6 +521,29 @@ function applyRevalidationValidators(
   const md: Map<string, string> | undefined = (input as any)?.metadata;
   params.ifNoneMatch = md?.get(CACHE_IF_NONE_MATCH_KEY);
   params.ifModifiedSince = md?.get(CACHE_IF_MODIFIED_SINCE_KEY);
+}
+
+function applyDynamicFilterUpdate(
+  params: { pushdownFilters?: PushdownFilters },
+  input: VgiBatch,
+): void {
+  const encoded = ((input as any)?.metadata as Map<string, string> | undefined)?.get("vgi_pushdown_filters");
+  if (!encoded) return;
+  if (!params.pushdownFilters) throw new Error("dynamic filter delta received without an initial snapshot");
+  if (new TextEncoder().encode(encoded).byteLength > (24 << 20)) {
+    throw new Error("base64 dynamic filter metadata exceeds the encoded-size limit");
+  }
+  if (encoded.length % 4 !== 0 ||
+      !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(encoded)) {
+    throw new Error("dynamic filter metadata is not valid base64");
+  }
+  const binary = (globalThis as any).atob
+    ? (globalThis as any).atob(encoded)
+    : Buffer.from(encoded, "base64").toString("binary");
+  const bytes = Uint8Array.from(binary, (character: string) => character.charCodeAt(0));
+  if (bytes.byteLength > (17 << 20)) throw new Error("dynamic filter IPC payload exceeds the encoded-size limit");
+  const current = params.pushdownFilters;
+  params.pushdownFilters = current.applyDelta(deserializeBatch(bytes));
 }
 
 /**
@@ -893,9 +922,14 @@ export function defineRowTransformFunction<
         ? projectSchema(projIds, request.output_schema)
         : request.output_schema;
 
-      const joinKeysLookup = buildJoinKeysLookup(request.join_keys);
       const pushdownFilters = request.pushdown_filters
-        ? deserializeFilters(request.pushdown_filters, joinKeysLookup)
+        ? deserializeFilters(request.pushdown_filters, {
+          outputSchema: request.output_schema,
+          joinKeyBatches: request.join_keys,
+          extensionFunctions: meta.additionalFilterFunctions,
+          runtimeAlgorithms: meta.runtimeFilterAlgorithms,
+          evaluationContexts: meta.filterEvaluationContexts,
+        })
         : undefined;
 
       const boundStorage = new BoundStorage(
@@ -949,12 +983,14 @@ export function defineRowTransformFunction<
           out: OutputCollector,
         ) => {
           applyRevalidationValidators(eState.processParams, input);
+          applyDynamicFilterUpdate(eState.processParams, input);
           let wrappedOut: OutputCollector = makeMetadataBakingCollector(out);
           if (projIds) {
             wrappedOut = makeSchemaReconcilingCollector(wrappedOut, outputSchema);
           }
-          if (config.autoApplyFilters && pushdownFilters) {
-            wrappedOut = new FilteringOutputCollector(wrappedOut, pushdownFilters) as unknown as OutputCollector;
+          const currentFilters = eState.processParams.pushdownFilters;
+          if (config.autoApplyFilters && currentFilters) {
+            wrappedOut = new FilteringOutputCollector(wrappedOut, currentFilters) as unknown as OutputCollector;
           }
           await config.process(eState.processParams, input, wrappedOut);
         },

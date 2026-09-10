@@ -1,91 +1,108 @@
 // Copyright 2025, 2026 Query Farm LLC - https://query.farm
-// Filter pushdown type definitions.
+
+import type { VgiBatch, VgiDataType, VgiField } from "../arrow/index.js";
+
+export const FILTER_ENCODING = "vgi.filters.v2";
+export const FILTER_VERSION = "2";
+export const DUCKDB_STANDARD_V1 = "vgi.duckdb.standard.v1";
+export const NO_EVALUATION_CONTEXT = "vgi.none.v1";
+export const DUCKDB_SESSION_CONTEXT = "vgi.duckdb.session.v1";
 
 export enum ComparisonOp {
   EQ = "eq",
   NE = "ne",
-  GT = "gt",
-  GE = "ge",
   LT = "lt",
   LE = "le",
+  GT = "gt",
+  GE = "ge",
+  DISTINCT_FROM = "distinct_from",
+  NOT_DISTINCT_FROM = "not_distinct_from",
 }
 
-export interface ConstantFilter {
-  type: "constant";
-  columnName: string;
-  columnIndex: number;
-  op: ComparisonOp;
-  value: any;
+export type ArithmeticOp = "add" | "subtract" | "multiply" | "divide" | "modulo";
+export type PredicateMode = "required" | "advisory";
+export type PredicateSource = "query" | "join" | "top_n" | "split_refinement" | "other";
+export type StandardFilterFunction = "starts_with" | "ends_with" | "contains" | "list_contains";
+
+export interface FunctionIdentity {
+  namespace: string;
+  name: string;
+  version: number;
 }
 
-export interface IsNullFilter {
-  type: "is_null";
-  columnName: string;
-  columnIndex: number;
+export interface EvaluationContext {
+  profile: string;
+  timeZone?: string;
+  calendar?: string;
+  defaultCollation?: string;
+  ieeeFloatingPointOps?: boolean;
+  integerDivision?: boolean;
+  providerFingerprint?: string;
 }
 
-export interface IsNotNullFilter {
-  type: "is_not_null";
-  columnName: string;
-  columnIndex: number;
+export type FilterExpression =
+  | { node: "column_ref"; columnIndex: number; columnName: string; dataType?: VgiDataType }
+  | { node: "field_ref"; expression: FilterExpression; fieldIndex: number; fieldName: string; dataType: VgiDataType }
+  | { node: "literal"; valueRef: number; field: VgiField; value: unknown }
+  | { node: "comparison"; op: ComparisonOp; left: FilterExpression; right: FilterExpression }
+  | { node: "and" | "or"; children: FilterExpression[] }
+  | { node: "not"; expression: FilterExpression }
+  | { node: "is_null"; expression: FilterExpression; negated: boolean }
+  | { node: "in"; expression: FilterExpression; set: FilterSet; negated: boolean }
+  | { node: "cast"; expression: FilterExpression; typeRef: number; field: VgiField }
+  | { node: "arithmetic"; op: ArithmeticOp; left: FilterExpression; right: FilterExpression }
+  | { node: "negate"; expression: FilterExpression }
+  | {
+      node: "call";
+      function: StandardFilterFunction | FunctionIdentity;
+      arguments: FilterExpression[];
+      options?: Record<string, unknown>;
+    }
+  | {
+      node: "runtime_filter";
+      algorithm: FunctionIdentity;
+      input: FilterExpression;
+      artifactRef: number;
+      field: VgiField;
+      artifact: unknown;
+      nullHandling: "pass" | "reject";
+      supported: boolean;
+    };
+
+export type FilterSet =
+  | { kind: "literal"; valueRef: number; field: VgiField; values: unknown[] }
+  | {
+      kind: "external";
+      batchIndex: number;
+      columnIndex: number;
+      columnName: string;
+      values: unknown[];
+      batch: VgiBatch;
+    };
+
+export interface FilterPredicate {
+  id: string;
+  revision: number;
+  mode: PredicateMode;
+  source: PredicateSource;
+  expression: FilterExpression;
 }
 
-export interface InFilter {
-  type: "in";
-  columnName: string;
-  columnIndex: number;
-  values: Set<any>;
+export interface FilterCapabilities {
+  extensionFunctions?: ReadonlyArray<FunctionIdentity>;
+  runtimeAlgorithms?: ReadonlyArray<FunctionIdentity>;
+  evaluationContexts?: ReadonlyArray<{ profile: string; providerFingerprint?: string | null }>;
 }
 
-export interface AndFilter {
-  type: "and";
-  columnName: string;
-  columnIndex: number;
-  children: Filter[];
-}
-
-export interface OrFilter {
-  type: "or";
-  columnName: string;
-  columnIndex: number;
-  children: Filter[];
-}
-
-export interface StructFilter {
-  type: "struct";
-  columnName: string;
-  columnIndex: number;
-  childIndex: number;
-  childName: string;
-  childFilter: Filter;
-}
-
-export type Filter =
-  | ConstantFilter
-  | IsNullFilter
-  | IsNotNullFilter
-  | InFilter
-  | AndFilter
-  | OrFilter
-  | StructFilter
-  | ExpressionFilter;
-
-/**
- * Expression-tree filter. The expr is a parsed AST; evaluation matches
- * DuckDB's semantics for the function names the table function advertises in
- * `supportedExpressionFilters` (e.g. list_contains, starts_with, contains,
- * &&/st_intersects_extent for spatial).
- */
-export interface ExpressionFilter {
-  type: "expression";
-  columnName: string;
-  columnIndex: number;
-  expr: ExprNode;
-}
-
-export type ExprNode =
-  | { expr_type: "column_ref"; index: number }
-  | { expr_type: "constant"; value: any }
-  | { expr_type: "function"; function_name: string; children: ExprNode[] }
-  | { expr_type: "comparison"; op: ComparisonOp; left: ExprNode; right: ExprNode }
-  | { expr_type: "conjunction"; conjunction_type: "and" | "or"; children: ExprNode[] };
+// Source aliases ease the protocol-2.0 transition for applications that imported
+// the old names. The wire model itself is v2-only.
+export type Filter = FilterExpression;
+export type ExprNode = FilterExpression;
+export type ConstantFilter = FilterExpression;
+export type IsNullFilter = FilterExpression;
+export type IsNotNullFilter = FilterExpression;
+export type InFilter = FilterExpression;
+export type AndFilter = FilterExpression;
+export type OrFilter = FilterExpression;
+export type StructFilter = FilterExpression;
+export type ExpressionFilter = FilterExpression;

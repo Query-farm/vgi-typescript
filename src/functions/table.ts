@@ -43,7 +43,6 @@ import {
 import { assertArrowType, assertArrowTypes } from "../arguments/argument-spec.js";
 import { batchToScalarDict, batchToSecretDict, projectSchema, safeNumber } from "../util/arrow/index.js";
 import {
-  buildJoinKeysLookup,
   deserializeFilters,
   FilteringOutputCollector,
   type PushdownFilters,
@@ -62,9 +61,16 @@ import { CACHE_IF_MODIFIED_SINCE_KEY, CACHE_IF_NONE_MATCH_KEY } from "../cache-c
 // Base64-decode a string into raw bytes. Used to unpack the dynamic filter
 // update DuckDB attaches to each tick batch's custom metadata.
 function base64Decode(s: string): Uint8Array {
+  if (new TextEncoder().encode(s).byteLength > (24 << 20)) {
+    throw new Error("base64 dynamic filter metadata exceeds the encoded-size limit");
+  }
+  if (s.length % 4 !== 0 || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(s)) {
+    throw new Error("dynamic filter metadata is not valid base64");
+  }
   const bin = (globalThis as any).atob ? (globalThis as any).atob(s) : Buffer.from(s, "base64").toString("binary");
   const out = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  if (out.byteLength > (17 << 20)) throw new Error("dynamic filter IPC payload exceeds the encoded-size limit");
   return out;
 }
 
@@ -310,7 +316,10 @@ export interface TableFunctionConfig<
   /** Opt in to DuckDB's late-materialization SEMI-join rewrite; requires a
    *  UNIQUE, snapshot-stable rowid column. FunctionInfo.late_materialization. */
   lateMaterialization?: boolean;
-  supportedExpressionFilters?: string[];
+  filterSemanticProfiles?: string[];
+  additionalFilterFunctions?: import("./types.js").FilterFunctionCapability[];
+  runtimeFilterAlgorithms?: import("./types.js").FilterFunctionCapability[];
+  filterEvaluationContexts?: import("./types.js").EvaluationContextCapability[];
   autoApplyFilters?: boolean;
   stability?: FunctionStability;
   examples?: FunctionExample[];
@@ -389,7 +398,10 @@ export function defineTableFunction<
     filterPushdown: config.filterPushdown,
     samplingPushdown: config.samplingPushdown,
     lateMaterialization: config.lateMaterialization,
-    supportedExpressionFilters: config.supportedExpressionFilters,
+    filterSemanticProfiles: config.filterSemanticProfiles,
+    additionalFilterFunctions: config.additionalFilterFunctions,
+    runtimeFilterAlgorithms: config.runtimeFilterAlgorithms,
+    filterEvaluationContexts: config.filterEvaluationContexts,
     autoApplyFilters: config.autoApplyFilters,
     examples: config.examples,
     categories: config.categories,
@@ -528,9 +540,15 @@ export function defineTableFunction<
       // Deserialize pushdown filters. Pass a join-keys column lookup so that
       // filters DuckDB promoted to join_keys (IN/OR lists, etc.) are
       // materialized as InFilters rather than silently dropped.
-      const joinKeysLookup = buildJoinKeysLookup(request.join_keys);
+      const filterOptions = {
+        outputSchema: request.output_schema,
+        joinKeyBatches: request.join_keys,
+        extensionFunctions: meta.additionalFilterFunctions,
+        runtimeAlgorithms: meta.runtimeFilterAlgorithms,
+        evaluationContexts: meta.filterEvaluationContexts,
+      };
       const pushdownFilters = request.pushdown_filters
-        ? deserializeFilters(request.pushdown_filters, joinKeysLookup)
+        ? deserializeFilters(request.pushdown_filters, filterOptions)
         : undefined;
 
       const boundStorage = new BoundStorage(globalStorage, response.execution_id);
@@ -587,23 +605,20 @@ export function defineTableFunction<
           if (ifModifiedSince !== undefined) pState.processParams.ifModifiedSince = ifModifiedSince;
 
           // Dynamic filter pushdown: DuckDB's Top-N optimizer tightens filters
-          // between ticks and serializes the current filter into the tick
+          // between ticks and serializes an atomic v2 delta into the tick
           // batch's custom metadata under `vgi_pushdown_filters` (base64 of a
-          // filter IPC stream). Decode and overwrite the current pushdown
-          // filters so process() sees the updated value.
+          // filter IPC stream). Apply it to the prior snapshot so process()
+          // sees the revised advisory predicate state.
           const encoded = tickMetadata.get("vgi_pushdown_filters");
           if (!encoded) return;
-          try {
-            const bytes = base64Decode(encoded);
-            const filterBatch = deserializeFilterBatch(bytes);
-            if (filterBatch) {
-              const updated = deserializeFilters(filterBatch, joinKeysLookup);
-              pState.processParams.pushdownFilters = updated;
-            }
-          } catch {
-            // Malformed dynamic-filter update: keep the previous filter. Not
-            // fatal — this is a best-effort optimization hint from DuckDB.
-          }
+          const current = pState.processParams.pushdownFilters;
+          if (!current) throw new Error("dynamic filter delta received without an initial snapshot");
+          const bytes = base64Decode(encoded);
+          const filterBatch = deserializeFilterBatch(bytes);
+          if (!filterBatch) throw new Error("dynamic filter metadata must contain one RecordBatch");
+          // Assignment happens only after complete validation, so a rejected
+          // delta leaves the immutable prior state intact.
+          pState.processParams.pushdownFilters = current.applyDelta(filterBatch);
         },
         producerFn: async (
           pState: { state: TState; processParams: TableProcessParams<TArgs> },

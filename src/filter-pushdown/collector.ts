@@ -6,8 +6,8 @@
 import { type VgiBatch, type VgiSchema, isBatch } from "../arrow/index.js";
 import type { OutputCollector } from "@query-farm/vgi-rpc";
 import { batchFromColumns } from "../util/arrow/index.js";
-import { ComparisonOp, type ExprNode, type Filter } from "./types.js";
-import { PushdownFilters } from "./evaluate.js";
+import { ComparisonOp, type FilterExpression } from "./types.js";
+import { expressionToSql, PushdownFilters } from "./evaluate.js";
 
 /**
  * Format pushdown filters as a human-readable SQL-like string.
@@ -40,47 +40,34 @@ function opSymbol(op: ComparisonOp): string {
     case ComparisonOp.GE: return ">=";
     case ComparisonOp.LT: return "<";
     case ComparisonOp.LE: return "<=";
+    case ComparisonOp.DISTINCT_FROM: return "IS DISTINCT FROM";
+    case ComparisonOp.NOT_DISTINCT_FROM: return "IS NOT DISTINCT FROM";
   }
 }
 
-function reprFilter(f: Filter): string {
-  switch (f.type) {
-    case "constant":
-      return `ConstantFilter(${f.columnName} ${opSymbol(f.op)} ${reprValue(f.value)})`;
+function reprFilter(f: FilterExpression): string {
+  switch (f.node) {
+    case "comparison": {
+      if (f.left.node === "column_ref" && f.right.node === "literal") {
+        return `ConstantFilter(${f.left.columnName} ${opSymbol(f.op)} ${reprValue(f.right.value)})`;
+      }
+      return `V2ExpressionFilter(${expressionToSql(f)})`;
+    }
     case "is_null":
-      return `IsNullFilter(${f.columnName} IS NULL)`;
-    case "is_not_null":
-      return `IsNotNullFilter(${f.columnName} IS NOT NULL)`;
+      return `Is${f.negated ? "Not" : ""}NullFilter(${expressionToSql(f)})`;
     case "in": {
-      const values = [...f.values];
+      const values = f.set.values;
       const preview = values.length > 5
-        ? `${JSON.stringify(values.slice(0, 3))}...(${values.length} total)`
-        : JSON.stringify(values);
-      return `InFilter(${f.columnName} IN ${preview})`;
+        ? `[${values.slice(0, 3).map(reprValue).join(", ")}]...(${values.length} total)`
+        : `[${values.map(reprValue).join(", ")}]`;
+      return `InFilter(${expressionToSql(f.expression)} IN ${preview})`;
     }
-    case "and": {
-      const kids = f.children.map(reprFilter).join(" AND ");
-      return `AndFilter(${kids})`;
+    case "and": case "or": {
+      const kids = f.children.map(reprFilter).join(f.node === "and" ? " AND " : " OR ");
+      return `${f.node === "and" ? "And" : "Or"}Filter(${kids})`;
     }
-    case "or": {
-      const kids = f.children.map(reprFilter).join(" OR ");
-      return `OrFilter(${kids})`;
-    }
-    case "struct":
-      return `StructFilter(${f.columnName}.${f.childName}: ${reprFilter(f.childFilter)})`;
-    case "expression":
-      return `ExpressionFilter(${f.columnName}: ${reprExpr(f.expr)})`;
-  }
-}
-
-function reprExpr(e: ExprNode): string {
-  switch (e.expr_type) {
-    case "column_ref": return `col#${e.index}`;
-    case "constant": return reprValue(e.value);
-    case "function": return `${e.function_name}(${e.children.map(reprExpr).join(", ")})`;
-    case "comparison": return `(${reprExpr(e.left)} ${opSymbol(e.op)} ${reprExpr(e.right)})`;
-    case "conjunction":
-      return `(${e.children.map(reprExpr).join(e.conjunction_type === "and" ? " AND " : " OR ")})`;
+    default:
+      return `V2ExpressionFilter(${expressionToSql(f)})`;
   }
 }
 

@@ -34,6 +34,17 @@ export interface FunctionExample {
   expectedOutput?: string;
 }
 
+export interface FilterFunctionCapability {
+  namespace: string;
+  name: string;
+  version: number;
+}
+
+export interface EvaluationContextCapability {
+  profile: string;
+  providerFingerprint?: string | null;
+}
+
 export interface FunctionMeta {
   name: string;
   description?: string;
@@ -54,7 +65,10 @@ export interface FunctionMeta {
    * for tables whose worker also guarantees a UNIQUE, snapshot-stable rowid.
    */
   lateMaterialization?: boolean;
-  supportedExpressionFilters?: string[];
+  filterSemanticProfiles?: string[];
+  additionalFilterFunctions?: FilterFunctionCapability[];
+  runtimeFilterAlgorithms?: FilterFunctionCapability[];
+  filterEvaluationContexts?: EvaluationContextCapability[];
   autoApplyFilters?: boolean;
   preservesOrder?: OrderPreservation;
   maxWorkers?: number;

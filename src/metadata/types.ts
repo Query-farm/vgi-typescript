@@ -36,6 +36,17 @@ export interface FunctionExample {
   expectedOutput: string | null;
 }
 
+export interface FilterFunctionCapability {
+  namespace: string;
+  name: string;
+  version: number;
+}
+
+export interface EvaluationContextCapability {
+  profile: string;
+  providerFingerprint: string | null;
+}
+
 export interface ResolvedMetadata {
   name: string;
   className: string;
@@ -52,7 +63,10 @@ export interface ResolvedMetadata {
   projectionPushdown: boolean;
   filterPushdown: boolean;
   samplingPushdown: boolean;
-  supportedExpressionFilters: string[];
+  filterSemanticProfiles: string[];
+  additionalFilterFunctions: FilterFunctionCapability[];
+  runtimeFilterAlgorithms: FilterFunctionCapability[];
+  filterEvaluationContexts: EvaluationContextCapability[];
   preservesOrder: OrderPreservation;
   maxWorkers: number | null;
   orderDependent: OrderDependence;

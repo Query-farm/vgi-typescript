@@ -8,6 +8,7 @@ import {
   field,
   utf8,
   int32,
+  uint64,
   bool,
   list,
   struct as makeStruct,
@@ -41,6 +42,17 @@ const PARAMETER_STRUCT = makeStruct([
   field("is_const", bool(), false),
 ]);
 
+const FILTER_IDENTITY_STRUCT = makeStruct([
+  field("namespace", utf8(), false),
+  field("name", utf8(), false),
+  field("version", uint64(), false),
+]);
+
+const FILTER_CONTEXT_STRUCT = makeStruct([
+  field("profile", utf8(), false),
+  field("provider_fingerprint", utf8(), true),
+]);
+
 const METADATA_SCHEMA = makeSchema([
   field("name", utf8(), false),
   field("class_name", utf8(), false),
@@ -56,6 +68,10 @@ const METADATA_SCHEMA = makeSchema([
   field("required_secrets", list(field("item", utf8(), true)), false),
   field("projection_pushdown", bool(), false),
   field("filter_pushdown", bool(), false),
+  field("filter_semantic_profiles", list(field("item", utf8(), true)), false),
+  field("additional_filter_functions", list(field("item", FILTER_IDENTITY_STRUCT, true)), false),
+  field("runtime_filter_algorithms", list(field("item", FILTER_IDENTITY_STRUCT, true)), false),
+  field("filter_evaluation_contexts", list(field("item", FILTER_CONTEXT_STRUCT, true)), false),
   field("preserves_order", utf8(), false),
   field("max_workers", int32(), true),
   field("order_dependent", utf8(), false),
@@ -101,7 +117,17 @@ function metadataToRow(m: ResolvedMetadata): Record<string, any> {
     projection_pushdown: m.projectionPushdown,
     filter_pushdown: m.filterPushdown,
     sampling_pushdown: m.samplingPushdown,
-    supported_expression_filters: m.supportedExpressionFilters,
+    filter_semantic_profiles: m.filterSemanticProfiles,
+    additional_filter_functions: m.additionalFilterFunctions.map((value) => ({
+      ...value, version: BigInt(value.version),
+    })),
+    runtime_filter_algorithms: m.runtimeFilterAlgorithms.map((value) => ({
+      ...value, version: BigInt(value.version),
+    })),
+    filter_evaluation_contexts: m.filterEvaluationContexts.map((value) => ({
+      profile: value.profile,
+      provider_fingerprint: value.providerFingerprint,
+    })),
     preserves_order: m.preservesOrder,
     max_workers: m.maxWorkers,
     order_dependent: m.orderDependent,
@@ -227,10 +253,16 @@ export function arrowToMetadatas(batch: VgiBatch): ResolvedMetadata[] {
       projectionPushdown: (get("projection_pushdown") as boolean) ?? false,
       filterPushdown: (get("filter_pushdown") as boolean) ?? false,
       samplingPushdown: (get("sampling_pushdown") as boolean) ?? false,
-      supportedExpressionFilters: (() => {
-        const raw = get("supported_expression_filters") as any ?? [];
-        return raw ? [...raw].filter((s: any) => s != null).map(String) : [];
-      })(),
+      filterSemanticProfiles: [...((get("filter_semantic_profiles") as any) ?? [])].filter((s: any) => s != null).map(String),
+      additionalFilterFunctions: [...((get("additional_filter_functions") as any) ?? [])].filter((v: any) => v != null).map((v: any) => ({
+        namespace: String(v.namespace), name: String(v.name), version: Number(v.version),
+      })),
+      runtimeFilterAlgorithms: [...((get("runtime_filter_algorithms") as any) ?? [])].filter((v: any) => v != null).map((v: any) => ({
+        namespace: String(v.namespace), name: String(v.name), version: Number(v.version),
+      })),
+      filterEvaluationContexts: [...((get("filter_evaluation_contexts") as any) ?? [])].filter((v: any) => v != null).map((v: any) => ({
+        profile: String(v.profile), providerFingerprint: v.provider_fingerprint == null ? null : String(v.provider_fingerprint),
+      })),
       preservesOrder: (get("preserves_order") as any) ?? "NO_ORDER_GUARANTEE",
       maxWorkers: (get("max_workers") as number | null) ?? null,
       orderDependent: (get("order_dependent") as any) ?? "NOT_ORDER_DEPENDENT",

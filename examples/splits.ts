@@ -804,40 +804,42 @@ export function renderFiltersCanonical(pf: PushdownFilters | undefined): string 
   // walking only the top level renders "(none)" for exactly the multi-clause
   // filters worth asserting on.
   const walk = (f: any): void => {
-    switch (f.type) {
+    switch (f.node) {
       case "and":
       case "or":
         for (const c of f.children) walk(c);
         return;
-      case "constant": {
-        const v = BigInt(f.value);
+      case "comparison": {
+        if (f.left?.node !== "column_ref" || f.right?.node !== "literal") return;
+        const v = BigInt(f.right.value);
         // Exclusive comparisons are tightened by one: bounds are integer here,
         // so `< v` is exactly `<= v - 1` and the normalization is lossless.
-        if (f.op === "ge") note(f.columnName, "min", v);
-        else if (f.op === "gt") note(f.columnName, "min", v + 1n);
-        else if (f.op === "le") note(f.columnName, "max", v);
-        else if (f.op === "lt") note(f.columnName, "max", v - 1n);
+        if (f.op === "ge") note(f.left.columnName, "min", v);
+        else if (f.op === "gt") note(f.left.columnName, "min", v + 1n);
+        else if (f.op === "le") note(f.left.columnName, "max", v);
+        else if (f.op === "lt") note(f.left.columnName, "max", v - 1n);
         else if (f.op === "eq") {
-          note(f.columnName, "min", v);
-          note(f.columnName, "max", v);
+          note(f.left.columnName, "min", v);
+          note(f.left.columnName, "max", v);
         }
         return;
       }
       case "in": {
+        if (f.expression?.node !== "column_ref") return;
         // An IN set implies bounds — [min(values), max(values)] — and a join-key
         // filter IS an IN set once its side batch is resolved. Skipping them
         // means a worker pruning by range gets NOTHING from a join-key pushdown,
         // the single most valuable pushdown a scan receives.
         let lo: bigint | undefined;
         let hi: bigint | undefined;
-        for (const raw of f.values) {
+        for (const raw of f.set.values) {
           if (raw == null) continue;
           const v = BigInt(raw);
           if (lo === undefined || v < lo) lo = v;
           if (hi === undefined || v > hi) hi = v;
         }
-        if (lo !== undefined) note(f.columnName, "min", lo);
-        if (hi !== undefined) note(f.columnName, "max", hi);
+        if (lo !== undefined) note(f.expression.columnName, "min", lo);
+        if (hi !== undefined) note(f.expression.columnName, "max", hi);
         return;
       }
       default:

@@ -50,7 +50,6 @@ import { batchToScalarDict, batchToSecretDict, projectSchema } from "../util/arr
 import { batchFromColumns, readCanonicalValue } from "../arrow/index.js";
 import { codecFor } from "../arrow/codec/registry.js";
 import {
-  buildJoinKeysLookup,
   deserializeFilters,
   FilteringOutputCollector,
   type PushdownFilters,
@@ -355,9 +354,14 @@ export function defineTableBufferingFunction<
         ? projectSchema(projIds, request.output_schema)
         : request.output_schema;
 
-      const joinKeysLookup = buildJoinKeysLookup(request.join_keys);
       const pushdownFilters = request.pushdown_filters
-        ? deserializeFilters(request.pushdown_filters, joinKeysLookup)
+        ? deserializeFilters(request.pushdown_filters, {
+          outputSchema: request.output_schema,
+          joinKeyBatches: request.join_keys,
+          extensionFunctions: meta.additionalFilterFunctions,
+          runtimeAlgorithms: meta.runtimeFilterAlgorithms,
+          evaluationContexts: meta.filterEvaluationContexts,
+        })
         : undefined;
 
       const bound = new BoundStorage(

@@ -1,591 +1,400 @@
 // Copyright 2025, 2026 Query Farm LLC - https://query.farm
-// Filter pushdown evaluation: row-by-row predicate evaluation against
-// Arrow RecordBatches, plus the PushdownFilters class that owns a parsed
-// filter set and applies it to batches.
 
 import {
   type VgiBatch,
-  type VgiSchema,
   type VgiDataType,
-  schema,
+  isBool,
+  isFloat,
+  isInt,
+  isUtf8,
   readCanonicalValue,
 } from "../arrow/index.js";
-import { batchFromColumns, filterBatch } from "../util/arrow/index.js";
-import { codecFor } from "../arrow/codec/registry.js";
+import { filterBatch } from "../util/arrow/index.js";
+import { applyFilterDelta, type DeserializeFilterOptions, FilterV2Error } from "./deserialize.js";
 import {
   ComparisonOp,
-  type AndFilter,
-  type ConstantFilter,
-  type ExpressionFilter,
-  type ExprNode,
-  type Filter,
-  type InFilter,
-  type IsNotNullFilter,
-  type IsNullFilter,
-  type OrFilter,
-  type StructFilter,
+  type EvaluationContext,
+  type FilterExpression,
+  type FilterPredicate,
+  type FunctionIdentity,
 } from "./types.js";
 
-// ============================================================================
-// Comparison helpers
-// ============================================================================
+type SqlBoolean = boolean | null;
 
-function compare(a: any, b: any, op: ComparisonOp): boolean {
+function readCell(batch: VgiBatch, index: number, row: number): unknown {
+  const column = batch.getChildAt(index);
+  return column ? readCanonicalValue(batch.schema.fields[index].type, column, row) : null;
+}
+
+function deepEqual(left: unknown, right: unknown): boolean {
+  if (typeof left === "number" && typeof right === "number") {
+    return left === right || (Number.isNaN(left) && Number.isNaN(right));
+  }
+  if (left instanceof Uint8Array && right instanceof Uint8Array) {
+    return left.length === right.length && left.every((value, index) => value === right[index]);
+  }
+  if (Array.isArray(left) && Array.isArray(right)) {
+    return left.length === right.length && left.every((value, index) => deepEqual(value, right[index]));
+  }
+  if (left && right && typeof left === "object" && typeof right === "object") {
+    const entries = Object.entries(left as Record<string, unknown>);
+    const rightObject = right as Record<string, unknown>;
+    return entries.length === Object.keys(rightObject).length &&
+      entries.every(([key, value]) => key in rightObject && deepEqual(value, rightObject[key]));
+  }
+  return left === right;
+}
+
+function orderedCompare(left: unknown, right: unknown): number {
+  if (typeof left === "number" && typeof right === "number") {
+    const leftNan = Number.isNaN(left);
+    const rightNan = Number.isNaN(right);
+    if (leftNan || rightNan) return leftNan === rightNan ? 0 : leftNan ? 1 : -1;
+  }
+  if (deepEqual(left, right)) return 0;
+  return (left as any) < (right as any) ? -1 : 1;
+}
+
+function compare(left: unknown, right: unknown, op: ComparisonOp): SqlBoolean {
+  if (op === ComparisonOp.DISTINCT_FROM) {
+    return left === null || right === null ? left !== right : !deepEqual(left, right);
+  }
+  if (op === ComparisonOp.NOT_DISTINCT_FROM) {
+    return left === null || right === null ? left === right : deepEqual(left, right);
+  }
+  if (left === null || right === null) return null;
+  const order = orderedCompare(left, right);
   switch (op) {
-    case ComparisonOp.EQ: return a === b;
-    case ComparisonOp.NE: return a !== b;
-    case ComparisonOp.GT: return a > b;
-    case ComparisonOp.GE: return a >= b;
-    case ComparisonOp.LT: return a < b;
-    case ComparisonOp.LE: return a <= b;
+    case ComparisonOp.EQ: return order === 0;
+    case ComparisonOp.NE: return order !== 0;
+    case ComparisonOp.LT: return order < 0;
+    case ComparisonOp.LE: return order <= 0;
+    case ComparisonOp.GT: return order > 0;
+    case ComparisonOp.GE: return order >= 0;
+    default: throw new FilterV2Error(`unknown comparison operator ${op}`);
   }
 }
 
-/**
- * Read a column cell at `index` in CANONICAL form (the same representation the
- * filter literals are deserialized into — see deserialize.ts `getValue`). Going
- * through the per-backend canonical reader makes this work on BOTH Arrow
- * backends (arrow-js's `col.get` and flechette's `col.at` are not interchange-
- * able) and guarantees temporal/decimal cells and literals compare like-for-
- * like (e.g. timestamp -> bigint on both sides). `colIndex` resolves the field
- * type from the batch schema.
- */
-function readCell(batch: VgiBatch, colIndex: number, index: number): any {
-  const col = batch.getChildAt(colIndex);
-  if (!col) return null;
-  const type = batch.schema.fields[colIndex].type as unknown as VgiDataType;
-  return readCanonicalValue(type, col, index);
+function andKleene(values: SqlBoolean[]): SqlBoolean {
+  if (values.some((value) => value === false)) return false;
+  return values.some((value) => value === null) ? null : true;
 }
 
-// ============================================================================
-// Filter evaluation (row-by-row)
-// ============================================================================
+function orKleene(values: SqlBoolean[]): SqlBoolean {
+  if (values.some((value) => value === true)) return true;
+  return values.some((value) => value === null) ? null : false;
+}
 
-function evaluateFilter(
-  filter: Filter,
-  batch: VgiBatch,
-  mask: Uint8Array,
-): void {
-  switch (filter.type) {
-    case "constant":
-      evaluateConstant(filter, batch, mask);
-      break;
-    case "is_null":
-      evaluateIsNull(filter, batch, mask);
-      break;
-    case "is_not_null":
-      evaluateIsNotNull(filter, batch, mask);
-      break;
-    case "in":
-      evaluateIn(filter, batch, mask);
-      break;
-    case "and":
-      evaluateAnd(filter, batch, mask);
-      break;
-    case "or":
-      evaluateOr(filter, batch, mask);
-      break;
-    case "struct":
-      evaluateStruct(filter, batch, mask);
-      break;
-    case "expression":
-      evaluateExpression(filter, batch, mask);
-      break;
+function integerBounds(type: VgiDataType): [bigint, bigint] | null {
+  if (!isInt(type)) return null;
+  const width = BigInt((type as any).bitWidth ?? 32);
+  const signed = (type as any).isSigned ?? (type as any).signed ?? true;
+  return signed
+    ? [-(1n << (width - 1n)), (1n << (width - 1n)) - 1n]
+    : [0n, (1n << width) - 1n];
+}
+
+function castValue(value: unknown, type: VgiDataType): unknown {
+  if (value === null) return null;
+  if (isUtf8(type)) return String(value);
+  if (isBool(type)) {
+    if (typeof value === "boolean") return value;
+    if (value === 0 || value === 0n || value === "false") return false;
+    if (value === 1 || value === 1n || value === "true") return true;
+    throw new FilterV2Error(`cannot cast ${String(value)} to BOOLEAN`);
+  }
+  if (isFloat(type)) {
+    const result = Number(value);
+    if (Number.isNaN(result) && String(value).toLowerCase() !== "nan") {
+      throw new FilterV2Error(`cannot cast ${String(value)} to floating point`);
+    }
+    return result;
+  }
+  const bounds = integerBounds(type);
+  if (bounds) {
+    let result: bigint;
+    try {
+      result = typeof value === "bigint" ? value : BigInt(typeof value === "number" ? Math.trunc(value) : String(value));
+    } catch {
+      throw new FilterV2Error(`cannot cast ${String(value)} to integer`);
+    }
+    if (result < bounds[0] || result > bounds[1]) throw new FilterV2Error("integer cast overflow");
+    return (type as any).bitWidth === 64 ? result : Number(result);
+  }
+  throw new FilterV2Error(`no vgi.duckdb.standard.v1 cast evaluator for Arrow type ${type.typeId}`);
+}
+
+function numericBinary(
+  op: "add" | "subtract" | "multiply" | "divide" | "modulo",
+  left: unknown,
+  right: unknown,
+  context: EvaluationContext,
+): unknown {
+  if (left === null || right === null) return null;
+  if ((typeof left !== "number" && typeof left !== "bigint") ||
+      (typeof right !== "number" && typeof right !== "bigint")) {
+    throw new FilterV2Error("arithmetic operands must be numeric");
+  }
+  if (typeof left === "bigint" && typeof right === "bigint") {
+    if ((op === "divide" || op === "modulo") && right === 0n) throw new FilterV2Error("division by zero");
+    switch (op) {
+      case "add": return left + right;
+      case "subtract": return left - right;
+      case "multiply": return left * right;
+      case "divide": return context.integerDivision ? left / right : Number(left) / Number(right);
+      case "modulo": return left % right;
+    }
+  }
+  const a = Number(left);
+  const b = Number(right);
+  if ((op === "divide" || op === "modulo") && b === 0 && context.ieeeFloatingPointOps === false) {
+    throw new FilterV2Error("division by zero");
+  }
+  switch (op) {
+    case "add": return a + b;
+    case "subtract": return a - b;
+    case "multiply": return a * b;
+    case "divide": return a / b;
+    case "modulo": return a % b;
   }
 }
 
-// Recursively evaluate an expression AST against a row of the batch, returning
-// the scalar value it produces. column_ref reads from the batch using the
-// caller-supplied remap (DuckDB rewrites column refs inside an ExpressionFilter
-// so index=0 means "this filter's column"); constant returns its pre-resolved
-// JS value; function dispatches on function_name; comparison/conjunction
-// combine children.
-function evaluateExpr(
-  node: ExprNode,
-  batch: VgiBatch,
-  rowIndex: number,
-  colRefToBatchIndex: (index: number) => number,
-): any {
-  switch (node.expr_type) {
-    case "column_ref":
-      return readCell(batch, colRefToBatchIndex(node.index), rowIndex);
-    case "constant":
-      return node.value;
-    case "function":
-      return evalFunction(
-        node.function_name,
-        node.children.map((c) => evaluateExpr(c, batch, rowIndex, colRefToBatchIndex)),
-      );
-    case "comparison": {
-      const left = evaluateExpr(node.left, batch, rowIndex, colRefToBatchIndex);
-      const right = evaluateExpr(node.right, batch, rowIndex, colRefToBatchIndex);
-      if (left == null || right == null) return null;
-      return compare(left, right, node.op);
-    }
-    case "conjunction": {
-      if (node.conjunction_type === "and") {
-        for (const c of node.children) {
-          const v = evaluateExpr(c, batch, rowIndex, colRefToBatchIndex);
-          if (v !== true) return v === false ? false : null;
-        }
-        return true;
-      }
-      let sawNull = false;
-      for (const c of node.children) {
-        const v = evaluateExpr(c, batch, rowIndex, colRefToBatchIndex);
-        if (v === true) return true;
-        if (v == null) sawNull = true;
-      }
-      return sawNull ? null : false;
-    }
-  }
+function identityKey(identity: FunctionIdentity): string {
+  return `${identity.namespace}/${identity.name}@${identity.version}`;
 }
 
-// Dispatch DuckDB scalar-function names we support as pushdown filters.
-// Return null for any missing argument (SQL three-valued logic).
-function evalFunction(name: string, args: any[]): any {
-  if (args.some((a) => a == null)) return null;
-  switch (name) {
-    case "list_contains":
-    case "array_contains": {
-      // args[0] is an Arrow ListVector row (iterable), args[1] is the needle.
-      const [list, needle] = args;
-      if (!list || typeof list[Symbol.iterator] !== "function") return false;
-      for (const v of list) {
-        if (v === needle) return true;
-      }
-      return false;
-    }
-    case "starts_with":
-    case "prefix": {
-      const [hay, needle] = args;
-      return typeof hay === "string" && typeof needle === "string"
-        ? hay.startsWith(needle) : false;
-    }
-    case "contains": {
-      const [hay, needle] = args;
-      return typeof hay === "string" && typeof needle === "string"
-        ? hay.includes(needle) : false;
-    }
-    case "&&":
-    case "st_intersects_extent": {
-      // Bounding-box intersection between two WKB geometries. Parses each
-      // geometry's XY bbox and checks for overlap in both dimensions.
-      const [a, b] = args;
-      const ba = wkbBBox(a);
-      const bb = wkbBBox(b);
-      if (!ba || !bb) return false;
-      return !(ba.maxX < bb.minX || ba.minX > bb.maxX ||
-               ba.maxY < bb.minY || ba.minY > bb.maxY);
-    }
-    default:
-      // Unsupported functions shouldn't make it past the C++-side
-      // `ExpressionTreeIsSupported` gate, but be defensive: evaluate to null
-      // so the row is filtered out conservatively rather than silently
-      // producing wrong results.
-      return null;
-  }
-}
-
-// Parse the XY bounding box of a WKB geometry. Supports Point and Polygon for
-// ST_MakeEnvelope output; extend as new geometry kinds are needed.
-function wkbBBox(bytes: any): { minX: number; minY: number; maxX: number; maxY: number } | null {
-  if (!(bytes instanceof Uint8Array)) return null;
-  if (bytes.length < 5) return null;
+function wkbBBox(bytes: unknown): { minX: number; minY: number; maxX: number; maxY: number } | null {
+  if (!(bytes instanceof Uint8Array) || bytes.length < 5) return null;
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  const le = view.getUint8(0) === 1;
-  const type = view.getUint32(1, le);
-  // Point (type=1): 21 bytes total (5 header + 8+8 coords)
+  const littleEndian = view.getUint8(0) === 1;
+  const type = view.getUint32(1, littleEndian);
   if (type === 1 && bytes.length >= 21) {
-    const x = view.getFloat64(5, le);
-    const y = view.getFloat64(13, le);
+    const x = view.getFloat64(5, littleEndian);
+    const y = view.getFloat64(13, littleEndian);
     return { minX: x, minY: y, maxX: x, maxY: y };
   }
-  // Polygon (type=3): used by ST_MakeEnvelope. One ring, 4 points, close.
-  // Header 5 + num_rings 4 + num_points 4 + 4*16 coord bytes = 81 bytes.
-  if (type === 3 && bytes.length >= 81) {
-    const numRings = view.getUint32(5, le);
-    if (numRings < 1) return null;
-    const numPoints = view.getUint32(9, le);
-    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-    let off = 13;
-    for (let i = 0; i < numPoints && off + 16 <= bytes.length; i++, off += 16) {
-      const x = view.getFloat64(off, le);
-      const y = view.getFloat64(off + 8, le);
-      if (x < minX) minX = x;
-      if (x > maxX) maxX = x;
-      if (y < minY) minY = y;
-      if (y > maxY) maxY = y;
+  if (type !== 3 || bytes.length < 13 || view.getUint32(5, littleEndian) === 0) return null;
+  const points = view.getUint32(9, littleEndian);
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (let index = 0, offset = 13; index < points && offset + 16 <= bytes.length; index++, offset += 16) {
+    const x = view.getFloat64(offset, littleEndian);
+    const y = view.getFloat64(offset + 8, littleEndian);
+    minX = Math.min(minX, x); minY = Math.min(minY, y);
+    maxX = Math.max(maxX, x); maxY = Math.max(maxY, y);
+  }
+  return minX === Infinity ? null : { minX, minY, maxX, maxY };
+}
+
+function evaluateCall(expression: Extract<FilterExpression, { node: "call" }>, args: unknown[]): unknown {
+  if (args.some((value) => value === null)) return null;
+  if (typeof expression.function === "string") {
+    const [left, right] = args;
+    switch (expression.function) {
+      case "starts_with": return String(left).startsWith(String(right));
+      case "ends_with": return String(left).endsWith(String(right));
+      case "contains": return String(left).includes(String(right));
+      case "list_contains": return Array.isArray(left) && left.some((value) => value !== null && deepEqual(value, right));
     }
-    if (minX === Infinity) return null;
-    return { minX, minY, maxX, maxY };
+  }
+  if (identityKey(expression.function as FunctionIdentity) === "duckdb.spatial/intersects_extent@1") {
+    const left = wkbBBox(args[0]);
+    const right = wkbBBox(args[1]);
+    return !!left && !!right && !(left.maxX < right.minX || left.minX > right.maxX ||
+      left.maxY < right.minY || left.minY > right.maxY);
+  }
+  throw new FilterV2Error("no evaluator for extension filter function");
+}
+
+function evaluateExpression(expression: FilterExpression, batch: VgiBatch, row: number, context: EvaluationContext): unknown {
+  switch (expression.node) {
+    case "column_ref": {
+      const projectedIndex = batch.schema.fields.findIndex((field) => field.name === expression.columnName);
+      if (projectedIndex < 0) {
+        throw new FilterV2Error(`filter column ${expression.columnName} is unavailable in emitted batch`);
+      }
+      return readCell(batch, projectedIndex, row);
+    }
+    case "field_ref": {
+      const parent = evaluateExpression(expression.expression, batch, row, context);
+      if (parent === null) return null;
+      if (Array.isArray(parent)) return parent[expression.fieldIndex] ?? null;
+      return (parent as Record<string, unknown>)[expression.fieldName] ?? null;
+    }
+    case "literal": return expression.value;
+    case "comparison": return compare(evaluateExpression(expression.left, batch, row, context),
+      evaluateExpression(expression.right, batch, row, context), expression.op);
+    case "and": return andKleene(expression.children.map((child) => evaluateExpression(child, batch, row, context) as SqlBoolean));
+    case "or": return orKleene(expression.children.map((child) => evaluateExpression(child, batch, row, context) as SqlBoolean));
+    case "not": {
+      const value = evaluateExpression(expression.expression, batch, row, context) as SqlBoolean;
+      return value === null ? null : !value;
+    }
+    case "is_null": {
+      const result = evaluateExpression(expression.expression, batch, row, context) === null;
+      return expression.negated ? !result : result;
+    }
+    case "in": {
+      const input = evaluateExpression(expression.expression, batch, row, context);
+      if (input === null) return null;
+      const matched = expression.set.values.some((value) => value !== null && deepEqual(input, value));
+      let result: SqlBoolean = matched ? true : expression.set.values.some((value) => value === null) ? null : false;
+      if (expression.negated && result !== null) result = !result;
+      return result;
+    }
+    case "cast": return castValue(evaluateExpression(expression.expression, batch, row, context), expression.field.type);
+    case "arithmetic": return numericBinary(expression.op, evaluateExpression(expression.left, batch, row, context),
+      evaluateExpression(expression.right, batch, row, context), context);
+    case "negate": {
+      const value = evaluateExpression(expression.expression, batch, row, context);
+      return value === null ? null : typeof value === "bigint" ? -value : -Number(value);
+    }
+    case "call": return evaluateCall(expression, expression.arguments.map((argument) => evaluateExpression(argument, batch, row, context)));
+    case "runtime_filter": throw new FilterV2Error("runtime-filter artifact evaluator is unavailable");
+  }
+}
+
+function expressionColumns(expression: FilterExpression, output = new Map<number, string>()): Map<number, string> {
+  switch (expression.node) {
+    case "column_ref": output.set(expression.columnIndex, expression.columnName); break;
+    case "field_ref": case "not": case "is_null": case "cast": case "negate":
+      expressionColumns(expression.expression, output); break;
+    case "comparison": case "arithmetic":
+      expressionColumns(expression.left, output); expressionColumns(expression.right, output); break;
+    case "and": case "or": expression.children.forEach((child) => expressionColumns(child, output)); break;
+    case "in": expressionColumns(expression.expression, output); break;
+    case "call": expression.arguments.forEach((argument) => expressionColumns(argument, output)); break;
+    case "runtime_filter": expressionColumns(expression.input, output); break;
+  }
+  return output;
+}
+
+function discreteValues(expression: FilterExpression, columnName: string): unknown[] | null {
+  if (expression.node === "comparison" && expression.op === ComparisonOp.EQ) {
+    if (expression.left.node === "column_ref" && expression.left.columnName === columnName && expression.right.node === "literal") return [expression.right.value];
+    if (expression.right.node === "column_ref" && expression.right.columnName === columnName && expression.left.node === "literal") return [expression.left.value];
+  }
+  if (expression.node === "in" && expression.expression.node === "column_ref" &&
+      expression.expression.columnName === columnName && !expression.negated) return expression.set.values;
+  if (expression.node === "and") {
+    for (const child of expression.children) {
+      const values = discreteValues(child, columnName);
+      if (values) return values;
+    }
+  }
+  if (expression.node === "or") {
+    const branches = expression.children.map((child) => discreteValues(child, columnName));
+    if (branches.some((values) => values === null)) return null;
+    const result: unknown[] = [];
+    for (const values of branches as unknown[][]) {
+      for (const value of values) if (!result.some((known) => deepEqual(known, value))) result.push(value);
+    }
+    return result;
   }
   return null;
 }
 
-function evaluateExpression(
-  filter: ExpressionFilter,
-  batch: VgiBatch,
-  mask: Uint8Array,
-): void {
-  const n = batch.numRows;
-  // DuckDB's FilterSerializer rewrites bound references inside an
-  // ExpressionFilter so that column_ref index 0 refers to the filter's own
-  // column (see ReplaceWithBoundReference in DuckDB's optimizer). Higher
-  // indices on the same filter aren't produced — the filter is always
-  // scoped to a single column in the outer batch — so we map every
-  // column_ref back to `filter.columnIndex` by name, resolving through the
-  // current batch in case projection reordered columns.
-  const colName = filter.columnName;
-  let targetIdx = batch.schema.fields.findIndex((f) => f.name === colName);
-  if (targetIdx < 0) targetIdx = filter.columnIndex;
-  const colRef = (_nodeIndex: number) => targetIdx;
-  for (let i = 0; i < n; i++) {
-    if (!mask[i]) continue;
-    const v = evaluateExpr(filter.expr, batch, i, colRef);
-    mask[i] = v === true ? 1 : 0;
-  }
-}
-
-function evaluateConstant(
-  filter: ConstantFilter,
-  batch: VgiBatch,
-  mask: Uint8Array,
-): void {
-  const n = batch.numRows;
-  for (let i = 0; i < n; i++) {
-    if (!mask[i]) continue;
-    const cell = readCell(batch, filter.columnIndex, i);
-    if (cell === null) {
-      mask[i] = 0;
-    } else {
-      mask[i] = compare(cell, filter.value, filter.op) ? 1 : 0;
-    }
-  }
-}
-
-function evaluateIsNull(
-  filter: IsNullFilter,
-  batch: VgiBatch,
-  mask: Uint8Array,
-): void {
-  const n = batch.numRows;
-  for (let i = 0; i < n; i++) {
-    if (!mask[i]) continue;
-    mask[i] = (readCell(batch, filter.columnIndex, i) !== null) ? 0 : 1;
-  }
-}
-
-function evaluateIsNotNull(
-  filter: IsNotNullFilter,
-  batch: VgiBatch,
-  mask: Uint8Array,
-): void {
-  const n = batch.numRows;
-  for (let i = 0; i < n; i++) {
-    if (!mask[i]) continue;
-    mask[i] = (readCell(batch, filter.columnIndex, i) !== null) ? 1 : 0;
-  }
-}
-
-function evaluateIn(
-  filter: InFilter,
-  batch: VgiBatch,
-  mask: Uint8Array,
-): void {
-  const n = batch.numRows;
-  for (let i = 0; i < n; i++) {
-    if (!mask[i]) continue;
-    const cell = readCell(batch, filter.columnIndex, i);
-    if (cell === null) {
-      mask[i] = 0;
-    } else {
-      mask[i] = filter.values.has(cell) ? 1 : 0;
-    }
-  }
-}
-
-function evaluateAnd(
-  filter: AndFilter,
-  batch: VgiBatch,
-  mask: Uint8Array,
-): void {
-  // AND: start with all-pass, then narrow with each child
-  const n = batch.numRows;
-  const childMask = new Uint8Array(n);
-
-  for (const child of filter.children) {
-    childMask.fill(1);
-    evaluateFilter(child, batch, childMask);
-    for (let i = 0; i < n; i++) {
-      mask[i] &= childMask[i];
-    }
-  }
-}
-
-function evaluateOr(
-  filter: OrFilter,
-  batch: VgiBatch,
-  mask: Uint8Array,
-): void {
-  // OR: start with all-fail, then widen with each child
-  const n = batch.numRows;
-  const result = new Uint8Array(n); // all zeros
-  const childMask = new Uint8Array(n);
-
-  for (const child of filter.children) {
-    childMask.fill(1);
-    evaluateFilter(child, batch, childMask);
-    for (let i = 0; i < n; i++) {
-      result[i] |= childMask[i];
-    }
-  }
-
-  // Combine with incoming mask
-  for (let i = 0; i < n; i++) {
-    mask[i] &= result[i];
-  }
-}
-
-function evaluateStruct(
-  filter: StructFilter,
-  batch: VgiBatch,
-  mask: Uint8Array,
-): void {
-  const structType = batch.schema.fields[filter.columnIndex].type as unknown as VgiDataType;
-  const childField = (structType as any).children?.[filter.childIndex];
-  if (!childField) {
-    // Child field not found — fail all rows
-    mask.fill(0);
-    return;
-  }
-  const childType = childField.type as VgiDataType;
-
-  // Read the struct column in canonical form (backend-agnostic), pull out the
-  // target child's canonical value per row, and rebuild a single-column child
-  // batch via batchFromColumns (which re-runs canonical writes). Filter literals
-  // are compared in canonical form too (see deserialize.ts), so the child column
-  // cells and literals stay in matching representations across both backends.
-  const childCanonical = Array.from({ length: batch.numRows }, (_, i) => {
-    const structVal = readCell(batch, filter.columnIndex, i) as Record<string, unknown> | null;
-    return structVal == null ? null : (structVal[childField.name] ?? null);
-  });
-  // batchFromColumns expects RICH values; map canonical -> rich for the child.
-  const childCodec = codecFor(childType);
-  const childRich = childCanonical.map((v) => childCodec.canonicalToRich(v));
-
-  const childSchema = schema([
-    (structType as any).children[filter.childIndex],
-  ]);
-  const childBatch = batchFromColumns(
-    { [filter.childName]: childRich },
-    childSchema,
-  );
-
-  // Remap child filter's columnIndex to 0 for the wrapper batch
-  const remapped = { ...filter.childFilter, columnIndex: 0 };
-  evaluateFilter(remapped, childBatch, mask);
-}
-
-// ============================================================================
-// SQL formatting
-// ============================================================================
-
-const OP_SYMBOLS: Record<ComparisonOp, string> = {
-  [ComparisonOp.EQ]: "=",
-  [ComparisonOp.NE]: "!=",
-  [ComparisonOp.GT]: ">",
-  [ComparisonOp.GE]: ">=",
-  [ComparisonOp.LT]: "<",
-  [ComparisonOp.LE]: "<=",
-};
-
-function formatValue(v: any): string {
-  if (typeof v === "string") return `'${v}'`;
-  if (typeof v === "bigint") return String(v);
-  return String(v);
-}
-
-function filterToSql(f: Filter): string {
-  const col = f.columnName;
-
-  switch (f.type) {
-    case "constant":
-      return `${col} ${OP_SYMBOLS[f.op]} ${formatValue(f.value)}`;
-    case "is_null":
-      return `${col} IS NULL`;
-    case "is_not_null":
-      return `${col} IS NOT NULL`;
-    case "in": {
-      // Match Python's repr: summarize large lists as `N values`, otherwise
-      // render each element. Threshold matches vgi-python's InFilter.__repr__.
-      const size = f.values.size;
-      if (size > 20) {
-        return `${col} IN (${size} values)`;
-      }
-      const vals = [...f.values].map(formatValue).join(", ");
-      return `${col} IN (${vals})`;
-    }
-    case "and": {
-      const parts = f.children.map(filterToSql);
-      return `(${parts.join(" AND ")})`;
-    }
-    case "or": {
-      const parts = f.children.map(filterToSql);
-      return `(${parts.join(" OR ")})`;
-    }
-    case "struct": {
-      const nested = `${f.columnName}.${f.childName}`;
-      const remapped = { ...f.childFilter, columnName: nested };
-      return filterToSql(remapped);
-    }
-    case "expression":
-      // Expression filters don't have a natural SQL rendering here — the
-      // tree came from DuckDB's bound-expression serializer. Use a generic
-      // placeholder so debug output stays readable.
-      return `${f.columnName} MATCHES (expression)`;
-  }
-}
-
-// ============================================================================
-// PushdownFilters
-// ============================================================================
-
 export class PushdownFilters {
+  readonly version = "2";
+
   constructor(
-    readonly filters: Filter[],
-    readonly version: string,
+    readonly predicates: FilterPredicate[],
+    readonly evaluationContext: EvaluationContext,
+    readonly options: DeserializeFilterOptions,
+    readonly revisions = new Map<string, number>(),
+    readonly requiredIds = new Set<string>(),
   ) {}
 
-  /** Convert filters to a human-readable SQL-like string. */
-  toSql(): string {
-    if (this.filters.length === 0) return "";
-    return this.filters.map(filterToSql).join(" AND ");
+  get filters(): FilterExpression[] {
+    return this.predicates.map((predicate) => predicate.expression);
   }
 
-  /** Evaluate filters against a batch, returning a Uint8Array mask (0=fail, 1=pass). */
+  applyDelta(batch: VgiBatch): PushdownFilters {
+    return applyFilterDelta(this, batch);
+  }
+
   evaluate(batch: VgiBatch): Uint8Array {
-    const n = batch.numRows;
-    const mask = new Uint8Array(n);
+    const mask = new Uint8Array(batch.numRows);
     mask.fill(1);
-
-    for (const filter of this.filters) {
-      evaluateFilter(filter, batch, mask);
+    for (const predicate of this.predicates) {
+      if (predicate.expression.node === "runtime_filter" && !predicate.expression.supported) continue;
+      let values: unknown[];
+      try {
+        values = Array.from({ length: batch.numRows }, (_, row) => evaluateExpression(
+          predicate.expression, batch, row, this.evaluationContext));
+      } catch (error) {
+        if (predicate.mode === "advisory") continue;
+        throw error;
+      }
+      for (let row = 0; row < batch.numRows; row++) mask[row] &= values[row] === true ? 1 : 0;
     }
-
     return mask;
   }
 
-  /** Apply filters to a batch, returning only passing rows. */
   apply(batch: VgiBatch): VgiBatch {
-    if (batch.numRows === 0 || this.filters.length === 0) return batch;
-
-    const mask = this.evaluate(batch);
-    // filterBatch rebuilds via the codec/canonical path (backend-agnostic,
-    // lossless), including its own all-pass / all-fail fast paths.
-    return filterBatch(batch, mask);
+    if (!batch.numRows || !this.predicates.length) return batch;
+    return filterBatch(batch, this.evaluate(batch));
   }
 
-  /**
-   * The set of column names referenced by the pushed-down filters, sorted
-   * ascending. Descends one level into AndFilter children (DuckDB pushes
-   * `col IN (...) AND col>=min` as a single AndFilter), consistent with
-   * `getColumnValues` / `hasFilterForColumn`. Mirrors the cross-language
-   * `filtered_columns` accessor (vgi-python / vgi-go / vgi-rust).
-   */
   filteredColumns(): string[] {
-    const cols = new Set<string>();
-    for (const f of this.filters) {
-      if (f.type === "and") {
-        for (const c of f.children) cols.add(c.columnName);
-      } else {
-        cols.add(f.columnName);
-      }
+    const columns = new Set<string>();
+    for (const predicate of this.predicates) {
+      for (const name of expressionColumns(predicate.expression).values()) columns.add(name);
     }
-    return Array.from(cols).sort();
+    return [...columns].sort();
   }
 
-  /**
-   * Whether any pushed-down filter references `columnName`. Mirrors the
-   * cross-language `has_filter_for_column` accessor.
-   */
   hasFilterForColumn(columnName: string): boolean {
-    return this.collectColumnFilters(columnName).length > 0;
+    return this.filteredColumns().includes(columnName);
   }
 
-  /**
-   * Discrete values a column could take, from equality (`=`) or `IN` filters.
-   * Useful for partition pruning (resolve the key set up front, fetch only
-   * those keys). Returns null when the predicate is not enumerable — no
-   * filter, a bare range, or an OR with a non-discrete branch.
-   *
-   * Mirrors vgi-python's `PushdownFilters.get_column_values`: descends one
-   * level into an AndFilter (DuckDB pushes `col IN (...) AND col>=min AND
-   * col<=max` as a single AndFilter from a semi-join), and unions OR branches
-   * only when every branch pins the column to discrete values.
-   */
-  getColumnValues(columnName: string): any[] | null {
-    for (const f of this.collectColumnFilters(columnName)) {
-      if (f.type === "constant" && f.op === ComparisonOp.EQ) {
-        return [f.value];
-      } else if (f.type === "in") {
-        return Array.from(f.values);
-      } else if (f.type === "or") {
-        const union = this.orDiscreteValues(f, columnName);
-        if (union !== null) return union;
-      }
+  getColumnValues(columnName: string): unknown[] | null {
+    for (const predicate of this.predicates) {
+      const values = discreteValues(predicate.expression, columnName);
+      if (values) return values;
     }
     return null;
   }
 
-  /**
-   * Union of discrete values for `columnName` across all OR branches, iff every
-   * child constrains it to discrete values (`=` or `IN`); otherwise null (the
-   * column could take any value through a non-discrete branch). Returning one
-   * branch's values would be an unsafe subset.
-   */
-  private orDiscreteValues(orFilter: OrFilter, columnName: string): any[] | null {
-    const values: any[] = [];
-    for (const child of orFilter.children) {
-      if (child.columnName !== columnName) return null;
-      if (child.type === "constant" && child.op === ComparisonOp.EQ) {
-        values.push(child.value);
-      } else if (child.type === "in") {
-        for (const v of child.values) values.push(v);
-      } else {
-        return null;
-      }
-    }
-    if (values.length === 0) return null;
-    // Deduplicate, preserving first-seen order for stable output.
-    const seen = new Set<any>();
-    const deduped: any[] = [];
-    for (const v of values) {
-      if (!seen.has(v)) {
-        seen.add(v);
-        deduped.push(v);
-      }
-    }
-    return deduped;
+  toSql(): string {
+    return this.predicates.map((predicate) => expressionToSql(predicate.expression)).join(" AND ");
   }
+}
 
-  /**
-   * Collect filters for a column from the top level and direct AND children
-   * (one level of descent, consistent with the Python accessor). Deeply nested
-   * AND/AND is not traversed.
-   */
-  private collectColumnFilters(columnName: string): Filter[] {
-    const result: Filter[] = [];
-    for (const f of this.filters) {
-      if (f.columnName !== columnName) continue;
-      if (f.type === "and") {
-        for (const c of f.children) {
-          if (c.columnName === columnName) result.push(c);
-        }
-      } else {
-        result.push(f);
-      }
+function quote(value: unknown): string {
+  if (value === null) return "NULL";
+  if (typeof value === "string") return `'${value.replaceAll("'", "''")}'`;
+  if (value instanceof Uint8Array) return `X'${[...value].map((byte) => byte.toString(16).padStart(2, "0")).join("")}'`;
+  if (Array.isArray(value)) return `[${value.map(quote).join(", ")}]`;
+  return String(value);
+}
+
+export function expressionToSql(expression: FilterExpression): string {
+  switch (expression.node) {
+    case "column_ref": return expression.columnName;
+    case "field_ref": return `${expressionToSql(expression.expression)}.${expression.fieldName}`;
+    case "literal": return quote(expression.value);
+    case "comparison": {
+      const symbols: Record<ComparisonOp, string> = {
+        [ComparisonOp.EQ]: "=", [ComparisonOp.NE]: "!=", [ComparisonOp.LT]: "<", [ComparisonOp.LE]: "<=",
+        [ComparisonOp.GT]: ">", [ComparisonOp.GE]: ">=", [ComparisonOp.DISTINCT_FROM]: "IS DISTINCT FROM",
+        [ComparisonOp.NOT_DISTINCT_FROM]: "IS NOT DISTINCT FROM",
+      };
+      return `${expressionToSql(expression.left)} ${symbols[expression.op]} ${expressionToSql(expression.right)}`;
     }
-    return result;
+    case "and": case "or": return `(${expression.children.map(expressionToSql).join(` ${expression.node.toUpperCase()} `)})`;
+    case "not": return `(NOT ${expressionToSql(expression.expression)})`;
+    case "is_null": return `${expressionToSql(expression.expression)} IS ${expression.negated ? "NOT " : ""}NULL`;
+    case "in": return `${expressionToSql(expression.expression)} ${expression.negated ? "NOT " : ""}IN (${expression.set.values.map(quote).join(", ")})`;
+    case "cast": return `CAST(${expressionToSql(expression.expression)} AS type_${expression.typeRef})`;
+    case "arithmetic": {
+      const symbols = { add: "+", subtract: "-", multiply: "*", divide: "/", modulo: "%" } as const;
+      return `(${expressionToSql(expression.left)} ${symbols[expression.op]} ${expressionToSql(expression.right)})`;
+    }
+    case "negate": return `(-${expressionToSql(expression.expression)})`;
+    case "call": {
+      const name = typeof expression.function === "string" ? expression.function : identityKey(expression.function);
+      return `${name}(${expression.arguments.map(expressionToSql).join(", ")})`;
+    }
+    case "runtime_filter": return `${identityKey(expression.algorithm)}(${expressionToSql(expression.input)})`;
   }
 }

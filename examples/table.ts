@@ -1454,7 +1454,6 @@ const filter_echo_table_scan = defineTableFunction<Record<string, never>, { done
   projectionPushdown: true,
   filterPushdown: true,
   autoApplyFilters: true,
-  supportedExpressionFilters: ["prefix", "starts_with"],
   onBind: () => ({ outputSchema: FILTER_ECHO_TABLE_SCHEMA }),
   initialState: (params) => ({ done: false, filterStr: formatPushedFilters(params.pushdownFilters) }),
   process: (params, state, out) => {
@@ -2287,12 +2286,14 @@ function rowidPushdownWitness(filters: PushdownFilters | undefined): string {
   let hi: bigint | null = null;
   const toBig = (v: any): bigint => (typeof v === "bigint" ? v : BigInt(v));
   const walk = (f: Filter): void => {
-    if (f.type === "and" || f.type === "or") {
+    if (f.node === "and" || f.node === "or") {
       for (const child of f.children) walk(child);
-    } else if (f.type === "in" && f.columnName === LATE_MAT_ROWID) {
-      inCount += f.values.size;
-    } else if (f.type === "constant" && f.columnName === LATE_MAT_ROWID) {
-      const v = toBig(f.value);
+    } else if (f.node === "in" && f.expression.node === "column_ref" &&
+        f.expression.columnName === LATE_MAT_ROWID) {
+      inCount += f.set.values.length;
+    } else if (f.node === "comparison" && f.left.node === "column_ref" &&
+        f.left.columnName === LATE_MAT_ROWID && f.right.node === "literal") {
+      const v = toBig(f.right.value);
       switch (f.op) {
         case ComparisonOp.GT:
         case ComparisonOp.GE:
@@ -3441,7 +3442,7 @@ const spatial_filter_example = defineTableFunction<SpatialFilterArgs, SpatialFil
   projectionPushdown: true,
   filterPushdown: true,
   autoApplyFilters: true,
-  supportedExpressionFilters: ["&&", "st_intersects_extent"],
+  additionalFilterFunctions: [{ namespace: "duckdb.spatial", name: "intersects_extent", version: 1 }],
   onBind: () => ({ outputSchema: SPATIAL_FILTER_SCHEMA }),
   cardinality: (p: TableBindParams<SpatialFilterArgs>) => ({ estimate: p.args.count, max: p.args.count }),
   initialState: (p: TableProcessParams<SpatialFilterArgs>) => ({
@@ -3494,7 +3495,6 @@ const expression_filter_test = defineTableFunction<ExprFilterArgs, ExprFilterSta
   projectionPushdown: true,
   filterPushdown: true,
   autoApplyFilters: true,
-  supportedExpressionFilters: ["list_contains", "prefix", "starts_with", "contains"],
   onBind: () => ({ outputSchema: EXPR_FILTER_SCHEMA }),
   cardinality: (p: TableBindParams<ExprFilterArgs>) => ({ estimate: p.args.count, max: p.args.count }),
   initialState: (p: TableProcessParams<ExprFilterArgs>) => ({
