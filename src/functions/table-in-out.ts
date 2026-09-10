@@ -54,6 +54,8 @@ export interface TableInOutBindParams<TArgs = Record<string, any>> {
   bindCall: BindRequest;
   settings: Record<string, any>;
   secrets: Record<string, Record<string, any>>;
+  /** Resolved names aligned with the complete logical argument order. */
+  argumentNames?: (string | null)[] | null;
 }
 
 export interface TableInOutProcessParams<TArgs = Record<string, any>> {
@@ -105,6 +107,8 @@ export interface TableInOutConfig<
   namedArgs?: Record<string, VgiDataType>;
   /** Argument defaults */
   argDefaults?: Record<string, any>;
+  /** Authoritative typed defaults: one row, defaulted parameters only. */
+  parameterDefaultValues?: VgiBatch | null;
   /** Argument descriptions keyed by argument name. */
   argDocs?: Record<string, string>;
   /** Discovery constraints, also enforced for scalar arguments at bind. */
@@ -206,6 +210,7 @@ export function defineTableInOutFunction<
     examples: config.examples,
     categories: config.categories,
     tags: config.tags,
+    parameterDefaultValues: config.parameterDefaultValues,
     maxWorkers: config.maxWorkers,
     requiredSettings: config.requiredSettings,
     requiredSecrets: config.requiredSecrets,
@@ -247,6 +252,7 @@ export function defineTableInOutFunction<
           bindCall: request,
           settings,
           secrets,
+          argumentNames: request.argument_names ?? null,
         });
         return {
           output_schema: result.outputSchema,
@@ -732,6 +738,8 @@ export interface RowTransformConfig<TArgs = Record<string, any>> {
   /** Named (string-position) args stay bind-time scalars on `params.args`. */
   namedArgs?: Record<string, VgiDataType>;
   argDefaults?: Record<string, any>;
+  /** Authoritative typed defaults: one row, defaulted parameters only. */
+  parameterDefaultValues?: VgiBatch | null;
   /** Per-argument descriptions keyed by arg name (surfaced as `vgi_doc`). */
   argDocs?: Record<string, string>;
   /** Discovery constraints, also enforced for named scalar arguments at bind. */
@@ -841,6 +849,7 @@ export function defineRowTransformFunction<
     examples: config.examples,
     categories: config.categories,
     tags: config.tags,
+    parameterDefaultValues: config.parameterDefaultValues,
     maxWorkers: config.maxWorkers,
     requiredSettings: config.requiredSettings,
     requiredSecrets: config.requiredSecrets,
@@ -882,6 +891,7 @@ export function defineRowTransformFunction<
         bindCall: request,
         settings,
         secrets,
+        argumentNames: request.argument_names ?? null,
       });
       return {
         output_schema: result.outputSchema,

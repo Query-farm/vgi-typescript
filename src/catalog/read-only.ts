@@ -1,7 +1,7 @@
 // Copyright 2025, 2026 Query Farm LLC - https://query.farm
 // ReadOnlyCatalogInterface: derives catalog from registered functions + descriptors.
 
-import { type VgiSchema, schema as schema_, type VgiField, field, type VgiDataType, int64, utf8, binary, bool, nullType, list, isInt } from "../arrow/index.js";
+import { type VgiSchema, schema as schema_, type VgiField, field, type VgiDataType, int64, utf8, binary, bool, nullType, list, isInt, typeSignature } from "../arrow/index.js";
 import {
   CatalogInterface,
   type AttachOpaqueData,
@@ -441,6 +441,29 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
         const meta = resolveMetadata(f);
         const argSchema = argumentSpecsToSchema(f.argumentSpecs);
         const argBytes = serializeSchema(argSchema);
+        const defaults = f.meta.parameterDefaultValues ?? null;
+        if (defaults) {
+          if (defaults.numRows !== 1) {
+            throw new Error(`parameterDefaultValues must contain exactly one row, got ${defaults.numRows}`);
+          }
+          let argumentIndex = 0;
+          for (const defaultField of defaults.schema.fields) {
+            while (argumentIndex < argSchema.fields.length && argSchema.fields[argumentIndex].name !== defaultField.name) {
+              argumentIndex++;
+            }
+            if (argumentIndex === argSchema.fields.length) {
+              throw new Error(`parameterDefaultValues field '${defaultField.name}' is not in argument signature order`);
+            }
+            const argumentField = argSchema.fields[argumentIndex];
+            if (typeSignature(argumentField.type) !== typeSignature(defaultField.type)) {
+              throw new Error(
+                `parameterDefaultValues field '${defaultField.name}' has type ${typeSignature(defaultField.type)}, ` +
+                `expected ${typeSignature(argumentField.type)}`,
+              );
+            }
+            argumentIndex++;
+          }
+        }
 
         // Use the function's default output schema if available,
         // otherwise empty schema (table functions determine output at bind time)
@@ -472,6 +495,9 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
           function_type: meta.functionType.toUpperCase() as "SCALAR" | "TABLE" | "TABLE_BUFFERING" | "AGGREGATE",
           arguments: argBytes,
           output_schema: outputSchemaBytes,
+          parameter_default_values: defaults
+            ? serializeBatch(defaults)
+            : null,
           stability: meta.stability as any,
           null_handling: meta.nullHandling as any,
           description: meta.description,

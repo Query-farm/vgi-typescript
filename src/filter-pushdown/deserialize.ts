@@ -16,6 +16,7 @@ import {
   typeSignature,
 } from "../arrow/index.js";
 import { PushdownFilters } from "./evaluate.js";
+import { filterFunctionIdentityKey, supportsExtensionFilterFunction } from "./capabilities.js";
 import {
   ComparisonOp,
   DUCKDB_SESSION_CONTEXT,
@@ -50,7 +51,6 @@ const SOURCES = new Set<PredicateSource>(["query", "join", "top_n", "split_refin
 const STANDARD_FUNCTIONS = new Set<StandardFilterFunction>([
   "starts_with", "ends_with", "contains", "list_contains",
 ]);
-const KNOWN_EXTENSION_FUNCTIONS = new Set(["duckdb.spatial/intersects_extent@1"]);
 const KNOWN_RUNTIME_ALGORITHMS = new Set([
   "duckdb.runtime_filter/bloom@1",
   "duckdb.runtime_filter/prefix_range@1",
@@ -284,10 +284,6 @@ function parseContext(schema: VgiSchema): EvaluationContext {
     integerDivision: bool("vgi_integer_division"),
     providerFingerprint: fingerprint,
   };
-}
-
-function identityKey(identity: FunctionIdentity): string {
-  return `${identity.namespace}/${identity.name}@${identity.version}`;
 }
 
 class FilterParser {
@@ -576,9 +572,9 @@ class FilterParser {
         fn = object.function as StandardFilterFunction;
       } else {
         fn = this.identity(object.function, "call.function");
-        const key = identityKey(fn);
-        if (!KNOWN_EXTENSION_FUNCTIONS.has(key)) throw new FilterV2Error(`unknown extension function ${key}`);
-        if (!(this.options.extensionFunctions ?? []).some((value) => identityKey(value) === key)) {
+        const key = filterFunctionIdentityKey(fn);
+        if (!supportsExtensionFilterFunction(fn)) throw new FilterV2Error(`unknown extension function ${key}`);
+        if (!(this.options.extensionFunctions ?? []).some((value) => filterFunctionIdentityKey(value) === key)) {
           throw new FilterV2Error(`extension function ${key} was not advertised`);
         }
       }
@@ -596,13 +592,13 @@ class FilterParser {
       expectKeys(object, ["node", "algorithm", "input", "artifact_ref", "null_handling"], [], "runtime_filter");
       if (!root) throw new FilterV2Error("runtime_filter is allowed only at a predicate root");
       const algorithm = this.identity(object.algorithm, "runtime_filter.algorithm");
-      const key = identityKey(algorithm);
+      const key = filterFunctionIdentityKey(algorithm);
       if (!KNOWN_RUNTIME_ALGORITHMS.has(key)) throw new FilterV2Error(`unknown runtime filter ${key}`);
       const payload = this.payload("artifact", object.artifact_ref);
       validateArrowExtensions(payload.field);
       const nullHandling = expectString(object.null_handling, "runtime_filter.null_handling");
       if (nullHandling !== "pass" && nullHandling !== "reject") throw new FilterV2Error("invalid runtime null handling");
-      const supported = (this.options.runtimeAlgorithms ?? []).some((value) => identityKey(value) === key);
+      const supported = (this.options.runtimeAlgorithms ?? []).some((value) => filterFunctionIdentityKey(value) === key);
       if (supported) throw new FilterV2Error("runtime algorithm was advertised without an evaluator");
       return {
         node, algorithm, input: child(object.input), artifactRef: payload.ref,

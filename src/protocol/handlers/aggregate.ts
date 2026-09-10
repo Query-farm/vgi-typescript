@@ -95,6 +95,12 @@ export function registerAggregateMethods(protocol: Protocol, registry: FunctionR
         inputSchema,
         settings: {},
         secrets,
+        argumentNames: innerParams.argument_names
+          ? (Array.isArray(innerParams.argument_names)
+            ? innerParams.argument_names
+            : [...innerParams.argument_names])
+            .map((value: unknown) => value == null ? null : String(value))
+          : null,
       };
       const executionId = new Uint8Array(16);
       crypto.getRandomValues(executionId);

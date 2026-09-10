@@ -71,6 +71,14 @@ VERSIONED_TABLES="$BIN_DIR/vgi-example-versioned-tables-worker"
 VERSIONED_TABLES_HTTP="$BIN_DIR/vgi-example-versioned-tables-http-worker"
 ATTACH_OPTIONS="$BIN_DIR/vgi-example-attach-options-worker"
 ATTACH_OPTIONS_HTTP="$BIN_DIR/vgi-example-attach-options-http-worker"
+
+# database_worker/package.sh needs a real stdio executable even when the main
+# integration lane attaches over HTTP. The separate package probe uses the
+# default Arrow backend: vgi-rpc's stdio path is Arrow JS, while Flechette is an
+# HTTP/Workers backend and cannot validate its schema objects on that path.
+if [ -z "${VGI_DATABASE_PACKAGE_WORKER:-}" ]; then
+  export VGI_DATABASE_PACKAGE_WORKER="VGI_BUN_CONDITIONS= $WORKER"
+fi
 for b in "$WORKER" "$HTTP_WORKER" "$VERSIONED" "$VERSIONED_HTTP" \
          "$VERSIONED_TABLES" "$VERSIONED_TABLES_HTTP" \
          "$ATTACH_OPTIONS" "$ATTACH_OPTIONS_HTTP"; do

@@ -146,6 +146,8 @@ export interface TableBindParams<TArgs = Record<string, any>> {
   settings: Record<string, any>;
   secrets: Record<string, Record<string, any>>;
   resolvedSecretsProvided: boolean;
+  /** Resolved names aligned with the complete logical argument order. */
+  argumentNames?: (string | null)[] | null;
 }
 
 export interface TableProcessParams<TArgs = Record<string, any>> {
@@ -205,6 +207,8 @@ export interface TableFunctionConfig<
   argDocs?: Record<string, string>;
   /** Argument defaults */
   argDefaults?: Record<string, any>;
+  /** Authoritative typed defaults: one row, defaulted parameters only. */
+  parameterDefaultValues?: VgiBatch | null;
   /**
    * Per-argument discovery constraints (choices / ge / le / gt / lt / pattern),
    * keyed by argument name. Surfaced via `vgi_function_arguments()` for agent
@@ -406,6 +410,7 @@ export function defineTableFunction<
     examples: config.examples,
     categories: config.categories,
     tags: config.tags,
+    parameterDefaultValues: config.parameterDefaultValues,
     maxWorkers: config.maxWorkers,
     requiredSettings: config.requiredSettings,
     requiredSecrets: config.requiredSecrets,
@@ -457,6 +462,7 @@ export function defineTableFunction<
       const result = await config.onBind({
         args, bindCall: request, settings, secrets,
         resolvedSecretsProvided: request.resolved_secrets_provided ?? false,
+        argumentNames: request.argument_names ?? null,
       });
       return {
         output_schema: result.outputSchema,

@@ -63,6 +63,8 @@ export interface ScalarBindParameters {
   secrets: Record<string, Record<string, any>>;
   /** Original bind request — exposes attach_opaque_data, transaction_opaque_data, function_type, etc. */
   bindCall: BindRequest;
+  /** Resolved names aligned with the complete logical argument order. */
+  argumentNames: (string | null)[] | null;
 }
 
 // ============================================================================
@@ -181,6 +183,7 @@ export interface ScalarFunctionConfig<
   examples?: FunctionExample[];
   categories?: string[];
   tags?: Record<string, string>;
+  parameterDefaultValues?: VgiBatch | null;
   maxWorkers?: number;
   requiredSettings?: string[];
   requiredSecrets?: string[];
@@ -290,6 +293,7 @@ export function defineScalarFunction<
     examples: config.examples,
     categories: config.categories,
     tags: config.tags,
+    parameterDefaultValues: config.parameterDefaultValues,
     maxWorkers: config.maxWorkers,
     requiredSettings: config.requiredSettings,
     requiredSecrets: config.requiredSecrets,
@@ -339,6 +343,7 @@ export function defineScalarFunction<
           settings,
           secrets,
           bindCall: request,
+          argumentNames: request.argument_names ?? null,
         });
       } else if (config.returns) {
         outputType = config.returns;

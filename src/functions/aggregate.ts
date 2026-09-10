@@ -64,6 +64,8 @@ export interface AggregateBindParams<TArgs = Record<string, any>> {
   inputSchema: VgiSchema | null;
   settings: Record<string, any>;
   secrets: Record<string, Record<string, any>>;
+  /** Resolved names aligned with the complete logical argument order. */
+  argumentNames: (string | null)[] | null;
 }
 
 export interface AggregateUpdateParams<TArgs = Record<string, any>, TState = any> {
@@ -128,6 +130,8 @@ export interface AggregateFunctionConfig<TArgs = Record<string, any>, TState = a
   onBind?: (params: AggregateBindParams<TArgs>) => VgiDataType | Promise<VgiDataType>;
   /** Optional per-arg default values (positional only here). */
   argDefaults?: Record<string, any>;
+  /** Authoritative typed defaults: one row, defaulted parameters only. */
+  parameterDefaultValues?: VgiBatch | null;
   /**
    * Per-argument discovery constraints (choices / ge / le / gt / lt / pattern),
    * keyed by argument name. Surfaced via `vgi_function_arguments()` and enforced
@@ -370,6 +374,7 @@ export function defineAggregate<TArgs = Record<string, any>, TState = any>(
     examples: config.examples,
     categories: config.categories,
     tags: config.tags,
+    parameterDefaultValues: config.parameterDefaultValues,
     nullHandling: config.nullHandling as any,
     requiredSecrets: config.requiredSecrets,
   };
