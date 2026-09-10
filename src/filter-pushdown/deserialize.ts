@@ -13,6 +13,7 @@ import {
   isTimestamp,
   isUtf8,
   readCanonicalValue,
+  typeSignature,
 } from "../arrow/index.js";
 import { PushdownFilters } from "./evaluate.js";
 import {
@@ -584,10 +585,12 @@ class FilterParser {
       const args = expectArray(object.arguments, "call.arguments");
       if (args.length > MAX_ARGUMENTS) throw new FilterV2Error("call argument limit exceeded");
       if (args.length !== 2) throw new FilterV2Error("registered v2 filter functions require exactly two arguments");
+      const parsedArgs = args.map(child);
+      if (typeof fn === "string") validateStandardCall(fn, parsedArgs);
       const options = object.options === undefined ? undefined : expectObject(object.options, "call.options");
       if (typeof fn === "string" && options !== undefined) throw new FilterV2Error("standard functions forbid options");
       if (options && Object.keys(options).length) throw new FilterV2Error("extension function options are unsupported");
-      return { node, function: fn, arguments: args.map(child), options };
+      return { node, function: fn, arguments: parsedArgs, options };
     }
     if (node === "runtime_filter") {
       expectKeys(object, ["node", "algorithm", "input", "artifact_ref", "null_handling"], [], "runtime_filter");
@@ -618,6 +621,20 @@ function expressionType(expression: FilterExpression): VgiDataType | undefined {
     case "cast": return expression.field.type;
     default: return undefined;
   }
+}
+
+function validateStandardCall(fn: StandardFilterFunction, args: FilterExpression[]): void {
+  const types = args.map(expressionType);
+  let matches = false;
+  if (fn === "starts_with" || fn === "ends_with" || fn === "contains") {
+    matches = types.every((type) => type !== undefined && isUtf8(type));
+  } else if (fn === "list_contains") {
+    const listType = types[0];
+    const needleType = types[1];
+    const element = listType && isList(listType) ? (listType as any).children?.[0]?.type as VgiDataType | undefined : undefined;
+    matches = element !== undefined && needleType !== undefined && typeSignature(element) === typeSignature(needleType);
+  }
+  if (!matches) throw new FilterV2Error(`${fn} arguments do not bind under vgi.duckdb.standard.v1`);
 }
 
 function isBooleanExpression(expression: FilterExpression): boolean {

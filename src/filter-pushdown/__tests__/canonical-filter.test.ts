@@ -92,6 +92,19 @@ const column = (columnIndex: number, columnName: string) => ({ node: "column_ref
 const literal = (valueRef: number) => ({ node: "literal", value_ref: valueRef });
 
 describe(`canonical filter-pushdown (backend=${backend.name})`, () => {
+  test("rejects a type-invalid standard function overload", () => {
+    const dataSchema = schema([field("n", int32(), true)]);
+    const batch = filterWireBatch([{
+      node: "call",
+      function: "starts_with",
+      arguments: [column(0, "n"), literal(0)],
+    }], [{ type: utf8(), value: "x" }]);
+
+    expect(() => deserializeFilters(batch, { outputSchema: dataSchema })).toThrow(
+      "starts_with arguments do not bind under vgi.duckdb.standard.v1",
+    );
+  });
+
   test("timestamp >= literal keeps the right rows", () => {
     const tsType = timestamp(TimeUnit.MICROSECOND);
     const dataSchema = schema([
