@@ -443,6 +443,7 @@ function sampleBindRequest(): BindRequest {
     copy_from: null,
     copy_to: null,
     schema_path: ["main"],
+    argument_names: ["path", null, "format"],
   };
 }
 

@@ -111,6 +111,8 @@ export interface TableBufferingConfig<
   args?: Record<string, VgiDataType>;
   namedArgs?: Record<string, VgiDataType>;
   argDefaults?: Record<string, any>;
+  /** Authoritative typed defaults: one row, defaulted parameters only. */
+  parameterDefaultValues?: VgiBatch | null;
   /** Argument descriptions keyed by argument name. */
   argDocs?: Record<string, string>;
   /** Discovery constraints, also enforced for scalar arguments at bind. */
@@ -247,6 +249,7 @@ export function defineTableBufferingFunction<
     examples: config.examples,
     categories: config.categories,
     tags: config.tags,
+    parameterDefaultValues: config.parameterDefaultValues,
     maxWorkers: config.maxWorkers,
     requiredSettings: config.requiredSettings,
     requiredSecrets: config.requiredSecrets,

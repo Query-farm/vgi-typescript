@@ -92,6 +92,7 @@ export function registerAggregateMethods(protocol: Protocol, registry: FunctionR
       const bindParams: AggregateBindParams<any> = {
         args: extractArgMap(cfg, args),
         arguments: args,
+        argumentNames: innerParams.argument_names ?? null,
         inputSchema,
         settings: {},
         secrets,

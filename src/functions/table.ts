@@ -205,6 +205,8 @@ export interface TableFunctionConfig<
   argDocs?: Record<string, string>;
   /** Argument defaults */
   argDefaults?: Record<string, any>;
+  /** Authoritative typed defaults: one row, defaulted parameters only. */
+  parameterDefaultValues?: VgiBatch | null;
   /**
    * Per-argument discovery constraints (choices / ge / le / gt / lt / pattern),
    * keyed by argument name. Surfaced via `vgi_function_arguments()` for agent
@@ -406,6 +408,7 @@ export function defineTableFunction<
     examples: config.examples,
     categories: config.categories,
     tags: config.tags,
+    parameterDefaultValues: config.parameterDefaultValues,
     maxWorkers: config.maxWorkers,
     requiredSettings: config.requiredSettings,
     requiredSecrets: config.requiredSecrets,

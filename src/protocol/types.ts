@@ -96,6 +96,12 @@ export interface BindRequest {
    * binds). Mirrors vgi-python's `BindRequest.schema_path`.
    */
   schema_path?: string[] | null;
+  /**
+   * Resolved name for every logical argument, in complete call order. Fixed
+   * parameters carry their declared names, unnamed varargs carry `null`, and
+   * named varargs retain the caller-provided name. `null` means unavailable.
+   */
+  argument_names?: (string | null)[] | null;
 }
 
 export interface BindResponse {

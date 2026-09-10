@@ -31,7 +31,7 @@ import { serializeArguments, deserializeArguments } from "./arguments.js";
 // two schemas in full and leaves the reader to diff them by eye.
 //
 // So `copy_from` and `copy_to` are always present and null on a non-COPY bind,
-// `schema_path` is LAST (not before them), and `function_type` is a dictionary
+// `schema_path` and `argument_names` are last, and `function_type` is a dictionary
 // rather than plain utf8.
 const COPY_FROM_STRUCT_TYPE = struct([
   field("format", utf8(), false),
@@ -64,6 +64,7 @@ const BIND_REQUEST_SCHEMA = schema([
   // several schemas, so the bare name is not a unique key — resolution is by
   // (schema_path, function_name). Null for callers with no catalog context.
   field("schema_path", list(field("item", utf8(), true)), true),
+  field("argument_names", list(field("item", utf8(), true)), true),
 ]);
 
 export function serializeBindRequest(req: BindRequest): VgiBatch {
@@ -90,6 +91,7 @@ export function serializeBindRequest(req: BindRequest): VgiBatch {
       ? { format: req.copy_to.format, file_path: req.copy_to.file_path }
       : null,
     schema_path: req.schema_path ?? null,
+    argument_names: req.argument_names ?? null,
   });
 }
 
@@ -166,6 +168,10 @@ export function deserializeBindRequest(
     // Empty string -> null, same convention as at_unit/at_value.
     schema_path: params.schema_path
       ? (Array.isArray(params.schema_path) ? params.schema_path : [...params.schema_path]).map(String)
+      : null,
+    argument_names: params.argument_names
+      ? (Array.isArray(params.argument_names) ? params.argument_names : [...params.argument_names])
+          .map((name: unknown) => name == null ? null : String(name))
       : null,
     // COPY ... FROM context — absent for ordinary scans (params.copy_from
     // undefined -> null). The struct column decodes to a plain object.
