@@ -75,6 +75,8 @@ export interface TableBufferingBindParams<TArgs = Record<string, any>> {
   /** True on the second bind pass, after the connector resolved the secrets
    *  requested via the onBind `lookupSecret*` return fields on the first pass. */
   resolvedSecretsProvided: boolean;
+  /** Resolved names aligned with the complete logical argument order. */
+  argumentNames?: (string | null)[] | null;
 }
 
 export interface TableBufferingParams<TArgs = Record<string, any>> {
@@ -293,6 +295,7 @@ export function defineTableBufferingFunction<
           settings,
           secrets,
           resolvedSecretsProvided: request.resolved_secrets_provided ?? false,
+          argumentNames: request.argument_names ?? null,
         });
         return {
           output_schema: result.outputSchema,

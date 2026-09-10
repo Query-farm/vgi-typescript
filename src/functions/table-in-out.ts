@@ -54,6 +54,8 @@ export interface TableInOutBindParams<TArgs = Record<string, any>> {
   bindCall: BindRequest;
   settings: Record<string, any>;
   secrets: Record<string, Record<string, any>>;
+  /** Resolved names aligned with the complete logical argument order. */
+  argumentNames?: (string | null)[] | null;
 }
 
 export interface TableInOutProcessParams<TArgs = Record<string, any>> {
@@ -247,6 +249,7 @@ export function defineTableInOutFunction<
           bindCall: request,
           settings,
           secrets,
+          argumentNames: request.argument_names ?? null,
         });
         return {
           output_schema: result.outputSchema,
@@ -882,6 +885,7 @@ export function defineRowTransformFunction<
         bindCall: request,
         settings,
         secrets,
+        argumentNames: request.argument_names ?? null,
       });
       return {
         output_schema: result.outputSchema,

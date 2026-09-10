@@ -1639,11 +1639,48 @@ const hash_rounds = defineScalarFunction({
   },
 });
 
+// The v2 bind signature carries the complete resolved logical argument names,
+// including const/default arguments. This probe keeps that contract covered by
+// the cross-language sqllogictest suite.
+const argument_names_probe = defineScalarFunction({
+  name: "argument_names_probe",
+  description: "Checks VGI 2.0 bind-time argument names",
+  parameters: [
+    { name: "left", type: new Int64(), doc: "Left value" },
+    { name: "right", type: new Int64(), doc: "Right value" },
+    { name: "scale", type: new Int64(), const: true, default: 2, doc: "Scale factor" },
+  ],
+  outputType: (params: ScalarBindParameters) => {
+    const expected = ["left", "right", "scale"];
+    if (
+      params.argumentNames === null ||
+      params.argumentNames.length !== expected.length ||
+      params.argumentNames.some((name, index) => name !== expected[index])
+    ) {
+      throw new Error(
+        `argument_names_probe expected ${JSON.stringify(expected)}, got ${JSON.stringify(params.argumentNames)}`,
+      );
+    }
+    return new Int64();
+  },
+  compute: (batch: RecordBatch, consts: Record<string, any>) => {
+    const left = getColumnValues(batch, 0);
+    const right = getColumnValues(batch, 1);
+    const scale = BigInt(consts.scale ?? 2);
+    return left.map((value: any, index: number) => {
+      const other = right[index];
+      if (value === null || value === undefined || other === null || other === undefined) return null;
+      return (BigInt(value) + BigInt(other)) * scale;
+    });
+  },
+});
+
 export const scalarFunctions: VgiFunction[] = [
   passthru,
   collatz_steps,
   sha256_hex,
   hash_rounds,
+  argument_names_probe,
   multiply,
   conditional_message,
   binary_packet,

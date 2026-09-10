@@ -64,6 +64,8 @@ export interface AggregateBindParams<TArgs = Record<string, any>> {
   inputSchema: VgiSchema | null;
   settings: Record<string, any>;
   secrets: Record<string, Record<string, any>>;
+  /** Resolved names aligned with the complete logical argument order. */
+  argumentNames: (string | null)[] | null;
 }
 
 export interface AggregateUpdateParams<TArgs = Record<string, any>, TState = any> {

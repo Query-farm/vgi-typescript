@@ -11,6 +11,7 @@ import {
 } from "../arrow/index.js";
 import { filterBatch } from "../util/arrow/index.js";
 import { applyFilterDelta, type DeserializeFilterOptions, FilterV2Error } from "./deserialize.js";
+import { filterFunctionIdentityKey } from "./capabilities.js";
 import {
   ComparisonOp,
   type EvaluationContext,
@@ -159,30 +160,128 @@ function numericBinary(
   }
 }
 
-function identityKey(identity: FunctionIdentity): string {
-  return `${identity.namespace}/${identity.name}@${identity.version}`;
+interface Bounds {
+  minX: number;
+  minY: number;
+  maxX: number;
+  maxY: number;
 }
 
-function wkbBBox(bytes: unknown): { minX: number; minY: number; maxX: number; maxY: number } | null {
-  if (!(bytes instanceof Uint8Array) || bytes.length < 5) return null;
-  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  const littleEndian = view.getUint8(0) === 1;
-  const type = view.getUint32(1, littleEndian);
-  if (type === 1 && bytes.length >= 21) {
-    const x = view.getFloat64(5, littleEndian);
-    const y = view.getFloat64(13, littleEndian);
+class WkbBoundsReader {
+  private readonly view: DataView;
+  private offset = 0;
+
+  constructor(bytes: Uint8Array) {
+    this.view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  }
+
+  read(): Bounds | null {
+    const bounds = this.geometry();
+    if (this.offset !== this.view.byteLength) throw new FilterV2Error("WKB has trailing bytes");
+    return bounds;
+  }
+
+  private require(length: number): void {
+    if (length < 0 || this.offset + length > this.view.byteLength) throw new FilterV2Error("truncated WKB geometry");
+  }
+
+  private byte(): number {
+    this.require(1);
+    return this.view.getUint8(this.offset++);
+  }
+
+  private uint32(littleEndian: boolean): number {
+    this.require(4);
+    const value = this.view.getUint32(this.offset, littleEndian);
+    this.offset += 4;
+    return value;
+  }
+
+  private float64(littleEndian: boolean): number {
+    this.require(8);
+    const value = this.view.getFloat64(this.offset, littleEndian);
+    this.offset += 8;
+    return value;
+  }
+
+  private point(littleEndian: boolean, dimensions: number): Bounds | null {
+    const x = this.float64(littleEndian);
+    const y = this.float64(littleEndian);
+    for (let dimension = 2; dimension < dimensions; dimension++) this.float64(littleEndian);
+    if (Number.isNaN(x) && Number.isNaN(y)) return null;
+    if (!Number.isFinite(x) || !Number.isFinite(y)) throw new FilterV2Error("WKB coordinate must be finite");
     return { minX: x, minY: y, maxX: x, maxY: y };
   }
-  if (type !== 3 || bytes.length < 13 || view.getUint32(5, littleEndian) === 0) return null;
-  const points = view.getUint32(9, littleEndian);
-  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-  for (let index = 0, offset = 13; index < points && offset + 16 <= bytes.length; index++, offset += 16) {
-    const x = view.getFloat64(offset, littleEndian);
-    const y = view.getFloat64(offset + 8, littleEndian);
-    minX = Math.min(minX, x); minY = Math.min(minY, y);
-    maxX = Math.max(maxX, x); maxY = Math.max(maxY, y);
+
+  private count(littleEndian: boolean): number {
+    const count = this.uint32(littleEndian);
+    if (count > Math.floor((this.view.byteLength - this.offset) / 4)) {
+      throw new FilterV2Error("WKB element count exceeds payload size");
+    }
+    return count;
   }
-  return minX === Infinity ? null : { minX, minY, maxX, maxY };
+
+  private merge(left: Bounds | null, right: Bounds | null): Bounds | null {
+    if (!left) return right;
+    if (!right) return left;
+    return {
+      minX: Math.min(left.minX, right.minX),
+      minY: Math.min(left.minY, right.minY),
+      maxX: Math.max(left.maxX, right.maxX),
+      maxY: Math.max(left.maxY, right.maxY),
+    };
+  }
+
+  private points(littleEndian: boolean, dimensions: number): Bounds | null {
+    let bounds: Bounds | null = null;
+    const count = this.count(littleEndian);
+    for (let index = 0; index < count; index++) bounds = this.merge(bounds, this.point(littleEndian, dimensions));
+    return bounds;
+  }
+
+  private geometry(): Bounds | null {
+    const byteOrder = this.byte();
+    if (byteOrder !== 0 && byteOrder !== 1) throw new FilterV2Error("invalid WKB byte order");
+    const littleEndian = byteOrder === 1;
+    const encodedType = this.uint32(littleEndian);
+    const hasZ = (encodedType & 0x80000000) !== 0;
+    const hasM = (encodedType & 0x40000000) !== 0;
+    const hasSrid = (encodedType & 0x20000000) !== 0;
+    let type = encodedType & 0x0fffffff;
+    let dimensions = 2 + Number(hasZ) + Number(hasM);
+    if (type >= 3000) {
+      type -= 3000;
+      dimensions = 4;
+    } else if (type >= 2000) {
+      type -= 2000;
+      dimensions = 3;
+    } else if (type >= 1000) {
+      type -= 1000;
+      dimensions = 3;
+    }
+    if (hasSrid) this.uint32(littleEndian);
+
+    if (type === 1) return this.point(littleEndian, dimensions);
+    if (type === 2) return this.points(littleEndian, dimensions);
+    if (type === 3) {
+      let bounds: Bounds | null = null;
+      const rings = this.count(littleEndian);
+      for (let ring = 0; ring < rings; ring++) bounds = this.merge(bounds, this.points(littleEndian, dimensions));
+      return bounds;
+    }
+    if (type >= 4 && type <= 7) {
+      let bounds: Bounds | null = null;
+      const geometries = this.count(littleEndian);
+      for (let index = 0; index < geometries; index++) bounds = this.merge(bounds, this.geometry());
+      return bounds;
+    }
+    throw new FilterV2Error(`unsupported WKB geometry type ${type}`);
+  }
+}
+
+function wkbBBox(bytes: unknown): Bounds | null {
+  if (!(bytes instanceof Uint8Array)) throw new FilterV2Error("spatial extent arguments must be WKB binary values");
+  return new WkbBoundsReader(bytes).read();
 }
 
 function evaluateCall(expression: Extract<FilterExpression, { node: "call" }>, args: unknown[]): unknown {
@@ -196,7 +295,7 @@ function evaluateCall(expression: Extract<FilterExpression, { node: "call" }>, a
       case "list_contains": return Array.isArray(left) && left.some((value) => value !== null && deepEqual(value, right));
     }
   }
-  if (identityKey(expression.function as FunctionIdentity) === "duckdb.spatial/intersects_extent@1") {
+  if (filterFunctionIdentityKey(expression.function as FunctionIdentity) === "duckdb.spatial/intersects_extent@1") {
     const left = wkbBBox(args[0]);
     const right = wkbBBox(args[1]);
     return !!left && !!right && !(left.maxX < right.minX || left.minX > right.maxX ||
@@ -392,9 +491,12 @@ export function expressionToSql(expression: FilterExpression): string {
     }
     case "negate": return `(-${expressionToSql(expression.expression)})`;
     case "call": {
-      const name = typeof expression.function === "string" ? expression.function : identityKey(expression.function);
+      const name = typeof expression.function === "string"
+        ? expression.function
+        : filterFunctionIdentityKey(expression.function);
       return `${name}(${expression.arguments.map(expressionToSql).join(", ")})`;
     }
-    case "runtime_filter": return `${identityKey(expression.algorithm)}(${expressionToSql(expression.input)})`;
+    case "runtime_filter":
+      return `${filterFunctionIdentityKey(expression.algorithm)}(${expressionToSql(expression.input)})`;
   }
 }

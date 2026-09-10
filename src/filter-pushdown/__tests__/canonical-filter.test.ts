@@ -12,6 +12,7 @@ import { describe, test, expect } from "bun:test";
 import {
   schema,
   field,
+  binary,
   utf8,
   int32,
   timestamp,
@@ -90,6 +91,31 @@ function rawDocumentWireBatch(document: string): ReturnType<typeof batchFromColu
 
 const column = (columnIndex: number, columnName: string) => ({ node: "column_ref", column_index: columnIndex, column_name: columnName });
 const literal = (valueRef: number) => ({ node: "literal", value_ref: valueRef });
+
+function wkbPoint(x: number, y: number): Uint8Array {
+  const bytes = new Uint8Array(21);
+  const view = new DataView(bytes.buffer);
+  view.setUint8(0, 1);
+  view.setUint32(1, 1, true);
+  view.setFloat64(5, x, true);
+  view.setFloat64(13, y, true);
+  return bytes;
+}
+
+function wkbCollection(type: number, geometries: Uint8Array[]): Uint8Array {
+  const length = 9 + geometries.reduce((total, geometry) => total + geometry.byteLength, 0);
+  const bytes = new Uint8Array(length);
+  const view = new DataView(bytes.buffer);
+  view.setUint8(0, 1);
+  view.setUint32(1, type, true);
+  view.setUint32(5, geometries.length, true);
+  let offset = 9;
+  for (const geometry of geometries) {
+    bytes.set(geometry, offset);
+    offset += geometry.byteLength;
+  }
+  return bytes;
+}
 
 describe(`canonical filter-pushdown (backend=${backend.name})`, () => {
   test("rejects a type-invalid standard function overload", () => {
@@ -239,6 +265,30 @@ describe(`canonical filter-pushdown (backend=${backend.name})`, () => {
     }], []);
     const filters = deserializeFilters(batch, { outputSchema: dataSchema, joinKeyBatches: [unused, keys] });
     expect([...iterRows(filters.apply(data))].map((row) => row.n)).toEqual([2, 4]);
+  });
+
+  test("advertised spatial extent evaluates nested WKB geometries", () => {
+    const geometryType = binary();
+    const dataSchema = schema([field("id", int32(), false), field("geom", geometryType, false)]);
+    const data = batchFromColumns({
+      id: [1, 2],
+      geom: [
+        wkbCollection(4, [wkbPoint(1, 1), wkbPoint(3, 3)]),
+        wkbCollection(7, [wkbPoint(10, 10), wkbCollection(4, [wkbPoint(12, 12)])]),
+      ],
+    }, dataSchema);
+    const extent = wkbCollection(4, [wkbPoint(2, 2), wkbPoint(4, 4)]);
+    const batch = filterWireBatch([{
+      node: "call",
+      function: { namespace: "duckdb.spatial", name: "intersects_extent", version: 1 },
+      arguments: [column(1, "geom"), literal(0)],
+    }], [{ type: geometryType, value: extent }]);
+    const filters = deserializeFilters(batch, {
+      outputSchema: dataSchema,
+      extensionFunctions: [{ namespace: "duckdb.spatial", name: "intersects_extent", version: 1 }],
+    });
+
+    expect([...iterRows(filters.apply(data))].map((row) => row.id)).toEqual([1]);
   });
 
   test("evaluation remaps by name and never falls back to a projected index", () => {

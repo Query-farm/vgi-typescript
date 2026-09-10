@@ -11,6 +11,7 @@ import {
 } from "../types.js";
 import type { VgiFunction } from "../functions/types.js";
 import type { ArgumentSpec } from "../arguments/argument-spec.js";
+import { supportsExtensionFilterFunction } from "../filter-pushdown/capabilities.js";
 import {
   CatalogFunctionType,
   type ResolvedMetadata,
@@ -64,8 +65,8 @@ export function resolveMetadata(func: VgiFunction): ResolvedMetadata {
   if (meta.filterSemanticProfiles?.some((value) => value !== "vgi.duckdb.standard.v1")) {
     throw new Error("TypeScript SDK supports only vgi.duckdb.standard.v1 filter semantics");
   }
-  if (meta.additionalFilterFunctions?.length) {
-    throw new Error("TypeScript SDK has no complete extension-filter evaluator to advertise");
+  if (meta.additionalFilterFunctions?.some((value) => !supportsExtensionFilterFunction(value))) {
+    throw new Error("TypeScript SDK cannot advertise an extension-filter function without an evaluator");
   }
 
   let functionType: CatalogFunctionType;

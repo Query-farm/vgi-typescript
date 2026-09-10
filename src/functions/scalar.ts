@@ -63,6 +63,8 @@ export interface ScalarBindParameters {
   secrets: Record<string, Record<string, any>>;
   /** Original bind request — exposes attach_opaque_data, transaction_opaque_data, function_type, etc. */
   bindCall: BindRequest;
+  /** Resolved names aligned with the complete logical argument order. */
+  argumentNames: (string | null)[] | null;
 }
 
 // ============================================================================
@@ -339,6 +341,7 @@ export function defineScalarFunction<
           settings,
           secrets,
           bindCall: request,
+          argumentNames: request.argument_names ?? null,
         });
       } else if (config.returns) {
         outputType = config.returns;

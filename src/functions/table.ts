@@ -146,6 +146,8 @@ export interface TableBindParams<TArgs = Record<string, any>> {
   settings: Record<string, any>;
   secrets: Record<string, Record<string, any>>;
   resolvedSecretsProvided: boolean;
+  /** Resolved names aligned with the complete logical argument order. */
+  argumentNames?: (string | null)[] | null;
 }
 
 export interface TableProcessParams<TArgs = Record<string, any>> {
@@ -457,6 +459,7 @@ export function defineTableFunction<
       const result = await config.onBind({
         args, bindCall: request, settings, secrets,
         resolvedSecretsProvided: request.resolved_secrets_provided ?? false,
+        argumentNames: request.argument_names ?? null,
       });
       return {
         output_schema: result.outputSchema,
