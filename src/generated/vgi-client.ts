@@ -671,4 +671,3 @@ export const encodeTableInfo = (v: TableInfo): Uint8Array => encodeASD(TableInfo
 export const decodeTableInfo = (b: Uint8Array): TableInfo => decodeASD<TableInfo>(TableInfoSchema, b);
 export const encodeViewInfo = (v: ViewInfo): Uint8Array => encodeASD(ViewInfoSchema, v);
 export const decodeViewInfo = (b: Uint8Array): ViewInfo => decodeASD<ViewInfo>(ViewInfoSchema, b);
-

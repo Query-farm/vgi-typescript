@@ -183,6 +183,7 @@ export interface ScalarFunctionConfig<
   examples?: FunctionExample[];
   categories?: string[];
   tags?: Record<string, string>;
+  parameterDefaultValues?: VgiBatch | null;
   maxWorkers?: number;
   requiredSettings?: string[];
   requiredSecrets?: string[];
@@ -292,6 +293,7 @@ export function defineScalarFunction<
     examples: config.examples,
     categories: config.categories,
     tags: config.tags,
+    parameterDefaultValues: config.parameterDefaultValues,
     maxWorkers: config.maxWorkers,
     requiredSettings: config.requiredSettings,
     requiredSecrets: config.requiredSecrets,

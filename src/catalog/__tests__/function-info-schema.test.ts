@@ -9,7 +9,7 @@
 // with supports_batch_index / partition_kind after a schema regen).
 
 import { describe, test, expect } from "bun:test";
-import { int64 } from "../../arrow/index.js";
+import { int64, field, schema, batchFromColumns, deserializeBatch } from "../../arrow/index.js";
 import { defineScalarFunction } from "../../functions/scalar.js";
 import { FunctionRegistry } from "../../functions/registry.js";
 import { ReadOnlyCatalogInterface } from "../read-only.js";
@@ -48,5 +48,45 @@ describe("ReadOnlyCatalogInterface FunctionInfo ↔ generated schema", () => {
     expect(decoded.name).toBe("noop");
     expect(decoded.supports_batch_index).toBe(false);
     expect(decoded.partition_kind).toBe("NOT_PARTITIONED");
+  });
+
+  test("emits authoritative typed parameter defaults", () => {
+    const defaults = batchFromColumns({ x: [7n] }, schema([field("x", int64(), true)]));
+    const withDefaults = defineScalarFunction({
+      name: "with_default",
+      params: { x: int64() },
+      parameterDefaultValues: defaults,
+      returns: int64(),
+      compute: () => [],
+    });
+    const defaultCatalog = new ReadOnlyCatalogInterface(
+      { name: "test", schemas: [{ name: "main", functions: [withDefaults] }] },
+      new FunctionRegistry(),
+    );
+    const info = defaultCatalog.schemaContentsFunctions(new Uint8Array([1]), "main", "scalar_function")[0];
+    expect(info.parameter_default_values).not.toBeNull();
+    const decoded = deserializeBatch(info.parameter_default_values!);
+    expect(decoded.numRows).toBe(1);
+    expect(decoded.schema.fields.map((f) => f.name)).toEqual(["x"]);
+  });
+
+  test("rejects parameter defaults outside signature order", () => {
+    const defaults = batchFromColumns(
+      { y: [1n], x: [2n] },
+      schema([field("y", int64(), true), field("x", int64(), true)]),
+    );
+    const invalid = defineScalarFunction({
+      name: "invalid_defaults",
+      params: { x: int64(), y: int64() },
+      parameterDefaultValues: defaults,
+      returns: int64(),
+      compute: () => [],
+    });
+    const invalidCatalog = new ReadOnlyCatalogInterface(
+      { name: "test", schemas: [{ name: "main", functions: [invalid] }] },
+      new FunctionRegistry(),
+    );
+    expect(() => invalidCatalog.schemaContentsFunctions(new Uint8Array([1]), "main", "scalar_function"))
+      .toThrow("not in argument signature order");
   });
 });

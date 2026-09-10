@@ -31,7 +31,7 @@ import { serializeArguments, deserializeArguments } from "./arguments.js";
 // two schemas in full and leaves the reader to diff them by eye.
 //
 // So `copy_from` and `copy_to` are always present and null on a non-COPY bind,
-// `schema_path` is LAST (not before them), and `function_type` is a dictionary
+// `schema_path` and `argument_names` are last, and `function_type` is a dictionary
 // rather than plain utf8.
 const COPY_FROM_STRUCT_TYPE = struct([
   field("format", utf8(), false),

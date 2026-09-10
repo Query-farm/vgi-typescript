@@ -97,8 +97,9 @@ export interface BindRequest {
    */
   schema_path?: string[] | null;
   /**
-   * Resolved names aligned with the complete logical argument order. Fixed
-   * parameters retain their declared names; unnamed varargs are null.
+   * Resolved name for every logical argument, in complete call order. Fixed
+   * parameters carry their declared names, unnamed varargs carry `null`, and
+   * named varargs retain the caller-provided name. `null` means unavailable.
    */
   argument_names?: (string | null)[] | null;
 }

@@ -53,6 +53,12 @@ export interface FunctionMeta {
   examples?: FunctionExample[];
   categories?: string[];
   tags?: Record<string, string>;
+  /**
+   * Authoritative typed parameter defaults. The batch must contain one row
+   * and only defaulted parameters, in signature order; a present null is an
+   * explicit null default. `vgi_default` field metadata remains discovery-only.
+   */
+  parameterDefaultValues?: VgiBatch | null;
   projectionPushdown?: boolean;
   filterPushdown?: boolean;
   samplingPushdown?: boolean;

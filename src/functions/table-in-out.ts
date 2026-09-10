@@ -107,6 +107,8 @@ export interface TableInOutConfig<
   namedArgs?: Record<string, VgiDataType>;
   /** Argument defaults */
   argDefaults?: Record<string, any>;
+  /** Authoritative typed defaults: one row, defaulted parameters only. */
+  parameterDefaultValues?: VgiBatch | null;
   /** Argument descriptions keyed by argument name. */
   argDocs?: Record<string, string>;
   /** Discovery constraints, also enforced for scalar arguments at bind. */
@@ -208,6 +210,7 @@ export function defineTableInOutFunction<
     examples: config.examples,
     categories: config.categories,
     tags: config.tags,
+    parameterDefaultValues: config.parameterDefaultValues,
     maxWorkers: config.maxWorkers,
     requiredSettings: config.requiredSettings,
     requiredSecrets: config.requiredSecrets,
@@ -735,6 +738,8 @@ export interface RowTransformConfig<TArgs = Record<string, any>> {
   /** Named (string-position) args stay bind-time scalars on `params.args`. */
   namedArgs?: Record<string, VgiDataType>;
   argDefaults?: Record<string, any>;
+  /** Authoritative typed defaults: one row, defaulted parameters only. */
+  parameterDefaultValues?: VgiBatch | null;
   /** Per-argument descriptions keyed by arg name (surfaced as `vgi_doc`). */
   argDocs?: Record<string, string>;
   /** Discovery constraints, also enforced for named scalar arguments at bind. */
@@ -844,6 +849,7 @@ export function defineRowTransformFunction<
     examples: config.examples,
     categories: config.categories,
     tags: config.tags,
+    parameterDefaultValues: config.parameterDefaultValues,
     maxWorkers: config.maxWorkers,
     requiredSettings: config.requiredSettings,
     requiredSecrets: config.requiredSecrets,
