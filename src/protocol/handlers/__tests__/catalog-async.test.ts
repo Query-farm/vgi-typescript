@@ -69,10 +69,7 @@ class AsyncStubCatalog extends CatalogInterface {
       check_constraints: [],
       primary_key_constraints: [],
       foreign_key_constraints: [],
-      supports_insert: false,
-      supports_update: false,
-      supports_delete: false,
-      supports_returning: false,
+      write_result_modes: {},
       supports_column_statistics: false,
       required_filters: [],
     };

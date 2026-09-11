@@ -74,10 +74,7 @@ describe("ASD codec", () => {
       check_constraints: ["a > 0", "b < 10"],
       primary_key_constraints: [[0]],
       foreign_key_constraints: [new Uint8Array([7])],
-      supports_insert: true,
-      supports_update: false,
-      supports_delete: true,
-      supports_returning: false,
+      write_result_modes: { insert: "changes", delete: "count" },
       supports_column_statistics: false,
       required_filters: [],
     };
@@ -89,8 +86,7 @@ describe("ASD codec", () => {
     expect(back.check_constraints).toEqual(["a > 0", "b < 10"]);
     expect(back.primary_key_constraints).toEqual([[0]]);
     expect(back.foreign_key_constraints?.map((u) => Array.from(u))).toEqual([[7]]);
-    expect(back.supports_insert).toBe(true);
-    expect(back.supports_delete).toBe(true);
+    expect(back.write_result_modes).toEqual({ insert: "changes", delete: "count" });
   });
 
   test("ViewInfo round-trip", () => {
