@@ -15,6 +15,7 @@ import { FunctionRegistry } from "../../functions/registry.js";
 import { ReadOnlyCatalogInterface } from "../read-only.js";
 import { FunctionInfoSchema } from "../../generated/vgi-protocol-schemas.js";
 import { encodeFunctionInfo, decodeFunctionInfo } from "../../generated/vgi-client.js";
+import { ArgumentMonotonicity } from "../../types.js";
 
 const fn = defineScalarFunction({
   name: "noop",
@@ -48,6 +49,41 @@ describe("ReadOnlyCatalogInterface FunctionInfo ↔ generated schema", () => {
     expect(decoded.name).toBe("noop");
     expect(decoded.supports_batch_index).toBe(false);
     expect(decoded.partition_kind).toBe("NOT_PARTITIONED");
+  });
+
+  test("round-trips scalar argument monotonicity in declaration order", () => {
+    const monotone = defineScalarFunction({
+      name: "shift",
+      parameters: [
+        { name: "value", type: int64() },
+        { name: "offset", type: int64(), const: true },
+      ],
+      argumentMonotonicity: [
+        ArgumentMonotonicity.STRICTLY_INCREASING,
+        ArgumentMonotonicity.NON_DECREASING,
+      ],
+      returns: int64(),
+      compute: () => [],
+    });
+    const monotoneCatalog = new ReadOnlyCatalogInterface(
+      { name: "test", schemas: [{ name: "main", functions: [monotone] }] },
+      new FunctionRegistry(),
+    );
+    const info = monotoneCatalog.schemaContentsFunctions(new Uint8Array([1]), "main", "scalar_function")[0];
+    expect(decodeFunctionInfo(encodeFunctionInfo(info)).argument_monotonicity).toEqual([
+      "STRICTLY_INCREASING",
+      "NON_DECREASING",
+    ]);
+  });
+
+  test("rejects a monotonicity list that does not match declaration slots", () => {
+    expect(() => defineScalarFunction({
+      name: "bad",
+      params: { value: int64() },
+      argumentMonotonicity: [],
+      returns: int64(),
+      compute: () => [],
+    })).toThrow("expected 1 declaration slots");
   });
 
   test("emits authoritative typed parameter defaults", () => {

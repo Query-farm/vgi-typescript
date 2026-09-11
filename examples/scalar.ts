@@ -32,6 +32,7 @@ import {
   secretsOfType,
   FunctionStability,
   NullHandling,
+  ArgumentMonotonicity,
   type ScalarBindParameters,
   type ScalarParameterDef,
   ArgumentValidationError,
@@ -587,6 +588,7 @@ const null_handling = defineScalarFunction({
   params: { value: new Int64() },
   returns: new Int64(),
   nullHandling: NullHandling.SPECIAL,
+  argumentMonotonicity: [ArgumentMonotonicity.STRICTLY_INCREASING],
   compute: (batch: RecordBatch) => {
     const values = getColumnValues(batch, 0);
     return values.map((v: any) => {

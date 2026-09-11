@@ -22,6 +22,15 @@ export enum NullHandling {
   SPECIAL = "SPECIAL",
 }
 
+export enum ArgumentMonotonicity {
+  UNKNOWN = "UNKNOWN",
+  CONSTANT = "CONSTANT",
+  NON_DECREASING = "NON_DECREASING",
+  STRICTLY_INCREASING = "STRICTLY_INCREASING",
+  NON_INCREASING = "NON_INCREASING",
+  STRICTLY_DECREASING = "STRICTLY_DECREASING",
+}
+
 export enum OrderPreservation {
   /** Output rows are in same order as input rows (DuckDB INSERTION_ORDER). */
   PRESERVES_ORDER = "PRESERVES_ORDER",

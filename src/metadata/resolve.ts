@@ -4,6 +4,7 @@
 import {
   FunctionStability,
   NullHandling,
+  ArgumentMonotonicity,
   OrderPreservation,
   OrderDependence,
   DistinctDependence,
@@ -88,7 +89,27 @@ export function resolveMetadata(func: VgiFunction): ResolvedMetadata {
       functionType = CatalogFunctionType.TABLE;
   }
 
+  const argumentMonotonicity = meta.argumentMonotonicity ?? null;
+  if (argumentMonotonicity !== null && functionType !== CatalogFunctionType.SCALAR) {
+    throw new Error("argumentMonotonicity is only valid for scalar functions");
+  }
+
   const parameters: ParameterInfo[] = func.argumentSpecs.map(specToParameterInfo);
+
+  if (argumentMonotonicity !== null) {
+    if (argumentMonotonicity.length !== parameters.length) {
+      throw new Error(
+        `argumentMonotonicity has ${argumentMonotonicity.length} entries, ` +
+        `expected ${parameters.length} declaration slots`,
+      );
+    }
+    const allowed = new Set<string>(Object.values(ArgumentMonotonicity));
+    for (const [index, value] of argumentMonotonicity.entries()) {
+      if (!allowed.has(value)) {
+        throw new Error(`argumentMonotonicity[${index}] has unknown value ${String(value)}`);
+      }
+    }
+  }
 
   const examples: FunctionExample[] = (meta.examples ?? []).map((e) => ({
     sql: e.sql,
@@ -109,6 +130,7 @@ export function resolveMetadata(func: VgiFunction): ResolvedMetadata {
     parameters,
     stability: meta.stability ?? FunctionStability.CONSISTENT,
     nullHandling: meta.nullHandling ?? NullHandling.DEFAULT,
+    argumentMonotonicity,
     requiredSettings: meta.requiredSettings ?? [],
     requiredSecrets: meta.requiredSecrets ?? [],
     projectionPushdown: meta.projectionPushdown ?? false,

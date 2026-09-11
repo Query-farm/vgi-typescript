@@ -17,6 +17,7 @@ import {
   emptyBatch,
 } from "../arrow/index.js";
 import type { ResolvedMetadata, ParameterInfo, FunctionExample } from "./types.js";
+import type { ArgumentMonotonicity } from "../types.js";
 
 // ============================================================================
 // Schema definitions matching Python's _METADATA_SCHEMA exactly
@@ -64,6 +65,7 @@ const METADATA_SCHEMA = makeSchema([
   field("parameters", list(field("item", PARAMETER_STRUCT, true)), false),
   field("stability", utf8(), false),
   field("null_handling", utf8(), false),
+  field("argument_monotonicity", list(field("item", utf8(), true)), true),
   field("required_settings", list(field("item", utf8(), true)), false),
   field("required_secrets", list(field("item", utf8(), true)), false),
   field("projection_pushdown", bool(), false),
@@ -112,6 +114,7 @@ function metadataToRow(m: ResolvedMetadata): Record<string, any> {
     })),
     stability: m.stability,
     null_handling: m.nullHandling,
+    argument_monotonicity: m.argumentMonotonicity,
     required_settings: m.requiredSettings,
     required_secrets: m.requiredSecrets,
     projection_pushdown: m.projectionPushdown,
@@ -248,6 +251,9 @@ export function arrowToMetadatas(batch: VgiBatch): ResolvedMetadata[] {
       parameters,
       stability: (get("stability") as any) ?? "CONSISTENT",
       nullHandling: (get("null_handling") as any) ?? "DEFAULT",
+      argumentMonotonicity: get("argument_monotonicity") == null
+        ? null
+        : [...(get("argument_monotonicity") as any)].map(String) as ArgumentMonotonicity[],
       requiredSettings,
       requiredSecrets,
       projectionPushdown: (get("projection_pushdown") as boolean) ?? false,

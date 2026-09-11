@@ -500,6 +500,7 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
             : null,
           stability: meta.stability as any,
           null_handling: meta.nullHandling as any,
+          argument_monotonicity: meta.argumentMonotonicity,
           description: meta.description,
           examples: meta.examples.map((e) => ({
             sql: e.sql,

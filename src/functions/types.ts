@@ -6,6 +6,7 @@ import type { OutputCollector } from "@query-farm/vgi-rpc";
 import type {
   FunctionStability,
   NullHandling,
+  ArgumentMonotonicity,
   OrderPreservation,
   OrderDependence,
   DistinctDependence,
@@ -50,6 +51,8 @@ export interface FunctionMeta {
   description?: string;
   stability?: FunctionStability;
   nullHandling?: NullHandling;
+  /** Scalar-only claims in argument declaration order. A vararg is one slot. */
+  argumentMonotonicity?: ArgumentMonotonicity[] | null;
   examples?: FunctionExample[];
   categories?: string[];
   tags?: Record<string, string>;

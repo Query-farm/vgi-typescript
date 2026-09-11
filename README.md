@@ -111,6 +111,7 @@ const upperCase = defineScalarFunction({
   },
 
   // Other optional fields: constParams, nullHandling, stability (volatility),
+  // argumentMonotonicity,
   // examples, categories, tags, requiredSettings, requiredSecrets, maxWorkers.
 });
 
@@ -376,6 +377,11 @@ const addHour = defineScalarFunction({
   },
 });
 ```
+
+`argumentMonotonicity` is optional and scalar-only. If supplied, it must have
+one entry per ordered parameter declaration. Fixed, defaulted, and constant
+parameters each use one slot; a vararg declaration uses one slot regardless of
+call-time expansion. Named invocation order does not reorder the metadata.
 
 ```ts
 import {

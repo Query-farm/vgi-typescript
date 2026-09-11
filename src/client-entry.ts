@@ -37,6 +37,7 @@ export {
   FunctionType,
   FunctionStability,
   NullHandling,
+  ArgumentMonotonicity,
   OrderPreservation,
   OrderDependence,
   DistinctDependence,

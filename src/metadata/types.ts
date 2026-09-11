@@ -4,6 +4,7 @@
 import {
   FunctionStability,
   NullHandling,
+  ArgumentMonotonicity,
   OrderPreservation,
   OrderDependence,
   DistinctDependence,
@@ -58,6 +59,7 @@ export interface ResolvedMetadata {
   parameters: ParameterInfo[];
   stability: FunctionStability;
   nullHandling: NullHandling;
+  argumentMonotonicity: ArgumentMonotonicity[] | null;
   requiredSettings: string[];
   requiredSecrets: string[];
   projectionPushdown: boolean;

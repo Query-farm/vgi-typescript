@@ -21,6 +21,7 @@ import {
   FunctionType,
   FunctionStability,
   NullHandling,
+  ArgumentMonotonicity,
   DEFAULT_MAX_WORKERS,
 } from "../types.js";
 import { RowCountMismatchError } from "../errors.js";
@@ -180,6 +181,8 @@ export interface ScalarFunctionConfig<
   // Metadata
   stability?: FunctionStability;
   nullHandling?: NullHandling;
+  /** One scalar monotonicity claim per ordered parameter declaration. */
+  argumentMonotonicity?: ArgumentMonotonicity[] | null;
   examples?: FunctionExample[];
   categories?: string[];
   tags?: Record<string, string>;
@@ -265,6 +268,23 @@ export function defineScalarFunction<
     }
   }
 
+  if (config.argumentMonotonicity !== undefined && config.argumentMonotonicity !== null) {
+    if (config.argumentMonotonicity.length !== specs.length) {
+      throw new Error(
+        `defineScalarFunction("${config.name}"): argumentMonotonicity has ` +
+        `${config.argumentMonotonicity.length} entries, expected ${specs.length} declaration slots`,
+      );
+    }
+    const allowed = new Set<string>(Object.values(ArgumentMonotonicity));
+    for (const [index, value] of config.argumentMonotonicity.entries()) {
+      if (!allowed.has(value)) {
+        throw new Error(
+          `defineScalarFunction("${config.name}"): argumentMonotonicity[${index}] has unknown value ${String(value)}`,
+        );
+      }
+    }
+  }
+
   // Raw const-arg constraints for bind-time enforcement, keyed by arg name.
   // Only the ordered `parameters` API carries constraints (the legacy
   // params/constParams path does not), so only its const params appear here.
@@ -290,6 +310,7 @@ export function defineScalarFunction<
     description: config.description,
     stability: config.stability,
     nullHandling: config.nullHandling,
+    argumentMonotonicity: config.argumentMonotonicity,
     examples: config.examples,
     categories: config.categories,
     tags: config.tags,
