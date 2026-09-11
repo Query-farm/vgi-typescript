@@ -343,10 +343,7 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
         check_constraints: t.check ?? [],
         primary_key_constraints: pkIndices,
         foreign_key_constraints: fkBytes,
-        supports_insert: false,
-        supports_update: false,
-        supports_delete: false,
-        supports_returning: false,
+        write_result_modes: {},
         supports_column_statistics: t.statistics != null && Object.keys(t.statistics).length > 0,
         // Inline scan_function only for purely function-backed tables.
         // When explicit `columns` are also declared, the table is on the
