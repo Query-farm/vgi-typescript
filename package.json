@@ -34,7 +34,8 @@
     "./src/index.ts",
     "./src/client-entry.ts",
     "./src/worker-cf-entry.ts",
-    "./src/serve-entry.ts"
+    "./src/serve-entry.ts",
+    "./src/arrow/impl-flechette/compat.ts"
   ],
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
