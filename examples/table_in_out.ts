@@ -13,7 +13,6 @@ import {
   RecordBatch,
   Struct,
   Null,
-  makeData,
 } from "@query-farm/apache-arrow";
 import {
   defineTableInOutFunction,
@@ -762,20 +761,13 @@ const blended_explode = defineRowTransformFunction({
 // and the round-tripped values. Ports vgi-python's BlendedAnyFunction /
 // BlendedAnyVarargsFunction.
 
-// Re-label a batch's columns under `outSchema` WITHOUT touching the column
-// data: the child Data (values + validity) is reused as-is, so a NULL struct
-// and a struct with a NULL field stay distinct.
-function echoColumnsAs(batch: VgiBatch, outSchema: VgiSchema): RecordBatch {
-  const schema = outSchema as Schema;
-  const data = makeData({
-    type: new Struct(schema.fields),
-    length: batch.numRows,
-    children: (batch as RecordBatch).data.children,
-    nullCount: 0,
-  });
-  return new RecordBatch(schema, data);
-}
-
+// Both echoes emit the input batch as-is rather than rebuilding it. The client
+// names a fixed-arity blended input column after its declared arg (`value`) and
+// varargs columns col0..colN-1, each with the type DuckDB resolved — which is
+// exactly the output schema bound in onBind. Passing the batch through is also
+// what keeps these backend-neutral (arrow-js and flechette share no batch
+// internals), and it cannot disturb validity: a NULL struct and a struct with a
+// NULL field stay distinct because nothing is decoded.
 function requireInputSchema(name: string, inputSchema: VgiSchema | null | undefined): Schema {
   if (!inputSchema) throw new Error(`${name}: input_schema is required`);
   return inputSchema as Schema;
@@ -792,7 +784,7 @@ const blended_any = defineRowTransformFunction({
     return { outputSchema: new Schema([new Field("value", input.fields[0].type, true)]) };
   },
   process: (params, batch, out) => {
-    out.emit(echoColumnsAs(batch, params.outputSchema));
+    out.emit(batch);
   },
   categories: ["blended", "test"],
 });
@@ -811,7 +803,7 @@ const blended_any_varargs = defineRowTransformFunction({
     };
   },
   process: (params, batch, out) => {
-    out.emit(echoColumnsAs(batch, params.outputSchema));
+    out.emit(batch);
   },
   categories: ["blended", "test"],
 });
