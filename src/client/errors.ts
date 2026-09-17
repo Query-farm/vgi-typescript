@@ -63,6 +63,25 @@ export function wrapRpcWithErrorEnrichment(rpc: RpcClient): RpcClient {
         throw e;
       }
     },
+    // The batch-level twins (vgi-rpc 0.24.0) get the same treatment: a caller
+    // holding encoded Arrow should still see the worker's traceback rather
+    // than a bare RpcError.
+    async callRaw(method, input) {
+      try {
+        return await rpc.callRaw(method, input);
+      } catch (e) {
+        if (e instanceof RpcError) throw VgiClientError.fromRpcError(e);
+        throw e;
+      }
+    },
+    async streamRaw(method, input, options) {
+      try {
+        return await rpc.streamRaw(method, input, options);
+      } catch (e) {
+        if (e instanceof RpcError) throw VgiClientError.fromRpcError(e);
+        throw e;
+      }
+    },
     describe: () => rpc.describe(),
     close: () => rpc.close(),
   };

@@ -36,8 +36,19 @@ export interface ProtocolConfig {
   signingKey?: Uint8Array;
 }
 
+/**
+ * Wire name of the VGI protocol.
+ *
+ * Since `@query-farm/vgi-rpc` 0.24.0 this name is bound into the AEAD
+ * associated data of every state and call token (`TokenScope.protocol`), so a
+ * caller that opens a token minted by this protocol has to name it. Exported
+ * so the HTTP entry points build that scope from the same constant the
+ * protocol is registered under rather than a second copy of the literal.
+ */
+export const VGI_PROTOCOL_NAME = "vgi";
+
 export function buildVgiProtocol(config: ProtocolConfig): Protocol {
-  const protocol = new Protocol("vgi", { protocolVersion: "2.0.0" });
+  const protocol = new Protocol(VGI_PROTOCOL_NAME, { protocolVersion: "2.0.0" });
 
   registerFunctionMethods(protocol, {
     registry: config.registry,
