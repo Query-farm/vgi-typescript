@@ -37,15 +37,31 @@ export interface ProtocolConfig {
 }
 
 /**
- * Wire name of the VGI protocol.
+ * Wire name of the VGI protocol: the `vgi_rpc.protocol` routing key and the
+ * `{protocol}` HTTP path segment.
  *
- * Since `@query-farm/vgi-rpc` 0.24.0 this name is bound into the AEAD
+ * The name carries the major version, so an incompatible major is a
+ * *different* protocol and therefore a 404 — an answer every proxy, WAF and
+ * load balancer understands without an Arrow parser, and one that lets
+ * `vgi.v2` and a future `vgi.v3` be served side by side while clients migrate.
+ * That matters for this consumer specifically: the DuckDB extension ships to
+ * users and cannot be flag-dayed.
+ *
+ * Declared rather than derived. Until the transports made the routing key
+ * required, each implementation's wire name defaulted to whatever its local
+ * type was called, which left the six ports disagreeing four ways — Python
+ * `VgiProtocol`, Java and C# `VgiService`, Go the framework default `Service`,
+ * this port `vgi` — so no client could address them all. The canonical name is
+ * decided in vgi-python and emitted by the DuckDB extension; this is that same
+ * string, not an independent choice.
+ *
+ * Since `@query-farm/vgi-rpc` 0.24.0 the name is also bound into the AEAD
  * associated data of every state and call token (`TokenScope.protocol`), so a
  * caller that opens a token minted by this protocol has to name it. Exported
  * so the HTTP entry points build that scope from the same constant the
  * protocol is registered under rather than a second copy of the literal.
  */
-export const VGI_PROTOCOL_NAME = "vgi";
+export const VGI_PROTOCOL_NAME = "vgi.v2";
 
 export function buildVgiProtocol(config: ProtocolConfig): Protocol {
   const protocol = new Protocol(VGI_PROTOCOL_NAME, { protocolVersion: "2.0.0" });
