@@ -3,7 +3,7 @@
 // Two-phase: INPUT phase receives and transforms batches,
 // FINALIZE phase emits final results.
 
-import { type VgiSchema, schema, type VgiField, type VgiDataType, type VgiBatch, nullType, withBatchMetadata, serializeBatch, deserializeBatch } from "../arrow/index.js";
+import { type VgiSchema, schema, type VgiField, type VgiDataType, type VgiBatch, nullType, isNull, withBatchMetadata, serializeBatch, deserializeBatch } from "../arrow/index.js";
 import type { OutputCollector } from "@query-farm/vgi-rpc";
 import { DEFAULT_MAX_WORKERS, TableInOutPhase } from "../types.js";
 import type {
@@ -725,14 +725,17 @@ export interface RowTransformConfig<TArgs = Record<string, any>> {
   /**
    * Positional args = the per-row INPUT COLUMNS (real typed args on the wire,
    * no synthetic TABLE placeholder). Read from `batch` by declared name in
-   * process(); NOT surfaced on `params.args`.
+   * process(); NOT surfaced on `params.args`. A `Null` type declares the
+   * column ANY: the input column then arrives with whatever type DuckDB
+   * resolved for the call (see `params.bindCall.input_schema` in onBind).
    */
   args?: Record<string, VgiDataType>;
   /**
    * Trailing VARARGS input columns: the per-row input is N columns of the
    * declared type. A varargs blended function has no per-column declared
    * names (the C++ bind names them col0..colN-1), so process() reads the
-   * columns POSITIONALLY off `batch`.
+   * columns POSITIONALLY off `batch`. A `Null` element type declares ANY
+   * varargs: each runtime column resolves its own type.
    */
   varargs?: { name: string; type: VgiDataType; doc?: string };
   /** Named (string-position) args stay bind-time scalars on `params.args`. */
@@ -805,20 +808,30 @@ export function defineRowTransformFunction<
   let posIdx = 0;
   if (config.args) {
     for (const [name, type] of Object.entries(config.args)) {
+      // A Null arrow type declares the input column ANY (same convention as
+      // defineTableFunction / defineScalarFunction): advertised on the wire as
+      // vgi_type=any, and the client builds the input schema from the type
+      // DuckDB resolved for the call. Read the concrete type off
+      // bindCall.input_schema in onBind.
+      const isAny = isNull(type);
       specs.push({
         name,
         position: posIdx++,
-        arrowType: type,
+        arrowType: isAny ? nullType() : type,
+        isAnyType: isAny,
         doc: config.argDocs?.[name],
         ...constraintSpecFields(config.argConstraints?.[name]),
       });
     }
   }
   if (config.varargs) {
+    // ANY varargs: every runtime column resolves its own type.
+    const isAny = isNull(config.varargs.type);
     specs.push({
       name: config.varargs.name,
       position: posIdx++,
-      arrowType: config.varargs.type,
+      arrowType: isAny ? nullType() : config.varargs.type,
+      isAnyType: isAny,
       isVarargs: true,
       doc: config.varargs.doc ?? config.argDocs?.[config.varargs.name],
       ...constraintSpecFields(config.argConstraints?.[config.varargs.name]),

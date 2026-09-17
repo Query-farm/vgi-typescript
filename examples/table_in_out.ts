@@ -12,6 +12,8 @@ import {
   DataType,
   RecordBatch,
   Struct,
+  Null,
+  makeData,
 } from "@query-farm/apache-arrow";
 import {
   defineTableInOutFunction,
@@ -29,7 +31,7 @@ import {
 } from "../src/index.js";
 import { createHash } from "node:crypto";
 import type { OutputCollector } from "@query-farm/vgi-rpc";
-import type { VgiFunction } from "../src/index.js";
+import type { VgiFunction, VgiBatch, VgiSchema } from "../src/index.js";
 
 // ============================================================================
 // 1. echo - Passthrough
@@ -750,6 +752,70 @@ const blended_explode = defineRowTransformFunction({
   categories: ["blended", "test"],
 });
 
+// Blended ANY fixtures. A blended positional arg may be declared ANY (a Null
+// arrow type — the SDK's ANY convention): the declaration names no concrete
+// Arrow type, so the client builds the worker's input schema from the type
+// DuckDB actually resolved for the call (a STRUCT built per row, a whole-row
+// struct, a LIST, a plain VARCHAR ...). Both fixtures are 1->1 echoes whose
+// output is bound to that resolved input type and whose columns pass through
+// untouched, so the shared blended_any.test asserts on DuckDB's own typeof()
+// and the round-tripped values. Ports vgi-python's BlendedAnyFunction /
+// BlendedAnyVarargsFunction.
+
+// Re-label a batch's columns under `outSchema` WITHOUT touching the column
+// data: the child Data (values + validity) is reused as-is, so a NULL struct
+// and a struct with a NULL field stay distinct.
+function echoColumnsAs(batch: VgiBatch, outSchema: VgiSchema): RecordBatch {
+  const schema = outSchema as Schema;
+  const data = makeData({
+    type: new Struct(schema.fields),
+    length: batch.numRows,
+    children: (batch as RecordBatch).data.children,
+    nullCount: 0,
+  });
+  return new RecordBatch(schema, data);
+}
+
+function requireInputSchema(name: string, inputSchema: VgiSchema | null | undefined): Schema {
+  if (!inputSchema) throw new Error(`${name}: input_schema is required`);
+  return inputSchema as Schema;
+}
+
+// blended_any(value ANY) -> value <resolved input type>.
+const blended_any = defineRowTransformFunction({
+  name: "blended_any",
+  description: "Blended 1->1 echo of one ANY-typed input column (output typed from the input)",
+  args: { value: new Null() }, // Null = ANY
+  argDocs: { value: "Input column of any type (echoed back unchanged)" },
+  onBind: (params) => {
+    const input = requireInputSchema("blended_any", params.bindCall.input_schema);
+    return { outputSchema: new Schema([new Field("value", input.fields[0].type, true)]) };
+  },
+  process: (params, batch, out) => {
+    out.emit(echoColumnsAs(batch, params.outputSchema));
+  },
+  categories: ["blended", "test"],
+});
+
+// blended_any_varargs(values ANY...) -> col0..colN-1 <each resolved type>.
+// The varargs counterpart: every runtime column may resolve to a different
+// concrete type, so each output column is bound to its own input field's type.
+const blended_any_varargs = defineRowTransformFunction({
+  name: "blended_any_varargs",
+  description: "Blended 1->1 echo of N ANY-typed varargs input columns (col0..colN-1)",
+  varargs: { name: "values", type: new Null(), doc: "Input columns of any types (echoed back)" },
+  onBind: (params) => {
+    const input = requireInputSchema("blended_any_varargs", params.bindCall.input_schema);
+    return {
+      outputSchema: new Schema(input.fields.map((f, i) => new Field(`col${i}`, f.type, true))),
+    };
+  },
+  process: (params, batch, out) => {
+    out.emit(echoColumnsAs(batch, params.outputSchema));
+  },
+  categories: ["blended", "test"],
+});
+
 // Cacheable blended 1->N fan-out advertising vgi.cache.per_value.
 //
 // Same shape as blended_explode but opts into the per-value memo tier, so it
@@ -1054,6 +1120,8 @@ export const tableInOutFunctions: VgiFunction[] = [
   row_sum,
   blended_drop,
   blended_explode,
+  blended_any,
+  blended_any_varargs,
   cached_explode,
   projectable_blended,
   hostile_provenance,
