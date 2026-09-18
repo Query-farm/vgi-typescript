@@ -253,3 +253,54 @@ describe("arrowStateSerializer", () => {
     expect(new Uint8Array(result.executionId)).toEqual(new Uint8Array([0xbe, 0xef]));
   });
 });
+
+// ============================================================================
+// The exchange state frame
+// ============================================================================
+//
+// The cursor is built and parsed on every turn of every HTTP stream. It used
+// to be a one-row Arrow batch -- a column builder per field and an IPC schema
+// message each way, ~0.4 ms a turn and ~1 KB of framing that was then sealed
+// and base64-encoded twice per turn. It is a flat binary frame now.
+
+describe("the exchange state frame", () => {
+  const state = {
+    functionName: "test_func",
+    initRequestIpc: new Uint8Array([0xde, 0xad]),
+    executionId: new Uint8Array([0xbe, 0xef]),
+    maxWorkers: 4,
+    opaqueData: new Uint8Array([7]),
+    isProducer: true,
+    userState: null,
+  };
+
+  test("is a few bytes of framing around its fields, not an Arrow batch", () => {
+    const bytes = arrowStateSerializer.serialize(state);
+    // 10-byte header, a 4-byte length per field, then the fields themselves.
+    expect(bytes.byteLength).toBeLessThan(64);
+    const result = arrowStateSerializer.deserialize(bytes);
+    expect(result.functionName).toBe("test_func");
+    expect(result.maxWorkers).toBe(4);
+    expect(result.isProducer).toBe(true);
+    expect(new Uint8Array(result.opaqueData)).toEqual(new Uint8Array([7]));
+    expect(result.userState).toBeNull();
+  });
+
+  test("the init request travels packed and comes back packed", () => {
+    const once = arrowStateSerializer.deserialize(arrowStateSerializer.serialize(state));
+    const twice = arrowStateSerializer.deserialize(arrowStateSerializer.serialize(once));
+    expect(twice.initRequestPacked).toEqual(once.initRequestPacked);
+  });
+
+  test("refuses bytes it did not write", () => {
+    const bytes = arrowStateSerializer.serialize(state);
+    // An Arrow IPC stream (what an older build minted) starts 0xFF.
+    expect(() => arrowStateSerializer.deserialize(new Uint8Array([0xff, 0xff, 0xff, 0xff, 0, 0, 0, 0, 0, 0]))).toThrow(
+      /unknown format/,
+    );
+    expect(() => arrowStateSerializer.deserialize(bytes.subarray(0, bytes.byteLength - 1))).toThrow(/truncated/);
+    const longer = new Uint8Array(bytes.byteLength + 1);
+    longer.set(bytes);
+    expect(() => arrowStateSerializer.deserialize(longer)).toThrow(/trailing/);
+  });
+});

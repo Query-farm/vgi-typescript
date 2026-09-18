@@ -1,7 +1,6 @@
 // Copyright 2025, 2026 Query Farm LLC - https://query.farm
-// Arrow IPC state serializer for HTTP transport.
-// Replaces JSON serialization with Arrow IPC for the exchange state token,
-// avoiding base64/hex overhead and staying consistent with the rest of the protocol.
+// State serializer for the HTTP transport: the exchange state an HTTP cursor
+// carries between turns, and the Arrow IPC encoding of user state inside it.
 
 import {
   type VgiDataType,
@@ -30,7 +29,13 @@ import { toUint8Array } from "../util/bytes.js";
 import { decodeFilterHistory, encodeFilterHistory } from "../filter-pushdown/history.js";
 import { packInitRequest } from "./carried-init-request.js";
 
-/** Schema for the exchange state carried in HTTP state tokens. */
+/**
+ * The fields of the exchange state an HTTP cursor carries, by name and type.
+ *
+ * Descriptive: {@link arrowStateSerializer} writes them as a flat binary frame
+ * (see there), not as an Arrow batch of this schema. Kept exported for API
+ * stability.
+ */
 export const EXCHANGE_STATE_SCHEMA = makeSchema([
   field("function_name", binary(), false),
   // The init request, packed by carried-init-request.ts (a codec byte, then
@@ -49,6 +54,13 @@ export const EXCHANGE_STATE_SCHEMA = makeSchema([
 
 const TEXT_ENCODER = new TextEncoder();
 const TEXT_DECODER = new TextDecoder();
+
+/** Version byte of the exchange state frame (never 0xFF, the first byte of an Arrow IPC stream). */
+const STATE_FORMAT_VERSION = 1;
+const FLAG_PRODUCER = 1;
+const FLAG_OPAQUE_DATA = 2;
+const FLAG_USER_STATE = 4;
+const FLAG_FILTER_HISTORY = 8;
 
 /**
  * Child field name for an inferred list. Arrow matches list children by
@@ -195,54 +207,101 @@ export function deserializeUserState(bytes: Uint8Array | null): any {
   return result;
 }
 
-/** Arrow IPC state serializer — stores all data as native binary columns. */
+/**
+ * The HTTP exchange state serializer: what a stream's cursor carries between
+ * turns.
+ *
+ * A flat, versioned binary frame, not an Arrow batch. The cursor is built and
+ * parsed on every turn of every HTTP stream, and wrapping eight scalars in a
+ * one-row Arrow batch cost ~0.4 ms a turn (a generic column builder per field,
+ * an IPC schema message each way) plus ~1 KB of framing that was then sealed
+ * and base64-encoded twice per turn. The fields are the ones
+ * {@link EXCHANGE_STATE_SCHEMA} names; `user_state` stays Arrow IPC inside the
+ * frame, because it carries typed user values.
+ *
+ * Layout (little-endian): `u8 version | u8 flags | f64 max_workers |
+ * bytes function_name | bytes init_request | bytes execution_id |
+ * [bytes opaque_data] [bytes user_state] [bytes filter_history]`, where
+ * `bytes` is `u32 length, payload` and a bracketed field is present only when
+ * its flag bit is set. The frame never leaves this worker unsealed, so the
+ * version byte exists to turn a token minted by another build into a clean
+ * refusal rather than a misread.
+ *
+ * The name is kept for API stability; the Arrow in it is the user state.
+ */
 export const arrowStateSerializer: StateSerializer = {
   serialize(state: any): Uint8Array {
-    const columns: Record<string, any[]> = {
-      function_name: [TEXT_ENCODER.encode(state.functionName)],
-      // Packed on the init turn (the only one holding the raw bytes); every
-      // continuation carries the packed bytes through unchanged.
-      init_request: [state.initRequestPacked ?? packInitRequest(state.initRequestIpc)],
-      execution_id: [state.executionId],
-      max_workers: [state.maxWorkers],
-      opaque_data: [state.opaqueData ?? null],
-      is_producer: [state.isProducer],
-      user_state: [serializeUserState(state.userState)],
-      filter_history: [encodeFilterHistory(state.filterHistory)],
-    };
-    const batch = batchFromColumns(columns, EXCHANGE_STATE_SCHEMA);
-    return serializeBatch(batch);
+    const functionName = TEXT_ENCODER.encode(state.functionName ?? "");
+    // Packed on the init turn (the only one holding the raw bytes); every
+    // continuation carries the packed bytes through unchanged.
+    const initRequest: Uint8Array = state.initRequestPacked ?? packInitRequest(state.initRequestIpc);
+    const executionId = toUint8Array(state.executionId);
+    const opaqueData = state.opaqueData != null ? toUint8Array(state.opaqueData) : null;
+    const userState = serializeUserState(state.userState);
+    const filterHistory = encodeFilterHistory(state.filterHistory);
+    const flags =
+      (state.isProducer ? FLAG_PRODUCER : 0) |
+      (opaqueData ? FLAG_OPAQUE_DATA : 0) |
+      (userState ? FLAG_USER_STATE : 0) |
+      (filterHistory ? FLAG_FILTER_HISTORY : 0);
+    const chunks = [functionName, initRequest, executionId];
+    if (opaqueData) chunks.push(opaqueData);
+    if (userState) chunks.push(userState);
+    if (filterHistory) chunks.push(filterHistory);
+    let size = 2 + 8;
+    for (const chunk of chunks) size += 4 + chunk.byteLength;
+    const out = new Uint8Array(size);
+    const view = new DataView(out.buffer);
+    out[0] = STATE_FORMAT_VERSION;
+    out[1] = flags;
+    view.setFloat64(2, Number(state.maxWorkers ?? 1), true);
+    let offset = 10;
+    for (const chunk of chunks) {
+      view.setUint32(offset, chunk.byteLength, true);
+      out.set(chunk, offset + 4);
+      offset += 4 + chunk.byteLength;
+    }
+    return out;
   },
 
   deserialize(bytes: Uint8Array): any {
-    const batch = deserializeBatch(bytes);
-    const fieldByName = new Map(batch.schema.fields.map((f) => [f.name, f]));
-    const get = (name: string) => {
-      const col = batch.getChild(name);
-      const f = fieldByName.get(name);
-      if (!col || !f) return null;
-      const type = f.type as unknown as VgiDataType;
-      return codecFor(type).canonicalToRich(readCanonicalValue(type, col, 0));
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    if (bytes.byteLength < 10 || bytes[0] !== STATE_FORMAT_VERSION) {
+      throw new Error("exchange state has an unknown format (minted by another build of this worker?)");
+    }
+    const flags = bytes[1];
+    const maxWorkers = view.getFloat64(2, true);
+    let offset = 10;
+    // Each field is copied out, not viewed: Arrow readers want a buffer of
+    // their own (byteOffset 0), and nothing should pin the whole frame.
+    const take = (): Uint8Array => {
+      if (offset + 4 > bytes.byteLength) throw new Error("exchange state is truncated");
+      const length = view.getUint32(offset, true);
+      offset += 4;
+      if (offset + length > bytes.byteLength) throw new Error("exchange state is truncated");
+      const chunk = bytes.slice(offset, offset + length);
+      offset += length;
+      return chunk;
     };
-
-    const isProducer = get("is_producer");
-    const opaqueDataRaw = get("opaque_data");
-    const fnNameRaw = get("function_name");
-    const filterHistoryRaw = get("filter_history");
-
+    const functionName = TEXT_DECODER.decode(take());
+    const initRequestPacked = take();
+    const executionId = take();
+    const opaqueData = flags & FLAG_OPAQUE_DATA ? take() : null;
+    const userStateBytes = flags & FLAG_USER_STATE ? take() : null;
+    const filterHistoryBytes = flags & FLAG_FILTER_HISTORY ? take() : null;
+    if (offset !== bytes.byteLength) throw new Error("exchange state has trailing bytes");
+    const isProducer = (flags & FLAG_PRODUCER) !== 0;
     return {
-      functionName: fnNameRaw != null ? TEXT_DECODER.decode(toUint8Array(fnNameRaw)) : "",
-      initRequestPacked: toUint8Array(get("init_request")),
-      executionId: toUint8Array(get("execution_id")),
-      maxWorkers: Number(get("max_workers")),
-      opaqueData: opaqueDataRaw != null ? toUint8Array(opaqueDataRaw) : null,
+      functionName,
+      initRequestPacked,
+      executionId,
+      maxWorkers,
+      opaqueData,
       isProducer,
       // vgi-rpc dispatch reads __isProducer to choose producer vs exchange mode
       __isProducer: isProducer,
-      userState: deserializeUserState(
-        get("user_state") != null ? toUint8Array(get("user_state")) : null,
-      ),
-      filterHistory: decodeFilterHistory(filterHistoryRaw != null ? toUint8Array(filterHistoryRaw) : null),
+      userState: deserializeUserState(userStateBytes),
+      filterHistory: decodeFilterHistory(filterHistoryBytes),
     };
   },
 };
