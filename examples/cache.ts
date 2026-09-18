@@ -615,9 +615,9 @@ const cache_bench = defineTableFunction<CacheBenchArgs, CountdownState>({
 // ---------------------------------------------------------------------------
 // Work-queue fan-out (like partitioned_sequence): the primary worker enqueues
 // fixed-size (start, end) chunks at onInit; ANY worker pops a chunk and emits
-// batches for it. maxWorkers is DEFAULT (clamped to `SET threads`), so a cached
-// scan captures ONE SUBSTREAM PER WORKER THREAD — the only cache fixture that
-// exercises parallel capture. Values are the plain sequence [0..rows), so COUNT
+// batches for it. Its init declares one reader per chunk (at most 24), which the
+// client clamps to `SET threads`, so a cached scan captures ONE SUBSTREAM PER
+// WORKER THREAD — the only cache fixture that exercises parallel capture. Values are the plain sequence [0..rows), so COUNT
 // and SUM hold regardless of how chunks were distributed across workers.
 const CACHE_PARALLEL_MAX_CHUNKS = 24;
 
@@ -648,7 +648,8 @@ const cache_parallel = defineTableFunction<CacheParallelArgs, CacheParallelState
     for (let start = 0; start < rows; start += chunk) items.push(packPair(start, Math.min(start + chunk, rows)));
     // Always push (registers the invocation), even when there is no work.
     await params.storage.queuePush(items);
-    return { max_workers: DEFAULT_MAX_WORKERS, execution_id: params.executionId, opaque_data: null };
+    // No more readers than work items (see partitioned_sequence in table.ts).
+    return { max_workers: Math.max(1, items.length), execution_id: params.executionId, opaque_data: null };
   },
   initialState: () => ({ advertised: false, currentStart: null, currentEnd: null, currentIdx: 0 }),
   process: async (params, state, out) => {
@@ -724,7 +725,8 @@ const cache_ordered = defineTableFunction<CacheOrderedArgs, CacheOrderedState>({
       items.push(packTriple(pid++, start, Math.min(start + chunk, rows)));
     }
     await params.storage.queuePush(items);
-    return { max_workers: DEFAULT_MAX_WORKERS, execution_id: params.executionId, opaque_data: null };
+    // No more readers than work items (see partitioned_sequence in table.ts).
+    return { max_workers: Math.max(1, items.length), execution_id: params.executionId, opaque_data: null };
   },
   initialState: () => ({ advertised: false, partitionId: null, currentStart: null, currentEnd: null, currentIdx: 0 }),
   process: async (params, state, out) => {

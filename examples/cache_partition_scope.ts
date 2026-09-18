@@ -179,7 +179,8 @@ const cache_partition_parallel = defineTableFunction<RowsPerCountryArgs, Partiti
   onBind: () => ({ outputSchema: SCOPE_SCHEMA }),
   onInit: async (params) => {
     await params.storage.queuePush(PARALLEL_COUNTRIES.map((_, i) => packOne(i)));
-    return { max_workers: DEFAULT_MAX_WORKERS, execution_id: params.executionId, opaque_data: null };
+    // No more readers than work items (see partitioned_sequence in table.ts).
+    return { max_workers: Math.max(1, PARALLEL_COUNTRIES.length), execution_id: params.executionId, opaque_data: null };
   },
   initialState: () => ({ idx: -1 }),
   process: async (params, state, out) => {

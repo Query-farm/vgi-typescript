@@ -108,7 +108,8 @@ const partitioned_batch_index = defineTableFunction<BatchIndexArgs, BatchIndexSt
       partitionId++;
     }
     await params.storage.queuePush(items);
-    return { max_workers: DEFAULT_MAX_WORKERS, execution_id: params.executionId, opaque_data: null };
+    // No more readers than work items (see partitioned_sequence in table.ts).
+    return { max_workers: Math.max(1, items.length), execution_id: params.executionId, opaque_data: null };
   },
   initialState: () => ({ partitionId: null, currentStart: null, currentEnd: null, currentIdx: 0 }),
   process: async (params, state, out) => {
@@ -170,7 +171,8 @@ const partitioned_batch_index_marked = defineTableFunction<BatchIndexMarkedArgs,
       partitionId++;
     }
     await params.storage.queuePush(items);
-    return { max_workers: DEFAULT_MAX_WORKERS, execution_id: params.executionId, opaque_data: null };
+    // No more readers than work items (see partitioned_sequence in table.ts).
+    return { max_workers: Math.max(1, items.length), execution_id: params.executionId, opaque_data: null };
   },
   initialState: () => ({ partitionId: null, currentStart: null, currentEnd: null, currentIdx: 0 }),
   process: async (params, state, out) => {
@@ -319,7 +321,8 @@ const country_partitioned_sales = defineTableFunction<CountryArgs, PartitionStat
   onInit: async (params) => {
     const items = COUNTRIES.map((_, i) => packOne(i));
     await params.storage.queuePush(items);
-    return { max_workers: DEFAULT_MAX_WORKERS, execution_id: params.executionId, opaque_data: null };
+    // No more readers than work items (see partitioned_sequence in table.ts).
+    return { max_workers: Math.max(1, items.length), execution_id: params.executionId, opaque_data: null };
   },
   initialState: () => ({ idx: -1 }),
   process: async (params, state, out) => {
@@ -382,7 +385,8 @@ const region_year_partitioned = defineTableFunction<RegionYearArgs, PartitionSta
   onInit: async (params) => {
     const items = REGIONS_YEARS.map((_, i) => packOne(i));
     await params.storage.queuePush(items);
-    return { max_workers: DEFAULT_MAX_WORKERS, execution_id: params.executionId, opaque_data: null };
+    // No more readers than work items (see partitioned_sequence in table.ts).
+    return { max_workers: Math.max(1, items.length), execution_id: params.executionId, opaque_data: null };
   },
   initialState: () => ({ idx: -1 }),
   process: async (params, state, out) => {
@@ -439,7 +443,8 @@ const partitioned_with_explicit_override = defineTableFunction<CategoryArgs, Par
   onInit: async (params) => {
     const items = CATEGORIES.map((_, i) => packOne(i));
     await params.storage.queuePush(items);
-    return { max_workers: DEFAULT_MAX_WORKERS, execution_id: params.executionId, opaque_data: null };
+    // No more readers than work items (see partitioned_sequence in table.ts).
+    return { max_workers: Math.max(1, items.length), execution_id: params.executionId, opaque_data: null };
   },
   initialState: () => ({ idx: -1 }),
   process: async (params, state, out) => {
@@ -490,7 +495,8 @@ const disjoint_range_partitioned = defineTableFunction<DisjointArgs, PartitionSt
     const items: Uint8Array[] = [];
     for (let i = 0; i < params.args.partitions; i++) items.push(packOne(i));
     await params.storage.queuePush(items);
-    return { max_workers: DEFAULT_MAX_WORKERS, execution_id: params.executionId, opaque_data: null };
+    // No more readers than work items (see partitioned_sequence in table.ts).
+    return { max_workers: Math.max(1, items.length), execution_id: params.executionId, opaque_data: null };
   },
   initialState: () => ({ idx: -1 }),
   process: async (params, state, out) => {
@@ -541,7 +547,8 @@ const overlapping_range_partitioned = defineTableFunction<OverlappingArgs, Parti
     const items: Uint8Array[] = [];
     for (let i = 0; i < params.args.partitions; i++) items.push(packOne(i));
     await params.storage.queuePush(items);
-    return { max_workers: DEFAULT_MAX_WORKERS, execution_id: params.executionId, opaque_data: null };
+    // No more readers than work items (see partitioned_sequence in table.ts).
+    return { max_workers: Math.max(1, items.length), execution_id: params.executionId, opaque_data: null };
   },
   initialState: () => ({ idx: -1 }),
   process: async (params, state, out) => {
