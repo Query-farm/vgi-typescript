@@ -70,12 +70,14 @@ export interface TableInOutProcessParams<TArgs = Record<string, any>> {
   storage: BoundStorage;
   /**
    * Stable client-minted id for this streaming table-in-out substream.
-   * Present (identical across init / every process() / finalize) when the
-   * client fanned this function out across per-substream workers; use it to
-   * key per-substream accumulated state in shared storage so a finalize()
-   * that lands on a different HTTP backend than the process() calls still
-   * finds it. `null`/`undefined` for the serial path or an old client.
-   * Mirrors vgi-python's `ProcessParams.substream_id`.
+   * Present (identical across init / every process() / finalize) whenever the
+   * client sent one -- the DuckDB extension does for every substream. The
+   * framework keys the accumulated state it auto-persists by it
+   * ({@link BoundStorage.put}), so substreams of one execution that one
+   * process serves keep separate states and finalize() receives each; use it
+   * likewise for any per-substream state you keep in shared storage yourself.
+   * `null`/`undefined` for a client that sent none. Mirrors vgi-python's
+   * `ProcessParams.substream_id`.
    */
   substreamId?: Uint8Array | null;
   /**
@@ -325,10 +327,15 @@ export function defineTableInOutFunction<
         })
         : undefined;
 
-      // Create BoundStorage for cross-phase/cross-worker data sharing
+      // Create BoundStorage for cross-phase/cross-worker data sharing. Keyed
+      // per substream, not per process: every connection of a fanned-out
+      // scan shares this execution's storage, and one process may serve many
+      // of them (see BoundStorage.put). Rebuilt from the sealed init request
+      // on every HTTP continuation, so the key is the same on every tick.
       const boundStorage = new BoundStorage(
         defaultStorage,
         response.execution_id ?? new Uint8Array(16),
+        request.substream_id ?? null,
       );
 
       const processParams: TableInOutProcessParams<TArgs> = {
@@ -958,6 +965,7 @@ export function defineRowTransformFunction<
       const boundStorage = new BoundStorage(
         defaultStorage,
         response.execution_id ?? new Uint8Array(16),
+        request.substream_id ?? null,
       );
 
       const processParams: RowTransformProcessParams<TArgs> = {

@@ -84,9 +84,22 @@ function hexEncode(buf: Uint8Array): string {
 // FunctionStorage interface
 // ============================================================================
 
+/**
+ * Which slot of an execution's worker state a row occupies: a table-in-out
+ * substream's client-minted `substream_id` (raw bytes), or -- only for a client
+ * that sent none -- a numeric worker id, the process id (an int64 key). See
+ * {@link BoundStorage.put}.
+ */
+export type WorkerStateKey = number | Uint8Array;
+
 export interface FunctionStorage {
-  workerPut(executionId: Uint8Array, workerId: number, state: Uint8Array): Promise<void>;
+  /** Upsert `state` into the execution's worker-state slot `worker`. */
+  workerPut(executionId: Uint8Array, worker: WorkerStateKey, state: Uint8Array): Promise<void>;
+  /** Drain every worker-state slot of the execution, whatever its key. */
   workerCollect(executionId: Uint8Array): Promise<Uint8Array[]>;
+  /** Read every worker-state slot without draining. A slot keyed by a
+   *  numeric worker id reports that id; one keyed by bytes (a substream id)
+   *  has none and reports 0. */
   workerScan(executionId: Uint8Array): Promise<Array<[number, Uint8Array]>>;
   queuePush(executionId: Uint8Array, items: Uint8Array[]): Promise<number>;
   queuePop(executionId: Uint8Array): Promise<Uint8Array | null>;
@@ -148,8 +161,9 @@ function getDefaultDbPath(): string {
 }
 
 // Worker state rides the unified function_state table under a reserved
-// namespace, keyed by the worker/process id (8-byte big-endian) — exactly the
-// mapping the Cloudflare DO client uses, so both backends share one schema.
+// namespace, keyed by the substream id (its raw bytes) or, for a client that
+// sent none, the worker/process id (8-byte big-endian) — exactly the mapping
+// the Cloudflare DO client uses, so both backends share one schema.
 const NS_WORKER = new TextEncoder().encode("worker");
 
 /** Encode an int64 worker id as an 8-byte big-endian state key. */
@@ -157,6 +171,12 @@ function int64Key(v: number): Uint8Array {
   const b = new Uint8Array(8);
   new DataView(b.buffer).setBigInt64(0, BigInt(v), false);
   return b;
+}
+
+/** The state key for a worker-state slot: a substream id as-is, a numeric
+ *  worker id as an int64. */
+export function workerStateKey(worker: WorkerStateKey): Uint8Array {
+  return typeof worker === "number" ? int64Key(worker) : worker;
 }
 
 function int64FromKey(b: Uint8Array): number {
@@ -300,18 +320,19 @@ export class FunctionStorageSqlite implements FunctionStorage {
     return total;
   }
 
-  // Worker state rides function_state under ns=worker, keyed by worker id.
+  // Worker state rides function_state under ns=worker, keyed by substream id
+  // or worker id.
 
   async workerPut(
     executionId: Uint8Array,
-    workerId: number,
+    worker: WorkerStateKey,
     state: Uint8Array
   ): Promise<void> {
     this._db
       .prepare(
         "INSERT OR REPLACE INTO function_state (scope_id, ns, key, value) VALUES (?, ?, ?, ?)"
       )
-      .run(bufferArg(executionId), bufferArg(NS_WORKER), bufferArg(int64Key(workerId)), bufferArg(state));
+      .run(bufferArg(executionId), bufferArg(NS_WORKER), bufferArg(workerStateKey(worker)), bufferArg(state));
   }
 
   async workerCollect(executionId: Uint8Array): Promise<Uint8Array[]> {
@@ -381,14 +402,36 @@ export class FunctionStorageSqlite implements FunctionStorage {
 export class BoundStorage {
   private _base: FunctionStorage;
   private _executionId: Uint8Array;
+  private _substreamId: Uint8Array | null;
 
-  constructor(storage: FunctionStorage, executionId: Uint8Array) {
+  /**
+   * @param substreamId The table-in-out substream this storage serves -- the
+   *   client-minted `InitRequest.substream_id`, identical across the
+   *   substream's init, every tick and its finalize -- or `null` when the
+   *   client sent none. Keys {@link put}.
+   */
+  constructor(storage: FunctionStorage, executionId: Uint8Array, substreamId: Uint8Array | null = null) {
     this._base = storage;
     this._executionId = executionId;
+    this._substreamId = substreamId;
   }
 
+  /**
+   * Upsert this substream's state into the execution's worker state, which
+   * {@link collect} drains at finalize.
+   *
+   * One row per **substream**, keyed by its `substream_id`. Storage is
+   * already scoped to the execution, and every connection of a fanned-out
+   * scan shares that execution -- so the key has to tell those connections
+   * apart. The process id only does when each connection is its own process;
+   * under the launcher, TCP or HTTP one process serves many of them, and a
+   * per-process key let them overwrite each other's state so finish()
+   * undercounted. The pid remains only for a client that sends no
+   * `substream_id`, which it keys as before. Mirrors vgi-python's
+   * `TableInOutFunction.process` (072e543).
+   */
   put(state: Uint8Array): Promise<void> {
-    return this._base.workerPut(this._executionId, process.pid, state);
+    return this._base.workerPut(this._executionId, this._substreamId ?? process.pid, state);
   }
 
   collect(): Promise<Uint8Array[]> {

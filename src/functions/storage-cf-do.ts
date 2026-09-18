@@ -11,8 +11,8 @@
 //   Set `VGI_WORKER_SHARED_STORAGE=cloudflare-do` plus `VGI_CF_DO_URL`.
 //   Optionally set `VGI_CF_DO_TOKEN` for bearer auth.
 
-import type { FunctionStorage } from "./storage.js";
-import { UnknownInvocationError } from "./storage.js";
+import type { FunctionStorage, WorkerStateKey } from "./storage.js";
+import { UnknownInvocationError, workerStateKey } from "./storage.js";
 
 /** Minimal fetch signature satisfied by both the global `fetch` and a
  *  Cloudflare service-binding Fetcher (`env.<BINDING>`). */
@@ -77,10 +77,10 @@ export class FunctionStorageCfDo implements FunctionStorage {
     });
   }
 
-  // --- Worker state → ns=worker, key = int64(worker_id) ---
+  // --- Worker state → ns=worker, key = substream_id bytes, or int64(worker_id) ---
 
-  async workerPut(executionId: Uint8Array, workerId: number, state: Uint8Array): Promise<void> {
-    await this._statePutMany(executionId, NS_WORKER, [[int64Key(workerId), state]]);
+  async workerPut(executionId: Uint8Array, worker: WorkerStateKey, state: Uint8Array): Promise<void> {
+    await this._statePutMany(executionId, NS_WORKER, [[workerStateKey(worker), state]]);
   }
 
   async workerCollect(executionId: Uint8Array): Promise<Uint8Array[]> {
@@ -277,13 +277,8 @@ function newAttemptId(): string {
   return s;
 }
 
-/** Encode an int64 worker/group id as an 8-byte big-endian state key. */
-function int64Key(v: number): Uint8Array {
-  const b = new Uint8Array(8);
-  new DataView(b.buffer).setBigInt64(0, BigInt(v), false);
-  return b;
-}
-
+/** Decode an 8-byte big-endian state key to its int64 worker id; any other
+ *  key (a substream id) has none, and decodes to 0. */
 function int64FromKey(b: Uint8Array): number {
   if (b.length !== 8) return 0;
   return Number(new DataView(b.buffer, b.byteOffset, 8).getBigInt64(0, false));

@@ -175,8 +175,9 @@ const substream_partial_sum = defineTableInOutFunction<Record<string, any>, Subs
     out.emit(emptyBatch(params.outputSchema));
   },
   finalize: (params: TableInOutProcessParams, states: SubstreamPartialSumState[]) => {
-    // `states` are THIS substream's accumulated states (one per worker that
-    // handled this substream's batches); their sum is this substream's partial.
+    // `states` are this execution's accumulated states, one per substream that
+    // saw input (the framework keys each by its substream_id); their sum is
+    // this finalize's partial.
     let total = 0;
     for (const s of states) total += Number(s?.total ?? 0);
     const name = params.outputSchema.fields[0].name;

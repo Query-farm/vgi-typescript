@@ -282,6 +282,7 @@ export type { ScalarComputeRow, ScalarOutputValue, ScalarComputeResult } from ".
 // Storage
 export {
   type FunctionStorage,
+  type WorkerStateKey,
   FunctionStorageSqlite,
   BoundStorage,
   UnknownInvocationError,
