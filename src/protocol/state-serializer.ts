@@ -28,10 +28,13 @@ import { codecFor } from "../arrow/codec/registry.js";
 import type { StateSerializer } from "@query-farm/vgi-rpc";
 import { toUint8Array } from "../util/bytes.js";
 import { decodeFilterHistory, encodeFilterHistory } from "../filter-pushdown/history.js";
+import { packInitRequest } from "./carried-init-request.js";
 
 /** Schema for the exchange state carried in HTTP state tokens. */
 export const EXCHANGE_STATE_SCHEMA = makeSchema([
   field("function_name", binary(), false),
+  // The init request, packed by carried-init-request.ts (a codec byte, then
+  // the IPC bytes, zstd-compressed where the runtime can).
   field("init_request", binary(), false),
   field("execution_id", binary(), false),
   field("max_workers", int64(), false),
@@ -197,7 +200,9 @@ export const arrowStateSerializer: StateSerializer = {
   serialize(state: any): Uint8Array {
     const columns: Record<string, any[]> = {
       function_name: [TEXT_ENCODER.encode(state.functionName)],
-      init_request: [state.initRequestIpc],
+      // Packed on the init turn (the only one holding the raw bytes); every
+      // continuation carries the packed bytes through unchanged.
+      init_request: [state.initRequestPacked ?? packInitRequest(state.initRequestIpc)],
       execution_id: [state.executionId],
       max_workers: [state.maxWorkers],
       opaque_data: [state.opaqueData ?? null],
@@ -227,7 +232,7 @@ export const arrowStateSerializer: StateSerializer = {
 
     return {
       functionName: fnNameRaw != null ? TEXT_DECODER.decode(toUint8Array(fnNameRaw)) : "",
-      initRequestIpc: toUint8Array(get("init_request")),
+      initRequestPacked: toUint8Array(get("init_request")),
       executionId: toUint8Array(get("execution_id")),
       maxWorkers: Number(get("max_workers")),
       opaqueData: opaqueDataRaw != null ? toUint8Array(opaqueDataRaw) : null,

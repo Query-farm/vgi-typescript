@@ -40,6 +40,7 @@ import {
   recoverFinalizeState,
 } from "./shared.js";
 import { GLOBAL_INIT_RESPONSE_SCHEMA } from "../serializers/init.js";
+import { parseCarriedInitRequest } from "../carried-init-request.js";
 import { openAttach } from "./catalog/shared.js";
 import { currentRequestAuth } from "../../request-auth.js";
 import { batchFromColumns, serializeBatch } from "../../util/arrow/index.js";
@@ -384,9 +385,10 @@ export function registerFunctionMethods(protocol: Protocol, config: FunctionHand
         // Deserialized from token — reconstruct from serializable refs.
         // Infrastructure (processParams, BoundStorage) is recreated fresh.
         // Mutable user state is merged from state.userState.
-        const initRequestBatch = deserializeBatch(state.initRequestIpc);
-        const initRequestDict = batchToScalarDict(initRequestBatch);
-        const request = deserializeInitRequest(initRequestDict);
+        // Parsed once per process per stream (carried-init-request.ts): the
+        // cursor carries the packed request unchanged on every turn.
+        const carried = parseCarriedInitRequest(state.initRequestPacked);
+        const request = carried.request;
         // Re-derive the split payloads. The cursor carries the wire request,
         // which has `split_tokens` but not the opened `split_payloads` — that
         // field only ever existed in memory on the init turn. Without this a
@@ -399,7 +401,7 @@ export function registerFunctionMethods(protocol: Protocol, config: FunctionHand
         // pre-deserialization blob from the cursor — handing it the decoded
         // object hashes a different shape and every token fails as
         // SPLIT_TOKEN_INVALID "minted for a different bind".
-        await resolveSplitPayloads(request, { bind_call: initRequestDict.bind_call }, {
+        await resolveSplitPayloads(request, { bind_call: carried.bindCallIpc }, {
           // Same principal the tokens were sealed under. The exchange dispatch
           // gets no ctx (see stripAttach above), so the request-scoped identity
           // is the only source — opening under the anonymous tail would fail
