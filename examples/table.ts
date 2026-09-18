@@ -499,7 +499,11 @@ const partitioned_sequence = defineTableFunction<PartitionedSequenceArgs, Partit
     }
     await params.storage.queuePush(workItems);
     return {
-      max_workers: DEFAULT_MAX_WORKERS,
+      // No more readers than work items. Left at DEFAULT_MAX_WORKERS the client
+      // opens one stream per DuckDB thread -- 48 on a 48-core host for a
+      // 10-item scan -- and every extra one is an init plus an empty drain.
+      // Mirrors vgi-python 6fbffc0.
+      max_workers: Math.max(1, workItems.length),
       execution_id: params.executionId,
       opaque_data: null,
     };
@@ -584,7 +588,8 @@ function makeOrderModeFunction(name: string, mode: OrderPreservation, descriptio
       }
       await params.storage.queuePush(workItems);
       return {
-        max_workers: DEFAULT_MAX_WORKERS,
+        // No more readers than work items (see partitioned_sequence).
+        max_workers: Math.max(1, workItems.length),
         execution_id: params.executionId,
         opaque_data: null,
       };
