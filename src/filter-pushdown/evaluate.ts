@@ -22,9 +22,33 @@ import {
 
 type SqlBoolean = boolean | null;
 
-function readCell(batch: VgiBatch, index: number, row: number): unknown {
-  const column = batch.getChildAt(index);
-  return column ? readCanonicalValue(batch.schema.fields[index].type, column, row) : null;
+/**
+ * A batch's columns by name, resolved once per batch.
+ *
+ * Filters are evaluated row by row, and resolving a `column_ref` per row --
+ * a field search plus `getChildAt`, which builds a fresh Vector on arrow-js --
+ * cost more than the comparison itself: ~0.3 ms per 1000-row batch per
+ * referenced column. A batch is immutable, so what it resolves to never changes.
+ */
+const RESOLVED_COLUMNS = new WeakMap<object, Map<string, { type: VgiDataType; column: unknown } | null>>();
+
+function resolveColumn(batch: VgiBatch, columnName: string): { type: VgiDataType; column: unknown } | null {
+  let byName = RESOLVED_COLUMNS.get(batch);
+  if (!byName) {
+    byName = new Map();
+    RESOLVED_COLUMNS.set(batch, byName);
+  }
+  let resolved = byName.get(columnName);
+  if (resolved === undefined) {
+    const index = batch.schema.fields.findIndex((field) => field.name === columnName);
+    if (index < 0) {
+      throw new FilterV2Error(`filter column ${columnName} is unavailable in emitted batch`);
+    }
+    const column = batch.getChildAt(index);
+    resolved = column ? { type: batch.schema.fields[index].type, column } : null;
+    byName.set(columnName, resolved);
+  }
+  return resolved;
 }
 
 function deepEqual(left: unknown, right: unknown): boolean {
@@ -307,11 +331,8 @@ function evaluateCall(expression: Extract<FilterExpression, { node: "call" }>, a
 function evaluateExpression(expression: FilterExpression, batch: VgiBatch, row: number, context: EvaluationContext): unknown {
   switch (expression.node) {
     case "column_ref": {
-      const projectedIndex = batch.schema.fields.findIndex((field) => field.name === expression.columnName);
-      if (projectedIndex < 0) {
-        throw new FilterV2Error(`filter column ${expression.columnName} is unavailable in emitted batch`);
-      }
-      return readCell(batch, projectedIndex, row);
+      const resolved = resolveColumn(batch, expression.columnName);
+      return resolved ? readCanonicalValue(resolved.type, resolved.column as any, row) : null;
     }
     case "field_ref": {
       const parent = evaluateExpression(expression.expression, batch, row, context);
