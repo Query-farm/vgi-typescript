@@ -18,7 +18,6 @@ import {
   type CopyFromFormatInfo,
   encodeAttachCatalogInfo,
   encodeScanFunctionResult,
-  encodeFunctionInfo,
 } from "./interface.js";
 import { schemaDescriptorPath, type CatalogDescriptor, type SchemaDescriptor, type TableDescriptor, type ViewDescriptor, type MacroDescriptor, type SettingDescriptor, type SecretTypeDescriptor, type ForeignKeyDef, type DefaultValue } from "./descriptors.js";
 import { serializeColumnStatistics } from "../util/statistics.js";
@@ -32,12 +31,24 @@ import { FunctionStability, NullHandling, OrderPreservation, DEFAULT_MAX_WORKERS
 import { Arguments } from "../arguments/arguments.js";
 import { normalizeSchemaPath, schemaPathDisplay, schemaPathsEqual } from "../schema-path.js";
 import { ForeignKeyInfoSchema } from "../generated/vgi-protocol-schemas.js";
+import { encodeFunctionInfoOnce, freezeCatalogItem } from "./item-encoding.js";
 
 export class ReadOnlyCatalogInterface extends CatalogInterface {
   private _descriptor: CatalogDescriptor;
   private _registry: FunctionRegistry;
   private _attachments = new Map<string, AttachOpaqueData>();
   private _version = 1;
+  /**
+   * Function listings by schema and listing type, built on first request. A
+   * listing depends only on the registered functions' static metadata, so it
+   * is built once and every request returns the same frozen FunctionInfo
+   * instances -- which the listing handler then encodes once each (see
+   * item-encoding.ts). The descriptor is treated as immutable after the first
+   * listing, as the rest of this class already does.
+   */
+  private _functionListings = new Map<SchemaDescriptor, Map<FunctionListingKind, readonly FunctionInfo[]>>();
+  /** One frozen FunctionInfo per (declaring schema, function), shared by listings and `global_functions`. */
+  private _functionInfos = new Map<SchemaDescriptor, Map<VgiFunction, FunctionInfo>>();
 
   constructor(descriptor: CatalogDescriptor, registry: FunctionRegistry) {
     super();
@@ -169,7 +180,7 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
       // Functions the client should ALSO publish into its global (system.main)
       // namespace, under `global_function_prefix` + "_" + name. Empty unless
       // the descriptor opts in via `globalFunctions`.
-      global_functions: this._globalFunctionInfos().map(encodeFunctionInfo),
+      global_functions: this._globalFunctionInfos().map(encodeFunctionInfoOnce),
       global_function_prefix: this._descriptor.globalFunctionPrefix ?? "",
       resolved_data_version: null,
       resolved_implementation_version: null,
@@ -412,18 +423,53 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
     const schema = this._descriptor.schemas.find((s) => schemaPathsEqual(schemaDescriptorPath(s), path));
     if (!schema || !schema.functions) return [];
 
-    return schema.functions
-      .filter((f) => {
-        // Filter by SchemaObjectType (lowercase on the wire: scalar_function,
-        // table_function, aggregate_function). Unknown filter values pass
-        // everything through. Defensive String() coerces null/undefined.
-        const t = String(type ?? "").toUpperCase();
-        if (t === "SCALAR_FUNCTION") return f.kind === "scalar";
-        if (t === "TABLE_FUNCTION") return f.kind === "table" || f.kind === "table_in_out" || (f.kind as string) === "table_buffering";
-        if (t === "AGGREGATE_FUNCTION") return (f.kind as string) === "aggregate";
-        return true;
-      })
-      .map((f) => this._functionToInfo(f, path));
+    // Filter by SchemaObjectType (lowercase on the wire: scalar_function,
+    // table_function, aggregate_function). Unknown filter values pass
+    // everything through. Defensive String() coerces null/undefined.
+    const kind = functionListingKind(type);
+    const canonicalPath = schemaDescriptorPath(schema);
+    if (!sameSpelling(path, canonicalPath)) {
+      // Schema names match case-insensitively, and an item's schema_path keeps
+      // the caller's spelling, so a differently-spelled request is built fresh,
+      // exactly as before, rather than growing the cache per spelling.
+      return schema.functions.filter((f) => inListing(f, kind)).map((f) => this._functionToInfo(f, path));
+    }
+    let listings = this._functionListings.get(schema);
+    if (!listings) {
+      listings = new Map();
+      this._functionListings.set(schema, listings);
+    }
+    let listing = listings.get(kind);
+    if (!listing) {
+      listing = Object.freeze(
+        schema.functions.filter((f) => inListing(f, kind)).map((f) => this._sharedFunctionInfo(schema, f)),
+      );
+      listings.set(kind, listing);
+    }
+    // A fresh array of the shared (frozen) items: a caller may reorder or
+    // extend the array it gets without touching the cache.
+    return listing.slice();
+  }
+
+  /**
+   * The frozen FunctionInfo for `f` as declared in `schema`, built on first use.
+   * Shared between requests, so it must not (and, frozen, cannot) be mutated.
+   */
+  private _sharedFunctionInfo(schema: SchemaDescriptor, f: VgiFunction): FunctionInfo {
+    let infos = this._functionInfos.get(schema);
+    if (!infos) {
+      infos = new Map();
+      this._functionInfos.set(schema, infos);
+    }
+    let info = infos.get(f);
+    if (!info) {
+      // Cloned before freezing: the built item shares arrays with the function's
+      // own metadata (categories, monotonicity, ...), which must stay the
+      // author's to do with as they like.
+      info = freezeCatalogItem(structuredClone(this._functionToInfo(f, schemaDescriptorPath(schema))));
+      infos.set(f, info);
+    }
+    return info;
   }
 
   /**
@@ -602,22 +648,22 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
     const globals = this._descriptor.globalFunctions ?? [];
     if (globals.length === 0) return [];
 
-    const schemaOf = new Map<VgiFunction, string[]>();
+    const schemaOf = new Map<VgiFunction, SchemaDescriptor>();
     for (const sch of this._descriptor.schemas) {
       for (const fn of sch.functions ?? []) {
-        if (!schemaOf.has(fn)) schemaOf.set(fn, schemaDescriptorPath(sch));
+        if (!schemaOf.has(fn)) schemaOf.set(fn, sch);
       }
     }
 
     return globals.map((fn) => {
-      const schemaPath = schemaOf.get(fn);
-      if (schemaPath === undefined) {
+      const schema = schemaOf.get(fn);
+      if (schema === undefined) {
         throw new Error(
           `Catalog '${this._descriptor.name}': '${fn.meta.name}' is listed in ` +
             `globalFunctions but is not declared in any schema.`,
         );
       }
-      return this._functionToInfo(fn, schemaPath);
+      return this._sharedFunctionInfo(schema, fn);
     });
   }
 
@@ -1065,4 +1111,26 @@ function inlineScanFunction(
   const argSchema = argumentSpecsToSchema(func.argumentSpecs);
   const argBytes = serializeArgsBatch(args ?? new Arguments(), argSchema);
   return encodeScanFunctionResult(func.meta.name, argBytes, [], schemaPath);
+}
+
+/** Which functions a catalog_schema_contents_functions listing keeps. */
+type FunctionListingKind = "SCALAR_FUNCTION" | "TABLE_FUNCTION" | "AGGREGATE_FUNCTION" | "ALL";
+
+function functionListingKind(type: unknown): FunctionListingKind {
+  const t = String(type ?? "").toUpperCase();
+  return t === "SCALAR_FUNCTION" || t === "TABLE_FUNCTION" || t === "AGGREGATE_FUNCTION" ? t : "ALL";
+}
+
+function inListing(f: VgiFunction, kind: FunctionListingKind): boolean {
+  if (kind === "SCALAR_FUNCTION") return f.kind === "scalar";
+  if (kind === "TABLE_FUNCTION") return f.kind === "table" || f.kind === "table_in_out" || (f.kind as string) === "table_buffering";
+  if (kind === "AGGREGATE_FUNCTION") return (f.kind as string) === "aggregate";
+  return true;
+}
+
+/** Whether two schema paths are spelled identically (not just equal case-insensitively). */
+function sameSpelling(left: Iterable<unknown> | string, right: Iterable<unknown> | string): boolean {
+  const a = normalizeSchemaPath(left);
+  const b = normalizeSchemaPath(right);
+  return a.length === b.length && a.every((part, i) => part === b[i]);
 }

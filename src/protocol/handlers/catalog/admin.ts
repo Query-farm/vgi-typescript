@@ -4,7 +4,8 @@
 
 import { type VgiSchema, schema, type VgiField, field, type VgiDataType, binary, utf8, bool } from "../../../arrow/index.js";
 import { Protocol, type CallContext } from "@query-farm/vgi-rpc";
-import { encodeSchemaInfo, encodeTableInfo, encodeViewInfo, encodeFunctionInfo, encodeCatalogInfo } from "../../../generated/vgi-client.js";
+import { encodeSchemaInfo, encodeTableInfo, encodeViewInfo, encodeCatalogInfo } from "../../../generated/vgi-client.js";
+import { encodeFunctionInfoOnce } from "../../../catalog/item-encoding.js";
 import { encodeCopyFromFormatInfo } from "../../../catalog/interface.js";
 import {
   CatalogAttachParamsSchema,
@@ -360,8 +361,10 @@ export function registerCatalogAdminMethods(protocol: Protocol, getCatalog: GetC
         decodeDictValue(params.type),
         params.transaction_opaque_data ? toUint8Array(params.transaction_opaque_data) : undefined
       );
+      // A frozen item (a descriptor catalog's cached listing) is encoded once;
+      // anything else is encoded per call, as before (see item-encoding.ts).
       return wrapResult({
-        items: funcs.map((f) => encodeFunctionInfo(f)),
+        items: funcs.map((f) => encodeFunctionInfoOnce(f)),
       }, CatalogSchemaContentsFunctionsResultSchema);
     },
   });
