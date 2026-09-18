@@ -411,6 +411,32 @@ export class PushdownFilters {
     return applyFilterDelta(this, batch);
   }
 
+  /**
+   * These filters with their predicates arranged in `order`.
+   *
+   * Only the order changes, and `order` must name exactly the live predicate
+   * ids. Restores the order a stream had before its delta history was
+   * compacted: an id removed and later re-added moves to the end, which a
+   * shorter replay does not reproduce by itself.
+   */
+  withPredicateOrder(order: readonly string[]): PushdownFilters {
+    const predicates = this.predicates;
+    if (predicates.length === order.length && predicates.every((predicate, i) => predicate.id === order[i])) {
+      return this;
+    }
+    const byId = new Map(predicates.map((predicate) => [predicate.id, predicate]));
+    if (order.length !== byId.size || new Set(order).size !== order.length || !order.every((id) => byId.has(id))) {
+      throw new FilterV2Error("recorded predicate order does not match the replayed filter state");
+    }
+    return new PushdownFilters(
+      order.map((id) => byId.get(id)!),
+      this.evaluationContext,
+      this.options,
+      new Map(this.revisions),
+      new Set(this.requiredIds),
+    );
+  }
+
   evaluate(batch: VgiBatch): Uint8Array {
     const mask = new Uint8Array(batch.numRows);
     mask.fill(1);

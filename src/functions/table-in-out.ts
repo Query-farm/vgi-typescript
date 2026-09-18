@@ -33,6 +33,13 @@ import {
   FilteringOutputCollector,
   type PushdownFilters,
 } from "../filter-pushdown/index.js";
+import {
+  decodeDynamicFilterMetadata,
+  EMPTY_FILTER_HISTORY,
+  type FilterDeltaHistory,
+  recordFilterDelta,
+  replayFilterHistory,
+} from "../filter-pushdown/history.js";
 import { FunctionStability } from "../types.js";
 import { BoundStorage, storage as defaultStorage, FrameworkNS } from "./storage.js";
 import { serializeUserState, deserializeUserState } from "../protocol/state-serializer.js";
@@ -301,6 +308,7 @@ export function defineTableInOutFunction<
       request: InitRequest,
       response: GlobalInitResponse,
       accumulatedState?: any,
+      filterHistory?: FilterDeltaHistory | null,
     ): StreamHandlers {
       const args = extractArgs(request.bind_call);
       const settings = batchToScalarDict(request.bind_call.settings);
@@ -317,15 +325,21 @@ export function defineTableInOutFunction<
       // Deserialize pushdown filters. Pass a join-keys column lookup so that
       // filters DuckDB promoted to join_keys (IN/OR lists, etc.) are
       // materialized as InFilters rather than silently dropped.
-      const pushdownFilters = request.pushdown_filters
-        ? deserializeFilters(request.pushdown_filters, {
-          outputSchema: request.output_schema,
-          joinKeyBatches: request.join_keys,
-          extensionFunctions: meta.additionalFilterFunctions,
-          runtimeAlgorithms: meta.runtimeFilterAlgorithms,
-          evaluationContexts: meta.filterEvaluationContexts,
-        })
-        : undefined;
+      // An HTTP continuation replays the dynamic-filter deltas its cursor
+      // carries, so the filters are the ones the previous exchange left.
+      const carriedFilterHistory = filterHistory ?? EMPTY_FILTER_HISTORY;
+      const pushdownFilters = replayFilterHistory(
+        request.pushdown_filters
+          ? deserializeFilters(request.pushdown_filters, {
+            outputSchema: request.output_schema,
+            joinKeyBatches: request.join_keys,
+            extensionFunctions: meta.additionalFilterFunctions,
+            runtimeAlgorithms: meta.runtimeFilterAlgorithms,
+            evaluationContexts: meta.filterEvaluationContexts,
+          })
+          : undefined,
+        carriedFilterHistory,
+      );
 
       // Create BoundStorage for cross-phase/cross-worker data sharing. Keyed
       // per substream, not per process: every connection of a fanned-out
@@ -474,11 +488,12 @@ export function defineTableInOutFunction<
       return {
         outputSchema,
         inputSchema: request.bind_call.input_schema,
-        exchangeInit: () => ({ state, processParams }),
+        exchangeInit: () => ({ state, processParams, filterHistory: carriedFilterHistory }),
         exchangeFn: async (
           eState: {
             state: TState;
             processParams: TableInOutProcessParams<TArgs>;
+            filterHistory: FilterDeltaHistory;
           },
           input: VgiBatch,
           out: OutputCollector
@@ -487,7 +502,7 @@ export function defineTableInOutFunction<
           // custom metadata (attached by the C++ WriteInputBatch), so process()
           // can answer a 0-row `notModified` batch instead of recomputing.
           applyRevalidationValidators(eState.processParams, input);
-          applyDynamicFilterUpdate(eState.processParams, input);
+          applyDynamicFilterUpdate(eState, input);
           // Bake emit metadata onto the batch (0-row HTTP survival), then
           // reconcile emitted batches to the (possibly projected) output schema
           // by name — a process() may emit its full declared schema and let the
@@ -536,27 +551,23 @@ function applyRevalidationValidators(
   params.ifModifiedSince = md?.get(CACHE_IF_MODIFIED_SINCE_KEY);
 }
 
+/**
+ * Apply the dynamic-filter delta an input batch carries (if any) and record it
+ * in the compacted history an HTTP cursor carries to the next exchange, so a
+ * tightened filter survives the turn boundary (the extension sends each delta
+ * once per stream). See `filter-pushdown/history.ts`.
+ */
 function applyDynamicFilterUpdate(
-  params: { pushdownFilters?: PushdownFilters },
+  eState: { processParams: { pushdownFilters?: PushdownFilters }; filterHistory: FilterDeltaHistory },
   input: VgiBatch,
 ): void {
   const encoded = ((input as any)?.metadata as Map<string, string> | undefined)?.get("vgi_pushdown_filters");
   if (!encoded) return;
-  if (!params.pushdownFilters) throw new Error("dynamic filter delta received without an initial snapshot");
-  if (new TextEncoder().encode(encoded).byteLength > (24 << 20)) {
-    throw new Error("base64 dynamic filter metadata exceeds the encoded-size limit");
-  }
-  if (encoded.length % 4 !== 0 ||
-      !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(encoded)) {
-    throw new Error("dynamic filter metadata is not valid base64");
-  }
-  const binary = (globalThis as any).atob
-    ? (globalThis as any).atob(encoded)
-    : Buffer.from(encoded, "base64").toString("binary");
-  const bytes = Uint8Array.from(binary, (character: string) => character.charCodeAt(0));
-  if (bytes.byteLength > (17 << 20)) throw new Error("dynamic filter IPC payload exceeds the encoded-size limit");
-  const current = params.pushdownFilters;
-  params.pushdownFilters = current.applyDelta(deserializeBatch(bytes));
+  const current = eState.processParams.pushdownFilters;
+  if (!current) throw new Error("dynamic filter delta received without an initial snapshot");
+  const recorded = recordFilterDelta(current, eState.filterHistory, decodeDynamicFilterMetadata(encoded));
+  eState.processParams.pushdownFilters = recorded.filters;
+  eState.filterHistory = recorded.history;
 }
 
 /**
@@ -940,6 +951,7 @@ export function defineRowTransformFunction<
       request: InitRequest,
       response: GlobalInitResponse,
       _accumulatedState?: any,
+      filterHistory?: FilterDeltaHistory | null,
     ): StreamHandlers {
       const args = extractArgs(request.bind_call);
       const settings = batchToScalarDict(request.bind_call.settings);
@@ -952,15 +964,21 @@ export function defineRowTransformFunction<
         ? projectSchema(projIds, request.output_schema)
         : request.output_schema;
 
-      const pushdownFilters = request.pushdown_filters
-        ? deserializeFilters(request.pushdown_filters, {
-          outputSchema: request.output_schema,
-          joinKeyBatches: request.join_keys,
-          extensionFunctions: meta.additionalFilterFunctions,
-          runtimeAlgorithms: meta.runtimeFilterAlgorithms,
-          evaluationContexts: meta.filterEvaluationContexts,
-        })
-        : undefined;
+      // An HTTP continuation replays the dynamic-filter deltas its cursor
+      // carries, so the filters are the ones the previous exchange left.
+      const carriedFilterHistory = filterHistory ?? EMPTY_FILTER_HISTORY;
+      const pushdownFilters = replayFilterHistory(
+        request.pushdown_filters
+          ? deserializeFilters(request.pushdown_filters, {
+            outputSchema: request.output_schema,
+            joinKeyBatches: request.join_keys,
+            extensionFunctions: meta.additionalFilterFunctions,
+            runtimeAlgorithms: meta.runtimeFilterAlgorithms,
+            evaluationContexts: meta.filterEvaluationContexts,
+          })
+          : undefined,
+        carriedFilterHistory,
+      );
 
       const boundStorage = new BoundStorage(
         defaultStorage,
@@ -1007,14 +1025,18 @@ export function defineRowTransformFunction<
       return {
         outputSchema,
         inputSchema: request.bind_call.input_schema,
-        exchangeInit: () => ({ state: null, processParams }),
+        exchangeInit: () => ({ state: null, processParams, filterHistory: carriedFilterHistory }),
         exchangeFn: async (
-          eState: { state: null; processParams: RowTransformProcessParams<TArgs> },
+          eState: {
+            state: null;
+            processParams: RowTransformProcessParams<TArgs>;
+            filterHistory: FilterDeltaHistory;
+          },
           input: VgiBatch,
           out: OutputCollector,
         ) => {
           applyRevalidationValidators(eState.processParams, input);
-          applyDynamicFilterUpdate(eState.processParams, input);
+          applyDynamicFilterUpdate(eState, input);
           let wrappedOut: OutputCollector = makeMetadataBakingCollector(out);
           if (projIds) {
             wrappedOut = makeSchemaReconcilingCollector(wrappedOut, outputSchema);

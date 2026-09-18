@@ -26,6 +26,12 @@ import type { ArgumentSpec } from "../arguments/argument-spec.js";
 export interface HandlerState<T = any> {
   /** Serializable user state for HTTP exchange round-trips. */
   state: T;
+  /**
+   * The compacted dynamic-filter history, for a stream that applies
+   * `vgi_pushdown_filters` deltas. Carried in the HTTP cursor so the next turn
+   * rebuilds the filters this one left.
+   */
+  filterHistory?: import("../filter-pushdown/history.js").FilterDeltaHistory;
   [key: string]: any;
 }
 
@@ -229,10 +235,18 @@ export interface VgiFunction {
   defaultOutputSchema?: VgiSchema;
   bind(request: BindRequest): BindResponse | Promise<BindResponse>;
   globalInit(request: InitRequest): GlobalInitResponse | Promise<GlobalInitResponse>;
+  /**
+   * Build the stream's handlers. On an HTTP continuation `filterHistory` is
+   * the compacted dynamic-filter history the cursor carried: a function that
+   * applies `vgi_pushdown_filters` deltas replays it onto the init snapshot and
+   * keeps the (updated) history on its handler state as `filterHistory`, which
+   * the dispatcher writes back into the next cursor.
+   */
   createStreamHandlers(
     request: InitRequest,
     response: GlobalInitResponse,
     accumulatedState?: any,
+    filterHistory?: import("../filter-pushdown/history.js").FilterDeltaHistory | null,
   ): StreamHandlers;
   cardinality?(request: TableFunctionCardinalityRequest): TableCardinality | Promise<TableCardinality>;
   /**

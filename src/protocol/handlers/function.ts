@@ -421,7 +421,10 @@ export function registerFunctionMethods(protocol: Protocol, config: FunctionHand
         // Recover accumulated state for FINALIZE phase from initOpaqueData
         const recoveredState = recoverFinalizeState(request, config.recoverExchangeState);
 
-        handlers = func.createStreamHandlers(request, initResponse, recoveredState);
+        // The cursor's compacted dynamic-filter history: without it every turn
+        // after the one that received a delta would scan under the init
+        // snapshot again, because the extension sends each delta only once.
+        handlers = func.createStreamHandlers(request, initResponse, recoveredState, state.filterHistory ?? null);
         if (handlers.producerInit) {
           handlerState = handlers.producerInit();
         } else if (handlers.exchangeInit) {
@@ -453,6 +456,9 @@ export function registerFunctionMethods(protocol: Protocol, config: FunctionHand
       if (handlerState?.state !== undefined) {
         state.userState = handlerState!.state;
       }
+      // And the dynamic-filter history this turn left (compacted: bounded by
+      // the number of predicate ids, not the number of turns).
+      state.filterHistory = handlerState?.filterHistory ?? null;
     },
     headerSchema: initHeaderSchema,
     headerInit: (params: any, state: any, ctx: any) => {

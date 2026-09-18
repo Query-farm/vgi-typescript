@@ -9,7 +9,6 @@ import {
   isBatch,
   isNull,
   nullType,
-  deserializeBatch,
   readCanonicalValue,
 } from "../arrow/index.js";
 import { codecFor } from "../arrow/codec/registry.js";
@@ -47,6 +46,13 @@ import {
   FilteringOutputCollector,
   type PushdownFilters,
 } from "../filter-pushdown/index.js";
+import {
+  decodeDynamicFilterMetadata,
+  EMPTY_FILTER_HISTORY,
+  type FilterDeltaHistory,
+  recordFilterDelta,
+  replayFilterHistory,
+} from "../filter-pushdown/history.js";
 import type { ColumnStatistics } from "../util/statistics.js";
 import {
   FunctionStability,
@@ -57,30 +63,6 @@ import {
 } from "../types.js";
 import { BoundStorage, storage as globalStorage } from "./storage.js";
 import { CACHE_IF_MODIFIED_SINCE_KEY, CACHE_IF_NONE_MATCH_KEY } from "../cache-control.js";
-
-// Base64-decode a string into raw bytes. Used to unpack the dynamic filter
-// update DuckDB attaches to each tick batch's custom metadata.
-function base64Decode(s: string): Uint8Array {
-  if (new TextEncoder().encode(s).byteLength > (24 << 20)) {
-    throw new Error("base64 dynamic filter metadata exceeds the encoded-size limit");
-  }
-  if (s.length % 4 !== 0 || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(s)) {
-    throw new Error("dynamic filter metadata is not valid base64");
-  }
-  const bin = (globalThis as any).atob ? (globalThis as any).atob(s) : Buffer.from(s, "base64").toString("binary");
-  const out = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
-  if (out.byteLength > (17 << 20)) throw new Error("dynamic filter IPC payload exceeds the encoded-size limit");
-  return out;
-}
-
-// Read the first RecordBatch from an Arrow IPC stream buffer. Returns null if
-// the stream has no batches.
-function deserializeFilterBatch(bytes: Uint8Array): VgiBatch | null {
-  if (!bytes || bytes.length === 0) return null;
-  const batch = deserializeBatch(bytes);
-  return batch.numRows === 0 && batch.schema.fields.length === 0 ? null : batch;
-}
 
 // Wrap an OutputCollector so each emitted RecordBatch is projected-by-name
 // to the bound outputSchema before forwarding. Lenient: workers can emit
@@ -189,6 +171,17 @@ export interface TableProcessParams<TArgs = Record<string, any>> {
   /** Conditional-revalidation validator (the client's stored Last-Modified).
    *  Companion to {@link ifNoneMatch}. Undefined on a normal call. */
   ifModifiedSince?: string;
+}
+
+/**
+ * A table stream's live handler state: the user's state, the params its
+ * process() sees, and the compacted dynamic-filter history an HTTP cursor
+ * carries to the next turn (see `filter-pushdown/history.ts`).
+ */
+interface TableHandlerState<TArgs, TState> {
+  state: TState;
+  processParams: TableProcessParams<TArgs>;
+  filterHistory: FilterDeltaHistory;
 }
 
 // ============================================================================
@@ -529,7 +522,9 @@ export function defineTableFunction<
 
     createStreamHandlers(
       request: InitRequest,
-      response: GlobalInitResponse
+      response: GlobalInitResponse,
+      _accumulatedState?: unknown,
+      filterHistory?: FilterDeltaHistory | null,
     ): StreamHandlers {
       const args = extractArgs(request.bind_call);
       const settings = batchToScalarDict(request.bind_call.settings);
@@ -553,9 +548,14 @@ export function defineTableFunction<
         runtimeAlgorithms: meta.runtimeFilterAlgorithms,
         evaluationContexts: meta.filterEvaluationContexts,
       };
-      const pushdownFilters = request.pushdown_filters
-        ? deserializeFilters(request.pushdown_filters, filterOptions)
-        : undefined;
+      // An HTTP continuation replays the dynamic-filter deltas its cursor
+      // carries, so process() sees the filters the previous turn left, not the
+      // init snapshot (the extension sends each delta once per stream).
+      const carriedFilterHistory = filterHistory ?? EMPTY_FILTER_HISTORY;
+      const pushdownFilters = replayFilterHistory(
+        request.pushdown_filters ? deserializeFilters(request.pushdown_filters, filterOptions) : undefined,
+        carriedFilterHistory,
+      );
 
       const boundStorage = new BoundStorage(globalStorage, response.execution_id);
 
@@ -593,9 +593,13 @@ export function defineTableFunction<
 
       return {
         outputSchema,
-        producerInit: () => ({ state, processParams }),
+        producerInit: (): TableHandlerState<TArgs, TState> => ({
+          state,
+          processParams,
+          filterHistory: carriedFilterHistory,
+        }),
         onTick: (
-          pState: { state: TState; processParams: TableProcessParams<TArgs> },
+          pState: TableHandlerState<TArgs, TState>,
           tickMetadata: Map<string, string> | undefined,
         ) => {
           if (!tickMetadata) return;
@@ -613,21 +617,21 @@ export function defineTableFunction<
           // Dynamic filter pushdown: DuckDB's Top-N optimizer tightens filters
           // between ticks and serializes an atomic v2 delta into the tick
           // batch's custom metadata under `vgi_pushdown_filters` (base64 of a
-          // filter IPC stream). Apply it to the prior snapshot so process()
-          // sees the revised advisory predicate state.
+          // filter IPC stream). Apply it to the prior state so process() sees
+          // the revised advisory predicate state, and record it in the
+          // compacted history an HTTP cursor carries to the next turn.
           const encoded = tickMetadata.get("vgi_pushdown_filters");
           if (!encoded) return;
           const current = pState.processParams.pushdownFilters;
           if (!current) throw new Error("dynamic filter delta received without an initial snapshot");
-          const bytes = base64Decode(encoded);
-          const filterBatch = deserializeFilterBatch(bytes);
-          if (!filterBatch) throw new Error("dynamic filter metadata must contain one RecordBatch");
           // Assignment happens only after complete validation, so a rejected
           // delta leaves the immutable prior state intact.
-          pState.processParams.pushdownFilters = current.applyDelta(filterBatch);
+          const recorded = recordFilterDelta(current, pState.filterHistory, decodeDynamicFilterMetadata(encoded));
+          pState.processParams.pushdownFilters = recorded.filters;
+          pState.filterHistory = recorded.history;
         },
         producerFn: async (
-          pState: { state: TState; processParams: TableProcessParams<TArgs> },
+          pState: TableHandlerState<TArgs, TState>,
           out: OutputCollector
         ) => {
           const current = pState.processParams.pushdownFilters;

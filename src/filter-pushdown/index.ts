@@ -36,6 +36,14 @@ export { PushdownFilters } from "./evaluate.js";
 export { FilterV2Error, applyFilterDelta, buildJoinKeysLookup, deserializeFilters } from "./deserialize.js";
 
 export {
+  EMPTY_FILTER_HISTORY,
+  type FilterDeltaHistory,
+  decodeDynamicFilterMetadata,
+  recordFilterDelta,
+  replayFilterHistory,
+} from "./history.js";
+
+export {
   FilteringOutputCollector,
   formatPushedFilters,
   reprPushedFilters,

@@ -27,6 +27,7 @@ import {
 import { codecFor } from "../arrow/codec/registry.js";
 import type { StateSerializer } from "@query-farm/vgi-rpc";
 import { toUint8Array } from "../util/bytes.js";
+import { decodeFilterHistory, encodeFilterHistory } from "../filter-pushdown/history.js";
 
 /** Schema for the exchange state carried in HTTP state tokens. */
 export const EXCHANGE_STATE_SCHEMA = makeSchema([
@@ -37,6 +38,10 @@ export const EXCHANGE_STATE_SCHEMA = makeSchema([
   field("opaque_data", binary(), true),
   field("is_producer", bool(), false),
   field("user_state", binary(), true),
+  // The stream's compacted dynamic-filter history (filter-pushdown/history.ts),
+  // null when no delta has been applied. Bounded by the number of predicate
+  // ids, so the token stays flat-sized however many turns the scan takes.
+  field("filter_history", binary(), true),
 ]);
 
 const TEXT_ENCODER = new TextEncoder();
@@ -198,6 +203,7 @@ export const arrowStateSerializer: StateSerializer = {
       opaque_data: [state.opaqueData ?? null],
       is_producer: [state.isProducer],
       user_state: [serializeUserState(state.userState)],
+      filter_history: [encodeFilterHistory(state.filterHistory)],
     };
     const batch = batchFromColumns(columns, EXCHANGE_STATE_SCHEMA);
     return serializeBatch(batch);
@@ -217,6 +223,7 @@ export const arrowStateSerializer: StateSerializer = {
     const isProducer = get("is_producer");
     const opaqueDataRaw = get("opaque_data");
     const fnNameRaw = get("function_name");
+    const filterHistoryRaw = get("filter_history");
 
     return {
       functionName: fnNameRaw != null ? TEXT_DECODER.decode(toUint8Array(fnNameRaw)) : "",
@@ -230,6 +237,7 @@ export const arrowStateSerializer: StateSerializer = {
       userState: deserializeUserState(
         get("user_state") != null ? toUint8Array(get("user_state")) : null,
       ),
+      filterHistory: decodeFilterHistory(filterHistoryRaw != null ? toUint8Array(filterHistoryRaw) : null),
     };
   },
 };
