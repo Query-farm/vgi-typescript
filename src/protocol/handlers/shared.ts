@@ -5,8 +5,6 @@ import { type VgiSchema, schema, type VgiField, field, type VgiDataType, binary 
 import type { OverloadContext } from "../../functions/registry.js";
 import { batchToScalarDict, deserializeBatch, serializeBatch, batchFromColumns } from "../../util/arrow/index.js";
 import { toUint8Array } from "../../util/bytes.js";
-import { TableInOutPhase } from "../../types.js";
-import type { InitRequest } from "../types.js";
 import { normalizeSchemaPath } from "../../schema-path.js";
 
 // The Python vgi-rpc framework wraps ALL non-void unary results in a single
@@ -90,24 +88,4 @@ export function overloadContext(
     schemaPath: req.schema_path ?? null,
     catalogName,
   };
-}
-
-/**
- * Recover accumulated exchange state from a FINALIZE init request.
- * For HTTP transport, this unpacks the state token that the C++ extension
- * passes from the last INPUT exchange to the FINALIZE init request.
- */
-export function recoverFinalizeState(
-  request: InitRequest,
-  recoverExchangeState: ((opaqueData: Uint8Array) => any) | undefined,
-): any {
-  if (request.phase === TableInOutPhase.FINALIZE && request.init_opaque_data && recoverExchangeState) {
-    try {
-      const recovered = recoverExchangeState(request.init_opaque_data);
-      return recovered?.userState;
-    } catch (e: any) {
-      throw new Error(`Failed to recover FINALIZE state from init_opaque_data: ${e.message}`);
-    }
-  }
-  return undefined;
 }

@@ -21,13 +21,6 @@ export interface ProtocolConfig {
   catalogInterface?: CatalogInterface;
   catalogName?: string;
   /**
-   * Recover accumulated exchange state from FINALIZE init_opaque_data.
-   * For HTTP transport, this unpacks the state token that the C++ extension
-   * passes from the last INPUT exchange to the FINALIZE init request.
-   * Returns the deserialized VGI dispatch state object (with userState field).
-   */
-  recoverExchangeState?: (opaqueData: Uint8Array) => any;
-  /**
    * AEAD signing key for sealing catalog opaque-data envelopes. Pass the same
    * 32-byte key used for HTTP state tokens. When omitted (subprocess / unix
    * transports) attach_opaque_data / transaction_opaque_data pass through
@@ -68,7 +61,6 @@ export function buildVgiProtocol(config: ProtocolConfig): Protocol {
 
   registerFunctionMethods(protocol, {
     registry: config.registry,
-    recoverExchangeState: config.recoverExchangeState,
     signingKey: config.signingKey,
     catalogInterface: config.catalogInterface,
   });

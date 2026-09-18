@@ -3,10 +3,10 @@
 // `vgi-example-versioned-worker --http --port 0` from vgi-python.
 // Prints PORT:<n> to stdout for test discovery.
 
-import { createHttpHandler, unpackStateToken } from "@query-farm/vgi-rpc";
+import { createHttpHandler } from "@query-farm/vgi-rpc";
 import { arrowStateSerializer } from "../src/protocol/state-serializer.js";
 import { FunctionRegistry } from "../src/functions/registry.js";
-import { buildVgiProtocol, VGI_PROTOCOL_NAME } from "../src/protocol/dispatch.js";
+import { buildVgiProtocol } from "../src/protocol/dispatch.js";
 import {
   CatalogInterface,
   type AttachOpaqueData,
@@ -86,18 +86,6 @@ const protocol = buildVgiProtocol({
   registry,
   catalogInterface: new VersionedCatalog(),
   catalogName: CATALOG_NAME,
-  recoverExchangeState: (opaqueData: Uint8Array) => {
-    const tokenString = new TextDecoder().decode(opaqueData);
-    // The token scope's `protocol` is required since vgi-rpc 0.24.0 -- it is
-    // bound into the token's AEAD associated data, so a cursor minted under
-    // one hosted protocol cannot be opened under another. These workers serve
-    // anonymously, so the identity half of the scope stays empty.
-    const unpacked = unpackStateToken(tokenString, signingKey, tokenTtl, {
-      protocol: VGI_PROTOCOL_NAME,
-      principal: undefined,
-    });
-    return arrowStateSerializer.deserialize(unpacked.stateBytes);
-  },
 });
 
 const handler = createHttpHandler(protocol, {

@@ -37,7 +37,6 @@ import {
   unwrapRequest,
   wrapResult,
   overloadContext,
-  recoverFinalizeState,
 } from "./shared.js";
 import { GLOBAL_INIT_RESPONSE_SCHEMA } from "../serializers/init.js";
 import { parseCarriedInitRequest } from "../carried-init-request.js";
@@ -62,7 +61,6 @@ import {
 
 export interface FunctionHandlerConfig {
   registry: FunctionRegistry;
-  recoverExchangeState?: (opaqueData: Uint8Array) => any;
   signingKey?: Uint8Array;
   /**
    * Used to map a bind's `attach_opaque_data` to its catalog, so resolution can
@@ -315,11 +313,11 @@ export function registerFunctionMethods(protocol: Protocol, config: FunctionHand
       // FunctionStorage (e.g. Cloudflare DO).
       const initResponse = await func.globalInit(request);
 
-      // For FINALIZE over HTTP, recover accumulated INPUT state from init_opaque_data.
-      // The C++ extension passes the last exchange state token as init_opaque_data.
-      const accumulatedState = recoverFinalizeState(request, config.recoverExchangeState);
-
-      const handlers = func.createStreamHandlers(request, initResponse, accumulatedState);
+      // A FINALIZE stream reads its accumulated states from storage, where
+      // every INPUT turn persisted them. Its `init_opaque_data` is the primary
+      // init's opaque data echoed back (vgi-python's InitRequest), never a
+      // cursor, so nothing here opens it.
+      const handlers = func.createStreamHandlers(request, initResponse);
 
       // Initialize the appropriate handler
       let handlerState: HandlerState | undefined;
@@ -420,13 +418,10 @@ export function registerFunctionMethods(protocol: Protocol, config: FunctionHand
           opaque_data: opaqueData,
         };
 
-        // Recover accumulated state for FINALIZE phase from initOpaqueData
-        const recoveredState = recoverFinalizeState(request, config.recoverExchangeState);
-
         // The cursor's compacted dynamic-filter history: without it every turn
         // after the one that received a delta would scan under the init
         // snapshot again, because the extension sends each delta only once.
-        handlers = func.createStreamHandlers(request, initResponse, recoveredState, state.filterHistory ?? null);
+        handlers = func.createStreamHandlers(request, initResponse, state.filterHistory ?? null);
         if (handlers.producerInit) {
           handlerState = handlers.producerInit();
         } else if (handlers.exchangeInit) {

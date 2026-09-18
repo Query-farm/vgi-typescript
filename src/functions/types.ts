@@ -245,7 +245,6 @@ export interface VgiFunction {
   createStreamHandlers(
     request: InitRequest,
     response: GlobalInitResponse,
-    accumulatedState?: any,
     filterHistory?: import("../filter-pushdown/history.js").FilterDeltaHistory | null,
   ): StreamHandlers;
   cardinality?(request: TableFunctionCardinalityRequest): TableCardinality | Promise<TableCardinality>;

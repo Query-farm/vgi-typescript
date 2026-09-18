@@ -347,7 +347,6 @@ export function defineTableBufferingFunction<
     createStreamHandlers(
       request: InitRequest,
       response: GlobalInitResponse,
-      _accumulatedState?: any,
     ): StreamHandlers {
       const args = extractArgs(request.bind_call);
       const settings = batchToScalarDict(request.bind_call.settings);

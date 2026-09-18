@@ -307,7 +307,6 @@ export function defineTableInOutFunction<
     createStreamHandlers(
       request: InitRequest,
       response: GlobalInitResponse,
-      accumulatedState?: any,
       filterHistory?: FilterDeltaHistory | null,
     ): StreamHandlers {
       const args = extractArgs(request.bind_call);
@@ -403,12 +402,10 @@ export function defineTableInOutFunction<
           ) => {
             if (!pState.state.materialized) {
               const finalizeStates: TState[] = [];
-              if (accumulatedState != null) {
-                finalizeStates.push(accumulatedState as TState);
-              }
-              // Collect any states persisted by INPUT exchanges. Subprocess
-              // path reads from SQLite; HTTP path reads from CF DO / wherever
-              // the configured storage backend lives.
+              // Collect the states INPUT exchanges persisted -- the only
+              // source, on every transport: each INPUT turn upserts its
+              // substream's state here (SQLite, a CF DO, wherever the
+              // configured backend lives).
               const stored = await boundStorage.collect();
               for (const bytes of stored) {
                 finalizeStates.push(deserializeUserState(bytes) as TState);
@@ -950,7 +947,6 @@ export function defineRowTransformFunction<
     createStreamHandlers(
       request: InitRequest,
       response: GlobalInitResponse,
-      _accumulatedState?: any,
       filterHistory?: FilterDeltaHistory | null,
     ): StreamHandlers {
       const args = extractArgs(request.bind_call);

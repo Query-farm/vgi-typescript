@@ -13,7 +13,6 @@
 import {
   AuthContext,
   createHttpHandler,
-  unpackStateToken,
   type AuthenticateFn,
   type DispatchHook,
   type DispatchInfo,
@@ -24,13 +23,13 @@ import {
   type Protocol,
 } from "@query-farm/vgi-rpc";
 import { arrowStateSerializer } from "../protocol/state-serializer.js";
-import { buildVgiProtocol, VGI_PROTOCOL_NAME, type ProtocolConfig } from "../protocol/dispatch.js";
+import { buildVgiProtocol, type ProtocolConfig } from "../protocol/dispatch.js";
 import { createLandingRoutes, type LandingInfo } from "./landing.js";
 import { setRequestAuthScope, type RequestAuthHolder } from "../request-auth.js";
 
 export interface VgiFetchOptions {
   /** Wire-protocol config (registry + catalogInterface). */
-  protocol: Omit<ProtocolConfig, "recoverExchangeState">;
+  protocol: ProtocolConfig;
   /** HMAC key for state-token signing. Pass a stable, secret 32-byte key
    *  (e.g. derived from a Wrangler secret). Required because Workers don't
    *  preserve in-memory state across requests/instances. */
@@ -196,20 +195,6 @@ export function createVgiFetch(opts: VgiFetchOptions): (req: Request) => Promise
   const protocol: Protocol = buildVgiProtocol({
     signingKey: opts.signingKey,
     ...opts.protocol,
-    recoverExchangeState: async (opaqueData: Uint8Array) => {
-      const tokenString = new TextDecoder().decode(opaqueData);
-      // principal binding is enforced by the HTTP handler on the request that
-      // carried this token; the recovery path itself is not principal-scoped,
-      // so the scope names the protocol and leaves the identity anonymous.
-      // `protocol` is required since vgi-rpc 0.24.0: it is bound into the
-      // token's AEAD associated data, so a cursor minted under one hosted
-      // protocol cannot be opened under another.
-      const unpacked = await unpackStateToken(tokenString, opts.signingKey, tokenTtl, {
-        protocol: VGI_PROTOCOL_NAME,
-        principal: undefined,
-      });
-      return arrowStateSerializer.deserialize(unpacked.stateBytes);
-    },
   });
 
   const handler = createHttpHandler(protocol, {

@@ -523,7 +523,6 @@ export function defineTableFunction<
     createStreamHandlers(
       request: InitRequest,
       response: GlobalInitResponse,
-      _accumulatedState?: unknown,
       filterHistory?: FilterDeltaHistory | null,
     ): StreamHandlers {
       const args = extractArgs(request.bind_call);
