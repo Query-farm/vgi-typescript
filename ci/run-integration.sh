@@ -104,7 +104,6 @@ command -v bun >/dev/null 2>&1 || { echo "::error::bun not on PATH (the workers 
 #   writable/ — the opt-in generic writable catalog (VGI_WORKER_ENABLE_WRITABLE);
 #     the TypeScript port has no fixture worker for it.
 #   schema_reconcile.test — writable-style fixture, likewise not ported.
-#   table/constant_columns_types.test — arrow-js has no TIMESTAMP_NS.
 #   table_in_out/echo/nested_type_combinations.test — segfaults the prebuilt
 #     standalone runner (a property of that C++ build, not the worker, which
 #     passes it against a locally-built unittest). Same drop as vgi-go/-python.
@@ -115,10 +114,16 @@ command -v bun >/dev/null 2>&1 || { echo "::error::bun not on PATH (the workers 
 # been fixed centrally — the test now anchors on the field separator,
 # LIKE '%set_kind=table,%'. Verified against this SDK's worker on subprocess,
 # launch: and http: 23 assertions pass on each.
+#
+# table/constant_columns_types.test is NO LONGER excluded (removed 2026-09-19).
+# Its reason, "arrow-js has no TIMESTAMP_NS", was never true: TIMESTAMP_NS
+# passes on every lane. What the skip hid was wrong data -- DATE came back as
+# 480510-12-09 (arrow-js) / 1970-01-01 (flechette), UUID as BLOB, and HUGEINT
+# as raw bytes on flechette. Fixed; all 167 assertions pass on http (arrow-js),
+# http (flechette) and launch:.
 EXCLUDED=(
   'writable/*'
   'schema_reconcile.test'
-  'table/constant_columns_types.test'
   'table_in_out/echo/nested_type_combinations.test'
 )
 AWK_HTTP=0

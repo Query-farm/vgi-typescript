@@ -113,18 +113,16 @@ Excluded on **every** lane — these are staged out, so they cannot run:
 |---|---|
 | `writable/*` | the opt-in *generic* writable catalog (`VGI_WORKER_ENABLE_WRITABLE`); no TypeScript fixture worker |
 | `schema_reconcile.test` | writable-style fixture, likewise not ported |
-| `table/constant_columns_types.test` | arrow-js has no `TIMESTAMP_NS` |
-| `catalog/zero_count_bypass.test` | broken upstream — its `LIKE` pattern matches `set_kind=table` and `set_kind=table_function` ambiguously; fails against the Python worker too |
 | `table_in_out/echo/nested_type_combinations.test` | segfaults the prebuilt standalone runner (a property of that C++ build, not the worker) |
 
-Dropped on the **http** lane only:
-
-| test | why |
-|---|---|
-| `table/filter_echo_partitioned.test` | asserts `COUNT(DISTINCT worker_pid) > 1`; an HTTP worker is one OS process |
-| `table/partitioned_sequence.test` | same root cause, via distinct `conn=` ids under `threads=4` |
-| `table/batch_index.test`, `table/order_preservation_modes.test` | both read VGI `batch_received` log rows, which don't stream over HTTP |
-| `table/dynamic_filter.test` | Top-N + dynamic-filter continuation terminates early over http, so the tightened pushdown never reaches the worker. Same drop as vgi-go/vgi-python; verified still failing against a from-source vgi build, so it is not prebuilt-extension skew |
+No test is dropped on the **http** lane only. `run-integration.sh` is the source
+of truth: each exclusion sits next to its reason there, including the ones that
+have been removed and why. Several were removed because the reason given for
+them turned out to be false once someone ran the test. `catalog/zero_count_bypass.test`
+and the five http-only drops went on 2026-08-21, and
+`table/constant_columns_types.test` went on 2026-09-19. Its reason ("arrow-js
+has no `TIMESTAMP_NS`") was never true, and the exclusion was hiding a DATE that
+came back as 480510-12-09.
 
 ## Expected skips
 

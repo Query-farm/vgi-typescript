@@ -66,7 +66,12 @@ TEST_LOG := /tmp/vgi-typescript-test.log
 # Excluded patterns (use ~ prefix for unittest's filter exclusion syntax):
 #   writable/                          — writable fixture worker not ported
 #   schema_reconcile                   — writable-style fixture, also skipped
-#   constant_columns_types             — arrow-js doesn't support TIMESTAMP_NS
+#
+# constant_columns_types is NO LONGER excluded (removed 2026-09-19). "arrow-js
+# doesn't support TIMESTAMP_NS" was never true -- TIMESTAMP_NS passes -- and the
+# exclusion hid wrong data: DATE came back as 480510-12-09, UUID as BLOB, and
+# HUGEINT as raw bytes on flechette. Fixed; it passes on launch: and http, on
+# both Arrow backends.
 #
 # zero_count_bypass is NO LONGER excluded (removed 2026-08-21). The old reason
 # ("broken upstream; its LIKE pattern matches set_kind=table AND
@@ -89,8 +94,7 @@ TEST_LOG := /tmp/vgi-typescript-test.log
 # one here, measure the claim.
 TEST_PATTERNS := "test/sql/*" \
 	"~test/sql/integration/writable/*" \
-	"~test/sql/integration/schema_reconcile.test" \
-	"~test/sql/integration/table/constant_columns_types.test"
+	"~test/sql/integration/schema_reconcile.test"
 
 # Launcher transport excludes vgi_worker_pool.test, which asserts subprocess-pool
 # semantics: `launch:` workers are pooled by the AF_UNIX socket, not by DuckDB's
@@ -129,7 +133,6 @@ LAUNCHER_IDLE_TIMEOUT ?= 120
 HTTP_TEST_PATTERNS := "test/sql/integration/*" \
 	"~test/sql/integration/writable/*" \
 	"~test/sql/integration/schema_reconcile.test" \
-	"~test/sql/integration/table/constant_columns_types.test" \
 	$(EXTRA_HTTP_EXCLUDES)
 
 # Parallelism for the per-test runner. Default 8 locally; CI sets JOBS=1 to
