@@ -118,12 +118,29 @@ export function prepareForFlechette(type: VgiDataType, values: unknown[]): unkno
     });
   }
   if (tid === 17) {
+    // The keys and values need the same preparation as a column of their
+    // type: a date32 key/value is a canonical day-number, which flechette's
+    // builder reads as epoch-ms, so MAP {DATE: DATE} came back as
+    // {1970-01-01=1970-01-01} unless it is turned into a JS Date first.
+    const entries = (type as any).children?.[0]?.type?.children;
+    const keyType = entries?.[0]?.type as VgiDataType | undefined;
+    const valueType = entries?.[1]?.type as VgiDataType | undefined;
+    const prepKey = keyType !== undefined && needsPrepare(keyType);
+    const prepValue = valueType !== undefined && needsPrepare(valueType);
     return values.map((v) => {
       if (v == null) return null;
-      if (v instanceof Map) return v;
-      if (Array.isArray(v)) return new Map(v as Array<[unknown, unknown]>);
-      if (typeof v === "object") return new Map(Object.entries(v as any));
-      return v;
+      let pairs: Array<[unknown, unknown]>;
+      if (v instanceof Map) pairs = Array.from(v.entries());
+      else if (Array.isArray(v)) pairs = v as Array<[unknown, unknown]>;
+      else if (typeof v === "object") pairs = Object.entries(v as any);
+      else return v;
+      if (prepKey || prepValue) {
+        pairs = pairs.map(([k, x]) => [
+          prepKey ? prepareForFlechette(keyType!, [k])[0] : k,
+          prepValue ? prepareForFlechette(valueType!, [x])[0] : x,
+        ]);
+      }
+      return new Map(pairs);
     });
   }
   if (tid === 13) {

@@ -173,6 +173,31 @@ describe(`codec round-trip (backend=${backend.name})`, () => {
     expectRoundTrip("map", t, [[["k1", 1], ["k2", 2]], [], null]);
   });
 
+  test("map with date keys/values, and a map nested under list/struct", () => {
+    // flechette's writer prepared struct and list children but not a map's
+    // key/value, so a date32 day-number reached its builder as if it were
+    // epoch-ms: MAP {DATE: DATE} came back as {1970-01-01=1970-01-01}.
+    const d1 = new Date(Date.UTC(2024, 0, 15));
+    const d2 = new Date(Date.UTC(1900, 2, 1));
+    const dateMap = () => map(field("key", dateDay(), false), field("value", dateDay(), true));
+    expectRoundTrip("map<date32,date32>", dateMap(), [[[d1, d2], [d2, null]], [], null]);
+    expectRoundTrip("map<utf8,date64>", map(field("key", utf8(), false), field("value", dateMillisecond(), true)), [
+      [["a", new Date(Date.UTC(2024, 0, 15, 12, 34, 56))]],
+    ]);
+    expectRoundTrip(
+      "map<int32,list<date32>>",
+      map(field("key", int32(), false), field("value", list(field("item", dateDay(), true)), true)),
+      [[[1, [d1, d2]]]],
+    );
+    expectRoundTrip(
+      "map<int32,struct{d}>",
+      map(field("key", int32(), false), field("value", struct([field("d", dateDay(), true)]), true)),
+      [[[1, { d: d1 }]]],
+    );
+    expectRoundTrip("list<map<date32,date32>>", list(field("item", dateMap(), true)), [[[[d1, d2]]], null]);
+    expectRoundTrip("struct{m: map<date32,date32>}", struct([field("m", dateMap(), true)]), [{ m: [[d1, d2]] }]);
+  });
+
   test("dictionary<utf8> -> string", () => {
     expectRoundTrip("dict", dictionary(utf8(), int32()), ["red", "green", "red", null, "blue"]);
   });
