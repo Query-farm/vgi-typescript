@@ -16,7 +16,18 @@ import type { VgiBatch } from "../types.js";
  */
 export function withBatchMetadata(batch: VgiBatch, metadata: Map<string, string>): VgiBatch {
   const t = batch as any;
-  const clone = Object.assign(Object.create(Object.getPrototypeOf(t)), t);
+  // Copy the own properties as descriptors, not by assignment. vgi-rpc's reader
+  // pins a zero-column batch's row count as an own `numRows` over
+  // `Table.prototype.numRows`, a getter-only accessor, and `Object.assign`
+  // *assigns* each own property -- which throws in strict mode ("Attempted to
+  // assign to readonly property") over an inherited getter-only accessor.
+  const clone = Object.create(Object.getPrototypeOf(t), Object.getOwnPropertyDescriptors(t));
+  // This backend's own reader supplies that row count through a Proxy instead
+  // (see `deserializeBatch`), which no property copy carries: without this the
+  // clone would derive 0 rows from its absent columns.
+  if (clone.numRows !== t.numRows) {
+    Object.defineProperty(clone, "numRows", { value: t.numRows, configurable: true, enumerable: true });
+  }
   if (metadata && metadata.size > 0) {
     clone._vgiRecordMetadata = metadata;
     clone.metadata = metadata;
