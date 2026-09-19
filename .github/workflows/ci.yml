@@ -3,7 +3,8 @@
 # CI for @query-farm/vgi.
 #
 # Two jobs:
-#   unit        — pure TypeScript: build + `bun test` + Arrow facade parity.
+#   unit        — pure TypeScript: build + `bun test` (arrow-js and flechette)
+#                 + Arrow facade parity.
 #                 No DuckDB / vgi extension needed. Fast, always runs.
 #   integration — the C++ sqllogictest suite from the Query-farm/vgi repo, run
 #                 against the bun example workers through ci/run-integration.sh
@@ -36,7 +37,7 @@ on:
 
 jobs:
   unit:
-    name: Unit (bun test + build + parity)
+    name: Unit (bun test on both backends + build + parity)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -53,6 +54,12 @@ jobs:
 
       - name: Unit tests
         run: bun test
+
+      # The same suite on the flechette backend (what workerd resolves). The
+      # in-process HTTP tests drive vgi-rpc's own client, so this needs a
+      # vgi-rpc whose stream client writes through the facade.
+      - name: Unit tests (flechette)
+        run: bun --conditions=flechette test
 
       - name: Arrow facade parity (arrow-js + flechette)
         run: make test-facade-parity
