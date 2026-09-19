@@ -27,6 +27,7 @@
 import {
   Struct,
   List,
+  FixedSizeList,
   DataType,
   DateUnit,
   makeData,
@@ -54,6 +55,7 @@ export function writeCanonicalColumn(
 
 function buildColumnData(values: unknown[], type: DataType): any {
   if (DataType.isList(type)) return buildListData(values, type as List);
+  if (DataType.isFixedSizeList(type)) return buildFixedSizeListData(values, type as FixedSizeList);
   if (DataType.isMap(type)) return buildMapData(values, type as Map_);
   if (DataType.isStruct(type)) return buildStructData(values, type as Struct);
   if (DataType.isDecimal(type)) return buildDecimalData(values, type);
@@ -200,6 +202,48 @@ function buildListData(values: unknown[], listType: List): any {
   });
 }
 
+/**
+ * FixedSizeList (DuckDB's ARRAY) is built by hand, like List, so its items go
+ * through buildColumnData. Handing it to vectorFromArray fed arrow-js's own
+ * child builders CANONICAL values they read in other units: a date32
+ * day-number as epoch-ms (DATE[2], STRUCT(d DATE)[1], MAP(DATE, DATE)[1] and
+ * DATE[][1] all came back as 1970-01-01), and a bigint timestamp or unscaled
+ * decimal threw.
+ */
+function buildFixedSizeListData(values: unknown[], type: FixedSizeList): any {
+  const childField = type.children[0];
+  const listSize = type.listSize;
+  const numRows = values.length;
+  const allItems: unknown[] = [];
+  const nullBitmap = new Uint8Array(Math.ceil(numRows / 8));
+  let nullCount = 0;
+  for (let i = 0; i < numRows; i++) {
+    const row = values[i];
+    if (row == null) {
+      // A null row still occupies listSize child slots.
+      nullCount++;
+      for (let j = 0; j < listSize; j++) allItems.push(null);
+      continue;
+    }
+    nullBitmap[i >> 3] |= 1 << (i & 7);
+    const items = Array.isArray(row) ? row : Array.from(row as Iterable<unknown>);
+    if (items.length !== listSize) {
+      throw new TypeError(
+        `fixed_size_list[${listSize}]: row ${i} has ${items.length} items`,
+      );
+    }
+    for (const item of items) allItems.push(item);
+  }
+  const childData = allItems.length > 0
+    ? buildColumnData(allItems, childField.type)
+    : emptyDataForType(childField.type);
+  return makeData({
+    type, length: numRows, nullCount,
+    nullBitmap: nullCount > 0 ? nullBitmap : undefined,
+    child: childData,
+  });
+}
+
 function buildMapData(values: unknown[], mapType: Map_): any {
   const numRows = values.length;
   const entriesField = mapType.children[0];
@@ -283,6 +327,12 @@ function emptyDataForType(type: DataType): any {
       type, length: 0, nullCount: 0,
       child: emptyDataForType((type as Map_).children[0].type),
       valueOffsets: new Int32Array([0]),
+    });
+  }
+  if (DataType.isFixedSizeList(type)) {
+    return makeData({
+      type, length: 0, nullCount: 0,
+      child: emptyDataForType((type as FixedSizeList).children[0].type),
     });
   }
   if (DataType.isStruct(type)) {

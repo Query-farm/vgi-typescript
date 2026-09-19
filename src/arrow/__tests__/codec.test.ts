@@ -21,7 +21,7 @@ import {
   dateDay, dateMillisecond,
   timeSecond, timeMillisecond, timeMicrosecond, timeNanosecond,
   timestamp, duration, TimeUnit,
-  list, struct, map, dictionary,
+  list, fixedSizeList, struct, map, dictionary,
   batchFromColumns, serializeBatch, deserializeBatch, iterRows,
   backend,
 } from "../index.js";
@@ -196,6 +196,31 @@ describe(`codec round-trip (backend=${backend.name})`, () => {
     );
     expectRoundTrip("list<map<date32,date32>>", list(field("item", dateMap(), true)), [[[[d1, d2]]], null]);
     expectRoundTrip("struct{m: map<date32,date32>}", struct([field("m", dateMap(), true)]), [{ m: [[d1, d2]] }]);
+  });
+
+  test("fixed_size_list (DuckDB ARRAY) of dates, timestamps, decimals, and nested dates", () => {
+    // arrow-js handed fixed_size_list to vectorFromArray, whose child builders
+    // read canonical values in other units: every date under it came back as
+    // 1970-01-01, and a timestamp or decimal child threw.
+    const d1 = new Date(Date.UTC(2024, 0, 15));
+    const d2 = new Date(Date.UTC(1900, 2, 1));
+    const item = <T extends VgiDataType>(t: T) => field("item", t, true);
+    expectRoundTrip("fsl<date32>[2]", fixedSizeList(item(dateDay()), 2), [[d1, d2], null, [d2, null]]);
+    expectRoundTrip("fsl<timestamp[us]>[2]", fixedSizeList(item(timestamp(TimeUnit.MICROSECOND)), 2), [
+      [1705321845000000n, -2203891199000000n],
+    ]);
+    expectRoundTrip("fsl<timestamp[ns]>[1]", fixedSizeList(item(timestamp(TimeUnit.NANOSECOND)), 1), [
+      [1705321845123456789n],
+    ]);
+    expectRoundTrip("fsl<decimal128(4,1)>[2]", fixedSizeList(item(decimal128(4, 1)), 2), [[15n, -25n]]);
+    expectRoundTrip("fsl<struct{d}>[1]", fixedSizeList(item(struct([field("d", dateDay(), true)])), 1), [[{ d: d1 }]]);
+    expectRoundTrip(
+      "fsl<map<date32,date32>>[1]",
+      fixedSizeList(item(map(field("key", dateDay(), false), field("value", dateDay(), true))), 1),
+      [[[[d1, d2]]]],
+    );
+    expectRoundTrip("fsl<list<date32>>[1]", fixedSizeList(item(list(item(dateDay()))), 1), [[[d1, d2]]]);
+    expectRoundTrip("list<fsl<date32>[2]>", list(item(fixedSizeList(item(dateDay()), 2))), [[[d1, d2]], [], null]);
   });
 
   test("dictionary<utf8> -> string", () => {
