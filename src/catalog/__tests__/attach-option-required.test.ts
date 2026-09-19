@@ -13,14 +13,15 @@ import {
   serializeAttachOptionSpec,
   validateRequiredAttachOptions,
 } from "../attach-option.js";
-import { deserializeBatch } from "../../util/arrow/index.js";
+import { deserializeBatch, iterRows } from "../../util/arrow/index.js";
 
-/** Read the single serialized spec row back as a plain object. */
+/** Read the single serialized spec row back as a plain object -- through the
+ *  facade, so this holds on either Arrow backend (arrow-js rows have a
+ *  `toJSON()`, flechette rows are plain objects). */
 function roundTrip(spec: AttachOptionSpec): Record<string, unknown> {
-  const batch = deserializeBatch(serializeAttachOptionSpec(spec));
-  const row = batch.get(0);
-  expect(row).not.toBeNull();
-  return (row as { toJSON(): Record<string, unknown> }).toJSON();
+  const rows = [...iterRows(deserializeBatch(serializeAttachOptionSpec(spec)))];
+  expect(rows).toHaveLength(1);
+  return rows[0];
 }
 
 describe("required on the wire", () => {

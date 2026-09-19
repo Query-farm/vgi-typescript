@@ -18,7 +18,7 @@
 import {
   Type,
   field as f_field,
-  nullType, bool, int, float, utf8, binary, fixedSizeBinary,
+  nullType, bool, int, float, utf8, largeUtf8, binary, largeBinary, fixedSizeBinary,
   decimal, date, time, timestamp, duration, interval,
   list, largeList, fixedSizeList, struct, map, dictionary, union,
 } from "@query-farm/flechette";
@@ -47,12 +47,19 @@ export function toFlechetteType(type: any): any {
       return aliasIntSigned(int(type.bitWidth, type.isSigned ?? type.signed ?? true));
     case Type.Float:
       return float(type.precision);
+    // Large variants stay large: flechette builds and encodes them, and
+    // folding them into Binary/Utf8 put a different type on the wire than the
+    // one declared (arrow-js writes LargeBinary/LargeUtf8). InitRequest
+    // declares `pushdown_filters` large_binary, so a flechette worker or
+    // client wrote that field as binary.
     case Type.Binary:
-    case Type.LargeBinary:
       return binary();
+    case Type.LargeBinary:
+      return largeBinary();
     case Type.Utf8:
-    case Type.LargeUtf8:
       return utf8();
+    case Type.LargeUtf8:
+      return largeUtf8();
     case Type.FixedSizeBinary:
       return fixedSizeBinary(type.byteWidth ?? type.stride);
     case Type.Decimal:

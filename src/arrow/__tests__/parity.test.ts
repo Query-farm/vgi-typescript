@@ -14,6 +14,7 @@
 import { describe, test, expect } from "bun:test";
 import {
   schema, field, utf8, int32, int64, uint64, float64, struct, list, dictionary, decimal128,
+  largeUtf8, largeBinary,
   fixedSizeList, fixedSizeBinary, serializeSchema,
   timestamp, TimeUnit, dateDay,
   isList, isStruct, isDecimal, isDictionary, isTimestamp,
@@ -33,6 +34,21 @@ describe(`facade (backend=${backend.name})`, () => {
     expect(dictionary(utf8(), int32()).typeId).toBe(TypeId.Dictionary);
     expect(decimal128(38, 4).typeId).toBe(TypeId.Decimal);
     expect(timestamp(TimeUnit.NANOSECOND).typeId).toBe(TypeId.Timestamp);
+  });
+
+  test("large string/binary keep their declared width on the wire", () => {
+    // flechette's type normalization used to fold these into Utf8/Binary, so
+    // a declared large_binary field (InitRequest.pushdown_filters) went out
+    // as binary under flechette and as large_binary under arrow-js.
+    const sch = schema([field("s", largeUtf8(), true), field("b", largeBinary(), true)]);
+    const batch = batchFromColumns({ s: ["a", null], b: [new Uint8Array([1, 2]), null] }, sch);
+    for (const bytes of [serializeBatch(batch), serializeSchema(sch)]) {
+      expect(deserializeSchema(bytes).fields.map((f) => f.type.typeId)).toEqual([TypeId.LargeUtf8, TypeId.LargeBinary]);
+    }
+    const rows = [...iterRows(deserializeBatch(serializeBatch(batch)))];
+    expect(rows[0].s).toBe("a");
+    expect([...(rows[0].b as Uint8Array)]).toEqual([1, 2]);
+    expect(rows[1].s).toBeNull();
   });
 
   test("predicates dispatch by typeId, not by class identity", () => {
