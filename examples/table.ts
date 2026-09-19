@@ -17,8 +17,6 @@ import {
   Dictionary,
   Struct,
   List,
-  Decimal,
-  FixedSizeBinary,
   Binary,
   Timestamp,
   Duration,
@@ -908,28 +906,24 @@ const constant_columns = defineTableFunction<ConstantColumnsArgs, ConstantColumn
 
     // Iterate over all positional args after count (position 0)
     for (let i = 1; i < bindArgs.length; i++) {
-      // Use the argument's Arrow type from the schema when available
+      // Each column is the argument's own Arrow field: its type AND its
+      // metadata. Under arrow_lossless_conversion DuckDB sends UUID, HUGEINT,
+      // UHUGEINT, TIMETZ, BIT, BIGNUM and BOOLEAN as a storage type plus
+      // `ARROW:extension:*` field metadata, and only the metadata says what
+      // the column is: drop it and DuckDB reads back the storage (UUID ->
+      // BLOB). This is vgi-python's `v.type` and vgi-go's `col.DataType()`,
+      // which carry the extension. (It replaces a hand-mapping that sent
+      // HUGEINT/UHUGEINT to a signed decimal128, which read UHUGEINT's max as
+      // -1, and never fired on flechette: it tested `instanceof` an arrow-js
+      // class, so flechette returned HUGEINT as raw bytes.)
       let dt: DataType;
+      let metadata: Map<string, string> | undefined;
       const schemaField = argsSchema?.fields.find(
         f => f.name === `positional_${i}`
       );
-      if (schemaField && !(schemaField.type instanceof Null)) {
+      if (schemaField && !DataType.isNull(schemaField.type)) {
         dt = schemaField.type;
-        // Convert DuckDB extension types to Arrow-native types
-        const extName = schemaField.metadata?.get?.("ARROW:extension:name");
-        if (extName === "arrow.bool8") {
-          dt = new Bool();
-        } else if (dt instanceof FixedSizeBinary) {
-          const extMeta = schemaField.metadata?.get?.("ARROW:extension:metadata");
-          if (extMeta) {
-            try {
-              const parsed = JSON.parse(extMeta);
-              if (parsed.type_name === "hugeint" || parsed.type_name === "uhugeint") {
-                dt = new Decimal(0, 38, 128);
-              }
-            } catch { /* ignore */ }
-          }
-        }
+        metadata = schemaField.metadata ?? undefined;
       } else {
         // Fallback: infer from JS value
         const val = bindArgs.positional[i];
@@ -945,7 +939,7 @@ const constant_columns = defineTableFunction<ConstantColumnsArgs, ConstantColumn
           dt = new Utf8();
         }
       }
-      fields.push(new Field(`col_${i - 1}`, dt, true));
+      fields.push(new Field(`col_${i - 1}`, dt, true, metadata));
     }
 
     return { outputSchema: new Schema(fields) };
@@ -969,40 +963,19 @@ const constant_columns = defineTableFunction<ConstantColumnsArgs, ConstantColumn
 
     const size = Math.min(state.remaining, CONSTANT_COLUMNS_BATCH_SIZE);
 
-    // Extract the constant values from bind call arguments
+    // Repeat each argument's decoded value verbatim. It is already the RICH
+    // value batchFromColumns takes for the column's type -- the column IS the
+    // argument's type (onBind) -- so nothing needs converting. Converting is
+    // what broke DATE: the value is a JS Date, and "unwrapping" it with
+    // valueOf() gave epoch-milliseconds, which a date32 column reads as DAYS
+    // ('2024-01-15' came back as 480510-12-09).
     const bindArgs = params.initCall.bind_call.arguments;
     const columns: Record<string, any[]> = {};
 
     for (let i = 0; i < params.outputSchema.fields.length; i++) {
       const field = params.outputSchema.fields[i];
-      const rawVal = bindArgs.positional[i + 1]; // +1 to skip count
-      let val: any = rawVal;
-
-      // For complex types (Decimal, List, Map, Struct), keep raw Arrow value
-      // since buildColumnData handles them directly
-      if (DataType.isDecimal(field.type) || DataType.isList(field.type) ||
-          DataType.isMap(field.type) || DataType.isStruct(field.type)) {
-        // Keep val as-is — batchFromColumns handles complex types
-      } else {
-        // Unwrap arrow scalar if needed
-        if (val !== null && val !== undefined && typeof val === "object" && typeof val.valueOf === "function") {
-          val = val.valueOf();
-        }
-        // For Int64 fields, convert to BigInt
-        if (DataType.isInt(field.type) && (field.type as any).bitWidth === 64) {
-          if (typeof val === "number") val = BigInt(val);
-        }
-        // DuckDB sends BOOLEAN constants as the `arrow.bool8` extension type,
-        // whose storage is int8 — so the value arrives as 0/1, not a JS boolean.
-        // onBind already maps the *type* to Bool; the value needs the same
-        // treatment or the bool codec rejects it ("expected boolean, got number").
-        if (DataType.isBool(field.type) && val !== null && val !== undefined) {
-          if (typeof val === "number") val = val !== 0;
-          else if (typeof val === "bigint") val = val !== 0n;
-        }
-      }
-      const arr = new Array(size).fill(val);
-      columns[field.name] = arr;
+      const val = bindArgs.positional[i + 1] ?? null; // +1 to skip count
+      columns[field.name] = new Array(size).fill(val);
     }
 
     out.emit(batchFromColumns(columns, params.outputSchema));
