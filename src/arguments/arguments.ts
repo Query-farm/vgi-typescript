@@ -53,11 +53,20 @@ export class Arguments {
 
 /**
  * Unwrap an Arrow Scalar to a plain JS value.
+ *
+ * A `Date` is returned as-is. Arguments are decoded to their RICH values
+ * (deserializeArguments runs every value through the codec), and a JS `Date`
+ * is the rich value of date32/date64 — `valueOf()` would turn it into epoch
+ * MILLISECONDS, while a bare number in a date32 column means DAYS. So a DATE
+ * argument read through `get()` (every typed `params.args.x`, every scalar
+ * const) and written back out as a DATE came back 86,400,000x too far out:
+ * '2024-01-15' as 480510-12-09 on arrow-js, and an invalid Date on flechette.
  */
 function unwrapScalar(val: any): any {
   if (val === null || val === undefined) return null;
   // If it's already a primitive, return it
   if (typeof val !== "object") return val;
+  if (val instanceof Date) return val;
   // Arrow Scalar objects have a valueOf() method
   if (typeof val.valueOf === "function") {
     let v: any;
