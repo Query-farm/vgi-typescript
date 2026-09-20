@@ -34,7 +34,40 @@ const ENTRIES: EntryCheck[] = [
   },
 ];
 
+// Specifiers the browser client entry must NOT import at runtime.
+//
+// `@query-farm/vgi-rpc`'s root re-exports the entire framework — protocol,
+// dispatch, access log, the server — and it is `external` in this build, so it
+// lands in the CONSUMER's bundle, where nothing can tree-shake it. One value
+// import of `RpcError` from the root cost every browser consumer ~160 kB and
+// shipped them `RpcServer` to satisfy an `instanceof`. Client code takes the
+// narrow `/connect` subpath instead.
+//
+// An `import type` is erased and so is invisible here; only a real runtime
+// import trips this. The trap is `import { type X } from "..."`, which leaves
+// `import {} from "..."` behind — a side-effect import of the whole graph,
+// which this catches.
+const CLIENT_ENTRY = "./dist/client-entry.js";
+const FORBIDDEN_CLIENT_IMPORTS = ["@query-farm/vgi-rpc"];
+
 let failed = 0;
+
+{
+  const source = await Bun.file(CLIENT_ENTRY).text();
+  const imported = new Set(
+    [...source.matchAll(/(?:^|\n)\s*(?:import|export)[^;\n]*?from\s*"([^"]+)"/g)].map((m) => m[1]),
+  );
+  const offenders = FORBIDDEN_CLIENT_IMPORTS.filter((specifier) => imported.has(specifier));
+  if (offenders.length > 0) {
+    console.error(
+      `FAIL ${CLIENT_ENTRY} imports ${offenders.join(", ")} at runtime; ` +
+        `use a narrow subpath (e.g. "@query-farm/vgi-rpc/connect") or "import type"`,
+    );
+    failed++;
+  } else {
+    console.log(`ok   ${CLIENT_ENTRY} pulls no server-side framework into browser bundles`);
+  }
+}
 
 for (const entry of ENTRIES) {
   // Resolve against the repo root, not this script's directory: a bare
@@ -60,7 +93,7 @@ for (const entry of ENTRIES) {
 }
 
 if (failed > 0) {
-  console.error(`\n${failed} of ${ENTRIES.length} bundle entries are broken.`);
+  console.error(`\n${failed} bundle check${failed === 1 ? "" : "s"} failed.`);
   process.exit(1);
 }
-console.log(`\nAll ${ENTRIES.length} bundle entries import cleanly.`);
+console.log(`\nAll ${ENTRIES.length} bundle entries import cleanly, and the client entry stays client-only.`);

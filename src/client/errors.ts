@@ -2,7 +2,16 @@
 // VgiClient error class + RpcClient wrapper that translates RpcError into
 // VgiClientError, preserving the worker's remote traceback.
 
-import { RpcError, type RpcClient } from "@query-farm/vgi-rpc";
+// RpcError comes from the `/connect` subpath, not the package root, and the
+// distinction is worth ~160 kB in every browser bundle. The root re-exports the
+// whole framework — protocol, dispatch, access log, the server — and a bundler
+// cannot drop it, so importing one error class from there shipped `RpcServer`
+// to browsers to satisfy an `instanceof`. `RpcClient` is a pure `import type`
+// for the same reason: `import { type X }` leaves the statement behind, and a
+// bare `import {} from "@query-farm/vgi-rpc"` is a side-effect import of that
+// same graph.
+import { RpcError } from "@query-farm/vgi-rpc/connect";
+import type { RpcClient } from "@query-farm/vgi-rpc";
 
 /** Error thrown by VgiClient when an RPC call fails or returns unexpected data. */
 export class VgiClientError extends Error {

@@ -3,7 +3,11 @@
 // Works with any RpcClient (subprocess or HTTP transport).
 
 import { type VgiSchema, schema as schema_, type VgiField, field, type VgiBatch, type VgiDataType, utf8, binary, list } from "../arrow/index.js";
-import { type RpcClient, type StreamSession } from "@query-farm/vgi-rpc";
+// `import type`, not `import { type … }`: the latter keeps the statement and
+// emits `import {} from "@query-farm/vgi-rpc"`, a side-effect import of the
+// package root — which re-exports the whole framework, server included, into
+// every browser bundle. See the note in ./errors.
+import type { RpcClient, StreamSession } from "@query-farm/vgi-rpc";
 import {
   serializeBindRequest,
   deserializeBindResponse,
