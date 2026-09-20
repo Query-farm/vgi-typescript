@@ -1416,6 +1416,100 @@ const filter_echo = defineTableFunction<FilterEchoArgs, FilterEchoState>({
   categories: ["generator", "diagnostic"],
 });
 
+// ============================================================================
+// 15a. bool_filter_echo — a table function with a nullable BOOLEAN column
+//
+// The only arrangement in which `WHERE flag` / `WHERE NOT flag` reaches a
+// worker at all. filter_echo cannot cover them: its schema has no boolean
+// column, so the predicate cannot even be written against it. The
+// table-in-out echo path cannot either — DuckDB does not hand it a bare
+// boolean column as a pushed predicate, so a case written there passes
+// whether or not the worker can decode one.
+//
+// pushed_filters echoes the rendering, which covers the half a row count
+// cannot see: a shape that decodes and evaluates correctly but renders no SQL
+// shows up here as "(none)", and for a worker that builds a WHERE clause from
+// it that is silently wrong rows, because DuckDB does not re-apply a
+// predicate it pushed into a table function.
+// ============================================================================
+
+interface BoolFilterEchoArgs {
+  count: number;
+}
+
+interface BoolFilterEchoState {
+  remaining: number;
+  currentIndex: number;
+  filterStr: string;
+}
+
+const BOOL_FILTER_ECHO_SCHEMA = new Schema([
+  new Field("n", new Int64(), true),
+  new Field("flag", new Bool(), true),
+  new Field("pushed_filters", new Utf8(), true),
+]);
+
+const bool_filter_echo = defineTableFunction<BoolFilterEchoArgs, BoolFilterEchoState>({
+  name: "bool_filter_echo",
+  description: "Rows with a nullable BOOLEAN column, echoing pushed-down filters",
+  args: {
+    count: new Int64(),
+  },
+  projectionPushdown: true,
+  filterPushdown: true,
+  autoApplyFilters: true,
+  onBind: () => ({ outputSchema: BOOL_FILTER_ECHO_SCHEMA }),
+  cardinality: (params: TableBindParams<BoolFilterEchoArgs>) => ({
+    estimate: params.args.count,
+    max: params.args.count,
+  }),
+  initialState: (params: TableProcessParams<BoolFilterEchoArgs>) => ({
+    remaining: params.args.count,
+    currentIndex: 0,
+    filterStr: formatPushedFilters(params.pushdownFilters),
+  }),
+  process: (
+    params: TableProcessParams<BoolFilterEchoArgs>,
+    state: BoolFilterEchoState,
+    out: OutputCollector
+  ) => {
+    if (state.remaining <= 0) {
+      out.finish();
+      return;
+    }
+
+    const nValues: bigint[] = [];
+    const flagValues: Array<boolean | null> = [];
+    const filterValues: string[] = [];
+
+    for (let i = 0; i < state.remaining; i++) {
+      const idx = state.currentIndex + i;
+      nValues.push(BigInt(idx));
+      // TRUE, FALSE, NULL. The NULL is the point: it is what distinguishes
+      // `WHERE flag` from `WHERE flag IS NOT FALSE`, and `WHERE NOT flag`
+      // from `WHERE flag IS NOT TRUE`.
+      flagValues.push([true, false, null][idx % 3]);
+      filterValues.push(state.filterStr);
+    }
+
+    out.emit(batchFromColumns({
+      n: nValues,
+      flag: flagValues,
+      pushed_filters: filterValues,
+    }, params.outputSchema));
+
+    state.currentIndex += state.remaining;
+    state.remaining = 0;
+  },
+  examples: [
+    {
+      sql: "SELECT * FROM bool_filter_echo(6) WHERE flag",
+      description: "A boolean column is a predicate on its own",
+    },
+  ],
+  categories: ["generator", "diagnostic"],
+});
+
 // filter_echo_table_scan — no-arg *table* scan backing example.data.filter_echo_table.
 // Same pushed_filters echo as filter_echo, but opts into expression-filter
 // pushdown so `LIKE 'prefix%'` predicates are observable (and through a VIEW).
@@ -3824,6 +3918,7 @@ export const tableFunctions: VgiFunction[] = [
   scoped_secret_demo,
   multi_secret_demo,
   filter_echo,
+  bool_filter_echo,
   filter_echo_partitioned,
   slow_cancellable,
   profiling_demo,

@@ -633,11 +633,29 @@ function validateStandardCall(fn: StandardFilterFunction, args: FilterExpression
   if (!matches) throw new FilterV2Error(`${fn} arguments do not bind under vgi.duckdb.standard.v1`);
 }
 
+/**
+ * Whether `expression` resolves to BOOLEAN.
+ *
+ * Ask the type, never the node kind. The two agree for every node whose type
+ * is structurally fixed — a comparison is BOOLEAN whatever its operands — and
+ * that is exactly why enumerating kinds looked sufficient. It is not:
+ * `column_ref`, `field_ref` and `cast` are BOOLEAN or not depending on a type
+ * resolved from elsewhere (the bind output schema, or a parent expression),
+ * and the schema admits all of them as a predicate root — `coreExpression`
+ * lists `columnRef` first.
+ *
+ * Enumerating kinds rejected the lot, so the idiomatic `WHERE flag` /
+ * `WHERE NOT flag` — which DuckDB pushes down as a bare column reference
+ * rather than rewriting to `flag = true` — was refused as "predicate root
+ * must resolve to BOOLEAN", on a node whose type the parser had already
+ * resolved to BOOLEAN and stored. See vgi-python 0.36.2.
+ */
 function isBooleanExpression(expression: FilterExpression): boolean {
   if (["comparison", "and", "or", "not", "is_null", "in", "runtime_filter", "call"].includes(expression.node)) {
     return true;
   }
-  return expression.node === "literal" && isBool(expression.field.type);
+  const type = expressionType(expression);
+  return type !== undefined && isBool(type);
 }
 
 function requiresSessionContext(expression: FilterExpression): boolean {

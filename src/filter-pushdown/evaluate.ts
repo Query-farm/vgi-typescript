@@ -388,7 +388,46 @@ function expressionColumns(expression: FilterExpression, output = new Map<number
   return output;
 }
 
+/**
+ * `WHERE flag` / `WHERE NOT flag` — a BOOLEAN column is a predicate on its own.
+ *
+ * DuckDB pushes such a predicate down as a bare `column_ref` rather than
+ * rewriting it to `flag = true`, and the schema admits that: `coreExpression`
+ * lists `columnRef` first. `flag` on its own is legal SQL, so this is not
+ * about the fragment being invalid — it is that the shape is invisible to
+ * everything that looks for a column/constant pair: `getColumnValues` returns
+ * nothing for it, and the rendering disagrees with every other VGI SDK, all
+ * of which spell it `flag = true`.
+ *
+ * The projection is exact rather than approximate, including under NULLs:
+ * `WHERE flag` keeps only TRUE (a NULL predicate is not satisfied) and so does
+ * `flag = true`; `WHERE NOT flag` keeps only FALSE (`NOT NULL` is NULL) and so
+ * does `flag = false`. Three-valued logic makes both pairs agree on every
+ * input, which is what lets this be a projection and not a change of meaning.
+ *
+ * A column that is not BOOLEAN is left alone rather than guessed at.
+ *
+ * @returns the column name and the constant it compares equal to, or
+ *   undefined when `expression` is neither shape.
+ */
+function booleanColumnLeaf(expression: FilterExpression): { columnName: string; value: boolean } | undefined {
+  const column = (node: FilterExpression) =>
+    node.node === "column_ref" && node.dataType !== undefined && isBool(node.dataType)
+      ? node.columnName
+      : undefined;
+  if (expression.node === "not") {
+    const name = column(expression.expression);
+    return name === undefined ? undefined : { columnName: name, value: false };
+  }
+  const name = column(expression);
+  return name === undefined ? undefined : { columnName: name, value: true };
+}
+
 function discreteValues(expression: FilterExpression, columnName: string): unknown[] | null {
+  // `WHERE flag` pins `flag` to TRUE exactly as `flag = true` does, so a
+  // value-pruning caller sees the constant either way round.
+  const leaf = booleanColumnLeaf(expression);
+  if (leaf && leaf.columnName === columnName) return [leaf.value];
   if (expression.node === "comparison" && expression.op === ComparisonOp.EQ) {
     if (expression.left.node === "column_ref" && expression.left.columnName === columnName && expression.right.node === "literal") return [expression.right.value];
     if (expression.right.node === "column_ref" && expression.right.columnName === columnName && expression.left.node === "literal") return [expression.left.value];
@@ -502,7 +541,7 @@ export class PushdownFilters {
   }
 
   toSql(): string {
-    return this.predicates.map((predicate) => expressionToSql(predicate.expression)).join(" AND ");
+    return this.predicates.map((predicate) => predicateToSql(predicate.expression)).join(" AND ");
   }
 }
 
@@ -512,6 +551,16 @@ function quote(value: unknown): string {
   if (value instanceof Uint8Array) return `X'${[...value].map((byte) => byte.toString(16).padStart(2, "0")).join("")}'`;
   if (Array.isArray(value)) return `[${value.map(quote).join(", ")}]`;
   return String(value);
+}
+
+/**
+ * Render one predicate, projecting a bare boolean column onto its equality
+ * form first. Predicate positions are the root and the children of `and`/`or`
+ * — the shape that actually turns up is `other = x AND NOT flag`.
+ */
+export function predicateToSql(expression: FilterExpression): string {
+  const leaf = booleanColumnLeaf(expression);
+  return leaf ? `${leaf.columnName} = ${quote(leaf.value)}` : expressionToSql(expression);
 }
 
 export function expressionToSql(expression: FilterExpression): string {
@@ -527,7 +576,7 @@ export function expressionToSql(expression: FilterExpression): string {
       };
       return `${expressionToSql(expression.left)} ${symbols[expression.op]} ${expressionToSql(expression.right)}`;
     }
-    case "and": case "or": return `(${expression.children.map(expressionToSql).join(` ${expression.node.toUpperCase()} `)})`;
+    case "and": case "or": return `(${expression.children.map(predicateToSql).join(` ${expression.node.toUpperCase()} `)})`;
     case "not": return `(NOT ${expressionToSql(expression.expression)})`;
     case "is_null": return `${expressionToSql(expression.expression)} IS ${expression.negated ? "NOT " : ""}NULL`;
     case "in": return `${expressionToSql(expression.expression)} ${expression.negated ? "NOT " : ""}IN (${expression.set.values.map(quote).join(", ")})`;
