@@ -112,6 +112,7 @@ describe("every work-queue fixture declares max(1, the items it enqueued)", () =
     ["partitioned_batch_index", [2500], {}, 3],
     ["partitioned_batch_index_marked", [1000], { chunk_size: 100 }, 10],
     ["country_partitioned_sales", [10], {}, 5],
+    ["trailing_partition_sales", [10], {}, 5],
     ["region_year_partitioned", [10], {}, 6],
     ["partitioned_with_explicit_override", [5], {}, 3],
     ["disjoint_range_partitioned", [3], {}, 3],

@@ -52,7 +52,7 @@ import { splitFunctions } from "./splits.js";
 import { tableInOutFunctions } from "./table_in_out.js";
 import { tableBufferingFunctions } from "./table_buffering.js";
 import { aggregateFunctions } from "./aggregate.js";
-import { partitionTableFunctions } from "./table_partition.js";
+import { partitionTableFunctions, trailingPartitionSalesFunction } from "./table_partition.js";
 import { copyFromFunctions } from "./copy_from.js";
 import { copyToFunctions } from "./copy_to.js";
 import { cacheTableFunctions } from "./cache.js";
@@ -548,6 +548,21 @@ export const catalog: CatalogDescriptor = {
           function: sequenceFunction,
           arguments: new Arguments([123456]),
           comment: "123456 integers; stats served by the sequence function, not the table",
+        },
+        // A partitioned source as a CATALOG TABLE. A table's scan function is
+        // built on a different path than a direct function call, so a client can
+        // support partitioned aggregates for one and silently not the other; only
+        // a table exercises the catalog path. Paired with a partition column
+        // declared last — see trailing_partition_sales in ./table_partition.ts.
+        // No explicit columns: they come from the function's bind, so `country`
+        // keeps its vgi.partition_column annotation. rows_per_country = 100
+        // matches country_partitioned_sales(100). See partition_columns.test.
+        {
+          name: "trailing_partition_sales",
+          function: trailingPartitionSalesFunction,
+          arguments: new Arguments([100]),
+          comment:
+            "Per-country sales, SINGLE_VALUE partition column declared last; GROUP BY country must plan as PARTITIONED_AGGREGATE",
         },
         {
           name: "volatile_numbers",

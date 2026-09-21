@@ -355,6 +355,100 @@ const country_partitioned_sales = defineTableFunction<CountryArgs, PartitionStat
   categories: ["generator", "partitioning"],
 });
 
+// -----------------------------------------------------------------------------
+// trailing_partition_sales — SINGLE_VALUE, partition column declared LAST.
+// -----------------------------------------------------------------------------
+// country_partitioned_sales with `country` declared LAST (index 3) instead of
+// first. That difference is the point: every other partitioned fixture declares
+// its partition column at index 0, which makes two distinct index spaces
+// accidentally agree.
+//
+// CanUsePartitionedAggregate asks get_partition_info about WORKER-SCHEMA
+// indices, but the sink later asks get_partition_data about SCAN-LOCAL ones
+// (positions in the scan's own column_ids, after projection pushdown).
+// `GROUP BY country` projects just country and sales, so the sink asks about
+// scan-local 0 while the declared index is 3. A client comparing them without
+// mapping raised a FATAL InternalException. With the partition column at index 0
+// both spaces say 0 and the bug is invisible.
+//
+// Also registered as the catalog table `data.trailing_partition_sales`
+// (examples/common.ts), because a table's scan function is built on a different
+// path than a direct call: a client can wire get_partition_info for one and
+// miss it for the other, and a table then silently never plans
+// PARTITIONED_AGGREGATE. Same deterministic sales values as
+// country_partitioned_sales, so the two agree column-for-column.
+//
+// projectionPushdown is deliberate: without it the scan emits every base column
+// and the projection above it carries base-column indices, which DuckDB's own
+// CanUsePartitionedAggregate then maps a second time (duckdb/duckdb#24327, not
+// backported to v1.5), crashing the planner on 1.5-based builds. Only the
+// projected columns are built. The partition value always rides the batch
+// metadata, so it is still reported when the projection omits `country`.
+//
+// Mirrors vgi-python's TrailingPartitionSalesFunction (8cf1d64). Backs
+// vgi's test/sql/integration/table/partition_columns.test.
+const TRAILING_PARTITION_SCHEMA = new Schema([
+  new Field("seq", new Int64(), true),
+  new Field("label", new Utf8(), true),
+  new Field("sales", new Int64(), true),
+  partitionField("country", new Utf8()),
+]);
+
+const trailing_partition_sales = defineTableFunction<CountryArgs, PartitionState>({
+  name: "trailing_partition_sales",
+  description:
+    "Per-country sales rows, one Arrow batch per country, with the SINGLE_VALUE partition column declared LAST in the schema instead of first.",
+  args: { rows_per_country: new Int64() },
+  argDocs: { rows_per_country: "Rows to emit per country partition" },
+  argConstraints: { rows_per_country: { ge: 1 } },
+  maxWorkers: DEFAULT_MAX_WORKERS,
+  partitionKind: "SINGLE_VALUE_PARTITIONS",
+  projectionPushdown: true,
+  onBind: () => ({ outputSchema: TRAILING_PARTITION_SCHEMA }),
+  onInit: async (params) => {
+    const items = COUNTRIES.map((_, i) => packOne(i));
+    await params.storage.queuePush(items);
+    // No more readers than work items (see partitioned_sequence in table.ts).
+    return { max_workers: Math.max(1, items.length), execution_id: params.executionId, opaque_data: null };
+  },
+  initialState: () => ({ idx: -1 }),
+  process: async (params, state, out) => {
+    const item = await params.storage!.queuePop();
+    if (item === null) {
+      out.finish();
+      return;
+    }
+    state.idx = unpackOne(item);
+    const country = COUNTRIES[state.idx];
+    const rpc = params.args.rows_per_country;
+    const base = state.idx * 1_000_000;
+    const valueAt: Record<string, (i: number) => any> = {
+      seq: (i) => BigInt(i),
+      label: (i) => `${country}-${i}`,
+      sales: (i) => BigInt(base + i),
+      country: () => country,
+    };
+    const cols: Record<string, any[]> = {};
+    for (const f of params.outputSchema.fields) {
+      cols[f.name] = Array.from({ length: rpc }, (_, i) => valueAt[f.name](i));
+    }
+    out.emit(
+      batchFromColumns(cols, params.outputSchema),
+      partitionValuesMetadata(COUNTRY_FIELDS, { country: [country, country] }),
+    );
+  },
+  examples: [
+    {
+      sql: "SELECT country, SUM(sales) FROM trailing_partition_sales(100) GROUP BY country",
+      description: "Partitioned aggregate over a non-leading partition column",
+    },
+  ],
+  categories: ["generator", "partitioning"],
+});
+
+/** Also backs the `data.trailing_partition_sales` catalog table. */
+export const trailingPartitionSalesFunction: VgiFunction = trailing_partition_sales;
+
 const REGIONS_YEARS: [string, number][] = [
   ["AMER", 2023],
   ["AMER", 2024],
@@ -779,6 +873,7 @@ export const partitionTableFunctions: VgiFunction[] = [
   broken_non_monotone_batch_index,
   broken_batch_index_overflow,
   country_partitioned_sales,
+  trailing_partition_sales,
   region_year_partitioned,
   partitioned_with_explicit_override,
   disjoint_range_partitioned,
