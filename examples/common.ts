@@ -57,6 +57,7 @@ import { copyFromFunctions } from "./copy_from.js";
 import { copyToFunctions } from "./copy_to.js";
 import { cacheTableFunctions } from "./cache.js";
 import { cachePartitionScopeTableFunctions } from "./cache_partition_scope.js";
+import { secretCacheFunctions, secretCacheNonceFunction } from "./secret_cache.js";
 import { sameNameMain, sameNameData } from "./same_name.js";
 import {
   sameNameExchangeMainFunctions,
@@ -159,6 +160,9 @@ export const allFunctions = [
   ...tableFunctions,
   ...cacheTableFunctions,
   ...cachePartitionScopeTableFunctions,
+  // Secret-dependent cacheable fixtures (producer, scalar, blended map): their
+  // results are cached per secret FINGERPRINT. See ./secret_cache.ts.
+  ...secretCacheFunctions,
   ...partitionTableFunctions,
   ...tableInOutFunctions,
   ...tableBufferingFunctions,
@@ -407,6 +411,16 @@ export const catalog: CatalogDescriptor = {
           name: "cache_nonce",
           function: cacheFn("cache_nonce"),
           comment: "One-row cacheable result whose value changes per real invocation",
+        },
+        // The secret-dependent twin of cache_nonce: cached per secret
+        // fingerprint. vgi-python pre-binds it (inline_bind) to cover the
+        // client's no-bind-RPC path; this SDK has no inline bind, so a scan
+        // takes the bind RPC, where the fingerprint comes from the secrets that
+        // bind resolved. See ./secret_cache.ts.
+        {
+          name: "secret_cache_nonce",
+          function: secretCacheNonceFunction,
+          comment: "One-row cacheable result keyed on the vgi_example secret",
         },
         {
           name: "cache_multicol",
