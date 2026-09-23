@@ -312,6 +312,8 @@ EXPECTED_SKIP_REASONS=(
   # tests, which do run.
   'require-env VGI_HTTP_NO_COMPRESSION'     # no-compression fixture server, Python-side only
   'require spatial'                          # spatial is not published for every haybarn build
+  'require-env VGI_MALFORMED_BATCH_WORKER'       # hostile malformed-Arrow fixture (vgi test/support only)
+  'require-env VGI_ROWID_CONSTRAINT_WORKER'      # hostile rowid-constraint fixture (vgi test/support only)
 )
 # Transport-specific additions.
 case "$TRANSPORT" in
