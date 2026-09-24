@@ -422,7 +422,8 @@ export class VgiClient {
       inputSession.close();
     }
 
-    // Phase 2: FINALIZE
+    // Phase 2: FINALIZE — skipped entirely for a function with no finalize stage.
+    if (opts.hasFinalize === false) return;
     const { session: finalizeSession } = await this._doInit(
       bindReq,
       bindResp,
@@ -502,6 +503,8 @@ export class VgiClient {
       inputSession.close();
     }
 
+    // FINALIZE — skipped entirely for a function with no finalize stage.
+    if (opts.hasFinalize === false) return;
     const { session: finalizeSession } = await this._doInit(
       bindReq,
       bindResp,

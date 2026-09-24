@@ -139,4 +139,15 @@ export interface TableInOutFunctionOptions {
   joinKeys?: VgiBatch[];
   /** Invoked after bind, before init. Receives the bind response. */
   onBind?: BindResultCallback;
+  /**
+   * Whether the function declares a FINALIZE stage (`FunctionInfo.has_finalize`).
+   * Defaults to `true`, preserving the unconditional FINALIZE-phase `init()` every
+   * caller got before this option existed. Pass `false` for a function known to have
+   * no finalize — every blended row-transform function (`defineRowTransformFunction`,
+   * `FunctionInfo.input_from_args`) — to skip the FINALIZE `init()` entirely: the
+   * worker rejects an unexpected FINALIZE for a function that never advertised one.
+   * The DuckDB extension avoids it the same way (it registers no final callback).
+   * Mirrors vgi-python's `table_in_out_function(has_finalize=...)`.
+   */
+  hasFinalize?: boolean;
 }
