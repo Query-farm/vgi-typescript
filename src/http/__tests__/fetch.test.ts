@@ -12,6 +12,9 @@
 // same way if a future refactor stops mounting it for some other reason.
 
 import { describe, test, expect } from "bun:test";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { int64 } from "../../arrow/index.js";
 import { defineScalarFunction } from "../../functions/scalar.js";
 import { FunctionRegistry } from "../../functions/registry.js";
@@ -62,6 +65,37 @@ describe("createVgiFetch landing surface", () => {
     const res = await get(createVgiFetch(options()), "/vgi-client.js", "*/*");
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toContain("javascript");
+  });
+
+  test("the served browser bundle discovers and attaches to the current protocol", async () => {
+    const server = Bun.serve({ port: 0, fetch: createVgiFetch(options()) });
+    const dir = await mkdtemp(join(tmpdir(), "vgi-landing-test-"));
+    let rpc: { close(): void } | undefined;
+    try {
+      const url = `http://localhost:${server.port}`;
+      const response = await fetch(`${url}/vgi-client.js`);
+      expect(response.status).toBe(200);
+      const path = join(dir, "client.mjs");
+      await Bun.write(path, await response.arrayBuffer());
+      // Import the shipped artifact, not the SDK source: a stale bundle can
+      // speak a retired reflection protocol while source-client tests pass.
+      const browser = await import(path);
+      rpc = browser.httpConnect(url);
+      const client = new browser.VgiClient(rpc);
+      expect((await client.catalogsInfo()).map((c: { name: string }) => c.name)).toEqual(["demo"]);
+      const attached = await client.catalogAttach("demo");
+      const schemas = await client.schemas(attached.attach_opaque_data);
+      expect(schemas.map((s: { path: string[] }) => s.path)).toEqual([["main"]]);
+      const functions = await client.schemaContentsFunctions(attached.attach_opaque_data, schemas[0].path, "SCALAR_FUNCTION");
+      expect(functions.map((f: { name: string }) => f.name)).toEqual(["dbl"]);
+    } catch (error) {
+      // Avoid dumping the entire minified bundle as a source excerpt.
+      throw new Error(String(error));
+    } finally {
+      rpc?.close();
+      server.stop(true);
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 
   test("the status document carries the worker identity", async () => {
