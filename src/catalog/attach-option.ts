@@ -82,16 +82,19 @@ export interface AttachOptionSpec {
    * The option carries a credential: an API key, a token, a password, or
    * anything else that must not be shown, stored or logged in plain text.
    *
-   * Credential options **MUST** be declared `secret: true`. Clients and the
-   * DuckDB extension use the flag to mask the value, keep it out of result
-   * cache keys (the extension stores a salted hash instead), `duckdb_databases()`,
-   * logs, telemetry, shared links and exported configuration. They can also
-   * supply it from a `vgi_attach` DuckDB secret, so the ATTACH statement never
-   * carries it:
+   * Credential options **MUST** be declared `secret: true`. The value is still
+   * passed inline as an ordinary ATTACH option; the flag tells the DuckDB
+   * extension to redact it from `duckdb_databases()`, keep only a salted hash
+   * of it in its result-cache key, and never log it. Clients use the flag to
+   * mask the field and keep the value out of shared links and exported
+   * configuration.
+   *
+   * To keep the credential out of the SQL text itself, pass it as an
+   * expression:
    *
    * ```sql
-   * CREATE SECRET (TYPE vgi_attach, SCOPE 'https://worker.example.com', api_key 'sk-...');
-   * ATTACH 'sales' (TYPE vgi, LOCATION 'https://worker.example.com');
+   * ATTACH 'sales' (TYPE vgi, LOCATION 'https://worker.example.com',
+   *                 api_key getenv('SALES_API_KEY'));
    * ```
    *
    * Combines with `required` (a credential the catalog cannot attach without,
