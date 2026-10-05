@@ -54,7 +54,7 @@ describe("required on the wire", () => {
     ).toThrow(/required but also declares a default/);
   });
 
-  test("required is appended last, after the shared four columns", () => {
+  test("required is appended after the shared four columns, before secret", () => {
     // Column order is the compatibility contract: a peer predating `required`
     // reads the batch by name and simply doesn't see it.
     const batch = deserializeBatch(
@@ -66,6 +66,7 @@ describe("required on the wire", () => {
       "type",
       "default_value",
       "required",
+      "secret",
     ]);
   });
 });

@@ -22,6 +22,9 @@
 //                                that predates the column reads the batch by
 //                                name and simply doesn't see it; absent and
 //                                explicit-null both mean "not required".
+//     secret: Bool nullable -- the option carries a credential. Appended AFTER
+//                              `required` under the same rule: readers look it
+//                              up by name, and absent or null reads as false.
 //
 // The extension reads the outer `attach_option_specs: list<binary>` column
 // from CatalogInfo and validates user-supplied ATTACH options against the
@@ -75,6 +78,31 @@ export interface AttachOptionSpec {
    * is by definition satisfiable without the caller.
    */
   required?: boolean;
+  /**
+   * The option carries a credential: an API key, a token, a password, or
+   * anything else that must not be shown, stored or logged in plain text.
+   *
+   * Credential options **MUST** be declared `secret: true`. Clients and the
+   * DuckDB extension use the flag to mask the value, keep it out of result
+   * cache keys (the extension stores a salted hash instead), `duckdb_databases()`,
+   * logs, telemetry, shared links and exported configuration. They can also
+   * supply it from a `vgi_attach` DuckDB secret, so the ATTACH statement never
+   * carries it:
+   *
+   * ```sql
+   * CREATE SECRET (TYPE vgi_attach, SCOPE 'https://worker.example.com', api_key 'sk-...');
+   * ATTACH 'sales' (TYPE vgi, LOCATION 'https://worker.example.com');
+   * ```
+   *
+   * Combines with `required` (a credential the catalog cannot attach without,
+   * which a client can then ask for before attaching). It is allowed together
+   * with `default`, but a secret option normally has none: a default would be
+   * a credential shipped in the catalog's own discovery metadata.
+   *
+   * Defaults to `false`. On the wire it is a nullable `secret` Bool column
+   * appended after `required`; a peer that predates it reads it as `false`.
+   */
+  secret?: boolean;
 }
 
 const SPEC_SCHEMA = makeSchema([
@@ -83,6 +111,7 @@ const SPEC_SCHEMA = makeSchema([
   field("type", binary(), false),
   field("default_value", binary(), true),
   field("required", bool(), true),
+  field("secret", bool(), true),
 ]);
 
 /**
@@ -126,6 +155,8 @@ export function serializeAttachOptionSpec(spec: AttachOptionSpec): Uint8Array {
       // Written explicitly rather than left null so a reader sees `false`, not
       // NULL, for an option that simply isn't required.
       required: [spec.required ?? false],
+      // Same reasoning: an ordinary option reads `false`, not NULL.
+      secret: [spec.secret ?? false],
     },
     SPEC_SCHEMA,
   );
@@ -145,8 +176,8 @@ export function serializeAttachOptionSpecs(
  * Deserialize one AttachOptionSpec from the wire format above.
  *
  * Reads by column name, so a spec written by a peer that predates the
- * `required` column deserializes with `required: false` rather than failing —
- * the same tolerance the Python and C++ readers have.
+ * `required` or `secret` column deserializes with that flag `false` rather
+ * than failing — the same tolerance the Python and C++ readers have.
  */
 export function deserializeAttachOptionSpec(
   bytes: Uint8Array,
@@ -181,6 +212,7 @@ export function deserializeAttachOptionSpec(
     type,
     ...(value === undefined || value === null ? {} : { default: value }),
     required: row.required === true,
+    secret: row.secret === true,
   };
 }
 

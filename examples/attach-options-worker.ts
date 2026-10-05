@@ -104,9 +104,10 @@ const ATTACH_OPTION_SPECS: AttachOptionSpec[] = [
 
 // Attach-time options for the catalog that refuses an anonymous ATTACH.
 // `api_key` declares no default: there is nothing to fall back on, so the
-// caller has to supply it.
+// caller has to supply it. It is a credential, so it is declared `secret`:
+// clients mask it and the extension keeps it out of cache keys and logs.
 const REQUIRED_OPTION_SPECS: AttachOptionSpec[] = [
-  { name: "api_key", description: "API key", type: new Utf8(), required: true },
+  { name: "api_key", description: "API key", type: new Utf8(), required: true, secret: true },
   { name: "region", description: "Region", type: new Utf8(), default: "us-east-1" },
 ];
 
