@@ -678,6 +678,7 @@ export class VgiClient {
       global_function_prefix: inner.global_function_prefix ?? "",
       resolved_data_version: inner.resolved_data_version ?? null,
       resolved_implementation_version: inner.resolved_implementation_version ?? null,
+      supports_catalog_contents: inner.supports_catalog_contents ?? false,
     };
   }
 

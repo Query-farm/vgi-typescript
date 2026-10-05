@@ -57,7 +57,7 @@ export interface ProtocolConfig {
 export const VGI_PROTOCOL_NAME = "vgi.v2";
 
 export function buildVgiProtocol(config: ProtocolConfig): Protocol {
-  const protocol = new Protocol(VGI_PROTOCOL_NAME, { protocolVersion: "2.0.0" });
+  const protocol = new Protocol(VGI_PROTOCOL_NAME, { protocolVersion: "2.1.0" });
 
   registerFunctionMethods(protocol, {
     registry: config.registry,

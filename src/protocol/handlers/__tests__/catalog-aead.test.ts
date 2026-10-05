@@ -50,6 +50,7 @@ class RecordingCatalog extends CatalogInterface {
       global_function_prefix: "",
       resolved_data_version: null,
       resolved_implementation_version: null,
+      supports_catalog_contents: false,
     };
   }
   async detach(a: AttachOpaqueData): Promise<void> {

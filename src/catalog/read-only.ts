@@ -184,6 +184,9 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
       global_function_prefix: this._descriptor.globalFunctionPrefix ?? "",
       resolved_data_version: null,
       resolved_implementation_version: null,
+      // catalog_contents (the bulk enumeration RPC) is not implemented in this
+      // SDK; false keeps the extension on the per-kind schema_contents_* RPCs.
+      supports_catalog_contents: false,
     };
   }
 

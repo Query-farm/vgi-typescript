@@ -131,6 +131,11 @@ export function registerCatalogAdminMethods(protocol: Protocol, getCatalog: GetC
         global_function_prefix: result.global_function_prefix ?? "",
         resolved_data_version: result.resolved_data_version ?? null,
         resolved_implementation_version: result.resolved_implementation_version ?? null,
+        // The bulk catalog_contents RPC is not served by this SDK yet, so the
+        // default is false: the extension then never calls it and falls back
+        // to the per-kind schema_contents_* RPCs. The column must still be
+        // present -- the extension pins the full CatalogAttachResult schema.
+        supports_catalog_contents: result.supports_catalog_contents ?? false,
       }, CatalogAttachResultSchema);
     },
   });

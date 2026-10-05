@@ -61,6 +61,7 @@ class VersionedCatalog extends CatalogInterface {
       global_function_prefix: "",
       resolved_data_version: dataVersionSpec ?? DEFAULT_DATA_VERSION,
       resolved_implementation_version: IMPLEMENTATION_VERSION,
+      supports_catalog_contents: false,
     };
   }
   detach(_attachOpaqueData: AttachOpaqueData): void {}
