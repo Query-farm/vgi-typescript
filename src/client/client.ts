@@ -40,6 +40,8 @@ import {
   decodeMacroInfo,
   type MacroType,
   type CatalogAttachResult,
+  type SchemaContentsInfo,
+  decodeIndexInfo,
   type AttachOpaqueData,
   type TransactionOpaqueData,
   decodeCatalogInfo,
@@ -54,6 +56,7 @@ import { VgiClientError, wrapRpcWithErrorEnrichment } from "./errors.js";
 import { normalizeSchemaPath } from "../schema-path.js";
 import { encodeASD } from "../codec/asd.js";
 import { ClientCapabilitiesSchema, MacroCreateRequestSchema } from "../generated/vgi-protocol-schemas.js";
+import { decodeSchemaContents } from "../generated/vgi-protocol-types.js";
 import { deserializeInfoList, deserializeTags, toAsyncIterator } from "./helpers.js";
 
 export { VgiClientError };
@@ -680,6 +683,33 @@ export class VgiClient {
       resolved_implementation_version: inner.resolved_implementation_version ?? null,
       supports_catalog_contents: inner.supports_catalog_contents ?? false,
     };
+  }
+
+  /**
+   * Load the whole catalog in one `catalog_contents` call: every schema (parents
+   * before children) with all of its tables, views, functions, macros and
+   * indexes. Only call it when the attach result set
+   * `supports_catalog_contents`; it is the committed catalog at
+   * `catalog_version` (no transaction).
+   */
+  async catalogContents(
+    attachOpaqueData: AttachOpaqueData,
+  ): Promise<{ catalog_version: number; schemas: SchemaContentsInfo[] }> {
+    const result = await this.rpc.call("catalog_contents", { attach_opaque_data: attachOpaqueData });
+    if (!result) throw new VgiClientError("catalog_contents returned null");
+    const inner = unwrapResult(result);
+    const schemas = deserializeInfoList(inner.schemas, decodeSchemaContents).map((c) => ({
+      schema: decodeSchemaInfo(c.schema),
+      tables: c.tables.map(decodeTableInfo),
+      views: c.views.map(decodeViewInfo),
+      scalar_functions: c.scalar_functions.map(decodeFunctionInfo),
+      aggregate_functions: c.aggregate_functions.map(decodeFunctionInfo),
+      table_functions: c.table_functions.map(decodeFunctionInfo),
+      scalar_macros: c.scalar_macros.map(decodeMacroInfo),
+      table_macros: c.table_macros.map(decodeMacroInfo),
+      indexes: c.indexes.map(decodeIndexInfo),
+    }));
+    return { catalog_version: Number(inner.catalog_version ?? 0), schemas };
   }
 
   /** Detach a previously-attached catalog. */

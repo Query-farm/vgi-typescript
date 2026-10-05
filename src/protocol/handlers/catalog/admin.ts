@@ -4,12 +4,27 @@
 
 import { type VgiSchema, schema, type VgiField, field, type VgiDataType, binary, utf8, bool } from "../../../arrow/index.js";
 import { Protocol, type CallContext } from "@query-farm/vgi-rpc";
-import { encodeSchemaInfo, encodeTableInfo, encodeViewInfo, encodeCatalogInfo } from "../../../generated/vgi-client.js";
+import {
+  encodeSchemaInfo,
+  encodeTableInfo,
+  encodeViewInfo,
+  encodeCatalogInfo,
+  encodeMacroInfo,
+  encodeIndexInfo,
+} from "../../../generated/vgi-client.js";
+import {
+  buildCatalogAttachResult,
+  buildCatalogContentsResponse,
+  buildSchemaContents,
+  encodeSchemaContents,
+} from "../../../generated/vgi-protocol-types.js";
 import { encodeFunctionInfoOnce } from "../../../catalog/item-encoding.js";
 import { encodeCopyFromFormatInfo } from "../../../catalog/interface.js";
 import {
   CatalogAttachParamsSchema,
   CatalogAttachResultSchema,
+  CatalogContentsParamsSchema,
+  CatalogContentsResultSchema,
   CatalogCatalogsParamsSchema,
   CatalogCatalogsResultSchema,
   CatalogCopyFromFormatsParamsSchema,
@@ -105,38 +120,19 @@ export function registerCatalogAdminMethods(protocol: Protocol, getCatalog: GetC
         (ctx as CallContext | undefined)?.auth,
         signingKey,
       );
-      return wrapResult({
+      // The generated builder emits every column of the pinned
+      // CatalogAttachResult schema, filling vgi-python's defaults for any a
+      // catalog left out (supports_catalog_contents=false: the client then
+      // keeps to the per-schema RPCs).
+      return wrapResult(buildCatalogAttachResult({
+        ...result,
         attach_opaque_data: sealedAttach,
-        supports_transactions: result.supports_transactions,
-        supports_time_travel: result.supports_time_travel,
-        catalog_version_frozen: result.catalog_version_frozen,
-        catalog_version: result.catalog_version,
-        attach_opaque_data_required: result.attach_opaque_data_required ?? true,
-        default_schema: result.default_schema ?? "main",
-        settings: result.settings ?? [],
-        secret_types: result.secret_types ?? [],
-        attach_catalogs: result.attach_catalogs ?? [],
-        comment: result.comment ?? null,
-        tags: result.tags ?? {},
-        // True so DuckDB will route catalog_table_column_statistics_get RPCs
-        // to our handler for tables whose TableInfo.supports_column_statistics
-        // is also true. Catalogs that never serve column stats can override
-        // this in attach() via CatalogAttachResult.supports_column_statistics.
+        // SDK default, unlike vgi-python's false: true so DuckDB will route
+        // catalog_table_column_statistics_get RPCs to our handler for tables
+        // whose TableInfo.supports_column_statistics is also true. Catalogs
+        // that never serve column stats set it false in attach().
         supports_column_statistics: result.supports_column_statistics ?? true,
-        // Protocol 1.3.0: functions the worker asks the client to publish into
-        // its global namespace. Empty unless the catalog advertises them —
-        // but the columns must still be present, since the extension pins the
-        // full CatalogAttachResult field list on the response schema.
-        global_functions: result.global_functions ?? [],
-        global_function_prefix: result.global_function_prefix ?? "",
-        resolved_data_version: result.resolved_data_version ?? null,
-        resolved_implementation_version: result.resolved_implementation_version ?? null,
-        // The bulk catalog_contents RPC is not served by this SDK yet, so the
-        // default is false: the extension then never calls it and falls back
-        // to the per-kind schema_contents_* RPCs. The column must still be
-        // present -- the extension pins the full CatalogAttachResult schema.
-        supports_catalog_contents: result.supports_catalog_contents ?? false,
-      }, CatalogAttachResultSchema);
+      }), CatalogAttachResultSchema);
     },
   });
 
@@ -249,6 +245,40 @@ export function registerCatalogAdminMethods(protocol: Protocol, getCatalog: GetC
       return wrapResult({
         items: schemas.map((s) => encodeSchemaInfo(s)),
       }, CatalogSchemasResultSchema);
+    },
+  });
+
+  // catalog_contents — every schema and all of its contents in one result,
+  // for a client whose attach result set supports_catalog_contents. Takes no
+  // transaction: the client caches the answer for the whole attach, so it is
+  // the committed catalog at catalog_version. Every item is encoded with the
+  // SAME encoder its per-schema RPC uses (catalog_schemas, and the
+  // catalog_schema_contents_* handlers in this directory), so a client decodes
+  // the items it already knows how to decode and gets byte-identical entries.
+  catalogUnary(protocol, signingKey, "catalog_contents", {
+    params: CatalogContentsParamsSchema,
+    result: RESULT_BINARY_SCHEMA,
+    handler: async (params) => {
+      const cat = getCatalog();
+      const attach = toUint8Array(params.attach_opaque_data);
+      const version = await cat.version(attach);
+      const contents = await cat.catalogContents(attach);
+      // Parents before children, as catalog_schemas guarantees (stable sort).
+      const ordered = [...contents].sort((a, b) => a.schema.path.length - b.schema.path.length);
+      return wrapResult(buildCatalogContentsResponse({
+        catalog_version: version,
+        schemas: ordered.map((c) => encodeSchemaContents(buildSchemaContents({
+          schema: encodeSchemaInfo(c.schema),
+          tables: c.tables.map((t) => encodeTableInfo(t)),
+          views: c.views.map((v) => encodeViewInfo(v)),
+          scalar_functions: c.scalar_functions.map((f) => encodeFunctionInfoOnce(f)),
+          aggregate_functions: c.aggregate_functions.map((f) => encodeFunctionInfoOnce(f)),
+          table_functions: c.table_functions.map((f) => encodeFunctionInfoOnce(f)),
+          scalar_macros: c.scalar_macros.map((m) => encodeMacroInfo(m)),
+          table_macros: c.table_macros.map((m) => encodeMacroInfo(m)),
+          indexes: c.indexes.map((i) => encodeIndexInfo(i)),
+        }))),
+      }), CatalogContentsResultSchema);
     },
   });
 

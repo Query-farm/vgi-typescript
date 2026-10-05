@@ -52,7 +52,8 @@ export function registerCatalogMacroMethods(protocol: Protocol, getCatalog: GetC
     result: emptyResultSchema,
     handler: async (params) => {
       const cat = getCatalog();
-      const innerParams = unwrapRequest(params.request);
+      // catalogUnary already flattened the wrapped request.
+      const innerParams = params;
       await cat.macroCreate(
         toUint8Array(innerParams.attach_opaque_data),
         innerParams.schema_path,

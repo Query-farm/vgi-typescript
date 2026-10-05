@@ -7,7 +7,7 @@ import type { CatalogInterface } from "../../../catalog/interface.js";
 import { NoCatalogError } from "../../../errors.js";
 import { deserializeBatch } from "../../../util/arrow/index.js";
 import { toUint8Array } from "../../../util/bytes.js";
-import { normalizeRequestSchemaPaths } from "../shared.js";
+import { normalizeRequestSchemaPaths, unwrapRequest } from "../shared.js";
 import {
   sealBytes,
   openBytes,
@@ -195,6 +195,17 @@ export function catalogUnary(
     result: config.result as any,
     doc: config.doc,
     handler: async (params: Record<string, any>, ctx: any) => {
+      // catalog_create / catalog_table_create / catalog_macro_create (and
+      // catalog_index_create) send one `request: binary` column holding the
+      // IPC-serialized request record, so their attach/transaction values ride
+      // INSIDE it. Flatten it first, so handlers read the request's fields
+      // directly and those values are opened (and the framework UUID stripped)
+      // like every other catalog call's. Before this, table_create read every
+      // field off the envelope (all undefined) and macro_create handed the
+      // catalog an unopened attach value.
+      if (params.request != null && params.attach_opaque_data === undefined && params.name === undefined) {
+        params = unwrapRequest(params.request);
+      }
       normalizeRequestSchemaPaths(params);
       await unwrapParamsOpaque(params, ctx, signingKey);
       return config.handler(params, ctx);

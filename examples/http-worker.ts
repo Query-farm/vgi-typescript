@@ -12,6 +12,7 @@ import { projectionReproCatalog, projectionReproFunctions } from "./projection_r
 import { accumulateFunctions, createAccumulateCatalog } from "./accumulate.js";
 import { narrowBindCatalog, narrowBindFunctions } from "./narrow_bind.js";
 import { twinACatalog, twinBCatalog, twinCatalogFunctions } from "./twin_catalogs.js";
+import { createCatalogContentsCatalogs } from "./catalog_contents.js";
 import { optionalTestBearerAuthenticate } from "./optional-bearer.js";
 import {
   buildSecondaryProtocol,
@@ -43,6 +44,18 @@ const narrowBind = new ReadOnlyCatalogInterface(narrowBindCatalog, registry);
 // only the attached catalog tells them apart.
 const twinA = new ReadOnlyCatalogInterface(twinACatalog, registry);
 const twinB = new ReadOnlyCatalogInterface(twinBCatalog, registry);
+// The catalogs above are ReadOnlyCatalogInterfaces, so each advertises
+// supports_catalog_contents and serves catalog_contents (the whole catalog in
+// one RPC). VGI_EXAMPLE_NO_CATALOG_CONTENTS=1 turns that off, keeping DuckDB on
+// the per-schema catalog_schema_contents_* RPCs -- for running the
+// conformance suite both ways. (The contents_* fixtures below keep their own,
+// fixed behaviour: their tests switch modes with SET vgi_catalog_contents.)
+if (process.env.VGI_EXAMPLE_NO_CATALOG_CONTENTS) {
+  for (const c of [exampleCatalog, projectionRepro, accumulate, narrowBind, twinA, twinB]) {
+    c.supportsCatalogContents = false;
+  }
+}
+
 const catalogInterface = new CompositeCatalogInterface([
   exampleCatalog,
   projectionRepro,
@@ -50,6 +63,8 @@ const catalogInterface = new CompositeCatalogInterface([
   narrowBind,
   twinA,
   twinB,
+  // contents_probe / _broken / _legacy / _memory: catalog_contents fixtures.
+  ...createCatalogContentsCatalogs(registry),
 ]);
 
 // The `signingKey` this example used to pass to createHttpHandler was never read

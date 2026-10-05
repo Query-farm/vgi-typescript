@@ -14,11 +14,16 @@ export type { MacroType };
 
 // CatalogAttachResult is the generated snake_case wire shape.
 // The `supports_column_statistics` field is a catalog-level opt-in for the
-// catalog_table_column_statistics_get RPC — defaults to true when unspecified;
-// individual tables still need to set TableInfo.supports_column_statistics
-// before DuckDB will actually call it.
-import type { CatalogAttachResult } from "../generated/vgi-client.js";
-export type { CatalogAttachResult };
+// catalog_table_column_statistics_get RPC — the catalog_attach handler defaults
+// it to true when unspecified; individual tables still need to set
+// TableInfo.supports_column_statistics before DuckDB will actually call it.
+//
+// `buildCatalogAttachResult` (generated, src/generated/vgi-protocol-types.ts)
+// fills every other field the protocol defaults, exactly as vgi-python's
+// dataclass does — so an appended column needs no hand-written default here.
+import type { CatalogAttachResult, CatalogAttachResultInit } from "../generated/vgi-protocol-types.js";
+export type { CatalogAttachResult, CatalogAttachResultInit };
+export { buildCatalogAttachResult } from "../generated/vgi-protocol-types.js";
 
 // ============================================================================
 // Serializable info types
@@ -496,6 +501,31 @@ export function buildScanBranchesResult(
 }
 
 // ============================================================================
+// catalog_contents
+// ============================================================================
+
+/**
+ * One schema and everything in it, as returned by
+ * `CatalogInterface.catalogContents` (vgi-python's `SchemaContentsInfo`).
+ *
+ * Each kind is complete: an empty list means the schema has none of that kind.
+ * The `catalog_contents` handler encodes every item with the same encoder the
+ * matching per-schema RPC uses, so the items are byte-for-byte what
+ * `catalog_schemas` / `catalog_schema_contents_*` would return.
+ */
+export interface SchemaContentsInfo {
+  schema: SchemaInfo;
+  tables: TableInfo[];
+  views: ViewInfo[];
+  scalar_functions: FunctionInfo[];
+  aggregate_functions: FunctionInfo[];
+  table_functions: FunctionInfo[];
+  scalar_macros: MacroInfo[];
+  table_macros: MacroInfo[];
+  indexes: IndexInfo[];
+}
+
+// ============================================================================
 // CatalogInterface abstract class
 // ============================================================================
 
@@ -920,6 +950,55 @@ export abstract class CatalogInterface {
     transactionOpaqueData?: TransactionOpaqueData,
   ): Awaitable<CopyFromFormatInfo[]> {
     return [];
+  }
+  /**
+   * Every schema and all of its contents, for the `catalog_contents` RPC.
+   *
+   * Served only to a client whose attach result set
+   * `supports_catalog_contents` (ReadOnlyCatalogInterface does). The default
+   * composes `schemas()` with the per-kind `schemaContents*()` calls, skipping
+   * a kind whose `estimated_object_count` is exactly 0 (a hard guarantee) — so
+   * any catalog can serve it without new code. It runs with no transaction:
+   * the client caches the answer for the whole attach. Override it to build the
+   * snapshot more cheaply. Mirrors vgi-python's
+   * `CatalogInterface.catalog_contents`.
+   *
+   * @returns One `SchemaContentsInfo` per schema, in `schemas()` order (the
+   *   handler sorts parents before children).
+   */
+  async catalogContents(attachOpaqueData: AttachOpaqueData): Promise<SchemaContentsInfo[]> {
+    const schemas = await this.schemas(attachOpaqueData, undefined);
+    return Promise.all(
+      schemas.map(async (schema) => {
+        const counts = schema.estimated_object_count ?? {};
+        const path = schema.path;
+        // A missing count is unknown, never zero: only an explicit 0 skips.
+        const kind = async <T>(countKey: string, list: () => Awaitable<T[]>): Promise<T[]> =>
+          (counts[countKey] ?? 1) === 0 ? [] : [...(await list())];
+        const [tables, views, scalarFunctions, aggregateFunctions, tableFunctions, scalarMacros, tableMacros, indexes] =
+          await Promise.all([
+            kind("table", () => this.schemaContentsTables(attachOpaqueData, path)),
+            kind("view", () => this.schemaContentsViews(attachOpaqueData, path)),
+            kind("scalar_function", () => this.schemaContentsFunctions(attachOpaqueData, path, "scalar_function")),
+            kind("aggregate_function", () => this.schemaContentsFunctions(attachOpaqueData, path, "aggregate_function")),
+            kind("table_function", () => this.schemaContentsFunctions(attachOpaqueData, path, "table_function")),
+            kind("macro", () => this.schemaContentsMacros(attachOpaqueData, path, "scalar_macro")),
+            kind("macro", () => this.schemaContentsMacros(attachOpaqueData, path, "table_macro")),
+            kind("index", () => this.schemaContentsIndexes(attachOpaqueData, path)),
+          ]);
+        return {
+          schema,
+          tables: tables as TableInfo[],
+          views: views as ViewInfo[],
+          scalar_functions: scalarFunctions as FunctionInfo[],
+          aggregate_functions: aggregateFunctions as FunctionInfo[],
+          table_functions: tableFunctions as FunctionInfo[],
+          scalar_macros: scalarMacros as MacroInfo[],
+          table_macros: tableMacros as MacroInfo[],
+          indexes: indexes as IndexInfo[],
+        };
+      }),
+    );
   }
   transactionBegin(attachOpaqueData: AttachOpaqueData): Awaitable<Uint8Array | null> {
     return null;

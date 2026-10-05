@@ -18,6 +18,7 @@ import {
   type CopyFromFormatInfo,
   encodeAttachCatalogInfo,
   encodeScanFunctionResult,
+  buildCatalogAttachResult,
 } from "./interface.js";
 import { schemaDescriptorPath, type CatalogDescriptor, type SchemaDescriptor, type TableDescriptor, type ViewDescriptor, type MacroDescriptor, type SettingDescriptor, type SecretTypeDescriptor, type ForeignKeyDef, type DefaultValue } from "./descriptors.js";
 import { serializeColumnStatistics } from "../util/statistics.js";
@@ -34,6 +35,15 @@ import { ForeignKeyInfoSchema } from "../generated/vgi-protocol-schemas.js";
 import { encodeFunctionInfoOnce, freezeCatalogItem } from "./item-encoding.js";
 
 export class ReadOnlyCatalogInterface extends CatalogInterface {
+  /**
+   * Advertise `supports_catalog_contents` on attach, letting the client load
+   * the whole catalog with one `catalog_contents` call instead of
+   * `catalog_schemas` plus a `catalog_schema_contents_*` call per schema and
+   * kind. True by default — a descriptor catalog is static. Set it to false
+   * (before attach) to keep the client on the per-schema RPCs.
+   */
+  supportsCatalogContents = true;
+
   private _descriptor: CatalogDescriptor;
   private _registry: FunctionRegistry;
   private _attachments = new Map<string, AttachOpaqueData>();
@@ -161,7 +171,7 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
       (s) => s.tables?.some((t) => t.supportsTimeTravel) ?? false
     );
 
-    return {
+    return buildCatalogAttachResult({
       attach_opaque_data: attachOpaqueData,
       supports_transactions: false,
       supports_time_travel: hasTimeTravel,
@@ -184,10 +194,10 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
       global_function_prefix: this._descriptor.globalFunctionPrefix ?? "",
       resolved_data_version: null,
       resolved_implementation_version: null,
-      // catalog_contents (the bulk enumeration RPC) is not implemented in this
-      // SDK; false keeps the extension on the per-kind schema_contents_* RPCs.
-      supports_catalog_contents: false,
-    };
+      // Static, version-frozen catalog: the whole thing can be served in one
+      // catalog_contents call (as vgi-python's ReadOnlyCatalogInterface does).
+      supports_catalog_contents: this.supportsCatalogContents,
+    });
   }
 
   detach(attachOpaqueData: AttachOpaqueData): void {

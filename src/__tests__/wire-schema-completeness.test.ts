@@ -65,6 +65,7 @@ import { Arguments } from "../arguments/arguments.js";
 import { FunctionType } from "../types.js";
 import { OrderByDirection, OrderByNullOrder, type BindRequest } from "../protocol/types.js";
 import { encodeASD } from "../codec/asd.js";
+import { buildSchemaContents, encodeSchemaContents } from "../generated/vgi-protocol-types.js";
 
 // --------------------------------------------------------------------------- //
 // Fixtures
@@ -223,6 +224,13 @@ const CASES: WireRecordCase[] = [
     origin: "ForeignKeyInfo",
     schema: generated.ForeignKeyInfoSchema,
     build: () => encodeASD(generated.ForeignKeyInfoSchema, sampleRow(generated.ForeignKeyInfoSchema)),
+  },
+  {
+    // One entry of catalog_contents' result, built by the generated builder +
+    // encoder the catalog_contents handler uses.
+    origin: "SchemaContents",
+    schema: generated.SchemaContentsSchema,
+    build: () => encodeSchemaContents(buildSchemaContents(sampleRow(generated.SchemaContentsSchema) as any)),
   },
   {
     origin: "ScanFunctionResult",
