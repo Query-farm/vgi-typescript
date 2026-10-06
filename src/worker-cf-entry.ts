@@ -18,6 +18,7 @@ export type { VgiFetchOptions } from "./http/fetch.js";
 export type { HostingOptions } from "./rpc-server.js";
 export {
   AuthUnavailableError,
+  GrantKeys,
   GrantRefusedError,
   IdentityUnavailableError,
   StatusError,

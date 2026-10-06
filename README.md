@@ -615,6 +615,37 @@ never return `null` for one: both read as a definitive answer. Return `null` onl
 when the store answered and the credential is unknown; throw `GrantRefusedError` to
 decline a grant.
 
+### Sealed grants: minted credentials that log their owner in
+
+`issue_grant` mints a credential meant for unattended automation to present later
+as an ordinary bearer. Configure **grant keys** and the worker both mints and
+accepts them, with no storage and no code:
+
+```console
+$ VGI_RPC_GRANT_KEYS="$(openssl rand -base64 32)" bun run scripts/serve.ts
+# or: bun run scripts/serve.ts --grant-key "$(openssl rand -base64 32)"
+```
+
+- `VGI_RPC_GRANT_KEYS`: comma-separated standard base64, exactly 32 bytes each. The
+  first mints; every key verifies. Rotate by adding the new key first and removing
+  the old one once its grants have expired. `--grant-key KEY` (repeatable) on
+  `serveVgiWorker`, or the `grantKeys` option (`GrantKeys.parse([...])`, required on
+  Cloudflare Workers, where there is no process environment) work too.
+- Optional `VGI_RPC_GRANT_AUDIENCE` (bind grants to this deployment) and
+  `VGI_RPC_GRANT_MAX_TTL_SECONDS` (default 7 days).
+- With keys set, HTTP hosts `issue_grant` (minted by the framework unless you supply
+  `mintGrant`) and the worker's HTTP authentication accepts `vgig1.` grants after
+  your own `authenticate`, as the grant's owner (domain `grant`). A caller
+  authenticated by a grant has no `auth_time`, so it cannot mint another grant.
+- A worker that supplies `resolveToken` also has bearers your `authenticate` did not
+  accept resolved through it (domain `token`); an `AuthUnavailableError` from the hook
+  is a 503 with `Retry-After`, never a 401.
+- Your `authenticate` must throw (not return anonymous) for a bearer it does not
+  recognise, or the chain ends before grants are tried.
+- No key set, nothing changes. A malformed key stops the worker at startup.
+- Sealed grants are not individually revocable: keep the lifetime short; removing a
+  key revokes every grant it minted.
+
 ## Runtimes & entry points
 
 The package ships a backend-agnostic Arrow facade and selects an implementation at

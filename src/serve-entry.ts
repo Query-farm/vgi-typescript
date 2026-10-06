@@ -29,10 +29,11 @@ import {
   observePeerIdentity,
   peerIdentityPrimary,
   type AuthenticateFn,
+  GrantKeys,
   type PeerResolutionOptions,
 } from "@query-farm/vgi-rpc";
 import { createVgiFetch } from "./http/fetch.js";
-import type { HostingOptions } from "./rpc-server.js";
+import { grantKeysFromArgv, type HostingOptions } from "./rpc-server.js";
 
 /** Environment variables `serveVgiWorker` reads. Injectable for testing. */
 export interface ServeEnv {
@@ -40,6 +41,14 @@ export interface ServeEnv {
   VGI_SIGNING_KEY?: string;
   VGI_TOKEN_TTL?: string;
   CORS_ORIGINS?: string;
+  /** Sealed-grant keys: comma-separated base64, exactly 32 bytes each, first mints. */
+  VGI_RPC_GRANT_KEYS?: string;
+  /** Audience bound into sealed grants. */
+  VGI_RPC_GRANT_AUDIENCE?: string;
+  /** Sealed-grant lifetime ceiling, seconds (default 7 days). */
+  VGI_RPC_GRANT_MAX_TTL_SECONDS?: string;
+  /** Principals allowed to call `introspect_token`, comma-separated. */
+  VGI_INTROSPECT_PRINCIPALS?: string;
 }
 
 export const DEFAULT_PORT = 8787;
@@ -94,6 +103,10 @@ export interface ServeVgiWorkerOptions extends HostingOptions {
   quiet?: boolean;
   /** Environment source (default `process.env`). */
   env?: ServeEnv;
+  /** Command-line arguments to read `--grant-key KEY` (repeatable, first mints)
+   *  from. Default `process.argv.slice(2)`. A key here takes precedence over
+   *  `VGI_RPC_GRANT_KEYS`; an explicit {@link grantKeys} over both. */
+  argv?: readonly string[];
   /** Authenticates each request, returning the caller's `AuthContext`.
    *  Omit for an anonymous worker (the default). */
   authenticate?: AuthenticateFn;
@@ -247,6 +260,11 @@ export function createVgiWorkerFetch(
     mintGrant: opts.mintGrant,
     introspectPrincipals: opts.introspectPrincipals,
     maxAuthAge: opts.maxAuthAge,
+    grantKeys:
+      opts.grantKeys !== undefined
+        ? opts.grantKeys
+        : (grantKeysFromArgv(opts.argv ?? process.argv.slice(2), env as Record<string, string | undefined>) ??
+          GrantKeys.fromEnv(env as Record<string, string | undefined>)),
   });
 }
 

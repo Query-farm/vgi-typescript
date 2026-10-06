@@ -22,6 +22,7 @@
 // exactly as it would against a single-protocol server.
 
 import {
+  GrantKeys,
   type GrantMinter,
   IdentityImpl,
   type Protocol,
@@ -117,6 +118,20 @@ export interface HostingOptions {
   /** Maximum age of the caller's authentication for `issue_grant`, in
    *  seconds. vgi-rpc's default when omitted. */
   maxAuthAge?: number;
+
+  /**
+   * Sealed-grant keys (vgi-rpc `GrantKeys`), turning on the framework's own
+   * grants on HTTP: `issue_grant` mints `vgig1.` tokens (unless
+   * {@link mintGrant} is supplied) and the worker's HTTP authentication accepts
+   * them back as bearer credentials, as the grant's owner. When omitted,
+   * `VGI_RPC_GRANT_KEYS` (comma-separated base64, exactly 32 bytes each, first
+   * mints, all verify), `VGI_RPC_GRANT_AUDIENCE` and
+   * `VGI_RPC_GRANT_MAX_TTL_SECONDS` are read; `serveVgiWorker` also accepts
+   * `--grant-key KEY` (repeatable). Unset everywhere, nothing changes. A
+   * malformed key refuses to start. `null` turns grants off regardless of the
+   * environment.
+   */
+  grantKeys?: GrantKeys | null;
 }
 
 /** Server-level options passed through to `VgiRpcServer`. */
@@ -156,6 +171,9 @@ export function buildRpcServer(
     serverId: options.serverId,
     protocols,
     identity,
+    // Resolved here, per transport, rather than by vgi-rpc's own environment
+    // default: identity (and so grants) is hosted on HTTP only.
+    grantKeys: null,
   });
 }
 
@@ -224,10 +242,15 @@ function buildIdentity(
   env: Record<string, string | undefined> | undefined,
 ): IdentityImpl | undefined {
   const { resolveToken, mintGrant } = hosting;
-  if (!resolveToken && !mintGrant) return undefined;
+  // Explicit option, else the environment. Read at server build, so a
+  // malformed key stops the worker before it serves anything.
+  const grantKeys = hosting.grantKeys === undefined ? GrantKeys.fromEnv(env ?? processEnv()) : hosting.grantKeys;
+  if (!resolveToken && !mintGrant && !grantKeys) return undefined;
   return new IdentityImpl({
     resolveToken,
+    // Absent with grant keys configured, vgi-rpc mints sealed grants itself.
     mintGrant,
+    grantKeys: grantKeys ?? undefined,
     // Only meaningful for `introspect_token`; a worker that mints but resolves
     // nothing is not an oracle and needs no allowlist.
     introspectPrincipals: resolveToken ? resolveIntrospectPrincipals(hosting.introspectPrincipals, env) : undefined,
@@ -270,4 +293,35 @@ function resolveIntrospectPrincipals(
     );
   }
   return principals;
+}
+
+function processEnv(): Record<string, string | undefined> | undefined {
+  return (globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env;
+}
+
+/**
+ * Collect `--grant-key KEY` / `--grant-key=KEY` (repeatable, first mints) from
+ * an argv, as a `GrantKeys` -- or `undefined` when none was passed, so the
+ * environment still applies. Audience and lifetime come from
+ * `VGI_RPC_GRANT_AUDIENCE` / `VGI_RPC_GRANT_MAX_TTL_SECONDS`.
+ *
+ * @throws Error A malformed key: a worker refuses to start.
+ */
+export function grantKeysFromArgv(
+  argv: readonly string[],
+  env: Record<string, string | undefined> | undefined = processEnv(),
+): GrantKeys | undefined {
+  const keys: string[] = [];
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === "--grant-key") {
+      if (i + 1 >= argv.length) throw new Error("--grant-key requires a value");
+      keys.push(argv[++i]);
+    } else if (a.startsWith("--grant-key=")) {
+      keys.push(a.slice("--grant-key=".length));
+    }
+  }
+  if (keys.length === 0) return undefined;
+  const fromEnv = GrantKeys.fromEnv({ ...(env ?? {}), VGI_RPC_GRANT_KEYS: keys.join(",") });
+  return fromEnv ?? undefined;
 }

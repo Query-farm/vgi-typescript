@@ -4,7 +4,7 @@
 import { describe, expect, test } from "bun:test";
 import { Protocol, type TokenIdentity } from "@query-farm/vgi-rpc";
 import { buildSecondaryProtocol } from "@query-farm/vgi-rpc/conformance";
-import { buildRpcServer, type HostingOptions, type ServerTransport } from "../rpc-server.js";
+import { buildRpcServer, grantKeysFromArgv, type HostingOptions, type ServerTransport } from "../rpc-server.js";
 
 const primary = () => new Protocol("vgi.v2", { protocolVersion: "2.0.0" });
 const resolveToken = (_token: string): TokenIdentity | null => ({ principal: "p" });
@@ -77,5 +77,44 @@ describe("buildRpcServer", () => {
     expect(() => hosted({ hostedProtocols: () => [new Protocol("bad name")] }, "pipe")).toThrow(
       /hostedProtocols\(\) entry 0/,
     );
+  });
+});
+
+describe("sealed grants", () => {
+  const KEY = btoa(String.fromCharCode(...new Uint8Array(32).fill(3)));
+
+  test("grant keys from the environment host issue_grant on HTTP only, minted by the framework", () => {
+    const env = { VGI_RPC_GRANT_KEYS: KEY };
+    const http = buildRpcServer(primary(), {}, { transport: "http", env });
+    expect([...http.bindings().keys()]).toContain("vgi_rpc.Identity.v1");
+    expect([...(http.identity?.offeredMethods() ?? [])]).toEqual(["issue_grant"]);
+    expect(http.identity?.grantKeys).toBeDefined();
+    for (const transport of ALL.filter((t) => t !== "http")) {
+      expect(hosted({}, transport, env)).not.toContain("vgi_rpc.Identity.v1");
+    }
+  });
+
+  test("no key, no change; null turns grants off; a malformed key refuses to start", () => {
+    expect(hosted({}, "http", {})).not.toContain("vgi_rpc.Identity.v1");
+    expect(hosted({ grantKeys: null }, "http", { VGI_RPC_GRANT_KEYS: KEY })).not.toContain("vgi_rpc.Identity.v1");
+    expect(() => hosted({}, "http", { VGI_RPC_GRANT_KEYS: "bad*" })).toThrow(/base64/);
+  });
+
+  test("a worker's own mintGrant wins; resolveToken still needs its allowlist", () => {
+    const mintGrant = () => ({ token: "mine", expiresAt: 0 });
+    const server = buildRpcServer(primary(), { mintGrant }, { transport: "http", env: { VGI_RPC_GRANT_KEYS: KEY } });
+    expect(server.identity?.grantKeys).toBeDefined();
+    expect(() => hosted({ resolveToken }, "http", { VGI_RPC_GRANT_KEYS: KEY })).toThrow(/VGI_INTROSPECT_PRINCIPALS/);
+  });
+
+  test("--grant-key is read from argv, repeatable, first mints", () => {
+    expect(grantKeysFromArgv([], {})).toBeUndefined();
+    const other = btoa(String.fromCharCode(...new Uint8Array(32).fill(4)));
+    const keys = grantKeysFromArgv(["--grant-key", KEY, `--grant-key=${other}`], { VGI_RPC_GRANT_AUDIENCE: "a" });
+    expect(keys?.keys.length).toBe(2);
+    expect(keys?.keys[0][0]).toBe(3);
+    expect(keys?.audience).toBe("a");
+    expect(() => grantKeysFromArgv(["--grant-key"], {})).toThrow();
+    expect(() => grantKeysFromArgv(["--grant-key", "short"], {})).toThrow();
   });
 });

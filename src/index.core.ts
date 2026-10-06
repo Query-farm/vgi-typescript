@@ -318,6 +318,7 @@ export type { RpcClient, StreamSession, LogMessage } from "@query-farm/vgi-rpc";
 // GrantRefusedError to decline a grant.
 export {
   buildRpcServer,
+  grantKeysFromArgv,
   INTROSPECT_PRINCIPALS_ENV,
   type BuildRpcServerOptions,
   type HostingOptions,
@@ -325,6 +326,7 @@ export {
 } from "./rpc-server.js";
 export {
   AuthUnavailableError,
+  GrantKeys,
   GrantRefusedError,
   IdentityUnavailableError,
   StatusError,
