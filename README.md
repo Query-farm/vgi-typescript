@@ -479,6 +479,7 @@ A worker serves the same functions over any of:
 - **AF_UNIX** — a long-lived warm worker (`--unix <path>`), reused across calls.
 - **HTTP** — stateless; all state round-trips in a self-contained token, so requests
   can be load-balanced across hosts.
+- **TCP** (`--tcp [HOST:]PORT`) and caller-provided byte streams (`worker.serveStream`).
 
 Transport handling lives in [`@query-farm/vgi-rpc`](https://www.npmjs.com/package/@query-farm/vgi-rpc).
 
@@ -540,6 +541,79 @@ landing page and its JSON status document display. `serveVgiWorker` builds it fr
 its own required `name`/`doc`/`version`, so only the Cloudflare entry passes it
 explicitly. Without it there is no landing page and no `/vgi-client.js`; see
 [MIGRATION.md](MIGRATION.md).
+
+### Hosting additional protocols
+
+A worker can serve other [vgi-rpc](https://www.npmjs.com/package/@query-farm/vgi-rpc)
+protocols beside `vgi.v2`, on the same listener, through the `hostedProtocols` hook:
+
+```ts
+import { Protocol, str } from "@query-farm/vgi-rpc";
+
+const reports = new Protocol("acme.Reports.v1").unary("render", {
+  params: { id: str },
+  result: { result: str },
+  handler: ({ id }) => ({ result: `report ${id}` }),
+});
+
+new Worker({ functions, hostedProtocols: () => [reports] }).run();
+// …or serveVgiWorker({ …, hostedProtocols: () => [reports] }),
+// …or createVgiFetch({ …, hostedProtocols: () => [reports] }) on Cloudflare Workers.
+```
+
+- The hook is called **once**, when the server is built; it may read configuration,
+  but its answer is fixed for the life of the process.
+- Its protocols are hosted on **every** transport (stdio, AF_UNIX, TCP, the Iroh raw
+  upstream, `serveStream`, HTTP), after `vgi.v2`, in the order returned. Every
+  transport builds its server through one function, `buildRpcServer`.
+- Each needs a distinct name, which may not be `vgi.v2` or start with the reserved
+  `vgi_rpc.`. Violations are a startup error naming `hostedProtocols()`.
+- Requests route on their `vgi_rpc.protocol` key, so hosting more protocols never
+  changes how DuckDB's `vgi.v2` calls are dispatched.
+- The protocol is the unit of optionality: an optional capability is its own protocol.
+
+### Token introspection and grants (`vgi_rpc.Identity.v1`)
+
+A worker opts into `vgi_rpc.Identity.v1` by supplying `resolveToken` and/or
+`mintGrant` (accepted by `Worker`, `serveVgiWorker`, `createVgiWorkerFetch` and
+`createVgiFetch`). It is hosted on **HTTP only** — the transport that authenticates
+callers — and only the methods whose hooks exist are hosted; with neither, the
+protocol is absent.
+
+```ts
+import { AuthUnavailableError } from "@query-farm/vgi";
+
+serveVgiWorker({
+  // …
+  resolveToken: async (token) => {
+    let row;
+    try {
+      row = await apiKeys.lookup(token);
+    } catch (err) {
+      // "I could not find out" -- an outage, not a refusal.
+      throw new AuthUnavailableError("key store unreachable", 5);
+    }
+    return row ? { principal: row.principal, tokenName: row.label } : null; // null = unknown
+  },
+  introspectPrincipals: ["edge-proxy"], // or VGI_INTROSPECT_PRINCIPALS=edge-proxy
+});
+```
+
+**Enabling introspection without an allowlist refuses to start.** Authenticating
+and introspecting are different capabilities; "any authenticated caller" would let
+any user resolve any other user's credential to its owner. Set
+`introspectPrincipals` or `VGI_INTROSPECT_PRINCIPALS` (comma-separated). `mintGrant`
+alone needs no allowlist.
+
+**Transient failures:** throw `AuthUnavailableError` (re-exported here from
+`@query-farm/vgi-rpc`) from `resolveToken` or `mintGrant` when the answer is not
+knowable — a store or sidecar outage, a timeout, a 5xx. The framework translates it
+to `identity_unavailable` (code `UNAVAILABLE`) carrying that error's retry hint as
+`vgi_rpc.RetryInfo`, so a caller retries instead of caching a refusal.
+`IdentityUnavailableError` works too. Never throw a plain `Error` for an outage, and
+never return `null` for one: both read as a definitive answer. Return `null` only
+when the store answered and the credential is unknown; throw `GrantRefusedError` to
+decline a grant.
 
 ## Runtimes & entry points
 

@@ -17,6 +17,7 @@ import { projectionReproCatalog, projectionReproFunctions } from "./projection_r
 import { accumulateFunctions, createAccumulateCatalog } from "./accumulate.js";
 import { narrowBindCatalog, narrowBindFunctions } from "./narrow_bind.js";
 import { twinACatalog, twinBCatalog, twinCatalogFunctions } from "./twin_catalogs.js";
+import { buildSecondaryProtocol } from "@query-farm/vgi-rpc/conformance";
 
 // Build registry up front so all functions across catalogs are routable.
 const registry = new FunctionRegistry();
@@ -60,6 +61,10 @@ const worker = new Worker({
   // Same instance the catalogs above indexed into, so schema-qualified and
   // catalog-qualified resolution both work at dispatch.
   registry,
+  // The cross-SDK fixture protocol, hosted beside vgi.v2 on every transport
+  // through the public hook -- what vgi-rpc's hosted-protocols conformance
+  // group checks (`vgi-rpc-test-hosted --expect vgi.v2,conformance.Secondary.v1`).
+  hostedProtocols: () => [buildSecondaryProtocol()],
 });
 
 worker.run();

@@ -13,6 +13,15 @@ import { accumulateFunctions, createAccumulateCatalog } from "./accumulate.js";
 import { narrowBindCatalog, narrowBindFunctions } from "./narrow_bind.js";
 import { twinACatalog, twinBCatalog, twinCatalogFunctions } from "./twin_catalogs.js";
 import { optionalTestBearerAuthenticate } from "./optional-bearer.js";
+import {
+  buildSecondaryProtocol,
+  conformanceAuthenticate,
+  conformanceMintGrant,
+  conformanceResolveToken,
+  INTROSPECTOR_PRINCIPAL,
+  MAX_AUTH_AGE,
+} from "@query-farm/vgi-rpc/conformance";
+
 
 const registry = new FunctionRegistry();
 for (const func of [
@@ -48,6 +57,14 @@ const catalogInterface = new CompositeCatalogInterface([
 // while the protocol tried to recover them under this one. serveVgiWorker feeds
 // both seams from a single key. Left unset here: the helper generates a random
 // one and warns, which is exactly right for an ephemeral test fixture.
+// Identity's guards read an authenticated caller. The conformance fixture names
+// its caller in X-Conformance-Principal (TEST ONLY: trivially spoofable); a
+// request without that header falls through to the optional-bearer fixture the
+// DuckDB suite relies on, so nothing the suite sends changes meaning.
+const bearer = optionalTestBearerAuthenticate();
+const fixtureAuthenticate = (request: Request) =>
+  request.headers.has("X-Conformance-Principal") ? conformanceAuthenticate(request) : bearer(request);
+
 const server = serveVgiWorker({
   name: "VgiExampleWorker",
   doc: "Example VGI TypeScript worker.",
@@ -64,7 +81,16 @@ const server = serveVgiWorker({
   // HTTP suite shares this one server, so it has to stay anonymous by default;
   // cache/identity_isolation.test is the test that needs real principals. Same
   // fixture the Python, Go and Rust example workers ship.
-  authenticate: optionalTestBearerAuthenticate(),
+  authenticate: fixtureAuthenticate,
+  // The cross-SDK fixture protocol, hosted beside vgi.v2 through the public hook.
+  hostedProtocols: () => [buildSecondaryProtocol()],
+  // vgi_rpc.Identity.v1 under the pinned IDENTITY_CONFORMANCE_FIXTURE.md
+  // policy -- both hooks, the one-principal allowlist, the 900 s auth age --
+  // so `vgi-rpc-test-hosted --url ... --identity` can assert against it.
+  resolveToken: conformanceResolveToken,
+  mintGrant: conformanceMintGrant,
+  introspectPrincipals: [INTROSPECTOR_PRINCIPAL],
+  maxAuthAge: MAX_AUTH_AGE,
 });
 
 // The Makefile's test-http target reads this line off stdout to discover the port.

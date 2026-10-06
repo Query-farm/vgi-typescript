@@ -309,4 +309,23 @@ export type {
 export { str, bytes, int, int32, float, float32, bool, toSchema, OutputCollector, AuthContext } from "@query-farm/vgi-rpc";
 export { subprocessConnect, httpConnect, tcpConnect } from "@query-farm/vgi-rpc";
 export type { RpcClient, StreamSession, LogMessage } from "@query-farm/vgi-rpc";
+
+// Hosting additional protocols and opting into vgi_rpc.Identity.v1. The errors
+// are re-exported so a worker's resolveToken/mintGrant can throw the right one:
+// AuthUnavailableError (or IdentityUnavailableError) for "could not find out",
+// GrantRefusedError to decline a grant.
+export {
+  buildRpcServer,
+  INTROSPECT_PRINCIPALS_ENV,
+  type BuildRpcServerOptions,
+  type HostingOptions,
+  type ServerTransport,
+} from "./rpc-server.js";
+export {
+  AuthUnavailableError,
+  GrantRefusedError,
+  IdentityUnavailableError,
+  StatusError,
+} from "@query-farm/vgi-rpc";
+export type { GrantMinter, IssuedGrant, TokenIdentity, TokenResolver } from "@query-farm/vgi-rpc";
 export { normalizeSchemaPath, schemaPathDisplay, schemaPathKey, schemaPathsEqual, type SchemaPath } from "./schema-path.js";

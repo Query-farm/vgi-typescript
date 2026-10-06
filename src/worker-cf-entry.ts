@@ -15,6 +15,14 @@
 
 export { createVgiFetch } from "./http/fetch.js";
 export type { VgiFetchOptions } from "./http/fetch.js";
+export type { HostingOptions } from "./rpc-server.js";
+export {
+  AuthUnavailableError,
+  GrantRefusedError,
+  IdentityUnavailableError,
+  StatusError,
+} from "@query-farm/vgi-rpc";
+export type { GrantMinter, IssuedGrant, TokenIdentity, TokenResolver } from "@query-farm/vgi-rpc";
 
 // Re-export the public types CF Worker authors need to wire a registry +
 // catalog. They import from "@query-farm/vgi/worker-cf" rather than from

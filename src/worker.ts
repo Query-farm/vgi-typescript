@@ -2,13 +2,14 @@
 // VGI Worker: main entry point for running a VGI function server.
 
 import {
-  VgiRpcServer,
   observePeerIdentity,
   peerIdentityPrimary,
   serveUnix,
   serveTcp,
   serveStream as serveStreamRpc,
+  type VgiRpcServer,
 } from "@query-farm/vgi-rpc";
+import { buildRpcServer, type HostingOptions, type ServerTransport } from "./rpc-server.js";
 import { FunctionRegistry } from "./functions/registry.js";
 import type { VgiFunction } from "./functions/types.js";
 import { buildVgiProtocol } from "./protocol/dispatch.js";
@@ -105,7 +106,7 @@ function parseLauncherArgs(argv: readonly string[]): LauncherArgs {
   return out;
 }
 
-export interface WorkerConfig {
+export interface WorkerConfig extends HostingOptions {
   functions?: VgiFunction[];
   catalog?: CatalogDescriptor;
   catalogInterface?: CatalogInterface;
@@ -124,6 +125,7 @@ export interface WorkerConfig {
 
 export class Worker {
   private _registry: FunctionRegistry;
+  private _hosting: HostingOptions;
   private _catalogInterface?: CatalogInterface;
   private _catalogName?: string;
 
@@ -133,6 +135,13 @@ export class Worker {
     // index is what makes a schema-qualified bind resolve correctly.
     this._registry = config.registry ?? new FunctionRegistry();
     this._catalogName = config.catalogName;
+    this._hosting = {
+      hostedProtocols: config.hostedProtocols,
+      resolveToken: config.resolveToken,
+      mintGrant: config.mintGrant,
+      introspectPrincipals: config.introspectPrincipals,
+      maxAuthAge: config.maxAuthAge,
+    };
 
     // Register explicit functions
     if (config.functions) {
@@ -195,7 +204,7 @@ export class Worker {
         debug(() =>
           `[worker] AF_UNIX mode: ${launcher.unixPath} idle=${idleTimeout ?? 300}s${envOverride !== undefined && envOverride !== "" ? " (env override)" : ""}`,
         );
-        serveUnix(protocol, {
+        serveUnix(this.buildServer(protocol, "unix"), {
           unixPath: launcher.unixPath,
           idleTimeout,
         }).then((handle) => handle.done).then(() => {
@@ -220,7 +229,7 @@ export class Worker {
         debug(() =>
           `[worker] TCP mode: ${launcher.tcpHost}:${launcher.tcpPort} idle=${idleTimeout ?? 300}s${envOverride !== undefined && envOverride !== "" ? " (env override)" : ""}`,
         );
-        serveTcp(protocol, {
+        serveTcp(this.buildServer(protocol, launcher.irohRawUpstream ? "iroh" : "tcp"), {
           host: launcher.tcpHost,
           port: launcher.tcpPort,
           idleTimeout,
@@ -245,7 +254,7 @@ export class Worker {
         return;
       }
 
-      const server = new VgiRpcServer(protocol);
+      const server = this.buildServer(protocol, "pipe");
       debug(() => `[worker] server created, calling run()`);
       server.run().then(() => {
         debug(() => `[worker] server.run() resolved cleanly`);
@@ -257,6 +266,15 @@ export class Worker {
       process.stderr.write(`Worker init error: ${err.message}\n${err.stack}\n`);
       process.exit(1);
     }
+  }
+
+  /**
+   * Build the vgi-rpc server for one transport: `vgi.v2`, the worker's
+   * `hostedProtocols()` and reflection everywhere; identity on HTTP only. The
+   * one construction path every transport uses (see `rpc-server.ts`).
+   */
+  private buildServer(protocol: Protocol, transport: ServerTransport): VgiRpcServer {
+    return buildRpcServer(protocol, this._hosting, { transport });
   }
 
   /** Build the VGI protocol from this worker's registry + catalog interface. */
@@ -286,6 +304,6 @@ export class Worker {
     readable: ReadableStream<Uint8Array> | NodeJS.ReadableStream,
     writable?: number | import("node:net").Socket | import("@query-farm/vgi-rpc").ByteSink,
   ): Promise<void> {
-    await serveStreamRpc(this.buildProtocol(), { readable, writable });
+    await serveStreamRpc(this.buildServer(this.buildProtocol(), "stream"), { readable, writable });
   }
 }

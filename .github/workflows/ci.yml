@@ -64,6 +64,43 @@ jobs:
       - name: Arrow facade parity (arrow-js + flechette)
         run: make test-facade-parity
 
+  hosted-protocols:
+    # vgi-rpc's hosted-protocols group (MULTI_PROTOCOL_HOSTING.md §7) against
+    # the example fixture worker: the worker lists vgi.v2 then
+    # conformance.Secondary.v1 on stdio, AF_UNIX and HTTP, the secondary passes
+    # the shared error-model groups, and over HTTP vgi_rpc.Identity.v1 passes
+    # the identity fixture groups. The reference is unpinned main, by design: a
+    # reference change that breaks this SDK should turn it red the day it lands.
+    name: Hosted protocols (stdio, unix, http + identity)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout vgi-typescript
+        uses: actions/checkout@v4
+
+      - name: Check out vgi-rpc-python (the conformance suite)
+        uses: actions/checkout@v4
+        with:
+          repository: Query-farm/vgi-rpc-python
+          path: .vgi-rpc-python
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Install dependencies
+        run: bun install
+
+      - name: Install the reference
+        run: pip install "./.vgi-rpc-python[http,conformance]" pytest pytest-timeout
+
+      - name: Hosted-protocols group
+        run: ci/run-hosted-protocols.sh
+
   integration:
     # Lanes run independently (fail-fast: false) so a regression in one is never
     # masked by another. The plain subprocess transport is deliberately absent:

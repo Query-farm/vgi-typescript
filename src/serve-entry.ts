@@ -32,6 +32,7 @@ import {
   type PeerResolutionOptions,
 } from "@query-farm/vgi-rpc";
 import { createVgiFetch } from "./http/fetch.js";
+import type { HostingOptions } from "./rpc-server.js";
 
 /** Environment variables `serveVgiWorker` reads. Injectable for testing. */
 export interface ServeEnv {
@@ -61,7 +62,7 @@ export interface IrohHttpBridgeOptions {
   peerResolutionContext?: (request: Request) => PeerResolutionOptions | Promise<PeerResolutionOptions>;
 }
 
-export interface ServeVgiWorkerOptions {
+export interface ServeVgiWorkerOptions extends HostingOptions {
   /** Short worker name shown on the landing page, e.g. "ishares". */
   name: string;
   /** One-line description of what the worker serves. */
@@ -241,6 +242,11 @@ export function createVgiWorkerFetch(
       ? (bridge.authenticate === false ? observePeerIdentity : peerIdentityPrimary("iroh"))
       : undefined,
     peerResolutionContext: bridge?.peerResolutionContext,
+    hostedProtocols: opts.hostedProtocols,
+    resolveToken: opts.resolveToken,
+    mintGrant: opts.mintGrant,
+    introspectPrincipals: opts.introspectPrincipals,
+    maxAuthAge: opts.maxAuthAge,
   });
 }
 
