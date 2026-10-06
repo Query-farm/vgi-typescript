@@ -286,7 +286,6 @@ EXPECTED_SKIP_REASONS=(
   # No such fixture worker in the TypeScript port (the gate is the whole point —
   # these are cross-language fixtures other SDKs provide).
   'require-env VGI_SIMPLE_WRITABLE_WORKER'   # generic write-path fixture, not ported
-  'require-env VGI_CATALOG_CONTENTS_WORKER'   # set by every lane here (example worker hosts contents_*); allowed in case it is unset
   'require-env VGI_BAD_PROTOCOL_WORKER'      # advertises an incompatible protocol_version
   'require-env VGI_BAD_ENUM_WORKER'          # advertises a malformed ENUM
   'require-env VGI_RULES_WORKER'             # vgi-rust multibatch repro worker
@@ -425,9 +424,6 @@ case "$TRANSPORT" in
     echo "::error::unknown TRANSPORT=$TRANSPORT (expected http|stdio|launch)"; exit 1 ;;
 esac
 
-# vgi's catalog_contents{,_fallback,_ddl}.test need the contents_* fixture
-# catalogs, which the example worker serves (examples/catalog_contents.ts).
-export VGI_CATALOG_CONTENTS_WORKER="$VGI_TEST_WORKER"
 SUITE_GLOB="test/sql/integration/*"
 
 cd "$RUN_CWD"

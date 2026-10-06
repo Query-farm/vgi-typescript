@@ -5,6 +5,7 @@ import type { VgiBatch } from "../arrow/index.js";
 import type { Arguments } from "../arguments/arguments.js";
 import type { AttachOptionValue } from "../catalog/attach-options.js";
 import type { BindResponse } from "../protocol/types.js";
+import type { SchemaContentsInfo, TransactionOpaqueData } from "../catalog/interface.js";
 import { OrderByDirection, OrderByNullOrder } from "../protocol/types.js";
 
 export type { AttachOptionValue };
@@ -56,7 +57,7 @@ export interface CatalogAttachOptions {
 export type OnCreateConflict = "error" | "ignore" | "replace";
 
 /** DuckDB catalog function type filter (sent as uppercase wire values). */
-export type CatalogFunctionType = "SCALAR_FUNCTION" | "TABLE_FUNCTION";
+export type CatalogFunctionType = "SCALAR_FUNCTION" | "AGGREGATE_FUNCTION" | "TABLE_FUNCTION";
 
 /** Macro type filter for schema contents listing (uppercase wire values). */
 export type CatalogMacroType = "SCALAR_MACRO" | "TABLE_MACRO";
@@ -150,4 +151,60 @@ export interface TableInOutFunctionOptions {
    * Mirrors vgi-python's `table_in_out_function(has_finalize=...)`.
    */
   hasFinalize?: boolean;
+}
+
+/**
+ * A whole-catalog snapshot returned by `VgiClient.loadCatalog`: every schema
+ * with all of its tables, views, functions, macros and indexes.
+ *
+ * Hold on to it and pass it back as `LoadCatalogOptions.previous` to
+ * revalidate: when it carries an `etag` the client sends that as
+ * `if_none_match`, and a `not_modified` answer returns this snapshot's
+ * contents unchanged.
+ */
+export interface CatalogSnapshot {
+  /**
+   * Version the snapshot was taken at, as reported by `catalog_contents`.
+   * `null` when it was assembled from the per-schema RPCs (which carry no
+   * version); 0 means the worker does not track versions.
+   */
+  catalog_version: number | null;
+  /** Validator to revalidate with; null = the worker does not revalidate. */
+  etag: string | null;
+  /**
+   * How the contents were obtained: one `catalog_contents` call, or
+   * `catalog_schemas` + per-schema `catalog_schema_contents_*` calls.
+   */
+  source: "catalog_contents" | "per_schema";
+  /** True when this load was a `not_modified` revalidation of `previous`. */
+  not_modified: boolean;
+  /**
+   * Set when the catalog advertised `catalog_contents` but the call failed
+   * (or returned a malformed answer) and the client fell back to the
+   * per-schema RPCs: the failure's message.
+   */
+  fallback_error: string | null;
+  /** One entry per schema, parents before children. */
+  schemas: SchemaContentsInfo[];
+}
+
+/** Options for `VgiClient.loadCatalog`. */
+export interface LoadCatalogOptions {
+  /**
+   * A snapshot from an earlier load of the same attach. Its `etag` (if any)
+   * is sent as `if_none_match`; a `not_modified` answer keeps its contents.
+   */
+  previous?: CatalogSnapshot | null;
+  /**
+   * Set false to never call `catalog_contents` (the client-side equivalent of
+   * DuckDB's `SET vgi_catalog_contents = false`). Default true: it is used
+   * whenever the attach result advertised `supports_catalog_contents`.
+   */
+  useCatalogContents?: boolean;
+  /**
+   * Enumerate inside this transaction. `catalog_contents` returns only the
+   * committed catalog (it takes no transaction), so a transaction-scoped load
+   * always uses the per-schema RPCs.
+   */
+  transactionOpaqueData?: TransactionOpaqueData;
 }

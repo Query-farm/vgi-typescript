@@ -28,10 +28,9 @@ ATTACH_OPTIONS_HTTP   := $(CURDIR)/bin/vgi-example-attach-options-http-worker
 
 TEST_DIR     := $(VGI_DIR)/test/sql
 
-# VGI_CATALOG_CONTENTS_WORKER gates vgi's catalog_contents{,_fallback,_ddl}.test,
-# which need the contents_probe / _broken / _legacy / _memory fixture catalogs.
-# The example worker serves them (examples/catalog_contents.ts), so every lane
-# points that variable at the same worker as VGI_TEST_WORKER.
+# vgi's catalog_contents*.test files ATTACH the contents_probe / _broken /
+# _legacy / _memory / _reval / _hash fixture catalogs from VGI_TEST_WORKER; the
+# example worker serves them (examples/catalog_contents.ts).
 RELEASE_BIN  := $(VGI_DIR)/build/release/test/unittest
 
 # --- Build targets ---
@@ -198,7 +197,6 @@ COVERAGE_GATE := --min-executed $(TS_MIN_EXECUTED) \
 	--allow-skip 'require-env VGI_VERSIONED_TABLES_HTTP_WORKER' \
 	--allow-skip 'require-env VGI_WORKER_SUPPORTS_DYNAMIC_CODE' \
 	--allow-skip 'require-env VGI_SIMPLE_WRITABLE_WORKER' \
-	--allow-skip 'require-env VGI_CATALOG_CONTENTS_WORKER' \
 	--allow-skip 'require-env VGI_SCHEMA_RECONCILE_DB' \
 	--allow-skip 'require-env VGI_RULES_WORKER' \
 	--allow-skip 'require-env VGI_ATTACH_OPTIONS_REQUIRED_WORKER' \
@@ -213,7 +211,6 @@ COVERAGE_GATE := --min-executed $(TS_MIN_EXECUTED) \
 test:
 	@cd $(VGI_DIR) && \
 	export VGI_TEST_WORKER="launch:$(WORKER)"; \
-	export VGI_CATALOG_CONTENTS_WORKER="$$VGI_TEST_WORKER"; \
 	export VGI_VERSIONED_WORKER="launch:$(VERSIONED_WORKER)"; \
 	export VGI_VERSIONED_TABLES_WORKER="launch:$(VERSIONED_TABLES_WORKER)"; \
 	export VGI_ATTACH_OPTIONS_WORKER="launch:$(ATTACH_OPTIONS_WORKER)"; \
@@ -238,7 +235,6 @@ test:
 test-subprocess:
 	@cd $(VGI_DIR) && \
 	export VGI_TEST_WORKER="$(WORKER)"; \
-	export VGI_CATALOG_CONTENTS_WORKER="$$VGI_TEST_WORKER"; \
 	export VGI_VERSIONED_WORKER="$(VERSIONED_WORKER)"; \
 	export VGI_VERSIONED_TABLES_WORKER="$(VERSIONED_TABLES_WORKER)"; \
 	export VGI_ATTACH_OPTIONS_WORKER="$(ATTACH_OPTIONS_WORKER)"; \
@@ -286,7 +282,6 @@ test-http:
 	read -t 60 aport_line <&5 || { echo "ERROR: attach-options HTTP worker timeout"; exit 1; }; \
 	read -t 60 tport_line <&6 || { echo "ERROR: versioned-tables HTTP worker timeout"; exit 1; }; \
 	export VGI_TEST_WORKER="http://localhost:$${port_line#PORT:}"; \
-	export VGI_CATALOG_CONTENTS_WORKER="$$VGI_TEST_WORKER"; \
 	export VGI_DATABASE_PACKAGE_WORKER="$${VGI_DATABASE_PACKAGE_WORKER:-VGI_BUN_CONDITIONS= $(WORKER)}"; \
 	export VGI_VERSIONED_HTTP_WORKER="http://localhost:$${vport_line#PORT:}"; \
 	export VGI_ATTACH_OPTIONS_WORKER="http://localhost:$${aport_line#PORT:}"; \
@@ -325,7 +320,6 @@ test/%:
 		exit 1; \
 	fi; \
 	export VGI_TEST_WORKER="launch:$(WORKER)"; \
-	export VGI_CATALOG_CONTENTS_WORKER="$$VGI_TEST_WORKER"; \
 	export VGI_VERSIONED_WORKER="launch:$(VERSIONED_WORKER)"; \
 	export VGI_VERSIONED_TABLES_WORKER="launch:$(VERSIONED_TABLES_WORKER)"; \
 	export VGI_ATTACH_OPTIONS_WORKER="launch:$(ATTACH_OPTIONS_WORKER)"; \
@@ -343,7 +337,6 @@ test-subprocess/%:
 		exit 1; \
 	fi; \
 	export VGI_TEST_WORKER="$(WORKER)"; \
-	export VGI_CATALOG_CONTENTS_WORKER="$$VGI_TEST_WORKER"; \
 	export VGI_VERSIONED_WORKER="$(VERSIONED_WORKER)"; \
 	export VGI_VERSIONED_TABLES_WORKER="$(VERSIONED_TABLES_WORKER)"; \
 	export VGI_ATTACH_OPTIONS_WORKER="$(ATTACH_OPTIONS_WORKER)"; \
@@ -377,7 +370,6 @@ test-http/%:
 	read -t 60 aport_line <&5 || { echo "ERROR: attach-options HTTP worker timeout"; exit 1; }; \
 	read -t 60 tport_line <&6 || { echo "ERROR: versioned-tables HTTP worker timeout"; exit 1; }; \
 	export VGI_TEST_WORKER="http://localhost:$${port_line#PORT:}"; \
-	export VGI_CATALOG_CONTENTS_WORKER="$$VGI_TEST_WORKER"; \
 	export VGI_DATABASE_PACKAGE_WORKER="$${VGI_DATABASE_PACKAGE_WORKER:-VGI_BUN_CONDITIONS= $(WORKER)}"; \
 	export VGI_VERSIONED_HTTP_WORKER="http://localhost:$${vport_line#PORT:}"; \
 	export VGI_ATTACH_OPTIONS_WORKER="http://localhost:$${aport_line#PORT:}"; \

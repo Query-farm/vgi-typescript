@@ -42,6 +42,7 @@ import {
   type CatalogAttachResult,
   type SchemaContentsInfo,
   decodeIndexInfo,
+  type IndexInfo,
   type AttachOpaqueData,
   type TransactionOpaqueData,
   decodeCatalogInfo,
@@ -72,6 +73,8 @@ import type {
   OrderByPushdown,
   TablesamplePushdown,
   AttachOptionValue,
+  CatalogSnapshot,
+  LoadCatalogOptions,
 } from "./types.js";
 
 /**
@@ -696,6 +699,9 @@ export class VgiClient {
    * current the worker answers `not_modified` with no schemas. `etag` null
    * means the worker does not revalidate. Each schema's wire `path` is checked
    * against its decoded `SchemaInfo.path`.
+   *
+   * This is the raw RPC. To enumerate a catalog, use `loadCatalog`, which
+   * checks the capability, revalidates and falls back to the per-schema RPCs.
    */
   async catalogContents(
     attachOpaqueData: AttachOpaqueData,
@@ -731,6 +737,132 @@ export class VgiClient {
       etag: response.etag ?? null,
       not_modified: Boolean(response.not_modified),
       schemas,
+    };
+  }
+
+  /**
+   * Enumerate the whole catalog: every schema with all of its tables, views,
+   * scalar/aggregate/table functions, scalar/table macros and indexes.
+   *
+   * Honors the attach result's `supports_catalog_contents` the way the DuckDB
+   * extension does:
+   *
+   * - advertised (and `useCatalogContents` not false, no transaction): one
+   *   `catalog_contents` call. With `previous.etag` it is conditional
+   *   (`if_none_match`); `not_modified` returns `previous`'s contents.
+   * - not advertised: `catalog_schemas` + per-schema
+   *   `catalog_schema_contents_*` calls -- `catalog_contents` is never sent.
+   *   Kinds whose `estimated_object_count` is exactly 0 are skipped.
+   * - advertised but the call fails (or answers malformed, e.g. a
+   *   `SchemaContents.path` that disagrees with its `SchemaInfo.path`): falls
+   *   back to the per-schema calls and reports the failure in
+   *   `fallback_error`.
+   *
+   * A full answer older than `previous` (a lagging replica) is retried once,
+   * then the per-schema path is used.
+   */
+  async loadCatalog(
+    attach: Pick<CatalogAttachResult, "attach_opaque_data" | "supports_catalog_contents">,
+    opts?: LoadCatalogOptions,
+  ): Promise<CatalogSnapshot> {
+    const attachOpaqueData = attach.attach_opaque_data;
+    const previous = opts?.previous ?? null;
+    const useContents =
+      attach.supports_catalog_contents === true &&
+      opts?.useCatalogContents !== false &&
+      opts?.transactionOpaqueData == null;
+    if (!useContents) {
+      return this._loadCatalogPerSchema(attachOpaqueData, opts?.transactionOpaqueData, null);
+    }
+
+    let fallbackError: string | null = null;
+    const ifNoneMatch = previous?.etag ?? null;
+    const knownVersion = previous?.catalog_version ?? 0;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      let response: Awaited<ReturnType<VgiClient["catalogContents"]>>;
+      try {
+        response = await this.catalogContents(attachOpaqueData, ifNoneMatch);
+      } catch (err) {
+        fallbackError = err instanceof Error ? err.message : String(err);
+        break;
+      }
+      if (response.not_modified) {
+        if (previous == null || ifNoneMatch == null) {
+          fallbackError = "catalog_contents answered not_modified to an unconditional request";
+          break;
+        }
+        return {
+          ...previous,
+          // 0 = unknown: keep the version already known.
+          catalog_version: response.catalog_version !== 0 ? response.catalog_version : previous.catalog_version,
+          etag: response.etag ?? ifNoneMatch,
+          not_modified: true,
+          fallback_error: null,
+        };
+      }
+      // Version adoption: a snapshot at least as new as the known version is
+      // current; 0 means unknown and is accepted. An older one is retried once.
+      if (response.catalog_version !== 0 && knownVersion !== 0 && response.catalog_version < knownVersion) {
+        fallbackError = `catalog_contents snapshot version ${response.catalog_version} is older than the known version ${knownVersion}`;
+        continue;
+      }
+      return {
+        catalog_version: response.catalog_version,
+        etag: response.etag,
+        source: "catalog_contents",
+        not_modified: false,
+        fallback_error: null,
+        schemas: response.schemas,
+      };
+    }
+    return this._loadCatalogPerSchema(attachOpaqueData, undefined, fallbackError);
+  }
+
+  /** `loadCatalog` without `catalog_contents`: catalog_schemas + per-schema calls. */
+  private async _loadCatalogPerSchema(
+    attachOpaqueData: AttachOpaqueData,
+    transactionOpaqueData: TransactionOpaqueData | undefined,
+    fallbackError: string | null,
+  ): Promise<CatalogSnapshot> {
+    const schemas = await this.schemas(attachOpaqueData, transactionOpaqueData);
+    const out: SchemaContentsInfo[] = [];
+    // Sequential on purpose: a stdio RpcClient carries one call at a time.
+    for (const schema of schemas) {
+      const counts = schema.estimated_object_count ?? {};
+      const path = schema.path;
+      // Only an explicit 0 is a guarantee; a missing count is unknown. Decoded
+      // int64 counts are numbers, or bigints beyond the safe range, so compare
+      // numerically.
+      const has = (kind: string) => {
+        const n = (counts as Record<string, unknown>)[kind];
+        return n == null || Number(n) !== 0;
+      };
+      const t = transactionOpaqueData;
+      out.push({
+        schema,
+        tables: has("table") ? await this.schemaContentsTables(attachOpaqueData, path, t) : [],
+        views: has("view") ? await this.schemaContentsViews(attachOpaqueData, path, t) : [],
+        scalar_functions: has("scalar_function")
+          ? await this.schemaContentsFunctions(attachOpaqueData, path, "SCALAR_FUNCTION", t)
+          : [],
+        aggregate_functions: has("aggregate_function")
+          ? await this.schemaContentsFunctions(attachOpaqueData, path, "AGGREGATE_FUNCTION", t)
+          : [],
+        table_functions: has("table_function")
+          ? await this.schemaContentsFunctions(attachOpaqueData, path, "TABLE_FUNCTION", t)
+          : [],
+        scalar_macros: has("macro") ? await this.schemaContentsMacros(attachOpaqueData, path, "SCALAR_MACRO", t) : [],
+        table_macros: has("macro") ? await this.schemaContentsMacros(attachOpaqueData, path, "TABLE_MACRO", t) : [],
+        indexes: has("index") ? await this.schemaContentsIndexes(attachOpaqueData, path, t) : [],
+      });
+    }
+    return {
+      catalog_version: null,
+      etag: null,
+      source: "per_schema",
+      not_modified: false,
+      fallback_error: fallbackError,
+      schemas: out,
     };
   }
 
@@ -953,6 +1085,22 @@ export class VgiClient {
     if (!result) return [];
     const inner = unwrapResult(result);
     return deserializeInfoList(inner.items, decodeFunctionInfo);
+  }
+
+  /** List indexes in a schema. */
+  async schemaContentsIndexes(
+    attachOpaqueData: AttachOpaqueData,
+    path: string[] | string,
+    transactionOpaqueData?: TransactionOpaqueData,
+  ): Promise<IndexInfo[]> {
+    const result = await this.rpc.call("catalog_schema_contents_indexes", {
+      attach_opaque_data: attachOpaqueData,
+      path: normalizeSchemaPath(path),
+      transaction_opaque_data: transactionOpaqueData ?? null,
+    });
+    if (!result) return [];
+    const inner = unwrapResult(result);
+    return deserializeInfoList(inner.items, decodeIndexInfo);
   }
 
   /** Get a table by name, or null if not found. */

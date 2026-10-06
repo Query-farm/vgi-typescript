@@ -1,0 +1,7 @@
+[test]
+# Every unit test lives under src/. Scanning from the repo root walks into
+# gitignored artifact trees -- duckdb_unittest_tempdir/ alone can hold tens of
+# thousands of per-pid directories from raw `unittest` runs -- and after that
+# walk Bun (1.3.x) hands spawned children dead stdio, so any test that starts
+# a subprocess (finalize-init-opaque-data's HTTP worker) fails with no output.
+root = "src"

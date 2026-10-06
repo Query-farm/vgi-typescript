@@ -303,6 +303,8 @@ export type {
   CatalogFunctionType as ClientCatalogFunctionType,
   CatalogAttachOptions,
   AttachOptionValue,
+  CatalogSnapshot,
+  LoadCatalogOptions,
 } from "./client/types.js";
 
 // Re-export from vgi-rpc for convenience
