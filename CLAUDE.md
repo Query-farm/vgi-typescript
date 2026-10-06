@@ -25,7 +25,8 @@ make test/integration/table/sequence  # Subdirectory tests work too
 # Override defaults:
 make test TEST_TIMEOUT=30              # Custom timeout per test (default: 60s)
 make test WORKER=/path/to/other-worker # Custom worker binary
-make test VGI_DIR=/other/vgi           # Different VGI extension repo
+make test VGI_DIR=/other/vgi           # Different VGI extension repo (default: ../vgi)
+make test-client VGI_PYTHON_DIR=/other/vgi-python  # vgi-python checkout (default: ../vgi-python)
 ```
 
 Test target names mirror the test file paths under `vgi/test/sql/`, minus the `.test` extension:
@@ -97,7 +98,9 @@ counts skips, names them by reason, fails on any reason outside its allowlist, a
 fails if fewer than `MIN_EXECUTED` test cases actually executed. If you are trying
 to establish that a change really runs the suite, use it — not `make test-http`.
 
-Tests live in `/Users/rusty/Development/vgi/test/sql/` (DuckDB VGI extension repo).
+Tests live in `$VGI_DIR/test/sql/` (the DuckDB VGI extension repo; `VGI_DIR`
+defaults to the sibling checkout `../vgi`). The commands below assume
+`VGI_DIR` is exported as an absolute path and are run from this repo's root.
 Test format is [sqllogictest](https://duckdb.org/docs/stable/dev/sqllogictest/intro) —
 each `.test` file contains `statement ok`, `query`, etc. blocks.
 Reference the test format docs at https://duckdb.org/docs/stable/dev/sqllogictest/intro
@@ -106,20 +109,20 @@ debugging test files.
 
 ```bash
 # Set the worker command:
-export VGI_TEST_WORKER="/Users/rusty/Development/vgi-typescript/bin/vgi-example-worker"
+export VGI_TEST_WORKER="$PWD/bin/vgi-example-worker"
 
 # Run a specific test (use full path from -l output):
-/Users/rusty/Development/vgi/build/debug/test/unittest \
-  --test-dir /Users/rusty/Development/vgi/test/sql \
-  "/Users/rusty/Development/vgi/test/sql/vgi_table_in_out.test"
+$VGI_DIR/build/debug/test/unittest \
+  --test-dir $VGI_DIR/test/sql \
+  "$VGI_DIR/test/sql/vgi_table_in_out.test"
 
 # List all tests:
-/Users/rusty/Development/vgi/build/debug/test/unittest \
-  --test-dir /Users/rusty/Development/vgi/test/sql -l
+$VGI_DIR/build/debug/test/unittest \
+  --test-dir $VGI_DIR/test/sql -l
 
 # Run all tests:
-/Users/rusty/Development/vgi/build/debug/test/unittest \
-  --test-dir /Users/rusty/Development/vgi/test/sql
+$VGI_DIR/build/debug/test/unittest \
+  --test-dir $VGI_DIR/test/sql
 ```
 
 Always use `timeout 180` to avoid hangs blocking the session.
@@ -146,13 +149,13 @@ DuckDB CLI one at a time to isolate the hanging statement:
 
 ```bash
 # DuckDB CLI binary:
-/Users/rusty/Development/vgi/build/debug/duckdb
+$VGI_DIR/build/debug/duckdb
 
 # Run SQL directly (no need to cd — use full paths):
 VGI_WORKER_STDERR_PASSTHROUGH=1 timeout 15 \
-  /Users/rusty/Development/vgi/build/debug/duckdb -c "
+  $VGI_DIR/build/debug/duckdb -c "
 LOAD vgi;
-ATTACH 'example' AS vgi_test (TYPE vgi, LOCATION '/Users/rusty/Development/vgi-typescript/bin/vgi-example-worker');
+ATTACH 'example' AS vgi_test (TYPE vgi, LOCATION '$PWD/bin/vgi-example-worker');
 CREATE TABLE test_data AS SELECT i AS a, i * 2 AS b FROM range(10) t(i);
 SELECT * FROM vgi_test.echo((SELECT * FROM test_data)) ORDER BY a;
 "
@@ -171,10 +174,10 @@ SELECT * FROM vgi_test.echo((SELECT * FROM test_data)) ORDER BY a;
 
 ```bash
 # Pass worker stderr to terminal:
-VGI_WORKER_STDERR_PASSTHROUGH=1 /Users/rusty/Development/vgi/build/debug/duckdb -c "..."
+VGI_WORKER_STDERR_PASSTHROUGH=1 $VGI_DIR/build/debug/duckdb -c "..."
 
 # Full debug mode:
-VGI_WORKER_DEBUG=1 /Users/rusty/Development/vgi/build/debug/duckdb -c "..."
+VGI_WORKER_DEBUG=1 $VGI_DIR/build/debug/duckdb -c "..."
 ```
 
 ## HTTP entry points

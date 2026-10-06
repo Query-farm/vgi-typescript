@@ -149,7 +149,7 @@ and it is exactly the failure mode this harness exists to make visible.
 
 ```sh
 bun install
-VGI_SRC=~/Development/vgi \
+VGI_SRC="$PWD/../vgi" \
 HAYBARN_UNITTEST=/path/to/haybarn-unittest \
 TRANSPORT=http \
   ci/run-integration.sh
@@ -167,8 +167,8 @@ gh release download "$(gh release view --repo Query-farm-haybarn/haybarn --json 
 Set `PREPROCESS=0` and point `HAYBARN_UNITTEST` at the locally built binary:
 
 ```sh
-VGI_SRC=~/Development/vgi \
-HAYBARN_UNITTEST=~/Development/vgi/build/release/test/unittest \
+VGI_SRC="$PWD/../vgi" \
+HAYBARN_UNITTEST="$PWD/../vgi/build/release/test/unittest" \
 TRANSPORT=http PREPROCESS=0 \
   ci/run-integration.sh
 ```

@@ -10,8 +10,12 @@ SHELL := /bin/bash
 
 # --- Configuration (all overridable) ---
 
-VGI_DIR      ?= /Users/rusty/Development/vgi
-VGI_PYTHON_DIR ?= /Users/rusty/Development/vgi-python
+# VGI_DIR: the DuckDB VGI extension checkout (its test/sql suite and built
+# unittest runner). VGI_PYTHON_DIR: the vgi-python checkout (test-client's
+# reference HTTP workers). Both default to sibling checkouts of this repo;
+# override on the command line, e.g. `make test VGI_DIR=/path/to/vgi`.
+VGI_DIR      ?= ../vgi
+VGI_PYTHON_DIR ?= ../vgi-python
 TEST_TIMEOUT ?= 120
 WORKER                ?= $(CURDIR)/bin/vgi-example-worker
 HTTP_WORKER           := $(CURDIR)/bin/vgi-example-http-worker
@@ -56,7 +60,7 @@ clean:
 # CI uses ci/run-integration.sh instead, which counts and allowlists every skip
 # and enforces a floor on executed tests; run that when you need certainty.
 #
-# Use the unittest harness's own -j 8 parallelism (see ~/Development/vgi
+# Use the unittest harness's own -j 8 parallelism (see the $(VGI_DIR)
 # Makefile's test_subprocess target). One unittest invocation runs every
 # matching test in parallel, captures output to a log file, and prints a
 # pass/fail summary plus a list of failed tests at the end.
@@ -327,7 +331,7 @@ test/%:
 	export VGI_ATTACH_OPTIONS_WORKER="launch:$(ATTACH_OPTIONS_WORKER)"; \
 	export VGI_REQUIRE_LAUNCHER_TRANSPORT=1; \
 	export VGI_WORKER_IDLE_TIMEOUT=$(LAUNCHER_IDLE_TIMEOUT); \
-	cd $(VGI_DIR) && ./build/release/test/unittest -s "$$test_file"
+	cd $(VGI_DIR) && ./build/release/test/unittest -s "test/sql/$*.test"
 
 # Subprocess single-test entry point — same shape as `test/%` but without
 # the `launch:` prefix. Useful when isolating a hang at the worker spawn
@@ -343,7 +347,7 @@ test-subprocess/%:
 	export VGI_VERSIONED_WORKER="$(VERSIONED_WORKER)"; \
 	export VGI_VERSIONED_TABLES_WORKER="$(VERSIONED_TABLES_WORKER)"; \
 	export VGI_ATTACH_OPTIONS_WORKER="$(ATTACH_OPTIONS_WORKER)"; \
-	cd $(VGI_DIR) && ./build/release/test/unittest -s "$$test_file"
+	cd $(VGI_DIR) && ./build/release/test/unittest -s "test/sql/$*.test"
 
 # test-http/% — single-test HTTP entry point. Spawns the HTTP worker
 # triplet, points VGI_TEST_WORKER at it, runs that one test verbosely.
@@ -378,7 +382,7 @@ test-http/%:
 	export VGI_VERSIONED_HTTP_WORKER="http://localhost:$${vport_line#PORT:}"; \
 	export VGI_ATTACH_OPTIONS_WORKER="http://localhost:$${aport_line#PORT:}"; \
 	export VGI_VERSIONED_TABLES_HTTP_WORKER="http://localhost:$${tport_line#PORT:}"; \
-	cd $(VGI_DIR) && ./build/release/test/unittest -s "$$test_file"
+	cd $(VGI_DIR) && ./build/release/test/unittest -s "test/sql/$*.test"
 
 # VgiClient end-to-end tests against vgi-python's HTTP workers.
 # Spawns the normal + versioned HTTP workers, each with --port-file
