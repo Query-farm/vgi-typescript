@@ -525,6 +525,26 @@ export interface SchemaContentsInfo {
   indexes: IndexInfo[];
 }
 
+/**
+ * What `CatalogInterface.catalogContents` returns: a snapshot, or "not
+ * modified" (vgi-python's `CatalogContentsResult`).
+ *
+ * - `schemas`: one `SchemaContentsInfo` per schema. Must be empty (or absent)
+ *   when `not_modified` is set.
+ * - `etag`: opaque validator for this snapshot (a generation counter, schema
+ *   version, git sha, ...). The client sends it back as `if_none_match`.
+ *   Null/absent means the catalog does not revalidate -- unless it opts in to
+ *   the framework's content hash with `catalogContentsEtag = "content-hash"`.
+ * - `not_modified`: true when the request's `if_none_match` equals the
+ *   current etag, so the catalog skipped building the snapshot. Requires
+ *   `etag` (the matching validator).
+ */
+export interface CatalogContentsResult {
+  schemas?: SchemaContentsInfo[];
+  etag?: string | null;
+  not_modified?: boolean;
+}
+
 // ============================================================================
 // CatalogInterface abstract class
 // ============================================================================
@@ -541,6 +561,42 @@ function isPromise<T>(v: Awaitable<T>): v is Promise<T> {
 }
 
 export abstract class CatalogInterface {
+  /**
+   * Opt-in framework etag for `catalog_contents`. `"content-hash"`: when
+   * `catalogContents` returns no etag of its own, the worker uses the hex
+   * SHA-256 of the serialized snapshot (`catalogContentsDigest`) as the etag
+   * and turns a matching `if_none_match` into `not_modified` (it still builds
+   * the snapshot, but saves the transfer and the client's decode). `null`
+   * (default): no etag unless the catalog returns one. Off by default because
+   * for a catalog whose version is not frozen the client would revalidate with
+   * a full build on every transaction instead of a cheap `catalog_version`
+   * poll. Mirrors vgi-python's `catalog_contents_etag`.
+   */
+  catalogContentsEtag: "content-hash" | null = null;
+
+  /**
+   * Whether `catalogContents` depends only on `version()`: not on the attach
+   * (`attach_opaque_data`, attach options), the caller's identity, or anything
+   * else. Together with `catalogVersionFrozen`, it lets the worker build the
+   * `catalog_contents` response once per (catalog, version) and serve the same
+   * serialized bytes to every caller. Default false.
+   *
+   * `ReadOnlyCatalogInterface` leaves it false: unlike vgi-python's (which
+   * hands out one fixed attach id), it mints a random attach id per ATTACH and
+   * echoes it into every `SchemaInfo.attach_opaque_data`, and subclasses rely
+   * on that per-attach id for scoping -- a shared response would hand one
+   * caller another attach's id. A catalog whose items carry nothing
+   * attach-specific sets it true (with `catalogVersionFrozen`).
+   */
+  catalogContentsAttachIndependent = false;
+
+  /**
+   * Declares that `version()` never changes for this catalog instance (the
+   * attach result's `catalog_version_frozen`). Only the `catalog_contents`
+   * worker cache reads it. `ReadOnlyCatalogInterface` sets it.
+   */
+  catalogVersionFrozen = false;
+
   /**
    * Which catalog an `attach_opaque_data` belongs to, or null if unknown.
    *
@@ -957,19 +1013,29 @@ export abstract class CatalogInterface {
    * Served only to a client whose attach result set
    * `supports_catalog_contents` (ReadOnlyCatalogInterface does). The default
    * composes `schemas()` with the per-kind `schemaContents*()` calls, skipping
-   * a kind whose `estimated_object_count` is exactly 0 (a hard guarantee) — so
-   * any catalog can serve it without new code. It runs with no transaction:
-   * the client caches the answer for the whole attach. Override it to build the
-   * snapshot more cheaply. Mirrors vgi-python's
-   * `CatalogInterface.catalog_contents`.
+   * a kind whose `estimated_object_count` is exactly 0 (a hard guarantee), and
+   * returns no etag -- so any catalog can serve it without new code. It runs
+   * with no transaction: the client caches the answer for the whole attach.
    *
+   * Override it to build the snapshot more cheaply, or to revalidate: return
+   * an `etag` with the contents, and when `ifNoneMatch` equals the current
+   * etag return `{ etag, not_modified: true }` *before* building anything.
+   * Mirrors vgi-python's `CatalogInterface.catalog_contents`.
+   *
+   * @param ifNoneMatch The etag of the snapshot the client already holds, or
+   *   null.
    * @returns One `SchemaContentsInfo` per schema, in `schemas()` order (the
-   *   handler sorts parents before children).
+   *   handler sorts parents before children), plus its etag -- or
+   *   `not_modified`.
    */
-  async catalogContents(attachOpaqueData: AttachOpaqueData): Promise<SchemaContentsInfo[]> {
+  async catalogContents(
+    attachOpaqueData: AttachOpaqueData,
+    _ifNoneMatch?: string | null,
+  ): Promise<CatalogContentsResult> {
+    // The default has no etag, so it never revalidates and ignores ifNoneMatch.
     const schemas = await this.schemas(attachOpaqueData, undefined);
-    return Promise.all(
-      schemas.map(async (schema) => {
+    const contents = await Promise.all(
+      schemas.map(async (schema): Promise<SchemaContentsInfo> => {
         const counts = schema.estimated_object_count ?? {};
         const path = schema.path;
         // A missing count is unknown, never zero: only an explicit 0 skips.
@@ -999,6 +1065,17 @@ export abstract class CatalogInterface {
         };
       }),
     );
+    return { schemas: contents };
+  }
+
+  /**
+   * The catalog that answers `catalog_contents` for this attach: whose
+   * `catalogContentsEtag` / `catalogContentsAttachIndependent` /
+   * `catalogVersionFrozen` the handler honours and whose instance keys the
+   * worker cache. `this`, except for a composite, which routes to its backend.
+   */
+  catalogContentsOwner(_attachOpaqueData: AttachOpaqueData): CatalogInterface {
+    return this;
   }
   transactionBegin(attachOpaqueData: AttachOpaqueData): Awaitable<Uint8Array | null> {
     return null;

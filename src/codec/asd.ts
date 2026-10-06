@@ -40,7 +40,102 @@ export function encodeASD(
   schema: VgiSchema,
   obj: Record<string, any>,
 ): Uint8Array {
-  return serializeBatch(batchFromRows([obj], schema));
+  return serializeBatch(batchFromRows([sortMapsForSchema(schema, obj)], schema));
+}
+
+// --------------------------------------------------------------------------- //
+// Encode side: deterministic map columns
+// --------------------------------------------------------------------------- //
+//
+// A map value arrives as a JS object (or Map / pair list), whose iteration
+// order is insertion order -- except that integer-like keys ("1", "2") always
+// come first, ascending. Two builds of the same record could therefore encode
+// differently (and a catalog_contents content-hash etag would change with no
+// catalog change). Every map is written in sorted key order instead, matching
+// the Go / Java / C# / Rust SDKs: keys compared by Unicode code point (the
+// same order as comparing their UTF-8 bytes), not by UTF-16 code unit.
+
+/** Compare two strings by Unicode code point (= UTF-8 byte order). */
+export function compareCodePoints(a: string, b: string): number {
+  const n = Math.min(a.length, b.length);
+  for (let i = 0; i < n; i++) {
+    const x = a.charCodeAt(i);
+    const y = b.charCodeAt(i);
+    if (x === y) continue;
+    // A surrogate (a code point above U+FFFF) sorts after every BMP code unit,
+    // though as a code unit (0xD800-0xDFFF) it sorts below U+E000-U+FFFF.
+    const xs = x >= 0xd800 && x <= 0xdfff;
+    const ys = y >= 0xd800 && y <= 0xdfff;
+    if (xs !== ys) return xs ? 1 : -1;
+    return x - y;
+  }
+  return a.length - b.length;
+}
+
+function mapPairs(raw: any): Array<[unknown, unknown]> {
+  if (Array.isArray(raw)) return raw.map((e: any) => (Array.isArray(e) ? [e[0], e[1]] : [e?.key, e?.value]));
+  if (raw instanceof Map) return Array.from(raw.entries());
+  if (typeof raw[Symbol.iterator] === "function") return Array.from(raw as Iterable<[unknown, unknown]>);
+  return Object.entries(raw);
+}
+
+function compareKeys(a: unknown, b: unknown): number {
+  if (typeof a === "string" && typeof b === "string") return compareCodePoints(a, b);
+  if ((typeof a === "number" || typeof a === "bigint") && (typeof b === "number" || typeof b === "bigint")) {
+    return a < b ? -1 : a > b ? 1 : 0;
+  }
+  return compareCodePoints(String(a), String(b));
+}
+
+/** Whether a type contains a map anywhere (memoized per type object). */
+const HAS_MAP = new WeakMap<object, boolean>();
+function typeHasMap(type: VgiDataType): boolean {
+  const cached = HAS_MAP.get(type as object);
+  if (cached !== undefined) return cached;
+  let has = isMap(type);
+  if (!has && (isList(type) || isStruct(type))) {
+    has = ((type as any).children as VgiField[]).some((c) => typeHasMap(c.type));
+  }
+  HAS_MAP.set(type as object, has);
+  return has;
+}
+
+function sortMapsForType(type: VgiDataType, value: any): any {
+  if (value == null || !typeHasMap(type)) return value;
+  if (isMap(type)) {
+    const entries = (type as any).children[0].type as VgiDataType;
+    const valueType = ((entries as any).children as VgiField[])[1].type;
+    return mapPairs(value)
+      .map(([k, v]): [unknown, unknown] => [k, sortMapsForType(valueType, v)])
+      .sort((x, y) => compareKeys(x[0], y[0]));
+  }
+  if (isList(type)) {
+    const child = (type as any).children[0].type as VgiDataType;
+    return Array.from(value as Iterable<unknown>, (v) => sortMapsForType(child, v));
+  }
+  if (isStruct(type)) {
+    const out: Record<string, any> = { ...value };
+    for (const cf of (type as any).children as VgiField[]) out[cf.name] = sortMapsForType(cf.type, value[cf.name]);
+    return out;
+  }
+  return value;
+}
+
+/**
+ * `obj` with every map-typed field (at any depth) as a key-sorted pair list.
+ * Returns `obj` itself when the schema has no map column. Never mutates `obj`
+ * (catalog items may be frozen and shared).
+ */
+export function sortMapsForSchema(schema: VgiSchema, obj: Record<string, any>): Record<string, any> {
+  let out: Record<string, any> | null = null;
+  for (const f of schema.fields) {
+    if (!typeHasMap(f.type)) continue;
+    const v = obj[f.name];
+    if (v == null) continue;
+    out ??= { ...obj };
+    out[f.name] = sortMapsForType(f.type, v);
+  }
+  return out ?? obj;
 }
 
 /**

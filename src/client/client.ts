@@ -56,7 +56,7 @@ import { VgiClientError, wrapRpcWithErrorEnrichment } from "./errors.js";
 import { normalizeSchemaPath } from "../schema-path.js";
 import { encodeASD } from "../codec/asd.js";
 import { ClientCapabilitiesSchema, MacroCreateRequestSchema } from "../generated/vgi-protocol-schemas.js";
-import { decodeSchemaContents } from "../generated/vgi-protocol-types.js";
+import { decodeCatalogContentsResponse } from "../generated/vgi-protocol-types.js";
 import { deserializeInfoList, deserializeTags, toAsyncIterator } from "./helpers.js";
 
 export { VgiClientError };
@@ -691,25 +691,47 @@ export class VgiClient {
    * indexes. Only call it when the attach result set
    * `supports_catalog_contents`; it is the committed catalog at
    * `catalog_version` (no transaction).
+   *
+   * Pass the `etag` of a snapshot you hold as `ifNoneMatch`: when it is still
+   * current the worker answers `not_modified` with no schemas. `etag` null
+   * means the worker does not revalidate. Each schema's wire `path` is checked
+   * against its decoded `SchemaInfo.path`.
    */
   async catalogContents(
     attachOpaqueData: AttachOpaqueData,
-  ): Promise<{ catalog_version: number; schemas: SchemaContentsInfo[] }> {
-    const result = await this.rpc.call("catalog_contents", { attach_opaque_data: attachOpaqueData });
+    ifNoneMatch: string | null = null,
+  ): Promise<{ catalog_version: number; etag: string | null; not_modified: boolean; schemas: SchemaContentsInfo[] }> {
+    const result = await this.rpc.call("catalog_contents", {
+      attach_opaque_data: attachOpaqueData,
+      if_none_match: ifNoneMatch,
+    });
     if (!result) throw new VgiClientError("catalog_contents returned null");
-    const inner = unwrapResult(result);
-    const schemas = deserializeInfoList(inner.schemas, decodeSchemaContents).map((c) => ({
-      schema: decodeSchemaInfo(c.schema),
-      tables: c.tables.map(decodeTableInfo),
-      views: c.views.map(decodeViewInfo),
-      scalar_functions: c.scalar_functions.map(decodeFunctionInfo),
-      aggregate_functions: c.aggregate_functions.map(decodeFunctionInfo),
-      table_functions: c.table_functions.map(decodeFunctionInfo),
-      scalar_macros: c.scalar_macros.map(decodeMacroInfo),
-      table_macros: c.table_macros.map(decodeMacroInfo),
-      indexes: c.indexes.map(decodeIndexInfo),
-    }));
-    return { catalog_version: Number(inner.catalog_version ?? 0), schemas };
+    const response = decodeCatalogContentsResponse(toUint8Array(result.result));
+    const schemas = response.schemas.map((c) => {
+      const schema = decodeSchemaInfo(c.schema);
+      if (JSON.stringify(c.path) !== JSON.stringify(schema.path)) {
+        throw new VgiClientError(
+          `catalog_contents: SchemaContents.path ${JSON.stringify(c.path)} != SchemaInfo.path ${JSON.stringify(schema.path)}`,
+        );
+      }
+      return {
+        schema,
+        tables: c.tables.map(decodeTableInfo),
+        views: c.views.map(decodeViewInfo),
+        scalar_functions: c.scalar_functions.map(decodeFunctionInfo),
+        aggregate_functions: c.aggregate_functions.map(decodeFunctionInfo),
+        table_functions: c.table_functions.map(decodeFunctionInfo),
+        scalar_macros: c.scalar_macros.map(decodeMacroInfo),
+        table_macros: c.table_macros.map(decodeMacroInfo),
+        indexes: c.indexes.map(decodeIndexInfo),
+      };
+    });
+    return {
+      catalog_version: Number(response.catalog_version ?? 0),
+      etag: response.etag ?? null,
+      not_modified: Boolean(response.not_modified),
+      schemas,
+    };
   }
 
   /** Detach a previously-attached catalog. */

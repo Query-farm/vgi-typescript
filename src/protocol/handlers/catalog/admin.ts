@@ -9,22 +9,15 @@ import {
   encodeTableInfo,
   encodeViewInfo,
   encodeCatalogInfo,
-  encodeMacroInfo,
-  encodeIndexInfo,
 } from "../../../generated/vgi-client.js";
-import {
-  buildCatalogAttachResult,
-  buildCatalogContentsResponse,
-  buildSchemaContents,
-  encodeSchemaContents,
-} from "../../../generated/vgi-protocol-types.js";
+import { buildCatalogAttachResult } from "../../../generated/vgi-protocol-types.js";
+import { serveCatalogContents } from "./contents.js";
 import { encodeFunctionInfoOnce } from "../../../catalog/item-encoding.js";
 import { encodeCopyFromFormatInfo } from "../../../catalog/interface.js";
 import {
   CatalogAttachParamsSchema,
   CatalogAttachResultSchema,
   CatalogContentsParamsSchema,
-  CatalogContentsResultSchema,
   CatalogCatalogsParamsSchema,
   CatalogCatalogsResultSchema,
   CatalogCopyFromFormatsParamsSchema,
@@ -251,34 +244,15 @@ export function registerCatalogAdminMethods(protocol: Protocol, getCatalog: GetC
   // catalog_contents — every schema and all of its contents in one result,
   // for a client whose attach result set supports_catalog_contents. Takes no
   // transaction: the client caches the answer for the whole attach, so it is
-  // the committed catalog at catalog_version. Every item is encoded with the
-  // SAME encoder its per-schema RPC uses (catalog_schemas, and the
-  // catalog_schema_contents_* handlers in this directory), so a client decodes
-  // the items it already knows how to decode and gets byte-identical entries.
+  // the committed catalog at catalog_version. `if_none_match` revalidates a
+  // snapshot the client holds (etag / not_modified); see ./contents.ts for the
+  // rules, the content-hash etag and the frozen-catalog cache.
   catalogUnary(protocol, signingKey, "catalog_contents", {
     params: CatalogContentsParamsSchema,
     result: RESULT_BINARY_SCHEMA,
     handler: async (params) => {
-      const cat = getCatalog();
-      const attach = toUint8Array(params.attach_opaque_data);
-      const version = await cat.version(attach);
-      const contents = await cat.catalogContents(attach);
-      // Parents before children, as catalog_schemas guarantees (stable sort).
-      const ordered = [...contents].sort((a, b) => a.schema.path.length - b.schema.path.length);
-      return wrapResult(buildCatalogContentsResponse({
-        catalog_version: version,
-        schemas: ordered.map((c) => encodeSchemaContents(buildSchemaContents({
-          schema: encodeSchemaInfo(c.schema),
-          tables: c.tables.map((t) => encodeTableInfo(t)),
-          views: c.views.map((v) => encodeViewInfo(v)),
-          scalar_functions: c.scalar_functions.map((f) => encodeFunctionInfoOnce(f)),
-          aggregate_functions: c.aggregate_functions.map((f) => encodeFunctionInfoOnce(f)),
-          table_functions: c.table_functions.map((f) => encodeFunctionInfoOnce(f)),
-          scalar_macros: c.scalar_macros.map((m) => encodeMacroInfo(m)),
-          table_macros: c.table_macros.map((m) => encodeMacroInfo(m)),
-          indexes: c.indexes.map((i) => encodeIndexInfo(i)),
-        }))),
-      }), CatalogContentsResultSchema);
+      const ifNoneMatch = params.if_none_match == null ? null : String(params.if_none_match);
+      return serveCatalogContents(getCatalog(), toUint8Array(params.attach_opaque_data), ifNoneMatch);
     },
   });
 

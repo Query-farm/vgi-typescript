@@ -17,7 +17,7 @@ import type {
   IndexInfo,
   MacroInfo,
   MacroType,
-  SchemaContentsInfo,
+  CatalogContentsResult,
   SchemaInfo,
   TableInfo,
   TransactionOpaqueData,
@@ -239,8 +239,17 @@ export class CompositeCatalogInterface extends CatalogInterface {
 
   // Routed whole, so a backend that overrides catalogContents (or keeps the
   // default) answers for its own catalog.
-  override async catalogContents(attachOpaqueData: AttachOpaqueData): Promise<SchemaContentsInfo[]> {
-    return await this._route(attachOpaqueData).catalogContents(attachOpaqueData);
+  override async catalogContents(
+    attachOpaqueData: AttachOpaqueData,
+    ifNoneMatch?: string | null,
+  ): Promise<CatalogContentsResult> {
+    return await this._route(attachOpaqueData).catalogContents(attachOpaqueData, ifNoneMatch);
+  }
+
+  // The backend's etag / cache settings apply, and its instance keys the
+  // worker's catalog_contents cache.
+  override catalogContentsOwner(attachOpaqueData: AttachOpaqueData): CatalogInterface {
+    return this._route(attachOpaqueData).catalogContentsOwner(attachOpaqueData);
   }
 
   override async copyFromFormats(attachOpaqueData: AttachOpaqueData, transactionOpaqueData?: TransactionOpaqueData): Promise<CopyFromFormatInfo[]> {

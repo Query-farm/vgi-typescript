@@ -31,7 +31,6 @@ import {
 } from "../../../generated/vgi-protocol-schemas.js";
 import {
   buildCatalogAttachResult,
-  decodeSchemaContents,
   type CatalogContentsResponse,
   type SchemaContents,
 } from "../../../generated/vgi-protocol-types.js";
@@ -39,10 +38,29 @@ import { SIGNING_KEY_BYTES, serveVgiWorker } from "../../../serve-entry.js";
 import { buildVgiProtocol } from "../../dispatch.js";
 import { wrapRequest } from "../../../client/protocol.js";
 import { batchFromColumns } from "../../../util/arrow/index.js";
-import { schema, field, utf8, binary } from "../../../arrow/index.js";
+import { schema, field, utf8, binary, batchFromRows, serializeBatch } from "../../../arrow/index.js";
+import { SchemaInfoSchema } from "../../../generated/vgi-protocol-schemas.js";
 import { serializeSchema } from "../../../util/arrow/index.js";
 import { TableCreateRequestSchema } from "../../../generated/vgi-protocol-schemas.js";
-import { CATALOG_MEMORY, ContentsMemoryCatalog } from "../../../../examples/catalog_contents.js";
+import {
+  CATALOG_HASH,
+  CATALOG_MEMORY,
+  CATALOG_REVAL,
+  ContentsHashCatalog,
+  ContentsMemoryCatalog,
+  ContentsRevalCatalog,
+} from "../../../../examples/catalog_contents.js";
+import { catalogContentsDigest } from "../../../catalog/contents-digest.js";
+import { compareCodePoints } from "../../../codec/asd.js";
+import {
+  decodeSchemaInfo,
+  decodeTableInfo,
+  decodeViewInfo,
+  encodeSchemaInfo,
+  encodeTableInfo,
+  encodeViewInfo,
+} from "../../../generated/vgi-client.js";
+import type { CatalogContentsResult, SchemaContentsInfo } from "../../../catalog/interface.js";
 
 function registry(): FunctionRegistry {
   const r = new FunctionRegistry();
@@ -85,10 +103,23 @@ function handlers(cat: CatalogInterface) {
       const r = await call("catalog_attach", attachRequest(name));
       return decodeASD<CatalogAttachResult>(CatalogAttachResultSchema, r.result);
     },
-    async contents(attach: Uint8Array): Promise<{ response: CatalogContentsResponse; schemas: SchemaContents[] }> {
-      const r = await call("catalog_contents", { attach_opaque_data: attach });
+    async contents(
+      attach: Uint8Array,
+      ifNoneMatch: string | null = null,
+    ): Promise<{ response: CatalogContentsResponse; schemas: SchemaContents[]; wire: Uint8Array }> {
+      const r = await call("catalog_contents", { attach_opaque_data: attach, if_none_match: ifNoneMatch });
       const response = decodeASD<CatalogContentsResponse>(CatalogContentsResultSchema, r.result);
-      return { response, schemas: response.schemas.map(decodeSchemaContents) };
+      return { response, schemas: response.schemas, wire: r.result };
+    },
+    async ddlView(attach: Uint8Array, name: string, definition = "SELECT 1 AS x"): Promise<void> {
+      await call("catalog_view_create", {
+        attach_opaque_data: attach,
+        schema_path: ["main"],
+        name,
+        definition,
+        on_conflict: "ERROR",
+        transaction_opaque_data: null,
+      });
     },
     /** The `items` of a per-schema RPC (every items-result shares one schema). */
     async items(name: string, params: Record<string, unknown>): Promise<Uint8Array[]> {
@@ -227,10 +258,10 @@ describe("catalog_contents", () => {
   });
 });
 
-describe("a DDL-capable catalog behind a composite (the contents_memory fixture)", () => {
+describe("a DDL-capable catalog behind a composite (the contents_reval fixture)", () => {
   test("table_create's wrapped request reaches the catalog, and catalog_contents sees it", async () => {
-    const h = handlers(new CompositeCatalogInterface([exampleCatalog(), new ContentsMemoryCatalog()]));
-    const attached = await h.attach(CATALOG_MEMORY);
+    const h = handlers(new CompositeCatalogInterface([exampleCatalog(), new ContentsRevalCatalog()]));
+    const attached = await h.attach(CATALOG_REVAL);
     expect(attached.supports_catalog_contents).toBe(true);
     const attach = attached.attach_opaque_data;
     const before = await h.contents(attach);
@@ -351,6 +382,402 @@ describe("catalog_contents over HTTP, through VgiClient", () => {
         expect(sc.table_macros).toEqual(await client.schemaContentsMacros(attach, path, "TABLE_MACRO" as any));
       }
       expect(contents.schemas.reduce((n, s) => n + s.table_functions.length, 0)).toBeGreaterThan(100);
+    } finally {
+      server.stop(true);
+    }
+  });
+});
+
+// ============================================================================
+// v2: path column, etag revalidation, content hash, worker cache
+// ============================================================================
+
+/** NestedStubCatalog whose catalogContents answer is scripted per test. */
+class ScriptedCatalog extends NestedStubCatalog {
+  answer: (ifNoneMatch: string | null | undefined) => Promise<CatalogContentsResult> | CatalogContentsResult = () =>
+    super.catalogContents(new Uint8Array([9]));
+  override async catalogContents(_attach: AttachOpaqueData, ifNoneMatch?: string | null): Promise<CatalogContentsResult> {
+    return this.answer(ifNoneMatch);
+  }
+}
+
+function schemaInfo(path: string[]): SchemaInfo {
+  return { comment: null, tags: {}, attach_opaque_data: new Uint8Array([9]), path, estimated_object_count: null };
+}
+
+function contentsOf(path: string[]): SchemaContentsInfo {
+  return {
+    schema: schemaInfo(path),
+    tables: [],
+    views: [],
+    scalar_functions: [],
+    aggregate_functions: [],
+    table_functions: [],
+    scalar_macros: [],
+    table_macros: [],
+    indexes: [],
+  };
+}
+
+describe("catalog_contents v2 wire", () => {
+  test("each struct row's path equals its SchemaInfo.path", async () => {
+    const h = handlers(exampleCatalog());
+    const attach = (await h.attach(catalog.name)).attach_opaque_data;
+    const { response } = await h.contents(attach);
+    expect(response.schemas.length).toBe(catalog.schemas.length);
+    for (const sc of response.schemas) expect(sc.path).toEqual(decodeSchemaInfo(sc.schema).path);
+  });
+
+  test("a catalog without an etag ignores if_none_match and never answers not_modified", async () => {
+    const h = handlers(exampleCatalog());
+    const attach = (await h.attach(catalog.name)).attach_opaque_data;
+    const plain = await h.contents(attach);
+    expect(plain.response.etag).toBeNull();
+    expect(plain.response.not_modified).toBe(false);
+    const cond = await h.contents(attach, "anything");
+    expect(cond.response.etag).toBeNull();
+    expect(cond.response.not_modified).toBe(false);
+    expect(cond.schemas.length).toBe(plain.schemas.length);
+  });
+});
+
+describe("catalog_contents revalidation (contents_reval: generation-counter etag)", () => {
+  test("a matching if_none_match short-circuits before building; DDL changes the etag", async () => {
+    const reval = new ContentsRevalCatalog();
+    const h = handlers(new CompositeCatalogInterface([exampleCatalog(), reval]));
+    const attach = (await h.attach(CATALOG_REVAL)).attach_opaque_data;
+
+    const first = await h.contents(attach);
+    expect(first.response.etag).toBe("gen-1");
+    expect(first.response.not_modified).toBe(false);
+    expect(first.schemas.map((s) => s.path)).toEqual([["main"]]);
+    expect(reval.builds).toBe(1);
+
+    const same = await h.contents(attach, "gen-1");
+    expect(same.response).toEqual({ catalog_version: 1, etag: "gen-1", not_modified: true, schemas: [] });
+    expect(reval.builds).toBe(1); // the cheap validator answered; nothing was built
+
+    const other = await h.contents(attach, "gen-not-current");
+    expect(other.response.not_modified).toBe(false);
+    expect(other.schemas.length).toBe(1);
+    expect(reval.builds).toBe(2);
+
+    await h.ddlView(attach, "v");
+    const changed = await h.contents(attach, "gen-1");
+    expect(changed.response.etag).toBe("gen-2");
+    expect(changed.response.catalog_version).toBe(2);
+    expect(changed.response.not_modified).toBe(false);
+    expect(changed.schemas[0].views.map((v) => decodeViewInfo(v).name)).toEqual(["v"]);
+  });
+
+  test("contents_memory reports version 0 and no etag", async () => {
+    const h = handlers(new CompositeCatalogInterface([exampleCatalog(), new ContentsMemoryCatalog()]));
+    const attached = await h.attach(CATALOG_MEMORY);
+    expect(attached.catalog_version).toBe(0);
+    await h.ddlView(attached.attach_opaque_data, "v");
+    const { response } = await h.contents(attached.attach_opaque_data, "gen-0");
+    expect(response.catalog_version).toBe(0);
+    expect(response.etag).toBeNull();
+    expect(response.not_modified).toBe(false);
+    expect(response.schemas[0].views.length).toBe(1);
+  });
+});
+
+describe("catalog_contents worker rules", () => {
+  const attach = new Uint8Array([9]);
+
+  test("not_modified needs an etag equal to if_none_match", async () => {
+    const cat = new ScriptedCatalog();
+    const h = handlers(cat);
+    cat.answer = () => ({ etag: "e1", not_modified: true });
+    await expect(h.contents(attach, "e2")).rejects.toThrow(/not_modified/);
+    await expect(h.contents(attach, null)).rejects.toThrow(/not_modified/);
+    cat.answer = () => ({ not_modified: true });
+    await expect(h.contents(attach, "e1")).rejects.toThrow(/not_modified/);
+    cat.answer = () => ({ etag: "e1", not_modified: true });
+    const ok = await h.contents(attach, "e1");
+    expect(ok.response).toEqual({ catalog_version: 42, etag: "e1", not_modified: true, schemas: [] });
+  });
+
+  test("not_modified with schemas is refused", async () => {
+    const cat = new ScriptedCatalog();
+    cat.answer = () => ({ etag: "e1", not_modified: true, schemas: [contentsOf(["a"])] });
+    await expect(handlers(cat).contents(attach, "e1")).rejects.toThrow(/with schemas/);
+  });
+
+  test("a full answer whose etag matches if_none_match becomes not_modified", async () => {
+    const cat = new ScriptedCatalog();
+    cat.answer = () => ({ etag: "e1", schemas: [contentsOf(["a"])] });
+    const h = handlers(cat);
+    expect((await h.contents(attach, "e1")).response).toEqual({
+      catalog_version: 42,
+      etag: "e1",
+      not_modified: true,
+      schemas: [],
+    });
+    const full = await h.contents(attach, "e0");
+    expect(full.response.etag).toBe("e1");
+    expect(full.schemas.map((s) => s.path)).toEqual([["a"]]);
+  });
+
+  test("schema paths must be unique (case-insensitively) and have their parent", async () => {
+    const cat = new ScriptedCatalog();
+    const h = handlers(cat);
+    cat.answer = () => ({ schemas: [contentsOf(["a"]), contentsOf(["A"])] });
+    await expect(h.contents(attach)).rejects.toThrow(/duplicate/);
+    cat.answer = () => ({ schemas: [contentsOf(["a"]), contentsOf(["b", "c"])] });
+    await expect(h.contents(attach)).rejects.toThrow(/without its parent/);
+    cat.answer = () => ({ schemas: [contentsOf(["a", "b"]), contentsOf(["a"])] });
+    expect((await h.contents(attach)).schemas.map((s) => s.path)).toEqual([["a"], ["a", "b"]]);
+  });
+});
+
+describe("catalog_contents content-hash etag", () => {
+  test("hex SHA-256, stable while unchanged, changes with DDL, a match is not_modified", async () => {
+    const h = handlers(new CompositeCatalogInterface([exampleCatalog(), new ContentsHashCatalog()]));
+    const attach = (await h.attach(CATALOG_HASH)).attach_opaque_data;
+    await h.ddlView(attach, "v");
+    const a = await h.contents(attach);
+    const etag = a.response.etag!;
+    expect(etag).toMatch(/^[0-9a-f]{64}$/);
+    expect(etag).toBe(await catalogContentsDigest(a.schemas));
+    expect((await h.contents(attach)).response.etag).toBe(etag);
+    const same = await h.contents(attach, etag);
+    expect(same.response.not_modified).toBe(true);
+    expect(same.response.etag).toBe(etag);
+    expect(same.schemas).toEqual([]);
+    await h.ddlView(attach, "w");
+    const changed = await h.contents(attach, etag);
+    expect(changed.response.not_modified).toBe(false);
+    expect(changed.response.etag).not.toBe(etag);
+  });
+
+  test("a catalog's own etag wins over the content hash", async () => {
+    const cat = new ScriptedCatalog();
+    cat.catalogContentsEtag = "content-hash";
+    cat.answer = () => ({ etag: "mine", schemas: [contentsOf(["a"])] });
+    expect((await handlers(cat).contents(new Uint8Array([9]))).response.etag).toBe("mine");
+  });
+
+  test("the digest matches vgi-python's catalog_contents_digest", async () => {
+    const enc = (s: string) => new TextEncoder().encode(s);
+    const snapshot: SchemaContents[] = [
+      {
+        path: ["main"],
+        schema: new Uint8Array([1, 2]),
+        tables: [enc("t1"), new Uint8Array(0)],
+        views: [enc("v")],
+        scalar_functions: [],
+        aggregate_functions: [],
+        table_functions: [],
+        scalar_macros: [],
+        table_macros: [],
+        indexes: [],
+      },
+      {
+        path: ["main", "sub ü"],
+        schema: enc("S"),
+        tables: [],
+        views: [],
+        scalar_functions: [],
+        aggregate_functions: [],
+        table_functions: [],
+        scalar_macros: [],
+        table_macros: [],
+        indexes: [enc("i")],
+      },
+    ];
+    // Values computed with vgi-python cc83818 (vgi.worker.catalog_contents_digest).
+    expect(await catalogContentsDigest(snapshot)).toBe("856937931236f928e1f3fcd69da359bf21e41539f8c51e6d786929897db6d43c");
+    expect(await catalogContentsDigest([])).toBe("af5570f5a1810b7af78caf4bc70a660f0df51e42baf91d4de5b2328de0e83dfc");
+  });
+
+  test("two builds of the example catalog hash alike", async () => {
+    const h1 = handlers(exampleCatalog());
+    const h2 = handlers(exampleCatalog());
+    const a1 = (await h1.attach(catalog.name)).attach_opaque_data;
+    const a2 = (await h2.attach(catalog.name)).attach_opaque_data;
+    // Items embed the attach id (SchemaInfo.attach_opaque_data); compare the
+    // same attach across two independent catalog instances and builds.
+    const s1 = (await h1.contents(a1)).schemas;
+    const s1b = (await h1.contents(a1)).schemas;
+    expect(await catalogContentsDigest(s1)).toBe(await catalogContentsDigest(s1b));
+    const s2 = (await h2.contents(a2)).schemas;
+    expect(s2.length).toBe(s1.length);
+  });
+});
+
+describe("catalog_contents worker cache (frozen + attach-independent)", () => {
+  class CachedCatalog extends ScriptedCatalog {
+    override catalogVersionFrozen = true;
+    override catalogContentsAttachIndependent = true;
+    builds = 0;
+    v = 42;
+    override version(): number {
+      return this.v;
+    }
+  }
+
+  test("built once per (catalog, version); conditional hits answer not_modified", async () => {
+    const cat = new CachedCatalog();
+    cat.catalogContentsEtag = "content-hash";
+    cat.answer = () => {
+      cat.builds++;
+      return { schemas: [contentsOf(["a"])] };
+    };
+    const h = handlers(cat);
+    const attach = new Uint8Array([9]);
+    const a = await h.contents(attach);
+    const b = await h.contents(attach, "stale");
+    expect(cat.builds).toBe(1);
+    expect(b.wire).toBe(a.wire); // the same serialized bytes, reused
+    const nm = await h.contents(attach, a.response.etag);
+    expect(nm.response.not_modified).toBe(true);
+    expect(cat.builds).toBe(1);
+    cat.v = 43;
+    const c = await h.contents(attach);
+    expect(cat.builds).toBe(2);
+    expect(c.response.catalog_version).toBe(43);
+  });
+
+  test("not cached unless both frozen and attach-independent; a failed build is not cached", async () => {
+    const cat = new CachedCatalog();
+    cat.catalogContentsAttachIndependent = false;
+    cat.answer = () => {
+      cat.builds++;
+      return { schemas: [contentsOf(["a"])] };
+    };
+    const h = handlers(cat);
+    await h.contents(new Uint8Array([9]));
+    await h.contents(new Uint8Array([9]));
+    expect(cat.builds).toBe(2);
+
+    const flaky = new CachedCatalog();
+    let fail = true;
+    flaky.answer = () => {
+      flaky.builds++;
+      if (fail) throw new Error("boom");
+      return { schemas: [contentsOf(["a"])] };
+    };
+    const hf = handlers(flaky);
+    await expect(hf.contents(new Uint8Array([9]))).rejects.toThrow(/boom/);
+    fail = false;
+    expect((await hf.contents(new Uint8Array([9]))).schemas.length).toBe(1);
+    await hf.contents(new Uint8Array([9]));
+    expect(flaky.builds).toBe(2);
+  });
+
+  test("ReadOnlyCatalogInterface is frozen but not attach-independent (per-attach ids)", () => {
+    const ro = exampleCatalog();
+    expect(ro.catalogVersionFrozen).toBe(true);
+    expect(ro.catalogContentsAttachIndependent).toBe(false);
+  });
+});
+
+describe("deterministic item encoding (map columns in sorted key order)", () => {
+  test("map key insertion order does not change item bytes", () => {
+    const base = schemaInfo(["main"]);
+    const a = encodeSchemaInfo({
+      ...base,
+      tags: { b: "1", a: "2", "10": "x", "2": "y" },
+      estimated_object_count: { view: 1, table: 2 },
+    });
+    const b = encodeSchemaInfo({
+      ...base,
+      tags: { "2": "y", a: "2", "10": "x", b: "1" },
+      estimated_object_count: { table: 2, view: 1 },
+    });
+    expect(hex(a)).toBe(hex(b));
+    // On the wire the entries are sorted by code point: "10" < "2" < "a" < "b"
+    // (not JS's integer-keys-first object order). Encode explicit pair lists
+    // in that order, bypassing encodeASD's sort, and compare bytes.
+    const raw = serializeBatch(
+      batchFromRows(
+        [
+          {
+            ...base,
+            tags: [["10", "x"], ["2", "y"], ["a", "2"], ["b", "1"]],
+            estimated_object_count: [["table", 2], ["view", 1]],
+          },
+        ],
+        SchemaInfoSchema,
+      ),
+    );
+    expect(hex(a)).toBe(hex(raw));
+    expect(decodeSchemaInfo(a).tags).toEqual({ b: "1", a: "2", "10": "x", "2": "y" });
+  });
+
+  test("TableInfo / ViewInfo maps (tags, write_result_modes, column_comments)", () => {
+    const table = (tags: Record<string, string>, modes: Record<string, string>) =>
+      encodeTableInfo({
+        comment: null,
+        tags,
+        name: "t",
+        schema_path: ["main"],
+        columns: serializeSchema(schema([field("a", utf8(), true)])),
+        not_null_constraints: [],
+        unique_constraints: [],
+        check_constraints: [],
+        primary_key_constraints: [],
+        foreign_key_constraints: [],
+        write_result_modes: modes as any,
+        supports_column_statistics: false,
+        required_filters: [],
+      } as any);
+    expect(hex(table({ z: "1", a: "2" }, { update: "x", insert: "y" }))).toBe(
+      hex(table({ a: "2", z: "1" }, { insert: "y", update: "x" })),
+    );
+    const view = (cc: Record<string, string>) =>
+      encodeViewInfo({ comment: null, tags: {}, name: "v", schema_path: ["main"], definition: "SELECT 1", column_comments: cc });
+    expect(hex(view({ y: "1", x: "2" }))).toBe(hex(view({ x: "2", y: "1" })));
+    expect(Object.keys(decodeViewInfo(view({ y: "1", x: "2" })).column_comments)).toEqual(["x", "y"]);
+    expect(decodeTableInfo(table({ z: "1", a: "2" }, {})).name).toBe("t");
+  });
+
+  test("encoding never mutates a frozen item", () => {
+    const item = Object.freeze({ ...schemaInfo(["main"]), tags: Object.freeze({ b: "1", a: "2" }) });
+    expect(() => encodeSchemaInfo(item as SchemaInfo)).not.toThrow();
+    expect(Object.keys(item.tags)).toEqual(["b", "a"]);
+  });
+
+  test("compareCodePoints orders astral characters after the BMP (UTF-8 order)", () => {
+    const astral = "\u{1F600}";
+    const bmpHigh = "�";
+    expect(compareCodePoints(bmpHigh, astral)).toBeLessThan(0);
+    expect(bmpHigh < astral).toBe(false); // UTF-16 code-unit order disagrees
+    expect(compareCodePoints("a", "ab")).toBeLessThan(0);
+    expect(compareCodePoints("b", "a")).toBeGreaterThan(0);
+    expect(compareCodePoints("x", "x")).toBe(0);
+  });
+});
+
+describe("catalog_contents revalidation over HTTP, through VgiClient", () => {
+  test("etag / not_modified round-trip", async () => {
+    const r = registry();
+    const server = serveVgiWorker({
+      name: "demo",
+      doc: "catalog_contents test worker.",
+      version: "0.0.1",
+      registry: r,
+      catalogInterface: new CompositeCatalogInterface([exampleCatalog(r), new ContentsRevalCatalog()]),
+      prefix: "",
+      port: 0,
+      signingKey: new Uint8Array(SIGNING_KEY_BYTES).fill(5),
+      quiet: true,
+      env: {},
+    });
+    try {
+      const client = new VgiClient(httpConnect(`http://localhost:${server.port}`, { prefix: "" }));
+      const attach = (await client.catalogAttach(CATALOG_REVAL)).attach_opaque_data;
+      const full = await client.catalogContents(attach);
+      expect(full.etag).toBe("gen-1");
+      expect(full.not_modified).toBe(false);
+      expect(full.schemas.map((s) => s.schema.path)).toEqual([["main"]]);
+      const same = await client.catalogContents(attach, full.etag);
+      expect(same).toEqual({ catalog_version: 1, etag: "gen-1", not_modified: true, schemas: [] });
+      const other = await client.catalogContents(attach, "nope");
+      expect(other.not_modified).toBe(false);
+      expect(other.schemas.length).toBe(1);
     } finally {
       server.stop(true);
     }

@@ -44,6 +44,9 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
    */
   supportsCatalogContents = true;
 
+  /** A descriptor catalog's version never changes (`catalog_version_frozen`). */
+  override catalogVersionFrozen = true;
+
   private _descriptor: CatalogDescriptor;
   private _registry: FunctionRegistry;
   private _attachments = new Map<string, AttachOpaqueData>();

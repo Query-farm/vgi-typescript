@@ -63,7 +63,8 @@ const catalogInterface = new CompositeCatalogInterface([
   narrowBind,
   twinA,
   twinB,
-  // contents_probe / _broken / _legacy / _memory: catalog_contents fixtures.
+  // contents_probe / _broken / _legacy / _memory / _reval / _hash:
+  // catalog_contents fixtures.
   ...createCatalogContentsCatalogs(registry),
 ]);
 
