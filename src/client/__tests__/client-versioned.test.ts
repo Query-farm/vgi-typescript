@@ -282,7 +282,7 @@ describe.skipIf(skip)("VgiClient — versioned worker schemas", () => {
     const r = await client.catalogAttach("versioned");
     try {
       const schemas = await client.schemas(r.attach_opaque_data);
-      expect(schemas.map((s) => s.name)).toContain("main");
+      expect(schemas.map((s) => s.path.join("."))).toContain("main");
     } finally {
       await client.catalogDetach(r.attach_opaque_data);
     }

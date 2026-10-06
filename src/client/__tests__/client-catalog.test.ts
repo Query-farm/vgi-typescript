@@ -85,7 +85,7 @@ describe.skipIf(skip)("VgiClient — catalog discovery and attach", () => {
 describe.skipIf(skip)("VgiClient — schemas", () => {
   test("schemas() lists at least 'main' and 'data'", async () => {
     const schemas = await client.schemas(attachOpaqueData);
-    const names = schemas.map((s) => s.name).sort();
+    const names = schemas.map((s) => s.path.join(".")).sort();
     expect(names).toContain("main");
     expect(names).toContain("data");
   });
@@ -93,7 +93,7 @@ describe.skipIf(skip)("VgiClient — schemas", () => {
   test("schemaGet('main') returns a schema with the right name", async () => {
     const main = await client.schemaGet(attachOpaqueData, "main");
     expect(main).not.toBeNull();
-    expect(main!.name).toBe("main");
+    expect(main!.path).toEqual(["main"]);
   });
 
   test("schemaGet('not-real') returns null", async () => {
@@ -122,14 +122,14 @@ describe.skipIf(skip)("VgiClient — tables", () => {
       expect(names).toContain(expected);
     }
     // Schema name round-trip
-    for (const t of tables) expect(t.schema_path).toBe("data");
+    for (const t of tables) expect(t.schema_path).toEqual(["data"]);
   });
 
   test("tableGet('data', 'numbers') returns a populated TableInfo", async () => {
     const t = await client.tableGet(attachOpaqueData, "data", "numbers");
     expect(t).not.toBeNull();
     expect(t!.name).toBe("numbers");
-    expect(t!.schema_path).toBe("data");
+    expect(t!.schema_path).toEqual(["data"]);
     expect(t!.columns).toBeInstanceOf(Uint8Array);
     expect(t!.columns.byteLength).toBeGreaterThan(0);
   });
@@ -184,14 +184,15 @@ describe.skipIf(skip)("VgiClient — functions", () => {
     expect(names).toContain("sequence");
     // Must not contain a scalar
     expect(names).not.toContain("double");
-    for (const f of tables) expect(f.function_type).toBe("TABLE");
+    // TABLE_BUFFERING (sink-source) functions are table functions too.
+    for (const f of tables) expect(["TABLE", "TABLE_BUFFERING"]).toContain(f.function_type);
   });
 
   test("each FunctionInfo carries typed metadata fields", async () => {
     const fns = await client.schemaContentsFunctions(attachOpaqueData, "main", "SCALAR_FUNCTION");
     const d = fns.find((f) => f.name === "double")!;
     expect(d).toBeDefined();
-    expect(d.schema_path).toBe("main");
+    expect(d.schema_path).toEqual(["main"]);
     expect(Array.isArray(d.examples ?? [])).toBe(true);
     expect(Array.isArray(d.categories ?? [])).toBe(true);
     expect(d.arguments).toBeInstanceOf(Uint8Array);
