@@ -75,7 +75,7 @@ export interface CopyToOption {
    * Optional allowed value set, validated worker-side at bind. Mirrors
    * vgi-python's `Arg(..., choices=[...])`.
    */
-  choices?: unknown[];
+  choices?: readonly unknown[];
   /**
    * Optional inclusive lower bound for numeric options, validated worker-side at
    * bind. Mirrors vgi-python's `Arg(..., ge=...)`.

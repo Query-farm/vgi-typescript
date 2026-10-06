@@ -82,7 +82,7 @@ const repeat_inputs = defineTableInOutFunction<RepeatInputsArgs>({
   process: (
     params: TableInOutProcessParams<RepeatInputsArgs>,
     _state: null,
-    batch: RecordBatch,
+    batch: VgiBatch,
     out: OutputCollector
   ) => {
     // Concatenate the batch repeat_count times
@@ -160,7 +160,7 @@ const substream_partial_sum = defineTableInOutFunction<Record<string, any>, Subs
   process: (
     params: TableInOutProcessParams,
     state: SubstreamPartialSumState,
-    batch: RecordBatch,
+    batch: VgiBatch,
     out: OutputCollector,
   ) => {
     const col = batch.getChildAt(0);
@@ -223,7 +223,7 @@ const multi_batch_finish = defineTableInOutFunction<Record<string, any>, MultiBa
   process: (
     params: TableInOutProcessParams,
     state: MultiBatchFinishState,
-    batch: RecordBatch,
+    batch: VgiBatch,
     out: OutputCollector,
   ) => {
     const col = batch.getChildAt(0);
@@ -276,7 +276,7 @@ const filter_by_setting = defineTableInOutFunction({
   process: (
     params: TableInOutProcessParams,
     _state: null,
-    batch: RecordBatch,
+    batch: VgiBatch,
     out: OutputCollector
   ) => {
     const rawThreshold = params.settings.threshold;
@@ -427,8 +427,7 @@ const unnest_tensor_rows = defineTableInOutFunction({
     const axisRows: Record<string, any>[] = [];
 
     for (let i = 0; i < batch.numRows; i++) {
-      if (!col.isValid(i)) continue;
-      const row = col.get(i);
+      const row = col.get(i) as any;
       if (!row) continue;
       const tensor = typeof row.get === "function" ? row.get("tensor") : row.tensor;
       const axesStruct = typeof row.get === "function" ? row.get("axes") : row.axes;
@@ -489,7 +488,7 @@ const echo_witness = defineTableInOutFunction({
   process: (
     params: TableInOutProcessParams,
     _state: null,
-    batch: RecordBatch,
+    batch: VgiBatch,
     out: OutputCollector,
   ) => {
     const observed = params.outputSchema.fields.length;
@@ -526,7 +525,7 @@ const secret_in_out = defineTableInOutFunction({
       throw new Error("input_schema is required");
     }
     const fields = [
-      ...params.bindCall.input_schema.fields,
+      ...(params.bindCall.input_schema.fields as Field[]),
       new Field("secret_string", new Utf8(), true),
     ];
     return { outputSchema: new Schema(fields) };
@@ -534,7 +533,7 @@ const secret_in_out = defineTableInOutFunction({
   process: (
     params: TableInOutProcessParams,
     _state: null,
-    batch: RecordBatch,
+    batch: VgiBatch,
     out: OutputCollector,
   ) => {
     const secret = secretsOfType(params.secrets, "vgi_example")[0];
@@ -890,7 +889,7 @@ const projectable_blended = defineRowTransformFunction({
         a.push(null);
         b.push(null);
       } else {
-        const n = BigInt(v);
+        const n = BigInt(v as number);
         a.push(n * 10n);
         b.push(n * 100n);
       }
@@ -930,7 +929,7 @@ const hostile_provenance = defineRowTransformFunction<HostileNamedArgs>({
     const hv: (bigint | null)[] = [];
     for (let i = 0; i < n; i++) {
       const v = xs?.get(i);
-      hv.push(v === null || v === undefined ? null : BigInt(v));
+      hv.push(v === null || v === undefined ? null : BigInt(v as number));
     }
     const mode = String(params.args.mode ?? "range");
     let payload: string;
@@ -962,12 +961,12 @@ const hostile_provenance = defineRowTransformFunction<HostileNamedArgs>({
 
 const CACHED_DOUBLE_SCHEMA = new Schema([new Field("doubled", new Int64(), true)]);
 
-function doubledColumn(batch: RecordBatch): (bigint | null)[] {
+function doubledColumn(batch: VgiBatch): (bigint | null)[] {
   const xs = batch.getChild("x");
   const doubled: (bigint | null)[] = [];
   for (let i = 0; i < batch.numRows; i++) {
     const v = xs?.get(i);
-    doubled.push(v === null || v === undefined ? null : BigInt(v) * 2n);
+    doubled.push(v === null || v === undefined ? null : BigInt(v as number) * 2n);
   }
   return doubled;
 }
@@ -1012,7 +1011,7 @@ const cached_echo = defineTableInOutFunction({
   process: (
     _params: TableInOutProcessParams,
     _state: null,
-    batch: RecordBatch,
+    batch: VgiBatch,
     out: OutputCollector,
   ) => {
     out.emit(batch, cacheControlMetadata({ ttl: 300 }));
@@ -1023,7 +1022,7 @@ const cached_echo = defineTableInOutFunction({
 // Stable etag from a batch's content (deterministic across runs for equal
 // data). Only compared against etags this same worker minted earlier, so the
 // exact digest formula need not match other SDKs.
-function contentEtag(batch: RecordBatch): string {
+function contentEtag(batch: VgiBatch): string {
   const h = createHash("sha256");
   for (let c = 0; c < batch.schema.fields.length; c++) {
     const col = batch.getChildAt(c);
@@ -1056,14 +1055,14 @@ const cached_reval_echo = defineTableInOutFunction({
   process: (
     params: TableInOutProcessParams,
     _state: null,
-    batch: RecordBatch,
+    batch: VgiBatch,
     out: OutputCollector,
   ) => {
     const etag = contentEtag(batch);
     if (params.ifNoneMatch === etag) {
       // 304 Not Modified: the client's stored copy for this input is valid.
       out.emit(
-        batch.slice(0, 0),
+        (batch as RecordBatch).slice(0, 0),
         cacheControlMetadata({ notModified: true, ttl: 0, etag, revalidatable: true }),
       );
       return;

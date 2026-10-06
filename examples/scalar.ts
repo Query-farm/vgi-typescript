@@ -2,6 +2,7 @@
 // Example scalar function implementations.
 // Ports all 22 scalar function groups from vgi-python/vgi/examples/scalar.py.
 
+import type { VgiBatch } from "../src/index.js";
 import {
   Schema,
   Field,
@@ -130,7 +131,7 @@ function widerNumericType(a: DataType, b: DataType): DataType {
 // Helper: safe numeric operations on Arrow column values
 // ============================================================================
 
-function getColumnValues(batch: RecordBatch, colIndex: number): any[] {
+function getColumnValues(batch: VgiBatch, colIndex: number): any[] {
   const col = batch.getChildAt(colIndex);
   if (!col) return [];
   const values: any[] = [];
@@ -163,7 +164,7 @@ const multiply = defineScalarFunction({
     factor: "Multiplication factor",
   },
   returns: new Int64(),
-  compute: (batch: RecordBatch, consts: Record<string, any>) => {
+  compute: (batch: VgiBatch, consts: Record<string, any>) => {
     const factor = typeof consts.factor === "bigint" ? consts.factor : BigInt(consts.factor);
     const values = getColumnValues(batch, 0);
     return values.map((v: any) => {
@@ -191,7 +192,7 @@ const conditional_message = defineScalarFunction({
     { name: "condition", type: new Bool() },
   ],
   returns: new Utf8(),
-  compute: (batch: RecordBatch, consts: Record<string, any>) => {
+  compute: (batch: VgiBatch, consts: Record<string, any>) => {
     const repeatCount = typeof consts.repeat_count === "bigint"
       ? Number(consts.repeat_count)
       : (consts.repeat_count as number);
@@ -226,7 +227,7 @@ const binary_packet = defineScalarFunction({
     { name: "config", type: _configStructType, const: true },
   ],
   returns: new Binary(),
-  compute: (batch: RecordBatch, consts: Record<string, any>) => {
+  compute: (batch: VgiBatch, consts: Record<string, any>) => {
     const header: Uint8Array = consts.header instanceof Uint8Array
       ? consts.header
       : new Uint8Array(consts.header);
@@ -284,9 +285,9 @@ const double_fn = defineScalarFunction({
         `double: _is_multipliable_type rejected ${t}`
       );
     }
-    return promoteForAddition(t);
+    return promoteForAddition(t as DataType);
   },
-  compute: (batch: RecordBatch, _consts: any, ctx: any) => {
+  compute: (batch: VgiBatch, _consts: any, ctx: any) => {
     const inputType = batch.schema.fields[0]?.type;
     // Decimal128 max value at the declared precision. We multiply by 2 below;
     // detect overflow up front so the user sees "does not fit in precision N"
@@ -359,7 +360,7 @@ const cached_double_scalar = defineScalarFunction({
   argDocs: { value: "Value to double" },
   returns: new Int64(),
   cacheControl: { ttl: 300, perValue: true },
-  compute: (batch: RecordBatch) => {
+  compute: (batch: VgiBatch) => {
     const values = getColumnValues(batch, 0);
     return values.map((v: any) =>
       v === null || v === undefined ? null : BigInt(v) * 2n,
@@ -378,7 +379,7 @@ const cached_add_const = defineScalarFunction({
   argDocs: { value: "Value", addend: "Constant addend" },
   returns: new Int64(),
   cacheControl: { ttl: 300, perValue: true },
-  compute: (batch: RecordBatch, consts: any) => {
+  compute: (batch: VgiBatch, consts: any) => {
     const addend = BigInt(consts.addend ?? 0);
     const values = getColumnValues(batch, 0);
     return values.map((v: any) =>
@@ -397,7 +398,7 @@ const cached_label = defineScalarFunction({
   argDocs: { value: "Value" },
   returns: new Utf8(),
   cacheControl: { ttl: 300, perValue: true },
-  compute: (batch: RecordBatch) => {
+  compute: (batch: VgiBatch) => {
     const values = getColumnValues(batch, 0);
     return values.map((v: any) => {
       if (v === null || v === undefined) return null;
@@ -459,10 +460,10 @@ const add_values = defineScalarFunction({
       return new Decimal(scale, precision, d1.bitWidth);
     }
     // Find the wider type, then promote for overflow safety
-    const commonType = widerNumericType(t1, t2);
+    const commonType = widerNumericType(t1 as DataType, t2 as DataType);
     return promoteForAddition(commonType);
   },
-  compute: (batch: RecordBatch) => {
+  compute: (batch: VgiBatch) => {
     const t1 = batch.schema.fields[0]?.type;
     const t2 = batch.schema.fields[1]?.type;
     const col1 = getColumnValues(batch, 0);
@@ -510,7 +511,7 @@ const upper_case = defineScalarFunction({
   description: "Converts string values to uppercase",
   params: { value: new Utf8() },
   returns: new Utf8(),
-  compute: (batch: RecordBatch) => {
+  compute: (batch: VgiBatch) => {
     const values = getColumnValues(batch, 0);
     return values.map((v: any) => {
       if (v === null || v === undefined) return null;
@@ -538,9 +539,9 @@ const sum_values = defineScalarFunction({
       throw new ArgumentValidationError("sum_values requires at least 1 value");
     }
     const firstType = params.argumentsSchema.fields[0].type;
-    return promoteForAddition(firstType);
+    return promoteForAddition(firstType as DataType);
   },
-  compute: (batch: RecordBatch) => {
+  compute: (batch: VgiBatch) => {
     const numCols = batch.schema.fields.length;
     if (numCols === 0) return [];
 
@@ -562,7 +563,7 @@ const sum_values = defineScalarFunction({
         } else {
           if (typeof sum === "bigint" || typeof v === "bigint") {
             const b1 = typeof sum === "bigint" ? sum : BigInt(sum);
-            const b2 = typeof v === "bigint" ? v : BigInt(v);
+            const b2 = typeof v === "bigint" ? v : BigInt(v as number);
             sum = b1 + b2;
           } else {
             sum = sum + v;
@@ -589,7 +590,7 @@ const null_handling = defineScalarFunction({
   returns: new Int64(),
   nullHandling: NullHandling.SPECIAL,
   argumentMonotonicity: [ArgumentMonotonicity.STRICTLY_INCREASING],
-  compute: (batch: RecordBatch) => {
+  compute: (batch: VgiBatch) => {
     const values = getColumnValues(batch, 0);
     return values.map((v: any) => {
       if (v === null || v === undefined) return BigInt(-5000);
@@ -614,7 +615,7 @@ const random_int = defineScalarFunction({
   },
   returns: new Int64(),
   stability: FunctionStability.VOLATILE,
-  compute: (batch: RecordBatch) => {
+  compute: (batch: VgiBatch) => {
     const minValues = getColumnValues(batch, 0);
     const maxValues = getColumnValues(batch, 1);
     return minValues.map((minV: any, i: number) => {
@@ -639,7 +640,7 @@ const bernoulli = defineScalarFunction({
   description: "Generate random booleans (demonstrates VOLATILE stability)",
   returns: new Bool(),
   stability: FunctionStability.VOLATILE,
-  compute: (batch: RecordBatch) => {
+  compute: (batch: VgiBatch) => {
     const result: boolean[] = [];
     for (let i = 0; i < batch.numRows; i++) {
       result.push(Math.random() < 0.5);
@@ -664,7 +665,7 @@ const random_bytes = defineScalarFunction({
   },
   returns: new Binary(),
   stability: FunctionStability.CONSISTENT,
-  compute: (batch: RecordBatch, consts: Record<string, any>) => {
+  compute: (batch: VgiBatch, consts: Record<string, any>) => {
     const seed = typeof consts.seed === "bigint" ? Number(consts.seed) : (consts.seed as number);
     const byteLength = typeof consts.byte_length === "bigint" ? Number(consts.byte_length) : (consts.byte_length as number);
 
@@ -709,7 +710,7 @@ const multiply_by_setting = defineScalarFunction({
   returns: new Int64(),
   requiredSettings: ["multiplier"],
   compute: (
-    batch: RecordBatch,
+    batch: VgiBatch,
     _consts: Record<string, any>,
     info: { settings: Record<string, any>; secrets: Record<string, Record<string, any>> }
   ) => {
@@ -743,7 +744,7 @@ const scale_by_setting = defineScalarFunction({
   returns: new Float64(),
   requiredSettings: ["scale_factor"],
   compute: (
-    batch: RecordBatch,
+    batch: VgiBatch,
     _consts: Record<string, any>,
     info: { settings: Record<string, any>; secrets: Record<string, Record<string, any>> }
   ) => {
@@ -770,7 +771,7 @@ const return_secret_value = defineScalarFunction({
   returns: new Utf8(),
   requiredSecrets: ["vgi_example"],
   compute: (
-    batch: RecordBatch,
+    batch: VgiBatch,
     _consts: Record<string, any>,
     info: { settings: Record<string, any>; secrets: Record<string, Record<string, any>> }
   ) => {
@@ -827,7 +828,7 @@ const secret_field = defineScalarFunction({
   returns: new Utf8(),
   requiredSecrets: ["vgi_example"],
   compute: (
-    batch: RecordBatch,
+    batch: VgiBatch,
     _consts: Record<string, any>,
     info: { settings: Record<string, any>; secrets: Record<string, Record<string, any>> }
   ) => {
@@ -862,7 +863,7 @@ const hash_seed = defineScalarFunction({
   constParams: { seed: new Int64() },
   returns: new Int64(),
   stability: FunctionStability.CONSISTENT,
-  compute: (batch: RecordBatch, consts: Record<string, any>) => {
+  compute: (batch: VgiBatch, consts: Record<string, any>) => {
     const seed = typeof consts.seed === "bigint" ? Number(consts.seed) : (consts.seed as number);
     const result: bigint[] = [];
     for (let i = 0; i < batch.numRows; i++) {
@@ -889,7 +890,7 @@ const query_seed = defineScalarFunction({
   params: { value: new Int64() },
   returns: new Int64(),
   stability: FunctionStability.CONSISTENT_WITHIN_QUERY,
-  compute: (batch: RecordBatch) => {
+  compute: (batch: VgiBatch) => {
     const values = getColumnValues(batch, 0);
     return values.map((v: any) => {
       if (v === null || v === undefined) return null;
@@ -913,7 +914,7 @@ const format_number_default = defineScalarFunction({
   description: "Format number with default precision (0 decimals)",
   params: { value: new Float64() },
   returns: new Utf8(),
-  compute: (batch: RecordBatch) => {
+  compute: (batch: VgiBatch) => {
     const values = getColumnValues(batch, 0);
     return values.map((v: any) => {
       if (v === null || v === undefined) return null;
@@ -930,7 +931,7 @@ const format_number_precision = defineScalarFunction({
     { name: "value", type: new Float64() },
   ],
   returns: new Utf8(),
-  compute: (batch: RecordBatch, consts: Record<string, any>) => {
+  compute: (batch: VgiBatch, consts: Record<string, any>) => {
     const precision = Math.max(0, Math.min(100, typeof consts.precision === "bigint"
       ? Number(consts.precision)
       : (consts.precision as number)));
@@ -951,7 +952,7 @@ const format_number_full = defineScalarFunction({
     { name: "value", type: new Float64() },
   ],
   returns: new Utf8(),
-  compute: (batch: RecordBatch, consts: Record<string, any>) => {
+  compute: (batch: VgiBatch, consts: Record<string, any>) => {
     const precision = Math.max(0, Math.min(100, typeof consts.precision === "bigint"
       ? Number(consts.precision)
       : (consts.precision as number)));
@@ -973,7 +974,7 @@ const type_info_int32 = defineScalarFunction({
   description: "Returns type name for int32 values",
   params: { v: new Int32() },
   returns: new Utf8(),
-  compute: (batch: RecordBatch) => {
+  compute: (batch: VgiBatch) => {
     const values = getColumnValues(batch, 0);
     return values.map((v: any) => v === null || v === undefined ? null : "int32");
   },
@@ -984,7 +985,7 @@ const type_info_int64 = defineScalarFunction({
   description: "Returns type name for int64 values",
   params: { v: new Int64() },
   returns: new Utf8(),
-  compute: (batch: RecordBatch) => {
+  compute: (batch: VgiBatch) => {
     const values = getColumnValues(batch, 0);
     return values.map((v: any) => v === null || v === undefined ? null : "int64");
   },
@@ -995,7 +996,7 @@ const type_info_uint32 = defineScalarFunction({
   description: "Returns type name for uint32 values",
   params: { v: new Uint32() },
   returns: new Utf8(),
-  compute: (batch: RecordBatch) => {
+  compute: (batch: VgiBatch) => {
     const values = getColumnValues(batch, 0);
     return values.map((v: any) => v === null || v === undefined ? null : "uint32");
   },
@@ -1006,7 +1007,7 @@ const type_info_uint64 = defineScalarFunction({
   description: "Returns type name for uint64 values",
   params: { v: new Uint64() },
   returns: new Utf8(),
-  compute: (batch: RecordBatch) => {
+  compute: (batch: VgiBatch) => {
     const values = getColumnValues(batch, 0);
     return values.map((v: any) => v === null || v === undefined ? null : "uint64");
   },
@@ -1017,7 +1018,7 @@ const type_info_string = defineScalarFunction({
   description: "Returns type name for string values",
   params: { v: new Utf8() },
   returns: new Utf8(),
-  compute: (batch: RecordBatch) => {
+  compute: (batch: VgiBatch) => {
     const values = getColumnValues(batch, 0);
     return values.map((v: any) => v === null || v === undefined ? null : "varchar");
   },
@@ -1044,7 +1045,7 @@ const smart_format_width = defineScalarFunction({
     { name: "value", type: new Float64() },
   ],
   returns: new Utf8(),
-  compute: (batch: RecordBatch, consts: Record<string, any>) => {
+  compute: (batch: VgiBatch, consts: Record<string, any>) => {
     const width = typeof consts.width === "bigint"
       ? Number(consts.width)
       : (consts.width as number);
@@ -1064,7 +1065,7 @@ const smart_format_prefix = defineScalarFunction({
     { name: "value", type: new Float64() },
   ],
   returns: new Utf8(),
-  compute: (batch: RecordBatch, consts: Record<string, any>) => {
+  compute: (batch: VgiBatch, consts: Record<string, any>) => {
     const prefix = consts.prefix as string;
     const values = getColumnValues(batch, 0);
     return values.map((v: any) => {
@@ -1083,7 +1084,7 @@ const pair_type_int_int = defineScalarFunction({
   description: "Returns pair type for two int64 columns",
   params: { a: new Int64(), b: new Int64() },
   returns: new Utf8(),
-  compute: (batch: RecordBatch) => {
+  compute: (batch: VgiBatch) => {
     const values = getColumnValues(batch, 0);
     return values.map((v: any) => v === null || v === undefined ? null : "int+int");
   },
@@ -1094,7 +1095,7 @@ const pair_type_str_str = defineScalarFunction({
   description: "Returns pair type for two string columns",
   params: { a: new Utf8(), b: new Utf8() },
   returns: new Utf8(),
-  compute: (batch: RecordBatch) => {
+  compute: (batch: VgiBatch) => {
     const values = getColumnValues(batch, 0);
     return values.map((v: any) => v === null || v === undefined ? null : "str+str");
   },
@@ -1105,7 +1106,7 @@ const pair_type_int_str = defineScalarFunction({
   description: "Returns pair type for int64 + string columns",
   params: { a: new Int64(), b: new Utf8() },
   returns: new Utf8(),
-  compute: (batch: RecordBatch) => {
+  compute: (batch: VgiBatch) => {
     const values = getColumnValues(batch, 0);
     return values.map((v: any) => v === null || v === undefined ? null : "int+str");
   },
@@ -1122,7 +1123,7 @@ const concat_values_int = defineScalarFunction({
     { name: "values", type: new Int64(), varargs: true },
   ],
   returns: new Utf8(),
-  compute: (batch: RecordBatch) => {
+  compute: (batch: VgiBatch) => {
     const numCols = batch.schema.fields.length;
     const numRows = batch.numRows;
     const result: (string | null)[] = [];
@@ -1133,7 +1134,7 @@ const concat_values_int = defineScalarFunction({
         const child = batch.getChildAt(col);
         const v = child ? child.get(row) : null;
         if (v === null || v === undefined) { hasNull = true; break; }
-        sum += typeof v === "bigint" ? v : BigInt(v);
+        sum += typeof v === "bigint" ? v : BigInt(v as number);
       }
       result.push(hasNull ? null : String(sum));
     }
@@ -1148,7 +1149,7 @@ const concat_values_str = defineScalarFunction({
     { name: "values", type: new Utf8(), varargs: true },
   ],
   returns: new Utf8(),
-  compute: (batch: RecordBatch) => {
+  compute: (batch: VgiBatch) => {
     const numCols = batch.schema.fields.length;
     const numRows = batch.numRows;
     const result: (string | null)[] = [];
@@ -1176,7 +1177,7 @@ const any_mixed_int = defineScalarFunction({
   description: "Any + int64 parameter pair",
   params: { a: new Null(), b: new Int64() },
   returns: new Utf8(),
-  compute: (batch: RecordBatch) => {
+  compute: (batch: VgiBatch) => {
     const bValues = getColumnValues(batch, 1);
     return bValues.map((v: any) => {
       if (v === null || v === undefined) return null;
@@ -1190,7 +1191,7 @@ const any_mixed_str = defineScalarFunction({
   description: "Any + string parameter pair",
   params: { a: new Null(), b: new Utf8() },
   returns: new Utf8(),
-  compute: (batch: RecordBatch) => {
+  compute: (batch: VgiBatch) => {
     const bValues = getColumnValues(batch, 1);
     return bValues.map((v: any) => {
       if (v === null || v === undefined) return null;
@@ -1232,7 +1233,7 @@ const geo_distance_struct = defineScalarFunction({
   description: "Euclidean distance between two struct points",
   params: { p1: GEO_STRUCT_TYPE, p2: GEO_STRUCT_TYPE },
   returns: new Float64(),
-  compute: (batch: RecordBatch) => {
+  compute: (batch: VgiBatch) => {
     const p1s = getColumnValues(batch, 0);
     const p2s = getColumnValues(batch, 1);
     return p1s.map((p1: any, i: number) => {
@@ -1251,7 +1252,7 @@ const geo_distance_list = defineScalarFunction({
   description: "Euclidean distance between two list points",
   params: { p1: GEO_LIST_TYPE, p2: GEO_LIST_TYPE },
   returns: new Float64(),
-  compute: (batch: RecordBatch) => {
+  compute: (batch: VgiBatch) => {
     const p1s = getColumnValues(batch, 0);
     const p2s = getColumnValues(batch, 1);
     return p1s.map((p1: any, i: number) => {
@@ -1270,7 +1271,7 @@ const geo_distance_fixed = defineScalarFunction({
   description: "Euclidean distance between two fixed-size list points",
   params: { p1: GEO_FIXED_LIST_TYPE, p2: GEO_FIXED_LIST_TYPE },
   returns: new Float64(),
-  compute: (batch: RecordBatch) => {
+  compute: (batch: VgiBatch) => {
     const p1s = getColumnValues(batch, 0);
     const p2s = getColumnValues(batch, 1);
     return p1s.map((p1: any, i: number) => {
@@ -1300,7 +1301,7 @@ const geo_centroid_struct = defineScalarFunction({
     { name: "points", type: GEO_STRUCT_TYPE, varargs: true },
   ],
   returns: GEO_STRUCT_TYPE,
-  compute: (batch: RecordBatch) => {
+  compute: (batch: VgiBatch) => {
     const numCols = batch.schema.fields.length;
     const numRows = batch.numRows;
     const result: ({ lat: number; lon: number } | null)[] = [];
@@ -1329,7 +1330,7 @@ const geo_centroid_list = defineScalarFunction({
     { name: "points", type: GEO_LIST_TYPE, varargs: true },
   ],
   returns: GEO_STRUCT_TYPE,
-  compute: (batch: RecordBatch) => {
+  compute: (batch: VgiBatch) => {
     const numCols = batch.schema.fields.length;
     const numRows = batch.numRows;
     const result: ({ lat: number; lon: number } | null)[] = [];
@@ -1358,7 +1359,7 @@ const geo_centroid_fixed = defineScalarFunction({
     { name: "points", type: GEO_FIXED_LIST_TYPE, varargs: true },
   ],
   returns: GEO_STRUCT_TYPE,
-  compute: (batch: RecordBatch) => {
+  compute: (batch: VgiBatch) => {
     const numCols = batch.schema.fields.length;
     const numRows = batch.numRows;
     const result: ({ lat: number; lon: number } | null)[] = [];
@@ -1501,9 +1502,9 @@ const unnest_tensor = defineScalarFunction({
   params: { tensor: new Null() },
   outputType: (params: ScalarBindParameters) => {
     const structType = params.argumentsSchema.fields[0].type;
-    return _unnestTensorOutputType(structType);
+    return _unnestTensorOutputType(structType as DataType);
   },
-  compute: (batch: RecordBatch) => {
+  compute: (batch: VgiBatch) => {
     const col = batch.getChildAt(0);
     if (col == null) return new Array(batch.numRows).fill(null);
     const structType = (col as any).type as DataType;
@@ -1512,7 +1513,7 @@ const unnest_tensor = defineScalarFunction({
 
     const results: Array<any[] | null> = [];
     for (let i = 0; i < batch.numRows; i++) {
-      if (!col.isValid(i)) { results.push(null); continue; }
+      if (col.get(i) == null) { results.push(null); continue; }
       const row = col.get(i);
       if (row == null) { results.push(null); continue; }
       const tensorVal = (row as any).tensor ?? (row as any).get?.("tensor");
@@ -1587,7 +1588,7 @@ const passthru = defineScalarFunction({
   description: "Returns the input string unchanged (zero-compute wire probe)",
   params: { value: new Utf8() },
   returns: new Utf8(),
-  compute: (batch: RecordBatch) => {
+  compute: (batch: VgiBatch) => {
     const values = getColumnValues(batch, 0);
     return values.map((v: any) => (v === null || v === undefined ? null : String(v)));
   },
@@ -1598,7 +1599,7 @@ const collatz_steps = defineScalarFunction({
   description: "Number of Collatz (3n+1) steps to reach 1",
   params: { value: new Int64() },
   returns: new Int64(),
-  compute: (batch: RecordBatch) => {
+  compute: (batch: VgiBatch) => {
     const values = getColumnValues(batch, 0);
     return values.map((v: any) => {
       if (v === null || v === undefined) return null;
@@ -1616,7 +1617,7 @@ const sha256_hex = defineScalarFunction({
   description: "Lowercase hex SHA-256 of the UTF-8 string",
   params: { value: new Utf8() },
   returns: new Utf8(),
-  compute: (batch: RecordBatch) => {
+  compute: (batch: VgiBatch) => {
     const values = getColumnValues(batch, 0);
     return values.map((v: any) =>
       v === null || v === undefined ? null : createHash("sha256").update(String(v), "utf8").digest("hex"));
@@ -1629,7 +1630,7 @@ const hash_rounds = defineScalarFunction({
   params: { value: new Utf8() },
   constParams: { rounds: new Int64() },
   returns: new Utf8(),
-  compute: (batch: RecordBatch, consts: Record<string, any>) => {
+  compute: (batch: VgiBatch, consts: Record<string, any>) => {
     const k = Number(consts.rounds);
     const values = getColumnValues(batch, 0);
     return values.map((v: any) => {
@@ -1665,7 +1666,7 @@ const argument_names_probe = defineScalarFunction({
     }
     return new Int64();
   },
-  compute: (batch: RecordBatch, consts: Record<string, any>) => {
+  compute: (batch: VgiBatch, consts: Record<string, any>) => {
     const left = getColumnValues(batch, 0);
     const right = getColumnValues(batch, 1);
     const scale = BigInt(consts.scale ?? 2);

@@ -12,7 +12,7 @@
 
 import type { DataType } from "@query-farm/apache-arrow";
 import { Int64, Float64, Utf8, Bool, Binary, Null } from "@query-farm/apache-arrow";
-import type { ColumnStatistics } from "./statistics.js";
+import type { ColumnStatistics } from "../src/index.js";
 
 /**
  * Represents a column's logical type as reported by DuckDB's

@@ -1050,14 +1050,14 @@ export function createExampleCatalog(base: ReadOnlyCatalogInterface): ReadOnlyCa
   const origTableGet = base.tableGet.bind(base);
   const origTableScanFunctionGet = base.tableScanFunctionGet.bind(base);
 
-  base.tableGet = (
+  base.tableGet = async (
     attachOpaqueData: AttachOpaqueData,
     schemaPath: string[],
     name: string,
     atUnit?: string,
     atValue?: string,
     transactionOpaqueData?: TransactionOpaqueData,
-  ): TableInfo | null => {
+  ): Promise<TableInfo | null> => {
     if (schemaPath.join(".").toLowerCase() === "data" && name.toLowerCase() === "versioned_data" && atUnit) {
       const version = resolveVersion(atUnit, atValue);
       const cols = getVersionedSchema(version);

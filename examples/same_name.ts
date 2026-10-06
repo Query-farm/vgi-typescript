@@ -15,11 +15,12 @@
 // Mirrors vgi-python's `vgi/_test_fixtures/scalar/same_name.py`; driven by
 // `test/sql/integration/scalar/same_name_schemas.test`.
 
+import type { VgiBatch } from "../src/index.js";
 import { Int64, Utf8, RecordBatch } from "@query-farm/apache-arrow";
 import { defineScalarFunction } from "../src/index.js";
 
 /** Render `<schemaPath>:<value>` for every row of column 0, preserving nulls. */
-function tag(schemaPath: string[], batch: RecordBatch): (string | null)[] {
+function tag(schemaPath: string, batch: VgiBatch): (string | null)[] {
   const col = batch.getChildAt(0);
   if (!col) return [];
   const out: (string | null)[] = [];
@@ -36,7 +37,7 @@ export const sameNameMain = defineScalarFunction({
   params: { value: new Int64() },
   argDocs: { value: "Integer value to tag" },
   returns: new Utf8(),
-  compute: (batch: RecordBatch) => tag("main", batch),
+  compute: (batch: VgiBatch) => tag("main", batch),
   examples: [
     { sql: "SELECT example.main.test_same_name_bind(1)", description: "Returns 'main:1'" },
   ],
@@ -48,7 +49,7 @@ export const sameNameData = defineScalarFunction({
   params: { value: new Int64() },
   argDocs: { value: "Integer value to tag" },
   returns: new Utf8(),
-  compute: (batch: RecordBatch) => tag("data", batch),
+  compute: (batch: VgiBatch) => tag("data", batch),
   examples: [
     { sql: "SELECT example.data.test_same_name_bind(1)", description: "Returns 'data:1'" },
   ],

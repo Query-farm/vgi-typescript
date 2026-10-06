@@ -29,6 +29,7 @@
 // `vgi/_test_fixtures/aggregate/same_name.py`; driven by
 // `test/sql/integration/{table_in_out,aggregate}/same_name_schemas.test`.
 
+import type { VgiBatch } from "../src/index.js";
 import { Schema, Field, Int64, Utf8, RecordBatch } from "@query-farm/apache-arrow";
 import {
   defineTableInOutFunction,
@@ -54,7 +55,7 @@ const AGG_NAME = "test_same_name_agg";
 const TAG_SCHEMA = new Schema([new Field("tag", new Utf8(), true)]);
 
 /** Render `<schemaPath>:<value>` for every row of column 0, preserving nulls. */
-function tagBatch(schemaPath: string[], batch: RecordBatch): RecordBatch {
+function tagBatch(schemaPath: string, batch: VgiBatch): RecordBatch {
   const col = batch.getChildAt(0);
   const tags: (string | null)[] = [];
   for (let i = 0; i < batch.numRows; i++) {
@@ -79,7 +80,7 @@ function makeTransform(owningSchema: string): VgiFunction {
     process: (
       _params: TableInOutProcessParams,
       _state: null,
-      batch: RecordBatch,
+      batch: VgiBatch,
       out: OutputCollector,
     ) => {
       out.emit(tagBatch(owningSchema, batch));
@@ -112,7 +113,7 @@ function makeBuffered(owningSchema: string): VgiFunction {
     name: BUFFERED_NAME,
     description: `Schema-disambiguation probe; the ${owningSchema}-schema buffered function`,
     onBind: (_params: TableBufferingBindParams) => ({ outputSchema: TAG_SCHEMA }),
-    process: async (batch: RecordBatch, params: TableBufferingParams) => {
+    process: async (batch: VgiBatch, params: TableBufferingParams) => {
       const tagged = tagBatch(owningSchema, batch);
       await params.storage.stateAppend(ns("buf"), ns(""), serializeBatch(tagged));
       return params.executionId;

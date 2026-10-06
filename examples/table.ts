@@ -227,7 +227,7 @@ const nested_sequence = defineTableFunction<NestedSequenceArgs, CountdownState>(
     }
 
     const size = Math.min(state.remaining, params.args.batch_size);
-    const projectionIds = params.initCall.projectionIds;
+    const projectionIds = params.initCall.projection_ids;
     const projectedCols = projectionIds
       ? new Set(projectionIds.map((i) => NESTED_SEQUENCE_SCHEMA.fields[i].name))
       : new Set(NESTED_SEQUENCE_SCHEMA.fields.map((f) => f.name));
@@ -683,7 +683,7 @@ const projected_data = defineTableFunction<ProjectedDataArgs, CountdownState>({
       return;
     }
 
-    const projectionIds = params.initCall.projectionIds;
+    const projectionIds = params.initCall.projection_ids;
     const projectedIndices = projectionIds ?? [0, 1, 2, 3];
     const batchSize = Math.min(state.remaining, PROJECTED_BATCH_SIZE);
 
@@ -922,7 +922,7 @@ const constant_columns = defineTableFunction<ConstantColumnsArgs, ConstantColumn
         f => f.name === `positional_${i}`
       );
       if (schemaField && !DataType.isNull(schemaField.type)) {
-        dt = schemaField.type;
+        dt = schemaField.type as DataType;
         metadata = schemaField.metadata ?? undefined;
       } else {
         // Fallback: infer from JS value

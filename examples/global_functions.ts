@@ -27,6 +27,7 @@
 //
 // Ported from vgi-python's `vgi/_test_fixtures/global_functions.py`.
 
+import type { VgiBatch } from "../src/index.js";
 import { Schema, Field, Int64, Utf8, RecordBatch } from "@query-farm/apache-arrow";
 import {
   defineScalarFunction,
@@ -57,7 +58,7 @@ const global_scalar = defineScalarFunction({
   params: { value: new Int64() },
   argDocs: { value: "Value to label" },
   returns: new Utf8(),
-  compute: (batch: RecordBatch) => {
+  compute: (batch: VgiBatch) => {
     const col = batch.getChildAt(0);
     const out: (string | null)[] = [];
     for (let i = 0; i < batch.numRows; i++) {

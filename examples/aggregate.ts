@@ -623,7 +623,7 @@ const nest_tensor = defineAggregate<Record<string, never>, NestTensorState>({
     if (!inputSchema || inputSchema.fields.length < 2) {
       throw new NestTensorError("nest_tensor: expected 2 arguments (value, axes struct)");
     }
-    const valueType = inputSchema.fields[0].type;
+    const valueType = inputSchema.fields[0].type as DataType;
     const axesType = inputSchema.fields[1].type;
     if (!DataType.isStruct(axesType)) {
       throw new NestTensorError(`nest_tensor: second argument must be a struct, got ${axesType}`);
@@ -912,7 +912,7 @@ function evalDynamicAggregate(code: string, cols: number[][], params?: any): any
 // happen to be sum-compatible.
 // ============================================================================
 
-const vgi_dynamic_ml_agg = defineAggregate<{ code: string; params: any; value: number }, DynamicAggState>({
+const vgi_dynamic_ml_agg = defineAggregate<{ code: string; params: any; value: number }, { total: number }>({
   name: "vgi_dynamic_ml_agg",
   description: "Dynamic ML aggregate with params dict (sum-only stub)",
   args: { code: new Utf8(), params: new Utf8(), value: new Float64() },

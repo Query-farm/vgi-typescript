@@ -8,6 +8,7 @@
 // finalize() cursor-drains one batch per tick. State lives in cross-process
 // BoundStorage so the Source phase can run on a different worker process.
 
+import type { VgiBatch } from "../src/index.js";
 import {
   Schema,
   Field,
@@ -132,7 +133,7 @@ interface SumArgs {
 }
 
 function partialSumsBatch(
-  batch: RecordBatch,
+  batch: VgiBatch,
   outSchema: Schema,
 ): RecordBatch {
   const columns: Record<string, any[]> = {};
@@ -149,7 +150,7 @@ function partialSumsBatch(
           // DECIMAL raw values are scaled integers; promote to float64.
           sum = (sum as number) + Number(v) / Math.pow(10, scale);
         } else if (typeof sum === "bigint") {
-          sum += typeof v === "bigint" ? v : BigInt(v);
+          sum += typeof v === "bigint" ? v : BigInt(v as number);
         } else {
           sum += Number(v);
         }
@@ -162,7 +163,7 @@ function partialSumsBatch(
 
 function sumNumericBind(params: TableBufferingBindParams<SumArgs>) {
   if (!params.bindCall.input_schema) throw new Error("input_schema is required");
-  const out = buildNumericOutputSchema(params.bindCall.input_schema);
+  const out = buildNumericOutputSchema(params.bindCall.input_schema as Schema);
   if (out.fields.length === 0) {
     throw new Error("sum_all_columns requires at least one numeric input column");
   }
@@ -174,13 +175,13 @@ const sum_all_columns = defineTableBufferingFunction<SumArgs, LogDrainState>({
   description: "Computes column-wise sums across all batches",
   namedArgs: { logging: new Bool() },
   argDefaults: { logging: false },
-  cardinality: () => ({ estimate: 1n, max: 1n }),
+  cardinality: () => ({ estimate: 1, max: 1 }),
   onBind: sumNumericBind,
   process: async (batch, params) => {
     if (params.args.logging) {
       params.clientLog("INFO", `Processing batch with ${batch.numRows} rows`);
     }
-    const partial = partialSumsBatch(batch, params.outputSchema);
+    const partial = partialSumsBatch(batch, params.outputSchema as Schema);
     await params.storage.stateAppend(ns("partial"), ns(""), serializeBatch(partial));
     return params.executionId;
   },
@@ -233,7 +234,7 @@ const sum_all_columns = defineTableBufferingFunction<SumArgs, LogDrainState>({
 
 function sumNumericBindPlain(params: TableBufferingBindParams) {
   if (!params.bindCall.input_schema) throw new Error("input_schema is required");
-  const out = buildNumericOutputSchema(params.bindCall.input_schema);
+  const out = buildNumericOutputSchema(params.bindCall.input_schema as Schema);
   if (out.fields.length === 0) {
     throw new Error("sum_all_columns_simple_distributed requires at least one numeric input column");
   }
@@ -273,10 +274,10 @@ async function sumCombine(
 const sum_all_columns_simple_distributed = defineTableBufferingFunction<Record<string, any>, LogDrainState>({
   name: "sum_all_columns_simple_distributed",
   description: "Distributed sum using the buffered (Sink+Combine+Source) model",
-  cardinality: () => ({ estimate: 1n, max: 1n }),
+  cardinality: () => ({ estimate: 1, max: 1 }),
   onBind: sumNumericBindPlain,
   process: async (batch, params) => {
-    const partial = partialSumsBatch(batch, params.outputSchema);
+    const partial = partialSumsBatch(batch, params.outputSchema as Schema);
     await params.storage.stateAppend(ns("partial"), ns(""), serializeBatch(partial));
     return params.executionId;
   },
@@ -304,10 +305,10 @@ const cached_sum_all = defineTableBufferingFunction<SumArgs, LogDrainState>({
   description: "Cacheable column-wise sum across all input (advertises vgi.cache.ttl)",
   namedArgs: { logging: new Bool() },
   argDefaults: { logging: false },
-  cardinality: () => ({ estimate: 1n, max: 1n }),
+  cardinality: () => ({ estimate: 1, max: 1 }),
   onBind: sumNumericBind,
   process: async (batch, params) => {
-    const partial = partialSumsBatch(batch, params.outputSchema);
+    const partial = partialSumsBatch(batch, params.outputSchema as Schema);
     await params.storage.stateAppend(ns("partial"), ns(""), serializeBatch(partial));
     return params.executionId;
   },
@@ -335,7 +336,7 @@ const exception_process = defineTableBufferingFunction<SumArgs, LogDrainState>({
   description: "Test function that raises exception during process",
   namedArgs: { logging: new Bool() },
   argDefaults: { logging: false },
-  cardinality: () => ({ estimate: 1n, max: 1n }),
+  cardinality: () => ({ estimate: 1, max: 1 }),
   onBind: sumNumericBind,
   process: async (_batch, params) => {
     // Race-safe counter via append-only log.
@@ -364,10 +365,10 @@ const exception_finalize = defineTableBufferingFunction<SumArgs, LogDrainState>(
   description: "Test function that raises exception during finalize",
   namedArgs: { logging: new Bool() },
   argDefaults: { logging: false },
-  cardinality: () => ({ estimate: 1n, max: 1n }),
+  cardinality: () => ({ estimate: 1, max: 1 }),
   onBind: sumNumericBind,
   process: async (batch, params) => {
-    const partial = partialSumsBatch(batch, params.outputSchema);
+    const partial = partialSumsBatch(batch, params.outputSchema as Schema);
     await params.storage.stateAppend(ns("partial"), ns(""), serializeBatch(partial));
     return params.executionId;
   },
