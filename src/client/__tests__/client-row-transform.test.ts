@@ -38,7 +38,7 @@ const repeat = defineRowTransformFunction<{ times: number }>({
     const parents: number[] = [];
     for (let row = 0; row < batch.numRows; row++) {
       for (let i = 0; i < times; i++) {
-        words.push(batch.getChild("word")?.get(row) ?? null);
+        words.push((batch.getChild("word")?.get(row) as string | null | undefined) ?? null);
         is.push(BigInt(i));
         parents.push(row);
       }

@@ -95,7 +95,7 @@ describe("ReadOnlyCatalogInterface macro arguments_schema", () => {
       new FunctionRegistry(),
     );
 
-    const macros = catalog.schemaContentsMacros(new Uint8Array([1]), "main", "SCALAR_MACRO");
+    const macros = catalog.schemaContentsMacros(new Uint8Array([1]), ["main"], "SCALAR_MACRO");
     expect(macros).toHaveLength(1);
 
     const info = macros[0]!;

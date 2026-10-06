@@ -218,11 +218,11 @@ describe("serveVgiWorker environment handling", () => {
       const anonymous = new VgiClient(httpConnect(base, { prefix: "" }));
       await expect(anonymous.catalogs()).rejects.toThrow();
 
-      const bridgeFetch: typeof fetch = (input, init) => {
+      const bridgeFetch = ((input: RequestInfo | URL, init?: RequestInit) => {
         const headers = new Headers(init?.headers);
         headers.set("VGI-Forwarded-Iroh-Endpoint", "01".repeat(32));
         return fetch(input, { ...init, headers });
-      };
+      }) as typeof fetch;
       const authenticated = new VgiClient(httpConnect(base, { prefix: "", fetch: bridgeFetch }));
       expect(await authenticated.catalogs()).toContain("demo");
     } finally {

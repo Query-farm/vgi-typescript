@@ -20,7 +20,7 @@ import type { CatalogDescriptor } from "../descriptors.js";
 
 function infoFor(descriptor: CatalogDescriptor, type: string, name: string) {
   const catalog = new ReadOnlyCatalogInterface(descriptor, new FunctionRegistry());
-  const infos = catalog.schemaContentsFunctions(new Uint8Array([1]), "main", type);
+  const infos = catalog.schemaContentsFunctions(new Uint8Array([1]), ["main"], type);
   const info = infos.find((i) => i.name === name);
   expect(info, `function ${name} not found`).toBeDefined();
   return info!;

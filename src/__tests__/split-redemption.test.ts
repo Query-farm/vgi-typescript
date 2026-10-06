@@ -19,7 +19,7 @@ import {
 
 describe("split redemption", () => {
   test("a stamped token round-trips back to the worker's own payload", async () => {
-    const fingerprint = await bindFingerprint("main", "split_seq", new Uint8Array([1, 2]), new Uint8Array(0), new Uint8Array(0));
+    const fingerprint = await bindFingerprint(["main"], "split_seq", new Uint8Array([1, 2]), new Uint8Array(0), new Uint8Array(0));
     const anchor = splitAnchor(47);
     const payload = new TextEncoder().encode("rows=0..250");
 
@@ -32,7 +32,7 @@ describe("split redemption", () => {
   test("each split's payload survives independently", async () => {
     // The redemption path handles a LIST of tokens, because an engine whose
     // partition count is its concurrency bin-packs and reads a whole group.
-    const fingerprint = await bindFingerprint("main", "split_seq", new Uint8Array(), new Uint8Array(), new Uint8Array());
+    const fingerprint = await bindFingerprint(["main"], "split_seq", new Uint8Array(), new Uint8Array(), new Uint8Array());
     const anchor = splitAnchor(1);
     const payloads = [0, 1, 2].map((i) => new TextEncoder().encode(`slice-${i}`));
 
@@ -47,8 +47,8 @@ describe("split redemption", () => {
   });
 
   test("a token minted for another bind is refused before the payload is reachable", async () => {
-    const mine = await bindFingerprint("main", "a", new Uint8Array(), new Uint8Array(), new Uint8Array());
-    const theirs = await bindFingerprint("main", "b", new Uint8Array(), new Uint8Array(), new Uint8Array());
+    const mine = await bindFingerprint(["main"], "a", new Uint8Array(), new Uint8Array(), new Uint8Array());
+    const theirs = await bindFingerprint(["main"], "b", new Uint8Array(), new Uint8Array(), new Uint8Array());
     const token = await buildSplitToken({
       payload: new TextEncoder().encode("not-for-you"),
       fingerprint: theirs,

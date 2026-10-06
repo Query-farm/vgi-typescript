@@ -39,11 +39,11 @@ class AsyncStubCatalog extends CatalogInterface {
       attach_catalogs: [],
       tags: {},
       supports_column_statistics: false,
+      supports_catalog_contents: false,
       global_functions: [],
       global_function_prefix: "",
       resolved_data_version: null,
       resolved_implementation_version: null,
-      supports_catalog_contents: false,
     };
   }
   async detach(_a: AttachOpaqueData): Promise<void> {
@@ -75,9 +75,9 @@ class AsyncStubCatalog extends CatalogInterface {
       required_filters: [],
     };
   }
-  override async schemaContentsTables(attachOpaqueData: AttachOpaqueData, _name: string): Promise<TableInfo[]> {
+  override async schemaContentsTables(attachOpaqueData: AttachOpaqueData, _path: string[]): Promise<TableInfo[]> {
     await Promise.resolve();
-    const t = await this.tableGet(attachOpaqueData, "main", "stub_table");
+    const t = await this.tableGet(attachOpaqueData, ["main"], "stub_table");
     return t ? [t] : [];
   }
 }

@@ -31,7 +31,7 @@ const catalog = new ReadOnlyCatalogInterface(
 
 describe("ReadOnlyCatalogInterface FunctionInfo ↔ generated schema", () => {
   test("populates every non-nullable FunctionInfoSchema field", () => {
-    const infos = catalog.schemaContentsFunctions(new Uint8Array([1]), "main", "scalar_function");
+    const infos = catalog.schemaContentsFunctions(new Uint8Array([1]), ["main"], "scalar_function");
     expect(infos).toHaveLength(1);
     const info = infos[0] as unknown as Record<string, unknown>;
     for (const f of FunctionInfoSchema.fields) {
@@ -44,7 +44,7 @@ describe("ReadOnlyCatalogInterface FunctionInfo ↔ generated schema", () => {
   });
 
   test("the FunctionInfo round-trips through encode/decode intact", () => {
-    const info = catalog.schemaContentsFunctions(new Uint8Array([1]), "main", "scalar_function")[0];
+    const info = catalog.schemaContentsFunctions(new Uint8Array([1]), ["main"], "scalar_function")[0];
     const decoded = decodeFunctionInfo(encodeFunctionInfo(info)) as unknown as Record<string, unknown>;
     expect(decoded.name).toBe("noop");
     expect(decoded.supports_batch_index).toBe(false);
@@ -69,7 +69,7 @@ describe("ReadOnlyCatalogInterface FunctionInfo ↔ generated schema", () => {
       { name: "test", schemas: [{ name: "main", functions: [monotone] }] },
       new FunctionRegistry(),
     );
-    const info = monotoneCatalog.schemaContentsFunctions(new Uint8Array([1]), "main", "scalar_function")[0];
+    const info = monotoneCatalog.schemaContentsFunctions(new Uint8Array([1]), ["main"], "scalar_function")[0];
     expect(decodeFunctionInfo(encodeFunctionInfo(info)).argument_monotonicity).toEqual([
       "STRICTLY_INCREASING",
       "NON_DECREASING",
@@ -99,7 +99,7 @@ describe("ReadOnlyCatalogInterface FunctionInfo ↔ generated schema", () => {
       { name: "test", schemas: [{ name: "main", functions: [withDefaults] }] },
       new FunctionRegistry(),
     );
-    const info = defaultCatalog.schemaContentsFunctions(new Uint8Array([1]), "main", "scalar_function")[0];
+    const info = defaultCatalog.schemaContentsFunctions(new Uint8Array([1]), ["main"], "scalar_function")[0];
     expect(info.parameter_default_values).not.toBeNull();
     const decoded = deserializeBatch(info.parameter_default_values!);
     expect(decoded.numRows).toBe(1);
@@ -122,7 +122,7 @@ describe("ReadOnlyCatalogInterface FunctionInfo ↔ generated schema", () => {
       { name: "test", schemas: [{ name: "main", functions: [invalid] }] },
       new FunctionRegistry(),
     );
-    expect(() => invalidCatalog.schemaContentsFunctions(new Uint8Array([1]), "main", "scalar_function"))
+    expect(() => invalidCatalog.schemaContentsFunctions(new Uint8Array([1]), ["main"], "scalar_function"))
       .toThrow("not in argument signature order");
   });
 });
