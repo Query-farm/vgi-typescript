@@ -175,23 +175,27 @@ function normalizeValue(raw: any, type: VgiDataType): any {
   }
 
   if (isMap(type)) {
-    const out: Record<string, string> = {};
+    // Values are decoded with the map's declared value type, like list items
+    // and struct children: a map<utf8, int64> yields numbers (bigint beyond
+    // the safe range), not strings, and a null value stays null.
+    const entries = (type as any).children[0].type as VgiDataType;
+    const valueType = ((entries as any).children as VgiField[])[1].type;
+    const out: Record<string, any> = {};
+    const put = (k: unknown, v: unknown): void => {
+      out[String(k)] = normalizeValue(v, valueType);
+    };
     // arrow-js MapRow is iterable of [k,v]; flechette returns [[k,v],...] arrays.
     if (raw[Symbol.iterator]) {
       for (const entry of raw) {
         if (Array.isArray(entry)) {
-          out[String(entry[0])] = String(entry[1] ?? "");
+          put(entry[0], entry[1]);
         } else if (entry && typeof entry === "object") {
-          const k = entry.key ?? entry[0];
-          const v = entry.value ?? entry[1];
-          out[String(k)] = v == null ? "" : String(v);
+          put(entry.key ?? entry[0], entry.value ?? entry[1]);
         }
       }
     } else if (typeof raw === "object") {
       // Plain-object map (flechette without useMap): Object.entries fallback
-      for (const [k, v] of Object.entries(raw)) {
-        out[String(k)] = v == null ? "" : String(v);
-      }
+      for (const [k, v] of Object.entries(raw)) put(k, v);
     }
     return out;
   }

@@ -49,6 +49,47 @@ describe("ASD codec", () => {
     expect(back.tags).toEqual({ env: "prod", owner: "rusty" });
   });
 
+  test("SchemaInfo estimated_object_count decodes int64 map values as numbers", () => {
+    // map<utf8, int64 nullable>: values must come back typed, not stringified.
+    const v: SchemaInfo = {
+      attach_opaque_data: new Uint8Array([1]),
+      path: ["main"],
+      comment: null,
+      tags: {},
+      estimated_object_count: { table: 2, view: 0 },
+    };
+    const back = decodeASD<SchemaInfo>(SchemaInfoSchema, encodeASD(SchemaInfoSchema, v));
+    expect(back.estimated_object_count).toEqual({ table: 2, view: 0 });
+    expect(typeof back.estimated_object_count!.view).toBe("number");
+    expect(back.estimated_object_count!.view === 0).toBe(true);
+  });
+
+  test("int64 map values beyond Number.MAX_SAFE_INTEGER stay bigint", () => {
+    const big = 2n ** 60n;
+    const v = {
+      attach_opaque_data: new Uint8Array([1]),
+      path: ["main"],
+      comment: null,
+      tags: {},
+      estimated_object_count: { table: big },
+    };
+    const back = decodeASD<any>(SchemaInfoSchema, encodeASD(SchemaInfoSchema, v as any));
+    expect(back.estimated_object_count.table).toBe(big);
+  });
+
+  test("null map values decode as null, not an empty string", () => {
+    const v = {
+      attach_opaque_data: new Uint8Array([1]),
+      path: ["main"],
+      comment: null,
+      tags: { owner: null },
+      estimated_object_count: { table: null },
+    };
+    const back = decodeASD<any>(SchemaInfoSchema, encodeASD(SchemaInfoSchema, v as any));
+    expect(back.tags).toEqual({ owner: null });
+    expect(back.estimated_object_count).toEqual({ table: null });
+  });
+
   test("SchemaInfo with empty tags", () => {
     const v: SchemaInfo = {
       attach_opaque_data: new Uint8Array([5]),
