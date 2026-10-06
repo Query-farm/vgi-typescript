@@ -113,9 +113,9 @@ export async function buildCatalogContents(
 /**
  * Serve one catalog_contents call (the attach value is already opened).
  *
- * Caching: a catalog whose version is frozen (`catalogVersionFrozen`) and whose
- * contents are attach-independent (`catalogContentsAttachIndependent`) is built
- * once per (catalog instance, version); every later call reuses the same
+ * Caching: a catalog whose `catalogContentsCacheable()` is true (by default:
+ * version frozen and contents attach-independent; ReadOnlyCatalogInterface) is
+ * built once per (catalog instance, version); every later call reuses the same
  * serialized response bytes. A conditional call matching the cached etag is
  * answered `not_modified` without touching the snapshot.
  */
@@ -126,7 +126,7 @@ export async function serveCatalogContents(
 ): Promise<Wire> {
   const owner = cat.catalogContentsOwner(attach);
   const version = Number(await cat.version(attach));
-  if (owner.catalogContentsAttachIndependent && owner.catalogVersionFrozen) {
+  if (owner.catalogContentsCacheable()) {
     let pending = CACHE.get(owner);
     let snapshot = pending ? await pending.catch(() => null) : null;
     if (!snapshot || snapshot.version !== version) {

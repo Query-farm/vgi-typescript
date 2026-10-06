@@ -283,6 +283,7 @@ test-http:
 	read -t 60 tport_line <&6 || { echo "ERROR: versioned-tables HTTP worker timeout"; exit 1; }; \
 	export VGI_TEST_WORKER="http://localhost:$${port_line#PORT:}"; \
 	export VGI_CATALOG_CONTENTS_WORKER="$$VGI_TEST_WORKER"; \
+	export VGI_DATABASE_PACKAGE_WORKER="$${VGI_DATABASE_PACKAGE_WORKER:-VGI_BUN_CONDITIONS= $(WORKER)}"; \
 	export VGI_VERSIONED_HTTP_WORKER="http://localhost:$${vport_line#PORT:}"; \
 	export VGI_ATTACH_OPTIONS_WORKER="http://localhost:$${aport_line#PORT:}"; \
 	export VGI_VERSIONED_TABLES_HTTP_WORKER="http://localhost:$${tport_line#PORT:}"; \
@@ -373,6 +374,7 @@ test-http/%:
 	read -t 60 tport_line <&6 || { echo "ERROR: versioned-tables HTTP worker timeout"; exit 1; }; \
 	export VGI_TEST_WORKER="http://localhost:$${port_line#PORT:}"; \
 	export VGI_CATALOG_CONTENTS_WORKER="$$VGI_TEST_WORKER"; \
+	export VGI_DATABASE_PACKAGE_WORKER="$${VGI_DATABASE_PACKAGE_WORKER:-VGI_BUN_CONDITIONS= $(WORKER)}"; \
 	export VGI_VERSIONED_HTTP_WORKER="http://localhost:$${vport_line#PORT:}"; \
 	export VGI_ATTACH_OPTIONS_WORKER="http://localhost:$${aport_line#PORT:}"; \
 	export VGI_VERSIONED_TABLES_HTTP_WORKER="http://localhost:$${tport_line#PORT:}"; \

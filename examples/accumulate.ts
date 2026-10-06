@@ -617,7 +617,9 @@ export const accumulateCatalog: CatalogDescriptor = {
  * Catalog interface that advertises the accumulate catalog's stable data
  * version (so `vgi_catalogs()` surfaces `2.0.0`) and resolves it on attach.
  * Per-ATTACH scoping comes for free: ReadOnlyCatalogInterface.attach() mints a
- * random `attach_opaque_data` carried back on every call.
+ * random `attach_opaque_data` carried back on every function call (the catalog
+ * items carry a fixed id instead -- READ_ONLY_ITEM_ATTACH_ID -- but the
+ * functions here scope by the bind call's attach, never by an item).
  */
 export class AccumulateCatalog extends ReadOnlyCatalogInterface {
   override catalogsInfo(): CatalogInfo[] {

@@ -19,7 +19,7 @@ import {
   type ViewInfo,
 } from "../../../catalog/interface.js";
 import { CompositeCatalogInterface } from "../../../catalog/composite.js";
-import { ReadOnlyCatalogInterface } from "../../../catalog/read-only.js";
+import { READ_ONLY_ITEM_ATTACH_ID, ReadOnlyCatalogInterface } from "../../../catalog/read-only.js";
 import { VgiClient } from "../../../client/client.js";
 import { decodeASD, encodeASD } from "../../../codec/asd.js";
 import { FunctionRegistry } from "../../../functions/registry.js";
@@ -597,13 +597,12 @@ describe("catalog_contents content-hash etag", () => {
     const h2 = handlers(exampleCatalog());
     const a1 = (await h1.attach(catalog.name)).attach_opaque_data;
     const a2 = (await h2.attach(catalog.name)).attach_opaque_data;
-    // Items embed the attach id (SchemaInfo.attach_opaque_data); compare the
-    // same attach across two independent catalog instances and builds.
+    // Items carry the fixed READ_ONLY_ITEM_ATTACH_ID, not the per-attach id,
+    // so two independent catalog instances and attaches hash alike.
     const s1 = (await h1.contents(a1)).schemas;
-    const s1b = (await h1.contents(a1)).schemas;
-    expect(await catalogContentsDigest(s1)).toBe(await catalogContentsDigest(s1b));
     const s2 = (await h2.contents(a2)).schemas;
     expect(s2.length).toBe(s1.length);
+    expect(await catalogContentsDigest(s2)).toBe(await catalogContentsDigest(s1));
   });
 });
 
@@ -667,10 +666,48 @@ describe("catalog_contents worker cache (frozen + attach-independent)", () => {
     expect(flaky.builds).toBe(2);
   });
 
-  test("ReadOnlyCatalogInterface is frozen but not attach-independent (per-attach ids)", () => {
+  test("ReadOnlyCatalogInterface is cached by default: every attach gets the same bytes", async () => {
     const ro = exampleCatalog();
     expect(ro.catalogVersionFrozen).toBe(true);
-    expect(ro.catalogContentsAttachIndependent).toBe(false);
+    expect(ro.catalogContentsAttachIndependent).toBe(true);
+    expect(ro.catalogContentsCacheable()).toBe(true);
+    let builds = 0;
+    const orig = ro.catalogContents.bind(ro);
+    ro.catalogContents = async (...args: Parameters<typeof orig>) => {
+      builds++;
+      return orig(...args);
+    };
+    const h = handlers(ro);
+    const a1 = await h.attach(catalog.name);
+    const a2 = await h.attach(catalog.name);
+    // The attach values the client holds stay per-attach ...
+    expect(hex(a1.attach_opaque_data)).not.toBe(hex(a2.attach_opaque_data));
+    const r1 = await h.contents(a1.attach_opaque_data);
+    const r2 = await h.contents(a2.attach_opaque_data);
+    // ... while the snapshot is built once and shared.
+    expect(builds).toBe(1);
+    expect(r2.wire).toBe(r1.wire);
+    for (const sc of r1.schemas) {
+      expect(hex(decodeSchemaInfo(sc.schema).attach_opaque_data)).toBe(hex(READ_ONLY_ITEM_ATTACH_ID));
+    }
+    // The per-schema RPCs agree (same fixed id), for either attach.
+    const listed = await h.items("catalog_schemas", { attach_opaque_data: a2.attach_opaque_data });
+    expectSameBytes(r1.schemas.map((s) => s.schema), listed, "schemas");
+  });
+
+  test("perAttachItemIds opts back in to per-attach ids in items, and out of the cache", async () => {
+    const r = registry();
+    const ro = createExampleCatalog(new ReadOnlyCatalogInterface(catalog, r, { perAttachItemIds: true }));
+    expect(ro.catalogContentsCacheable()).toBe(false);
+    const h = handlers(ro);
+    const a1 = await h.attach(catalog.name);
+    const a2 = await h.attach(catalog.name);
+    const ids = async (a: Uint8Array) =>
+      (await h.contents(a)).schemas.map((sc) => hex(decodeSchemaInfo(sc.schema).attach_opaque_data));
+    const i1 = await ids(a1.attach_opaque_data);
+    const i2 = await ids(a2.attach_opaque_data);
+    expect(i1[0]).not.toBe(hex(READ_ONLY_ITEM_ATTACH_ID));
+    expect(i1[0]).not.toBe(i2[0]);
   });
 });
 

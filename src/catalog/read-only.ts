@@ -34,6 +34,13 @@ import { normalizeSchemaPath, schemaPathDisplay, schemaPathsEqual } from "../sch
 import { ForeignKeyInfoSchema } from "../generated/vgi-protocol-schemas.js";
 import { encodeFunctionInfoOnce, freezeCatalogItem } from "./item-encoding.js";
 
+/**
+ * The fixed attach id ReadOnlyCatalogInterface writes into its items (same
+ * bytes as vgi-python's `ReadOnlyCatalogInterface._FIXED_ATTACH_ID`). Shared:
+ * treat it as read-only (a typed array cannot be frozen).
+ */
+export const READ_ONLY_ITEM_ATTACH_ID: AttachOpaqueData = new TextEncoder().encode("readonly-catalog-");
+
 export class ReadOnlyCatalogInterface extends CatalogInterface {
   /**
    * Advertise `supports_catalog_contents` on attach, letting the client load
@@ -46,6 +53,28 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
 
   /** A descriptor catalog's version never changes (`catalog_version_frozen`). */
   override catalogVersionFrozen = true;
+
+  /**
+   * The catalog items (`SchemaInfo.attach_opaque_data`, and the attach value
+   * handed to a table function's bind when resolving a table's columns) carry
+   * one fixed id, `READ_ONLY_ITEM_ATTACH_ID`, not the per-ATTACH id -- as
+   * vgi-python's ReadOnlyCatalogInterface does. So the items are the same for
+   * every attach and caller, and the worker caches the `catalog_contents`
+   * response (see `catalogContentsCacheable`).
+   *
+   * `attach()` still mints a random per-ATTACH `attach_opaque_data` (sealed
+   * into the per-attach envelope the client holds), and function calls still
+   * receive it, so per-attach scoping in functions (the accumulate example) is
+   * unchanged.
+   *
+   * Set true (or pass `{ perAttachItemIds: true }` to the constructor) for a
+   * catalog whose items must echo the per-attach id. Its contents then depend
+   * on the attach, so the catalog_contents cache is off for it.
+   */
+  perAttachItemIds = false;
+
+  /** Static contents: attach-independent unless `perAttachItemIds` is set. */
+  override catalogContentsAttachIndependent = true;
 
   private _descriptor: CatalogDescriptor;
   private _registry: FunctionRegistry;
@@ -63,10 +92,15 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
   /** One frozen FunctionInfo per (declaring schema, function), shared by listings and `global_functions`. */
   private _functionInfos = new Map<SchemaDescriptor, Map<VgiFunction, FunctionInfo>>();
 
-  constructor(descriptor: CatalogDescriptor, registry: FunctionRegistry) {
+  constructor(
+    descriptor: CatalogDescriptor,
+    registry: FunctionRegistry,
+    options: { perAttachItemIds?: boolean } = {},
+  ) {
     super();
     this._descriptor = descriptor;
     this._registry = registry;
+    if (options.perAttachItemIds) this.perAttachItemIds = true;
     // Index every function this catalog declares by its owning schema, so a
     // schema-qualified bind resolves to the right implementation when one name
     // is declared in more than one schema. Table-backing functions are indexed
@@ -217,9 +251,21 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
     return this._version;
   }
 
+  /**
+   * The attach value written into this catalog's items: the fixed
+   * `READ_ONLY_ITEM_ATTACH_ID`, or the caller's attach with `perAttachItemIds`.
+   */
+  protected itemAttachId(attachOpaqueData: AttachOpaqueData): AttachOpaqueData {
+    return this.perAttachItemIds ? attachOpaqueData : READ_ONLY_ITEM_ATTACH_ID;
+  }
+
+  override catalogContentsCacheable(): boolean {
+    return super.catalogContentsCacheable() && !this.perAttachItemIds;
+  }
+
   schemas(attachOpaqueData: AttachOpaqueData, transactionOpaqueData?: TransactionOpaqueData): SchemaInfo[] {
     return this._descriptor.schemas.map((s) => ({
-      attach_opaque_data: attachOpaqueData,
+      attach_opaque_data: this.itemAttachId(attachOpaqueData),
       path: schemaDescriptorPath(s),
       comment: s.comment ?? null,
       tags: s.tags ?? {},
@@ -257,7 +303,7 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
     const desc = this._descriptor.schemas.find((s) => schemaPathsEqual(schemaDescriptorPath(s), path));
     if (!desc) return null;
     return {
-      attach_opaque_data: attachOpaqueData,
+      attach_opaque_data: this.itemAttachId(attachOpaqueData),
       path: schemaDescriptorPath(desc),
       comment: desc.comment ?? null,
       tags: desc.tags ?? {},
@@ -289,7 +335,7 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
             input_schema: null,
             settings: null,
             secrets: null,
-            attach_opaque_data: attachOpaqueData,
+            attach_opaque_data: this.itemAttachId(attachOpaqueData),
             transaction_opaque_data: null,
             resolved_secrets_provided: false,
           };

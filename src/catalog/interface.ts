@@ -581,12 +581,9 @@ export abstract class CatalogInterface {
    * `catalog_contents` response once per (catalog, version) and serve the same
    * serialized bytes to every caller. Default false.
    *
-   * `ReadOnlyCatalogInterface` leaves it false: unlike vgi-python's (which
-   * hands out one fixed attach id), it mints a random attach id per ATTACH and
-   * echoes it into every `SchemaInfo.attach_opaque_data`, and subclasses rely
-   * on that per-attach id for scoping -- a shared response would hand one
-   * caller another attach's id. A catalog whose items carry nothing
-   * attach-specific sets it true (with `catalogVersionFrozen`).
+   * `ReadOnlyCatalogInterface` sets it (its items carry a fixed attach id,
+   * like vgi-python's), unless its `perAttachItemIds` opt-in is on. A
+   * subclass whose contents vary per caller or attach option sets it false.
    */
   catalogContentsAttachIndependent = false;
 
@@ -1066,6 +1063,15 @@ export abstract class CatalogInterface {
       }),
     );
     return { schemas: contents };
+  }
+
+  /**
+   * Whether the worker may build `catalog_contents` once per (catalog
+   * instance, version) and reuse the serialized response for every caller:
+   * `catalogContentsAttachIndependent && catalogVersionFrozen` by default.
+   */
+  catalogContentsCacheable(): boolean {
+    return this.catalogContentsAttachIndependent && this.catalogVersionFrozen;
   }
 
   /**
