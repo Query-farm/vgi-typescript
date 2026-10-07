@@ -108,6 +108,29 @@ export interface AttachOptionSpec {
   secret?: boolean;
 }
 
+/**
+ * Reserved for attach tickets: the framework reads an ATTACH option with this
+ * name as a `vgi_attach_ticket` before any catalog code runs, so no catalog may
+ * declare an attach option called this, compared case-insensitively.
+ */
+export const RESERVED_ATTACH_OPTION = "vgi_attach_ticket";
+
+/**
+ * Throw if any spec uses the reserved {@link RESERVED_ATTACH_OPTION} name.
+ *
+ * @throws Error naming the offending option.
+ */
+export function assertNoReservedAttachOption(specs: Iterable<Pick<AttachOptionSpec, "name">>): void {
+  for (const spec of specs) {
+    if (spec.name.toLowerCase() === RESERVED_ATTACH_OPTION) {
+      throw new Error(
+        `Attach option '${spec.name}' uses the reserved name '${RESERVED_ATTACH_OPTION}': the framework ` +
+          "reads it as an attach ticket before any catalog code runs. Rename the option.",
+      );
+    }
+  }
+}
+
 const SPEC_SCHEMA = makeSchema([
   field("name", utf8(), false),
   field("description", utf8(), false),
@@ -122,6 +145,7 @@ const SPEC_SCHEMA = makeSchema([
  * (one IPC-serialized RecordBatch with a single row).
  */
 export function serializeAttachOptionSpec(spec: AttachOptionSpec): Uint8Array {
+  assertNoReservedAttachOption([spec]);
   // Mirrors AttachOptionSpec.__post_init__ on the Python side: an option that
   // falls back to a value is always satisfiable without the caller, so the
   // combination is a declaration bug rather than a runtime condition.
@@ -260,11 +284,62 @@ export function validateRequiredAttachOptions(
   specs: Iterable<AttachOptionSpec>,
   options: Record<string, unknown>,
 ): void {
+  specs = Array.from(specs);
+  assertNoReservedAttachOption(specs);
   const supplied = new Set(Object.keys(options).map((key) => key.toLowerCase()));
   const missing = Array.from(specs)
     .filter((spec) => spec.required && !supplied.has(spec.name.toLowerCase()))
     .map((spec) => spec.name);
   if (missing.length > 0) {
     throw new MissingAttachOptionsError(catalogName, missing);
+  }
+}
+
+/** Raised when a catalog declares the reserved attach option name. */
+export class ReservedAttachOptionError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ReservedAttachOptionError";
+  }
+}
+
+/**
+ * Startup check: refuse a catalog that declares an attach option named
+ * {@link RESERVED_ATTACH_OPTION}, reading the specs it advertises through
+ * `catalogsInfo()`.
+ *
+ * TypeScript has no declaration-time hook for a plain spec object, so the
+ * worker entry points run this before serving. Only the reserved-name refusal
+ * propagates (as {@link ReservedAttachOptionError}); any other failure reading
+ * `catalogsInfo()` -- a catalog whose discovery needs I/O that is not up yet
+ * -- is left for discovery itself to report.
+ */
+export async function checkReservedAttachOptions(catalog: {
+  catalogsInfo?(): unknown;
+} | undefined): Promise<void> {
+  if (!catalog?.catalogsInfo) return;
+  let infos: unknown;
+  try {
+    infos = await catalog.catalogsInfo();
+  } catch (e) {
+    if (e instanceof Error && e.message.includes(`reserved name '${RESERVED_ATTACH_OPTION}'`)) {
+      throw new ReservedAttachOptionError(e.message);
+    }
+    return;
+  }
+  for (const info of (infos ?? []) as Array<{ attach_option_specs?: unknown[] | null }>) {
+    for (const raw of info.attach_option_specs ?? []) {
+      let name: string;
+      try {
+        name = deserializeAttachOptionSpec(toUint8Array(raw as Uint8Array)).name;
+      } catch {
+        continue;
+      }
+      try {
+        assertNoReservedAttachOption([{ name }]);
+      } catch (e) {
+        throw new ReservedAttachOptionError((e as Error).message);
+      }
+    }
   }
 }

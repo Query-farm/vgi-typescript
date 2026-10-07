@@ -17,6 +17,7 @@ import type { Protocol } from "@query-farm/vgi-rpc";
 import { schemaDescriptorPath, type CatalogDescriptor } from "./catalog/descriptors.js";
 import type { CatalogInterface } from "./catalog/interface.js";
 import { ReadOnlyCatalogInterface } from "./catalog/read-only.js";
+import { checkReservedAttachOptions } from "./catalog/attach-option.js";
 
 /**
  * Startup/lifecycle tracing, off unless `VGI_DEBUG` is set to something other
@@ -180,6 +181,18 @@ export class Worker {
 
   run(argv: readonly string[] = process.argv.slice(2)): void {
     debug(() => `[worker] starting, pid=${process.pid}`);
+    // Refuse to serve a catalog that declares the reserved `vgi_attach_ticket`
+    // attach option, before anything is read off the transport.
+    checkReservedAttachOptions(this._catalogInterface).then(
+      () => this._serve(argv),
+      (err: Error) => {
+        process.stderr.write(`Worker init error: ${err.message}\n`);
+        process.exit(1);
+      },
+    );
+  }
+
+  private _serve(argv: readonly string[]): void {
     try {
       const protocol = this.buildProtocol();
       debug(() => `[worker] protocol built`);

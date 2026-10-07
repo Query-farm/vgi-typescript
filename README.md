@@ -646,6 +646,50 @@ $ VGI_RPC_GRANT_KEYS="$(openssl rand -base64 32)" bun run scripts/serve.ts
 - Sealed grants are not individually revocable: keep the lifetime short; removing a
   key revokes every grant it minted.
 
+### Attach tickets: reattach as a user without their options (`vgi.attach_tickets.v1`)
+
+A grant says *who* attaches; an **attach ticket** says *what*. While a user is
+attached and logged in, the client asks the worker to seal the options it attached
+with, secret ones included, into a ticket only this worker can open. A runner holding
+that user's grant later reattaches with one option and never sees the others:
+
+```sql
+-- as the runner, authenticated by `Authorization: Bearer <grant>`
+ATTACH 'ticket_probe' AS p (TYPE vgi, LOCATION 'https://worker.example.com',
+                            vgi_attach_ticket 'vgia1.…');
+```
+
+- **Hosting.** `seal_attach(request: SealAttachRequest) -> AttachTicket` is hosted on
+  **HTTP only**, and only when both halves of an unattended session can be issued:
+  `VGI_SIGNING_KEY` (or the `signingKey` option) is configured explicitly — the
+  generated fallback key never counts, since every ticket would die on restart — and
+  the worker can issue grants (grant keys configured, or its own `mintGrant`).
+  Otherwise the protocol is absent, so a client learns this from reflection.
+  `createVgiFetch` (Cloudflare Workers) requires its key and so counts it as
+  configured; pass `signingKeyConfigured: false` for a key you generate per isolate.
+- **Sealing.** The caller must be authenticated (anonymous is `action_denied`); no
+  fresh login is needed. Options are checked against the catalog's declared attach
+  options (`invalid_request` with one `BadRequest` violation per field). The lifetime
+  is capped at the grant maximum (`VGI_RPC_GRANT_MAX_TTL_SECONDS`, default 7 days with
+  grant keys); `ttl_seconds: 0` asks for the maximum.
+- **Redeeming.** `catalog_attach` redeems a `vgi_attach_ticket` option (any letter
+  case) before any catalog code runs: it must be the only option (`invalid_request`),
+  it opens only under the caller's principal and this worker's key
+  (`attach_ticket_invalid`) and only within its lifetime (`attach_ticket_expired`),
+  and the attach then proceeds exactly as the user typed it — the sealed catalog name,
+  options and version specs. A `CompositeCatalogInterface` routes on the sealed name.
+  The ticket binds the principal only, not the login domain, so a ticket sealed under
+  a JWT login opens under that user's grant.
+- **Reserved name.** No catalog may declare an attach option named
+  `vgi_attach_ticket` (any case); a worker that does refuses to serve.
+- Rotating `VGI_SIGNING_KEY` invalidates every ticket. A ticket carries no authority:
+  without a grant or login for the same principal it attaches nothing. Neither the
+  ticket nor a restored option is ever logged.
+
+Normative spec: vgi-python `docs/protocol/vgi-attach-tickets.md`. The example HTTP
+worker serves the cross-SDK `ticket_probe` fixture catalog and hosts tickets when
+started with both `VGI_SIGNING_KEY` and `VGI_RPC_GRANT_KEYS`.
+
 ## Runtimes & entry points
 
 The package ships a backend-agnostic Arrow facade and selects an implementation at

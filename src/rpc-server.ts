@@ -14,7 +14,10 @@
 //      transport.
 //   3. `vgi_rpc.Reflection.v1` -- on every transport.
 //   4. `vgi_rpc.Identity.v1` -- HTTP only, and only when the worker supplies
-//      `resolveToken` and/or `mintGrant`.
+//      `resolveToken` and/or `mintGrant` (or grant keys are configured).
+//   5. `vgi.attach_tickets.v1` -- HTTP only, and only when the signing key was
+//      configured explicitly (never a generated one) *and* the worker can
+//      issue grants. See `attach-ticket.ts`.
 //
 // Extra protocols cannot change `vgi.v2` behaviour: vgi-rpc routes every
 // request on its `vgi_rpc.protocol` key with no fallback to the primary, so a
@@ -29,6 +32,8 @@ import {
   type TokenResolver,
   VgiRpcServer,
 } from "@query-farm/vgi-rpc";
+import { buildAttachTicketsProtocol, resolveTicketMaxTtl } from "./attach-ticket.js";
+import type { CatalogInterface } from "./catalog/interface.js";
 
 /** The transport a server is being built for. Only `"http"` changes what is
  *  hosted (identity); the rest are recorded so the decision lives here rather
@@ -143,6 +148,19 @@ export interface BuildRpcServerOptions {
   /** Environment to read `VGI_INTROSPECT_PRINCIPALS` from. Default
    *  `process.env` where it exists (not on Cloudflare Workers). */
   env?: Record<string, string | undefined>;
+  /**
+   * HTTP only: what `vgi.attach_tickets.v1` needs. Hosted when
+   * `signingKeyConfigured` is true -- the key came from explicit
+   * configuration, not generated for this process, which would make every
+   * ticket die on restart -- and the worker can issue grants (grant keys
+   * configured, or its own `mintGrant`). Otherwise the protocol is absent,
+   * not hosted-and-refusing.
+   */
+  attachTickets?: {
+    signingKey: Uint8Array | undefined;
+    signingKeyConfigured: boolean;
+    catalogInterface: CatalogInterface | undefined;
+  };
 }
 
 /**
@@ -166,7 +184,16 @@ export function buildRpcServer(
     throw new Error(`Unknown transport ${JSON.stringify(options.transport)}; expected one of ${[...TRANSPORTS].join(", ")}.`);
   }
   const protocols = validatedHostedProtocols(hosting, primary);
-  const identity = IDENTITY_TRANSPORTS.has(options.transport) ? buildIdentity(hosting, options.env) : undefined;
+  let identity: IdentityImpl | undefined;
+  if (IDENTITY_TRANSPORTS.has(options.transport)) {
+    const env = options.env ?? processEnv();
+    // Explicit option, else the environment. Read at server build, so a
+    // malformed key stops the worker before it serves anything.
+    const grantKeys = hosting.grantKeys === undefined ? GrantKeys.fromEnv(env) : hosting.grantKeys;
+    identity = buildIdentity(hosting, grantKeys, options.env);
+    const tickets = buildAttachTickets(hosting, grantKeys, options.attachTickets, env);
+    if (tickets) protocols.push(tickets);
+  }
   return new VgiRpcServer(primary, {
     serverId: options.serverId,
     protocols,
@@ -239,12 +266,10 @@ function validatedHostedProtocols(hosting: HostingOptions, primary: Protocol): P
  *  hosting it and refusing every call. The two hooks are independent. */
 function buildIdentity(
   hosting: HostingOptions,
+  grantKeys: GrantKeys | null,
   env: Record<string, string | undefined> | undefined,
 ): IdentityImpl | undefined {
   const { resolveToken, mintGrant } = hosting;
-  // Explicit option, else the environment. Read at server build, so a
-  // malformed key stops the worker before it serves anything.
-  const grantKeys = hosting.grantKeys === undefined ? GrantKeys.fromEnv(env ?? processEnv()) : hosting.grantKeys;
   if (!resolveToken && !mintGrant && !grantKeys) return undefined;
   return new IdentityImpl({
     resolveToken,
@@ -255,6 +280,26 @@ function buildIdentity(
     // nothing is not an oracle and needs no allowlist.
     introspectPrincipals: resolveToken ? resolveIntrospectPrincipals(hosting.introspectPrincipals, env) : undefined,
     maxAuthAge: hosting.maxAuthAge,
+  });
+}
+
+/** Build `vgi.attach_tickets.v1`, or `undefined` when it must not be hosted.
+ *
+ *  Both halves of an unattended session have to be issuable: a ticket under a
+ *  generated per-process key would die on restart, and a ticket without a
+ *  grant attaches nothing. */
+function buildAttachTickets(
+  hosting: HostingOptions,
+  grantKeys: GrantKeys | null,
+  config: BuildRpcServerOptions["attachTickets"],
+  env: Record<string, string | undefined> | undefined,
+): Protocol | undefined {
+  if (!config || !config.signingKeyConfigured || !config.signingKey) return undefined;
+  if (!grantKeys && !hosting.mintGrant) return undefined;
+  return buildAttachTicketsProtocol({
+    signingKey: config.signingKey,
+    catalogInterface: config.catalogInterface,
+    maxTtlSeconds: resolveTicketMaxTtl(grantKeys, env),
   });
 }
 

@@ -45,6 +45,8 @@ import {
   CatalogVersionResultSchema,
 } from "../../../generated/vgi-protocol-schemas.js";
 import { toUint8Array } from "../../../util/bytes.js";
+import { redeemAttachTicket } from "../../../attach-ticket.js";
+import { currentRequestAuth } from "../../../request-auth.js";
 import { decodeDictValue } from "../../../util/arrow/index.js";
 import {
   REQUEST_PARAMS_SCHEMA,
@@ -98,7 +100,25 @@ export function registerCatalogAdminMethods(protocol: Protocol, getCatalog: GetC
       // RecordBatch of typed columns — one column per option. Deserialize
       // once here so workers see an ergonomic {name: value} dict instead of
       // raw bytes. Nullable / absent → {}.
-      const optionsDict = decodeOptionsBatch(innerParams.options);
+      let optionsDict = decodeOptionsBatch(innerParams.options);
+      // A `vgi_attach_ticket` is redeemed here, before any catalog code runs:
+      // the request becomes the attach the ticket seals (catalog name,
+      // options, version specs). A composite catalog therefore routes on the
+      // sealed name, not the request's. The ticket opens only under the
+      // caller's principal and this worker's signing key; neither it nor a
+      // restored option is ever logged.
+      const restored = await redeemAttachTicket(
+        optionsDict,
+        signingKey,
+        (ctx as CallContext | undefined)?.auth ?? currentRequestAuth(),
+      );
+      if (restored !== null) {
+        innerParams.name = restored.name;
+        innerParams.options = restored.optionsIpc;
+        innerParams.data_version_spec = restored.dataVersionSpec;
+        innerParams.implementation_version = restored.implementationVersion;
+        optionsDict = restored.options;
+      }
       const result = await cat.attach(
         innerParams.name,
         optionsDict,

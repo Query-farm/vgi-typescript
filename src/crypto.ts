@@ -108,8 +108,14 @@ export async function sealBytes(
   key: Uint8Array,
   aad: Uint8Array,
   version: number,
+  fixedNonce?: Uint8Array,
 ): Promise<Uint8Array> {
-  const nonce = crypto.getRandomValues(new Uint8Array(NONCE_LEN));
+  // A fixed nonce exists for byte-exact test vectors only; every real seal
+  // draws 24 fresh random bytes.
+  if (fixedNonce !== undefined && fixedNonce.length !== NONCE_LEN) {
+    throw new Error(`nonce must be ${NONCE_LEN} bytes`);
+  }
+  const nonce = fixedNonce ?? crypto.getRandomValues(new Uint8Array(NONCE_LEN));
   const ciphertext = xchacha20poly1305(await normalizeKey(key), nonce, aad).encrypt(payload);
   const out = new Uint8Array(1 + NONCE_LEN + ciphertext.length);
   out[0] = version & 0xff;

@@ -27,6 +27,7 @@ import { buildVgiProtocol, type ProtocolConfig } from "../protocol/dispatch.js";
 import { createLandingRoutes, type LandingInfo } from "./landing.js";
 import { buildRpcServer, type HostingOptions } from "../rpc-server.js";
 import { setRequestAuthScope, type RequestAuthHolder } from "../request-auth.js";
+import { checkReservedAttachOptions } from "../catalog/attach-option.js";
 
 export interface VgiFetchOptions extends HostingOptions {
   /** Wire-protocol config (registry + catalogInterface). */
@@ -35,6 +36,12 @@ export interface VgiFetchOptions extends HostingOptions {
    *  (e.g. derived from a Wrangler secret). Required because Workers don't
    *  preserve in-memory state across requests/instances. */
   signingKey: Uint8Array;
+  /** Whether {@link signingKey} came from explicit configuration (a secret,
+   *  `VGI_SIGNING_KEY`) rather than being generated for this process. Only a
+   *  configured key hosts `vgi.attach_tickets.v1` (with the ability to issue
+   *  grants): tickets sealed under a generated key would die on restart.
+   *  Defaults to `true`, since this factory requires the key to be passed. */
+  signingKeyConfigured?: boolean;
   /** State-token TTL in seconds (default 3600). */
   tokenTtl?: number;
   /** URL path prefix for VGI requests (default "/vgi"). Pass "" to mount at
@@ -203,7 +210,21 @@ export function createVgiFetch(opts: VgiFetchOptions): (req: Request) => Promise
   // authenticates callers -- vgi_rpc.Identity.v1 when the worker opts in.
   // Built at construction, so a worker that opts into introspection without an
   // allowlist fails here rather than serving traffic.
-  const server = buildRpcServer(protocol, opts, { transport: "http", serverId });
+  const server = buildRpcServer(protocol, opts, {
+    transport: "http",
+    serverId,
+    attachTickets: {
+      signingKey: opts.signingKey,
+      signingKeyConfigured: opts.signingKeyConfigured ?? true,
+      catalogInterface: opts.protocol.catalogInterface,
+    },
+  });
+  // A catalog declaring the reserved `vgi_attach_ticket` attach option must
+  // not serve. This factory is synchronous, so the check runs once up front
+  // and every request waits on it: a refusal fails each request (and is
+  // logged once) rather than letting a ticket be read as an ordinary option.
+  const reservedCheck = checkReservedAttachOptions(opts.protocol.catalogInterface);
+  reservedCheck.catch((e) => console.error(`VGI worker refused to serve: ${(e as Error).message}`));
 
   const handler = createHttpHandler(server, {
     prefix,
@@ -230,6 +251,7 @@ export function createVgiFetch(opts: VgiFetchOptions): (req: Request) => Promise
     enableLandingPage: false,
   });
   return async (req: Request) => {
+    await reservedCheck;
     const storage = await ensureRequestAuthStorage();
     // No AsyncLocalStorage on this host: serve exactly as before.
     if (!storage) return handler(req);

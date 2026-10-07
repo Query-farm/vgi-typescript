@@ -19,6 +19,7 @@ import { narrowBindCatalog, narrowBindFunctions } from "./narrow_bind.js";
 import { twinACatalog, twinBCatalog, twinCatalogFunctions } from "./twin_catalogs.js";
 import { buildSecondaryProtocol } from "@query-farm/vgi-rpc/conformance";
 import { createCatalogContentsCatalogs } from "./catalog_contents.js";
+import { createTicketProbeCatalog, ticketProbeFunctions } from "./ticket_probe.js";
 
 // Build registry up front so all functions across catalogs are routable.
 const registry = new FunctionRegistry();
@@ -28,6 +29,7 @@ for (const f of [
   ...accumulateFunctions,
   ...narrowBindFunctions,
   ...twinCatalogFunctions,
+  ...ticketProbeFunctions,
 ])
   registry.register(f);
 
@@ -63,6 +65,9 @@ const composite = new CompositeCatalogInterface([
   // contents_probe / _broken / _legacy / _memory / _reval / _hash:
   // catalog_contents fixtures.
   ...createCatalogContentsCatalogs(registry),
+  // ticket_probe: attach tickets (vgi.attach_tickets.v1) -- one plain and one
+  // secret attach option whose effect a table reveals.
+  createTicketProbeCatalog(registry),
 ]);
 
 const worker = new Worker({
@@ -72,6 +77,7 @@ const worker = new Worker({
     ...accumulateFunctions,
     ...narrowBindFunctions,
     ...twinCatalogFunctions,
+    ...ticketProbeFunctions,
   ],
   catalogInterface: composite,
   // Same instance the catalogs above indexed into, so schema-qualified and

@@ -166,7 +166,33 @@ export { createLandingRoutes } from "./http/landing.js";
 export { BindResultSchema, ScanFunctionResultSchema } from "./generated/vgi-protocol-schemas.js";
 
 // Attach-option specs (for catalogs that advertise typed ATTACH options).
-export { type AttachOptionSpec, serializeAttachOptionSpec, serializeAttachOptionSpecs, deserializeAttachOptionSpec, deserializeAttachOptionSpecs } from "./catalog/attach-option.js";
+export {
+  type AttachOptionSpec,
+  serializeAttachOptionSpec,
+  serializeAttachOptionSpecs,
+  deserializeAttachOptionSpec,
+  deserializeAttachOptionSpecs,
+  RESERVED_ATTACH_OPTION,
+  ReservedAttachOptionError,
+} from "./catalog/attach-option.js";
+export {
+  ATTACH_TICKET_OPTION,
+  ATTACH_TICKET_PREFIX,
+  ATTACH_TICKETS_PROTOCOL_NAME,
+  ATTACH_TICKETS_PROTOCOL_VERSION,
+  ATTACH_TICKET_SCHEMA,
+  SEAL_ATTACH_REQUEST_SCHEMA,
+  AttachTicketExpiredError,
+  AttachTicketInvalidError,
+  AttachTicketRequestError,
+  SealAttachDeniedError,
+  type AttachTicketClaims,
+  type RestoredAttach,
+  attachTicketAad,
+  mintAttachTicket,
+  openAttachTicket,
+  redeemAttachTicket,
+} from "./attach-ticket.js";
 
 // Column statistics (for inlining on TableInfo.column_statistics).
 export { type ColumnStatistics, serializeColumnStatistics } from "./util/statistics.js";

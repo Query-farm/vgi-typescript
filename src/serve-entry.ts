@@ -224,6 +224,9 @@ export function createVgiWorkerFetch(
 ): (req: Request) => Promise<Response> {
   const env = opts.env ?? (process.env as ServeEnv);
   const signingKey = resolveSigningKey(opts.signingKey, env);
+  // Explicit option or `$VGI_SIGNING_KEY`: a key that survives a restart.
+  // The generated fallback never enables attach tickets.
+  const signingKeyConfigured = opts.signingKey !== undefined || !!env.VGI_SIGNING_KEY?.trim();
   const tokenTtl = resolveTokenTtl(opts.tokenTtl, env);
   // `null` disables CORS and must stay `null` through to createVgiFetch, which
   // now reads a bare `undefined` as "default to *" — passing `undefined` here to
@@ -241,6 +244,7 @@ export function createVgiWorkerFetch(
   return createVgiFetch({
     protocol: { registry: opts.registry, catalogInterface: opts.catalogInterface },
     signingKey,
+    signingKeyConfigured,
     tokenTtl,
     prefix: opts.prefix ?? "",
     serverId: opts.serverId ?? opts.name,

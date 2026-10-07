@@ -61,6 +61,7 @@ function parseTokenMap(raw: string | undefined): Map<string, string> | null {
  */
 export function optionalTestBearerAuthenticate(
   env: { VGI_OPTIONAL_BEARER_TOKENS?: string } = process.env as any,
+  options: { grantsEnabled?: boolean } = {},
 ): (request: Request) => AuthContext {
   const tokens = parseTokenMap(env.VGI_OPTIONAL_BEARER_TOKENS) ?? new Map(DEFAULT_TEST_TOKENS);
   return (request: Request): AuthContext => {
@@ -68,7 +69,18 @@ export function optionalTestBearerAuthenticate(
     // A present-but-blank credential is still "offered but invalid"; on this
     // optional path both it and an unknown token fall through to anonymous.
     if (!/^Bearer\s/i.test(header)) return AuthContext.anonymous();
-    const principal = tokens.get(header.slice(header.indexOf(" ") + 1).trim());
-    return principal ? new AuthContext("bearer", true, principal) : AuthContext.anonymous();
+    const token = header.slice(header.indexOf(" ") + 1).trim();
+    if (options.grantsEnabled && token.startsWith("vgig1.")) {
+      // A sealed grant is not ours: a plain Error lets the chain fall through
+      // to the grant authenticator vgi-rpc appends after this one.
+      throw new Error("sealed grant");
+    }
+    const principal = tokens.get(token);
+    // A test bearer is a fresh login: stamping auth_time lets the
+    // attach-ticket tests call issue_grant (900 s freshness rule) with nothing
+    // but a bearer DuckDB can send. Same as vgi-python's fixture server.
+    return principal
+      ? new AuthContext("bearer", true, principal, { auth_time: Math.floor(Date.now() / 1000) })
+      : AuthContext.anonymous();
   };
 }
