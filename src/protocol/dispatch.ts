@@ -15,6 +15,7 @@ import { registerFunctionMethods } from "./handlers/function.js";
 import { registerAggregateMethods } from "./handlers/aggregate.js";
 import { registerTableBufferingMethods } from "./handlers/table-buffering.js";
 import { registerCatalogMethods } from "./handlers/catalog/index.js";
+import { registerUnimplementedMethods } from "./handlers/unimplemented.js";
 
 export interface ProtocolConfig {
   registry: FunctionRegistry;
@@ -56,6 +57,20 @@ export interface ProtocolConfig {
  */
 export const VGI_PROTOCOL_NAME = "vgi.v2";
 
+/**
+ * The `vgi.v2` protocol hash `vgi_rpc.Reflection.v1` must report for this
+ * worker: the reference's (vgi-python 0.43.0, 72 methods). Every SDK hosts
+ * every `vgi.v2` method with the reference's schemas, so the hash is one value
+ * across the ports; a method this SDK does not implement is still registered
+ * (handlers/unimplemented.ts). The hash covers method names, types and the
+ * params/result/header schemas only (WIRE_PROTOCOL.md §14).
+ *
+ * It changes only with vgi.v2's protocol version (currently 2.1.0). Asserted
+ * by src/protocol/__tests__/vgi-v2-hash.test.ts; if that test fails, the
+ * surface drifted from the reference -- fix the schemas, do not bump this.
+ */
+export const VGI_V2_PROTOCOL_HASH = "774cb80090d71ea76d09aa311b9cda4ca4c33c3bf72c43242eb6dc87b6f79ce5";
+
 export function buildVgiProtocol(config: ProtocolConfig): Protocol {
   const protocol = new Protocol(VGI_PROTOCOL_NAME, { protocolVersion: "2.1.0" });
 
@@ -67,6 +82,7 @@ export function buildVgiProtocol(config: ProtocolConfig): Protocol {
   registerAggregateMethods(protocol, config.registry);
   registerTableBufferingMethods(protocol, config.registry, config.signingKey);
   registerCatalogMethods(protocol, config.catalogInterface, config.catalogName, config.signingKey);
+  registerUnimplementedMethods(protocol);
 
   return protocol;
 }
