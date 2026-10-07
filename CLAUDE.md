@@ -26,6 +26,7 @@ make test/integration/table/sequence  # Subdirectory tests work too
 make test TEST_TIMEOUT=30              # Custom timeout per test (default: 60s)
 make test WORKER=/path/to/other-worker # Custom worker binary
 make test VGI_DIR=/other/vgi           # Different VGI extension repo (default: ../vgi)
+make test TEST_CONFIG=/path/cfg.json   # sqllogictest --test-config (default: $VGI_DIR/test/configs/no_error_skip.json)
 make test-client VGI_PYTHON_DIR=/other/vgi-python  # vgi-python checkout (default: ../vgi-python)
 ```
 

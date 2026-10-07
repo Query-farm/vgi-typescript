@@ -33,6 +33,16 @@ TEST_DIR     := $(VGI_DIR)/test/sql
 # example worker serves them (examples/catalog_contents.ts).
 RELEASE_BIN  := $(VGI_DIR)/build/release/test/unittest
 
+# sqllogictest --test-config passed to EVERY unittest invocation below. Given
+# no config, DuckDB's runner turns any error whose text contains "HTTP" or
+# "Unable to connect" into a SKIP that exits 0 -- and over the HTTP transport
+# every worker error contains "HTTP", so the http lane reported real failures
+# as passes. The file ships with the extension (Query-farm/vgi
+# test/configs/no_error_skip.json); its list holds one string no error
+# contains, because the runner cannot parse an empty list. Absolute because
+# every recipe cd's into $(VGI_DIR) first.
+TEST_CONFIG  ?= $(abspath $(VGI_DIR))/test/configs/no_error_skip.json
+
 # --- Build targets ---
 
 build:
@@ -217,7 +227,7 @@ test:
 	export VGI_REQUIRE_LAUNCHER_TRANSPORT=1; \
 	export VGI_WORKER_IDLE_TIMEOUT=$(LAUNCHER_IDLE_TIMEOUT); \
 	export VGI_TEST_BRANCH_DIR="$(VGI_TEST_BRANCH_DIR)"; \
-	python3 scripts/run_tests.py -j $(JOBS) $(COVERAGE_GATE) $(LAUNCHER_TEST_PATTERNS) > $(TEST_LOG) 2>&1; \
+	python3 scripts/run_tests.py -j $(JOBS) --test-config $(TEST_CONFIG) $(COVERAGE_GATE) $(LAUNCHER_TEST_PATTERNS) > $(TEST_LOG) 2>&1; \
 	rc=$$?; \
 	tail -n 20 $(TEST_LOG); \
 	echo ""; \
@@ -238,7 +248,7 @@ test-subprocess:
 	export VGI_VERSIONED_WORKER="$(VERSIONED_WORKER)"; \
 	export VGI_VERSIONED_TABLES_WORKER="$(VERSIONED_TABLES_WORKER)"; \
 	export VGI_ATTACH_OPTIONS_WORKER="$(ATTACH_OPTIONS_WORKER)"; \
-	python3 scripts/run_tests.py -j $(JOBS) $(TEST_PATTERNS) > $(TEST_LOG) 2>&1; \
+	python3 scripts/run_tests.py -j $(JOBS) --test-config $(TEST_CONFIG) $(TEST_PATTERNS) > $(TEST_LOG) 2>&1; \
 	rc=$$?; \
 	tail -n 20 $(TEST_LOG); \
 	echo ""; \
@@ -286,7 +296,7 @@ test-http:
 	export VGI_VERSIONED_HTTP_WORKER="http://localhost:$${vport_line#PORT:}"; \
 	export VGI_ATTACH_OPTIONS_WORKER="http://localhost:$${aport_line#PORT:}"; \
 	export VGI_VERSIONED_TABLES_HTTP_WORKER="http://localhost:$${tport_line#PORT:}"; \
-	python3 scripts/run_tests.py -j $(JOBS) $(HTTP_TEST_PATTERNS) > $(TEST_LOG) 2>&1; \
+	python3 scripts/run_tests.py -j $(JOBS) --test-config $(TEST_CONFIG) $(HTTP_TEST_PATTERNS) > $(TEST_LOG) 2>&1; \
 	rc=$$?; \
 	tail -n 20 $(TEST_LOG); \
 	echo ""; \
@@ -325,7 +335,7 @@ test/%:
 	export VGI_ATTACH_OPTIONS_WORKER="launch:$(ATTACH_OPTIONS_WORKER)"; \
 	export VGI_REQUIRE_LAUNCHER_TRANSPORT=1; \
 	export VGI_WORKER_IDLE_TIMEOUT=$(LAUNCHER_IDLE_TIMEOUT); \
-	cd $(VGI_DIR) && ./build/release/test/unittest -s "test/sql/$*.test"
+	cd $(VGI_DIR) && ./build/release/test/unittest --test-config $(TEST_CONFIG) -s "test/sql/$*.test"
 
 # Subprocess single-test entry point — same shape as `test/%` but without
 # the `launch:` prefix. Useful when isolating a hang at the worker spawn
@@ -340,7 +350,7 @@ test-subprocess/%:
 	export VGI_VERSIONED_WORKER="$(VERSIONED_WORKER)"; \
 	export VGI_VERSIONED_TABLES_WORKER="$(VERSIONED_TABLES_WORKER)"; \
 	export VGI_ATTACH_OPTIONS_WORKER="$(ATTACH_OPTIONS_WORKER)"; \
-	cd $(VGI_DIR) && ./build/release/test/unittest -s "test/sql/$*.test"
+	cd $(VGI_DIR) && ./build/release/test/unittest --test-config $(TEST_CONFIG) -s "test/sql/$*.test"
 
 # test-http/% — single-test HTTP entry point. Spawns the HTTP worker
 # triplet, points VGI_TEST_WORKER at it, runs that one test verbosely.
@@ -374,7 +384,7 @@ test-http/%:
 	export VGI_VERSIONED_HTTP_WORKER="http://localhost:$${vport_line#PORT:}"; \
 	export VGI_ATTACH_OPTIONS_WORKER="http://localhost:$${aport_line#PORT:}"; \
 	export VGI_VERSIONED_TABLES_HTTP_WORKER="http://localhost:$${tport_line#PORT:}"; \
-	cd $(VGI_DIR) && ./build/release/test/unittest -s "test/sql/$*.test"
+	cd $(VGI_DIR) && ./build/release/test/unittest --test-config $(TEST_CONFIG) -s "test/sql/$*.test"
 
 # VgiClient end-to-end tests against vgi-python's HTTP workers.
 # Spawns the normal + versioned HTTP workers, each with --port-file

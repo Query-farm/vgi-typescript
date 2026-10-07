@@ -178,6 +178,18 @@ echo "Staged $STAGED test files."
 # in at compile time and would otherwise silently run the build's own source tree,
 # ignoring every exclusion and every rewrite made above.
 UNITTEST_ARGS=(--test-dir "$STAGE")
+# `--test-config`: without one, DuckDB's sqllogictest runner turns any error
+# whose text contains "HTTP" or "Unable to connect" into a SKIP (exit 0), and
+# over the HTTP transport EVERY worker error contains "HTTP" -- so this lane
+# reported real failures as skips, and the skip accounting below never saw
+# them (they are not `require` skips with a reason). The config ships with the
+# extension checkout this lane already uses (Query-farm/vgi
+# test/configs/no_error_skip.json). Required, not optional: a checkout without
+# it would silently bring the masking back. Do not replace it with
+# `"skip_error_messages": []` -- the runner cannot parse an empty list.
+TEST_CONFIG="${TEST_CONFIG:-$(cd "$VGI_SRC" && pwd)/test/configs/no_error_skip.json}"
+[ -f "$TEST_CONFIG" ] || { echo "::error::no sqllogictest config at TEST_CONFIG=$TEST_CONFIG"; exit 1; }
+UNITTEST_ARGS+=(--test-config "$TEST_CONFIG")
 # The http workers are booted with the same cwd, because copy_from/copy_to hand
 # the worker a relative `__TEST_DIR__` path (duckdb_unittest_tempdir/<pid>/…)
 # that only resolves if the worker shares DuckDB's working directory.
