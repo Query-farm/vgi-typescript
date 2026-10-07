@@ -10,24 +10,16 @@
 // vgi-python's worker._load_table_buffering_params.
 
 import { deserializeBatch } from "../../arrow/index.js";
-import { Protocol } from "@query-farm/vgi-rpc";
+import type { VgiService } from "../../generated/vgi-service.js";
 import type { FunctionRegistry } from "../../functions/registry.js";
 import { toUint8Array } from "../../util/bytes.js";
 import { batchToScalarDict, batchToSecretDict } from "../../util/arrow/index.js";
 import {
-  TableBufferingCombineParamsSchema,
   TableBufferingCombineResultSchema,
-  TableBufferingDestructorParamsSchema,
   TableBufferingDestructorResultSchema,
-  TableBufferingProcessParamsSchema,
   TableBufferingProcessResultSchema,
 } from "../../generated/vgi-protocol-schemas.js";
-import {
-  REQUEST_PARAMS_SCHEMA,
-  RESULT_BINARY_SCHEMA,
-  unwrapRequest,
-  wrapResult,
-} from "./shared.js";
+import { unwrapRequest, wrapResult } from "./shared.js";
 import { openAttach } from "./catalog/shared.js";
 import {
   BoundStorage,
@@ -41,11 +33,11 @@ import {
 } from "../../functions/table-buffering.js";
 import { Arguments } from "../../arguments/arguments.js";
 
-export function registerTableBufferingMethods(
-  protocol: Protocol,
+/** The table_buffering lifecycle's `vgi.v2` handlers. */
+export function tableBufferingHandlers(
   registry: FunctionRegistry,
   signingKey?: Uint8Array,
-): void {
+): Partial<VgiService> {
   // `schemaPath` scopes resolution to the schema the caller named. The
   // buffering process/combine RPCs carry it (protocol 1.2.0), so a name
   // declared in two schemas resolves to the one the request names rather than
@@ -123,72 +115,62 @@ export function registerTableBufferingMethods(
   // ------------------------------------------------------------------------
   // table_buffering_process — sink one batch, return state_id (unary)
   // ------------------------------------------------------------------------
-  protocol.unary("table_buffering_process", {
-    params: TableBufferingProcessParamsSchema,
-    result: RESULT_BINARY_SCHEMA,
-    handler: async (rpcParams, ctx?: any) => {
-      const inner = unwrapRequest(rpcParams.request);
-      const clientLog = makeClientLog(ctx);
-      const { func, params } = await loadParams(inner, clientLog, ctx);
-      if (inner.batch_index != null) {
-        params.batchIndex = Number(inner.batch_index);
-      }
-      const batch = deserializeBatch(toUint8Array(inner.input_batch));
-      const stateId = await func.bufferingConfig.process(batch, params);
-      if (!(stateId instanceof Uint8Array)) {
-        throw new Error(
-          `${func.meta.name}.process() must return Uint8Array (the opaque state_id)`,
-        );
-      }
-      return wrapResult({ state_id: stateId }, TableBufferingProcessResultSchema);
-    },
-  });
+  const tableBufferingProcess: VgiService["tableBufferingProcess"] = async (rpcParams, ctx?: any) => {
+    const inner = unwrapRequest(rpcParams.request);
+    const clientLog = makeClientLog(ctx);
+    const { func, params } = await loadParams(inner, clientLog, ctx);
+    if (inner.batch_index != null) {
+      params.batchIndex = Number(inner.batch_index);
+    }
+    const batch = deserializeBatch(toUint8Array(inner.input_batch));
+    const stateId = await func.bufferingConfig.process(batch, params);
+    if (!(stateId instanceof Uint8Array)) {
+      throw new Error(
+        `${func.meta.name}.process() must return Uint8Array (the opaque state_id)`,
+      );
+    }
+    return wrapResult({ state_id: stateId }, TableBufferingProcessResultSchema);
+  };
 
   // ------------------------------------------------------------------------
   // table_buffering_combine — group/merge state_ids (unary)
   // ------------------------------------------------------------------------
-  protocol.unary("table_buffering_combine", {
-    params: TableBufferingCombineParamsSchema,
-    result: RESULT_BINARY_SCHEMA,
-    handler: async (rpcParams, ctx?: any) => {
-      const inner = unwrapRequest(rpcParams.request);
-      const clientLog = makeClientLog(ctx);
-      const { func, params } = await loadParams(inner, clientLog, ctx);
-      const stateIds = decodeBytesList(inner.state_ids);
-      const finalizeStateIds = await func.bufferingConfig.combine(stateIds, params);
-      const out = finalizeStateIds.map((fid, i) => {
-        if (!(fid instanceof Uint8Array)) {
-          throw new Error(
-            `${func.meta.name}.combine() returned non-Uint8Array finalize_state_id at index ${i}`,
-          );
-        }
-        return fid;
-      });
-      return wrapResult(
-        { finalize_state_ids: out },
-        TableBufferingCombineResultSchema,
-      );
-    },
-  });
+  const tableBufferingCombine: VgiService["tableBufferingCombine"] = async (rpcParams, ctx?: any) => {
+    const inner = unwrapRequest(rpcParams.request);
+    const clientLog = makeClientLog(ctx);
+    const { func, params } = await loadParams(inner, clientLog, ctx);
+    const stateIds = decodeBytesList(inner.state_ids);
+    const finalizeStateIds = await func.bufferingConfig.combine(stateIds, params);
+    const out = finalizeStateIds.map((fid, i) => {
+      if (!(fid instanceof Uint8Array)) {
+        throw new Error(
+          `${func.meta.name}.combine() returned non-Uint8Array finalize_state_id at index ${i}`,
+        );
+      }
+      return fid;
+    });
+    return wrapResult(
+      { finalize_state_ids: out },
+      TableBufferingCombineResultSchema,
+    );
+  };
 
   // ------------------------------------------------------------------------
   // table_buffering_destructor — best-effort end-of-query cleanup (unary)
   // ------------------------------------------------------------------------
-  protocol.unary("table_buffering_destructor", {
-    params: TableBufferingDestructorParamsSchema,
-    result: RESULT_BINARY_SCHEMA,
-    handler: async (rpcParams) => {
-      try {
-        const inner = unwrapRequest(rpcParams.request);
-        const executionId = toUint8Array(inner.execution_id);
-        const bound = new BoundStorage(defaultStorage, executionId);
-        await bound.executionClear();
-      } catch {
-        // Teardown path — swallow; the entry is wiped when the worker exits.
-      }
-      return wrapResult({}, TableBufferingDestructorResultSchema);
-    },
-  });
+  const tableBufferingDestructor: VgiService["tableBufferingDestructor"] = async (rpcParams) => {
+    try {
+      const inner = unwrapRequest(rpcParams.request);
+      const executionId = toUint8Array(inner.execution_id);
+      const bound = new BoundStorage(defaultStorage, executionId);
+      await bound.executionClear();
+    } catch {
+      // Teardown path — swallow; the entry is wiped when the worker exits.
+    }
+    return wrapResult({}, TableBufferingDestructorResultSchema);
+  };
+
+  return { tableBufferingProcess, tableBufferingCombine, tableBufferingDestructor };
 }
 
 function makeClientLog(ctx: any): (level: string, message: string) => void {

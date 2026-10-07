@@ -1,8 +1,8 @@
 // Copyright 2025, 2026 Query Farm LLC - https://query.farm
 // Shared param schemas and helpers for catalog protocol handlers.
 
-import { type VgiSchema, schema, iterRows } from "../../../arrow/index.js";
-import { Protocol, type AuthContext, type CallContext } from "@query-farm/vgi-rpc";
+import { iterRows } from "../../../arrow/index.js";
+import type { AuthContext, CallContext } from "@query-farm/vgi-rpc";
 import type { CatalogInterface } from "../../../catalog/interface.js";
 import { NoCatalogError } from "../../../errors.js";
 import { deserializeBatch } from "../../../util/arrow/index.js";
@@ -174,43 +174,32 @@ async function unwrapParamsOpaque(
 }
 
 /**
- * Register a catalog unary handler whose request opaque-data fields are
- * unwrapped before the handler body runs. Used for every catalog_* method
- * except catalog_attach / catalog_transaction_begin, which seal their outputs
- * and are registered bespoke.
+ * Wrap a catalog unary handler so its request opaque-data fields are unwrapped
+ * before the body runs. Used for every catalog_* method except catalog_attach
+ * / catalog_transaction_begin, which seal their outputs and are written
+ * bespoke. The body sees the flattened params as a plain record.
  */
-export function catalogUnary(
-  protocol: Protocol,
+export function catalogHandler<R>(
   signingKey: Uint8Array | undefined,
-  name: string,
-  config: {
-    params: unknown;
-    result: unknown;
-    handler: (params: Record<string, any>, ctx: CallContext) => unknown;
-    doc?: string;
-  },
-): void {
-  protocol.unary(name, {
-    params: config.params as any,
-    result: config.result as any,
-    doc: config.doc,
-    handler: async (params: Record<string, any>, ctx: any) => {
-      // catalog_create / catalog_table_create / catalog_macro_create (and
-      // catalog_index_create) send one `request: binary` column holding the
-      // IPC-serialized request record, so their attach/transaction values ride
-      // INSIDE it. Flatten it first, so handlers read the request's fields
-      // directly and those values are opened (and the framework UUID stripped)
-      // like every other catalog call's. Before this, table_create read every
-      // field off the envelope (all undefined) and macro_create handed the
-      // catalog an unopened attach value.
-      if (params.request != null && params.attach_opaque_data === undefined && params.name === undefined) {
-        params = unwrapRequest(params.request);
-      }
-      normalizeRequestSchemaPaths(params);
-      await unwrapParamsOpaque(params, ctx, signingKey);
-      return config.handler(params, ctx);
-    },
-  });
+  handler: (params: Record<string, any>, ctx: CallContext) => R | Promise<R>,
+): (params: object, ctx: CallContext) => Promise<R> {
+  return async (wire: object, ctx: CallContext) => {
+    let params = wire as Record<string, any>;
+    // catalog_create / catalog_table_create / catalog_macro_create (and
+    // catalog_index_create) send one `request: binary` column holding the
+    // IPC-serialized request record, so their attach/transaction values ride
+    // INSIDE it. Flatten it first, so handlers read the request's fields
+    // directly and those values are opened (and the framework UUID stripped)
+    // like every other catalog call's. Before this, table_create read every
+    // field off the envelope (all undefined) and macro_create handed the
+    // catalog an unopened attach value.
+    if (params.request != null && params.attach_opaque_data === undefined && params.name === undefined) {
+      params = unwrapRequest(params.request);
+    }
+    normalizeRequestSchemaPaths(params);
+    await unwrapParamsOpaque(params, ctx, signingKey);
+    return handler(params, ctx);
+  };
 }
 
 export function makeGetCatalog(catalog: CatalogInterface | undefined): GetCatalog {
@@ -240,18 +229,12 @@ export function decodeOptionsBatch(bytes: any): Record<string, unknown> {
   return row ?? {};
 }
 
-// ---------------------------------------------------------------------------
-// Common param schemas
-// ---------------------------------------------------------------------------
-
-export const emptyResultSchema = schema([]);
-
 // Eight hand-written catalog param schemas used to live here, restating shapes
-// codegen already emits. Every `params:` slot now points at a generated
-// `…ParamsSchema` and these were left behind, referenced by nothing but their
+// codegen already emits. Every method's schemas now come from the generated
+// registration table (src/generated/vgi-service.ts) and these were left behind, referenced by nothing but their
 // own import lines. A stale duplicate is worse than no duplicate: the copies
 // this SDK kept had drifted on `attach_opaque_data` nullability (45 generated
 // schemas say non-null, every copy said nullable) and on `type` being
 // dictionary-encoded utf8 rather than plain utf8, and the result was that a
-// CORRECT client got rejected at the very first catalog call. Import from
-// src/generated/vgi-protocol-schemas.ts instead of reviving one.
+// CORRECT client got rejected at the very first catalog call. Never revive one:
+// the registration table is generated, schemas and all.

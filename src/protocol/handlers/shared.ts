@@ -19,10 +19,6 @@ export const REQUEST_PARAMS_SCHEMA = schema([
   field("request", binary(), false),
 ]);
 
-export const RESULT_BINARY_NULLABLE_SCHEMA = schema([
-  field("result", binary(), true),
-]);
-
 /**
  * Unwrap a "request" Binary column: deserialize the inner Arrow IPC batch
  * and return flat columns as a dict (row 0).

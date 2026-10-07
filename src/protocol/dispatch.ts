@@ -1,21 +1,23 @@
 // Copyright 2025, 2026 Query Farm LLC - https://query.farm
 // Build VGI protocol from worker implementation.
-// Orchestrator that registers function, aggregate, and catalog handlers
-// against vgi-rpc Protocol. The handler implementations live in handlers/.
+// The method table, its schemas and the UNIMPLEMENTED defaults are generated
+// (src/generated/vgi-service.ts, from vgi-python's VgiProtocol); this module
+// composes the handler groups in handlers/ over those defaults.
 
-import { Protocol } from "@query-farm/vgi-rpc";
+import type { Protocol } from "@query-farm/vgi-rpc";
 
-// NOTE: We must NOT use vgi-rpc's str/bytes/int/etc. singletons in Schema objects
-// because Bun loads apache-arrow as separate module instances for our code vs vgi-rpc's
-// compiled dist. Instead, we pre-build Schema objects and pass them directly to Protocol
-// methods (toSchema() passes Schema instances through without instanceof checks).
 import type { FunctionRegistry } from "../functions/registry.js";
 import type { CatalogInterface } from "../catalog/interface.js";
-import { registerFunctionMethods } from "./handlers/function.js";
-import { registerAggregateMethods } from "./handlers/aggregate.js";
-import { registerTableBufferingMethods } from "./handlers/table-buffering.js";
-import { registerCatalogMethods } from "./handlers/catalog/index.js";
-import { registerUnimplementedMethods } from "./handlers/unimplemented.js";
+import {
+  createVgiProtocol,
+  UNIMPLEMENTED_VGI_SERVICE,
+  VGI_PROTOCOL_NAME,
+  type VgiService,
+} from "../generated/vgi-service.js";
+import { functionHandlers } from "./handlers/function.js";
+import { aggregateHandlers } from "./handlers/aggregate.js";
+import { tableBufferingHandlers } from "./handlers/table-buffering.js";
+import { catalogHandlers } from "./handlers/catalog/index.js";
 
 export interface ProtocolConfig {
   registry: FunctionRegistry;
@@ -41,7 +43,8 @@ export interface ProtocolConfig {
  * That matters for this consumer specifically: the DuckDB extension ships to
  * users and cannot be flag-dayed.
  *
- * Declared rather than derived. Until the transports made the routing key
+ * Declared rather than derived, and now generated with the method table
+ * (src/generated/vgi-service.ts). Until the transports made the routing key
  * required, each implementation's wire name defaulted to whatever its local
  * type was called, which left the six ports disagreeing four ways — Python
  * `VgiProtocol`, Java and C# `VgiService`, Go the framework default `Service`,
@@ -55,15 +58,16 @@ export interface ProtocolConfig {
  * so the HTTP entry points build that scope from the same constant the
  * protocol is registered under rather than a second copy of the literal.
  */
-export const VGI_PROTOCOL_NAME = "vgi.v2";
+export { VGI_PROTOCOL_NAME };
 
 /**
  * The `vgi.v2` protocol hash `vgi_rpc.Reflection.v1` must report for this
  * worker: the reference's (vgi-python 0.43.0, 72 methods). Every SDK hosts
  * every `vgi.v2` method with the reference's schemas, so the hash is one value
  * across the ports; a method this SDK does not implement is still registered
- * (handlers/unimplemented.ts). The hash covers method names, types and the
- * params/result/header schemas only (WIRE_PROTOCOL.md §14).
+ * with the generated UNIMPLEMENTED default (src/generated/vgi-service.ts). The
+ * hash covers method names, types and the params/result/header schemas only
+ * (WIRE_PROTOCOL.md §14).
  *
  * It changes only with vgi.v2's protocol version (currently 2.1.0). Asserted
  * by src/protocol/__tests__/vgi-v2-hash.test.ts; if that test fails, the
@@ -71,18 +75,25 @@ export const VGI_PROTOCOL_NAME = "vgi.v2";
  */
 export const VGI_V2_PROTOCOL_HASH = "774cb80090d71ea76d09aa311b9cda4ca4c33c3bf72c43242eb6dc87b6f79ce5";
 
+/**
+ * This worker's `vgi.v2` implementation: the generated UNIMPLEMENTED default
+ * for every method, overridden by the handler groups for what this SDK serves.
+ */
+export function buildVgiService(config: ProtocolConfig): VgiService {
+  return {
+    ...UNIMPLEMENTED_VGI_SERVICE,
+    ...functionHandlers({
+      registry: config.registry,
+      signingKey: config.signingKey,
+      catalogInterface: config.catalogInterface,
+    }),
+    ...aggregateHandlers(config.registry),
+    ...tableBufferingHandlers(config.registry, config.signingKey),
+    ...catalogHandlers(config.catalogInterface, config.signingKey),
+  };
+}
+
+/** The `vgi.v2` protocol, registered from the generated table with {@link buildVgiService}. */
 export function buildVgiProtocol(config: ProtocolConfig): Protocol {
-  const protocol = new Protocol(VGI_PROTOCOL_NAME, { protocolVersion: "2.1.0" });
-
-  registerFunctionMethods(protocol, {
-    registry: config.registry,
-    signingKey: config.signingKey,
-    catalogInterface: config.catalogInterface,
-  });
-  registerAggregateMethods(protocol, config.registry);
-  registerTableBufferingMethods(protocol, config.registry, config.signingKey);
-  registerCatalogMethods(protocol, config.catalogInterface, config.catalogName, config.signingKey);
-  registerUnimplementedMethods(protocol);
-
-  return protocol;
+  return createVgiProtocol(buildVgiService(config));
 }

@@ -4,7 +4,8 @@
 // implements VgiFunction.bind/globalInit/createStreamHandlers.
 
 import { type VgiSchema, schema, type VgiField, field, type VgiDataType, binary, int64 } from "../../arrow/index.js";
-import { Protocol, type AuthContext } from "@query-farm/vgi-rpc";
+import type { AuthContext } from "@query-farm/vgi-rpc";
+import { exchangeStream, type VgiService } from "../../generated/vgi-service.js";
 import type { FunctionRegistry } from "../../functions/registry.js";
 import type { StreamHandlers, HandlerState } from "../../functions/types.js";
 import {
@@ -20,25 +21,11 @@ import { batchToScalarDict, deserializeBatch, adoptArrowJsShape } from "../../ut
 import { toUint8Array } from "../../util/bytes.js";
 import { serializeColumnStatistics } from "../../util/statistics.js";
 import {
-  BindParamsSchema,
   BindResultSchema,
-  InitParamsSchema,
-  TableFunctionCardinalityParamsSchema,
   TableFunctionCardinalityResultSchema,
-  TableFunctionDynamicToStringParamsSchema,
   TableFunctionDynamicToStringResultSchema,
-  TableFunctionPlanParamsSchema,
-  TableFunctionStatisticsParamsSchema,
 } from "../../generated/vgi-protocol-schemas.js";
-import {
-  REQUEST_PARAMS_SCHEMA,
-  RESULT_BINARY_SCHEMA,
-  RESULT_BINARY_NULLABLE_SCHEMA,
-  unwrapRequest,
-  wrapResult,
-  overloadContext,
-} from "./shared.js";
-import { GLOBAL_INIT_RESPONSE_SCHEMA } from "../serializers/init.js";
+import { unwrapRequest, wrapResult, overloadContext } from "./shared.js";
 import { parseCarriedInitRequest } from "../carried-init-request.js";
 import { openAttach } from "./catalog/shared.js";
 import { currentRequestAuth } from "../../request-auth.js";
@@ -197,7 +184,8 @@ async function resolveSplitPayloads(
   }
 }
 
-export function registerFunctionMethods(protocol: Protocol, config: FunctionHandlerConfig): void {
+/** The per-function lifecycle's `vgi.v2` handlers. */
+export function functionHandlers(config: FunctionHandlerConfig): Partial<VgiService> {
   const { registry, signingKey, catalogInterface } = config;
 
   // The framework mints every attach as uuid(16) || catalog_bytes (sealed on
@@ -232,10 +220,6 @@ export function registerFunctionMethods(protocol: Protocol, config: FunctionHand
     return overloadContext({ ...bindCall, attach_opaque_data: attach }, catalogInterface);
   }
 
-  // Shared with the serializer that actually emits the header, so the
-  // advertised shape and the emitted shape cannot drift apart.
-  const initHeaderSchema = GLOBAL_INIT_RESPONSE_SCHEMA;
-
   const emptySchema = schema([]);
 
   // Dummy non-empty schema for the init exchange registration.
@@ -249,25 +233,20 @@ export function registerFunctionMethods(protocol: Protocol, config: FunctionHand
   // --------------------------------------------------------------------------
   // bind (unary)
   // --------------------------------------------------------------------------
-  protocol.unary("bind", {
-    params: BindParamsSchema,
-    result: RESULT_BINARY_SCHEMA,
-    handler: async (params, ctx) => {
-      const innerParams = unwrapRequest(params.request);
-      const request = deserializeBindRequest(innerParams);
-      request.attach_opaque_data = await stripAttach(request.attach_opaque_data, ctx);
-      const func = registry.get(request.function_name, overloadContext(request, catalogInterface));
-      const response = await func.bind(request);
-      const serialized = serializeBindResponse(response);
-      return wrapResult(serialized, BindResultSchema);
-    },
-  });
+  const bind: VgiService["bind"] = async (params, ctx) => {
+    const innerParams = unwrapRequest(params.request);
+    const request = deserializeBindRequest(innerParams);
+    request.attach_opaque_data = await stripAttach(request.attach_opaque_data, ctx);
+    const func = registry.get(request.function_name, overloadContext(request, catalogInterface));
+    const response = await func.bind(request);
+    const serialized = serializeBindResponse(response);
+    return wrapResult(serialized, BindResultSchema);
+  };
 
   // --------------------------------------------------------------------------
   // init (streaming) - dynamically produces either producer or exchange streams
   // --------------------------------------------------------------------------
-  protocol.exchange("init", {
-    params: InitParamsSchema,
+  const init = exchangeStream({
     inputSchema: dummyInputSchema,
     outputSchema: emptySchema,
     init: async (params, ctx?: any) => {
@@ -457,7 +436,6 @@ export function registerFunctionMethods(protocol: Protocol, config: FunctionHand
       // the number of predicate ids, not the number of turns).
       state.filterHistory = handlerState?.filterHistory ?? null;
     },
-    headerSchema: initHeaderSchema,
     headerInit: (params: any, state: any, ctx: any) => {
       // During init, _initResponse is still in memory.
       // For exchange, this is never called (headers are only in init response).
@@ -471,22 +449,18 @@ export function registerFunctionMethods(protocol: Protocol, config: FunctionHand
   // --------------------------------------------------------------------------
   // table_function_cardinality (unary)
   // --------------------------------------------------------------------------
-  protocol.unary("table_function_cardinality", {
-    params: TableFunctionCardinalityParamsSchema,
-    result: RESULT_BINARY_SCHEMA,
-    handler: async (params) => {
-      const innerParams = unwrapRequest(params.request);
-      const request = deserializeCardinalityRequest(innerParams);
-      const func = registry.get(request.bind_call.function_name, await strippedContext(request.bind_call));
-      let cardResult: Record<string, any>;
-      if (func.cardinality) {
-        cardResult = serializeTableCardinality(await func.cardinality(request));
-      } else {
-        cardResult = { estimate: null, max: null };
-      }
-      return wrapResult(cardResult, TableFunctionCardinalityResultSchema);
-    },
-  });
+  const tableFunctionCardinality: VgiService["tableFunctionCardinality"] = async (params) => {
+    const innerParams = unwrapRequest(params.request);
+    const request = deserializeCardinalityRequest(innerParams);
+    const func = registry.get(request.bind_call.function_name, await strippedContext(request.bind_call));
+    let cardResult: Record<string, any>;
+    if (func.cardinality) {
+      cardResult = serializeTableCardinality(await func.cardinality(request));
+    } else {
+      cardResult = { estimate: null, max: null };
+    }
+    return wrapResult(cardResult, TableFunctionCardinalityResultSchema);
+  };
 
   // --------------------------------------------------------------------------
   // table_function_plan (unary)
@@ -499,77 +473,73 @@ export function registerFunctionMethods(protocol: Protocol, config: FunctionHand
   // is one unit of work. That keeps every existing worker serving unchanged under
   // protocol 1.4.0, so splits stay opt-in rather than something every worker must
   // now implement.
-  protocol.unary("table_function_plan", {
-    params: TableFunctionPlanParamsSchema,
-    result: RESULT_BINARY_SCHEMA,
-    handler: async (params, ctx?: any) => {
-      const innerParams = unwrapRequest(params.request);
-      const request = deserializePlanRequest(innerParams);
-      const func = registry.get(
-        request.bind_call.function_name,
-        await strippedContext(request.bind_call),
-      );
+  const tableFunctionPlan: VgiService["tableFunctionPlan"] = async (params, ctx?: any) => {
+    const innerParams = unwrapRequest(params.request);
+    const request = deserializePlanRequest(innerParams);
+    const func = registry.get(
+      request.bind_call.function_name,
+      await strippedContext(request.bind_call),
+    );
 
-      const plan: PlanResult = func.plan
-        ? await func.plan(request)
-        : { splits: [{ payload: new Uint8Array(0) }] };
+    const plan: PlanResult = func.plan
+      ? await func.plan(request)
+      : { splits: [{ payload: new Uint8Array(0) }] };
 
-      // The framework stamps every token: an author cannot forget the
-      // consistency anchor, cannot mis-bind the fingerprint, and never writes
-      // crypto — and the envelope stays a private implementation detail whose
-      // layout can change without touching worker code in five languages.
-      const fp = fingerprintInputs(toUint8Array(innerParams.bind_call));
-      const fingerprint = await bindFingerprint(
-        fp.schemaPath,
-        fp.functionName,
-        fp.args,
-        fp.settings,
-        // projection_ids is not a bind-call field (it rides the init request),
-        // so it feeds in empty — matching the reference implementation, which
-        // reads it off the bind call and likewise finds nothing.
-        new Uint8Array(0),
-      );
-      // A worker that names its version is taken at its word — it knows which
-      // snapshot it planned against. One that leaves it unset gets the LIVE
-      // version, never 0: minting 0 while redemption compares against the live
-      // counter refuses every token, and is invisible on a catalog whose version
-      // happens to be 0, which is most fixtures.
-      const anchor =
-        plan.catalogVersion != null
-          ? splitAnchor(plan.catalogVersion)
-          : ((await liveSplitAnchor(catalogInterface, request.bind_call as any, ctx?.auth, signingKey)) ??
-            splitAnchor(0));
+    // The framework stamps every token: an author cannot forget the
+    // consistency anchor, cannot mis-bind the fingerprint, and never writes
+    // crypto — and the envelope stays a private implementation detail whose
+    // layout can change without touching worker code in five languages.
+    const fp = fingerprintInputs(toUint8Array(innerParams.bind_call));
+    const fingerprint = await bindFingerprint(
+      fp.schemaPath,
+      fp.functionName,
+      fp.args,
+      fp.settings,
+      // projection_ids is not a bind-call field (it rides the init request),
+      // so it feeds in empty — matching the reference implementation, which
+      // reads it off the bind call and likewise finds nothing.
+      new Uint8Array(0),
+    );
+    // A worker that names its version is taken at its word — it knows which
+    // snapshot it planned against. One that leaves it unset gets the LIVE
+    // version, never 0: minting 0 while redemption compares against the live
+    // counter refuses every token, and is invisible on a catalog whose version
+    // happens to be 0, which is most fixtures.
+    const anchor =
+      plan.catalogVersion != null
+        ? splitAnchor(plan.catalogVersion)
+        : ((await liveSplitAnchor(catalogInterface, request.bind_call as any, ctx?.auth, signingKey)) ??
+          splitAnchor(0));
 
-      const blobs: Uint8Array[] = [];
-      for (const split of plan.splits) {
-        const token = await buildSplitToken({
-          payload: split.payload,
-          fingerprint,
-          anchor,
-          signingKey,
-          // Bind the caller. Without it every token seals under the anonymous
-          // identity, so one tenant's splits are replayable by another — the
-          // exact replay the AAD exists to stop.
-          auth: ctx?.auth,
-        });
-        blobs.push(
-          serializeBatch(
-            batchFromColumns(
-              Object.fromEntries(
-                SCAN_SPLIT_SCHEMA.fields.map((f) => [
-                  f.name,
-                  [scanSplitRow(split, token)[f.name] ?? null],
-                ]),
-              ),
-              SCAN_SPLIT_SCHEMA,
+    const blobs: Uint8Array[] = [];
+    for (const split of plan.splits) {
+      const token = await buildSplitToken({
+        payload: split.payload,
+        fingerprint,
+        anchor,
+        signingKey,
+        // Bind the caller. Without it every token seals under the anonymous
+        // identity, so one tenant's splits are replayable by another — the
+        // exact replay the AAD exists to stop.
+        auth: ctx?.auth,
+      });
+      blobs.push(
+        serializeBatch(
+          batchFromColumns(
+            Object.fromEntries(
+              SCAN_SPLIT_SCHEMA.fields.map((f) => [
+                f.name,
+                [scanSplitRow(split, token)[f.name] ?? null],
+              ]),
             ),
+            SCAN_SPLIT_SCHEMA,
           ),
-        );
-      }
+        ),
+      );
+    }
 
-      return wrapResult(planResponseRow(plan, blobs), PLAN_RESPONSE_SCHEMA);
-    },
-  });
+    return wrapResult(planResponseRow(plan, blobs), PLAN_RESPONSE_SCHEMA);
+  };
 
   // --------------------------------------------------------------------------
   // table_function_statistics (unary)
@@ -578,19 +548,15 @@ export function registerFunctionMethods(protocol: Protocol, config: FunctionHand
   // the function declared a statistics() hook and it produced a non-empty
   // list, else null. DuckDB uses the bounds for plan-time filter elimination
   // (folds impossible filters to EMPTY_RESULT).
-  protocol.unary("table_function_statistics", {
-    params: TableFunctionStatisticsParamsSchema,
-    result: RESULT_BINARY_NULLABLE_SCHEMA,
-    handler: async (params) => {
-      const innerParams = unwrapRequest(params.request);
-      const request = deserializeCardinalityRequest(innerParams);
-      const func = registry.get(request.bind_call.function_name, await strippedContext(request.bind_call));
-      if (!func.statistics) return { result: null };
-      const stats = func.statistics(request);
-      if (!stats || stats.length === 0) return { result: null };
-      return { result: serializeColumnStatistics(stats) };
-    },
-  });
+  const tableFunctionStatistics: VgiService["tableFunctionStatistics"] = async (params) => {
+    const innerParams = unwrapRequest(params.request);
+    const request = deserializeCardinalityRequest(innerParams);
+    const func = registry.get(request.bind_call.function_name, await strippedContext(request.bind_call));
+    if (!func.statistics) return { result: null };
+    const stats = func.statistics(request);
+    if (!stats || stats.length === 0) return { result: null };
+    return { result: serializeColumnStatistics(stats) };
+  };
 
   // --------------------------------------------------------------------------
   // table_function_dynamic_to_string (unary)
@@ -601,27 +567,32 @@ export function registerFunctionMethods(protocol: Protocol, config: FunctionHand
   // intrinsics (Function, Rows Read, Threads). When the function doesn't
   // declare dynamicToString, return empty maps so the C++ side falls back
   // to intrinsics only.
-  protocol.unary("table_function_dynamic_to_string", {
-    params: TableFunctionDynamicToStringParamsSchema,
-    result: RESULT_BINARY_SCHEMA,
-    handler: async (params) => {
-      const innerParams = unwrapRequest(params.request);
-      const bindCallBytes = toUint8Array(innerParams.bind_call);
-      const bindCallBatch = deserializeBatch(bindCallBytes);
-      // Single-row bind_call batch -> dict via the codec/canonical path.
-      const bindParams = batchToScalarDict(bindCallBatch);
-      const bindCall = deserializeBindRequest(bindParams);
-      const globalExecutionId = toUint8Array(innerParams.global_execution_id);
-      const bindOpaqueData = innerParams.bind_opaque_data
-        ? toUint8Array(innerParams.bind_opaque_data)
-        : null;
-      const func = registry.get(bindCall.function_name, await strippedContext(bindCall));
-      const map = func.dynamicToString
-        ? await func.dynamicToString({ bindCall, bindOpaqueData, globalExecutionId })
-        : {};
-      const keys = Object.keys(map);
-      const values = keys.map((k) => map[k] ?? "");
-      return wrapResult({ keys, values }, TableFunctionDynamicToStringResultSchema);
-    },
-  });
+  const tableFunctionDynamicToString: VgiService["tableFunctionDynamicToString"] = async (params) => {
+    const innerParams = unwrapRequest(params.request);
+    const bindCallBytes = toUint8Array(innerParams.bind_call);
+    const bindCallBatch = deserializeBatch(bindCallBytes);
+    // Single-row bind_call batch -> dict via the codec/canonical path.
+    const bindParams = batchToScalarDict(bindCallBatch);
+    const bindCall = deserializeBindRequest(bindParams);
+    const globalExecutionId = toUint8Array(innerParams.global_execution_id);
+    const bindOpaqueData = innerParams.bind_opaque_data
+      ? toUint8Array(innerParams.bind_opaque_data)
+      : null;
+    const func = registry.get(bindCall.function_name, await strippedContext(bindCall));
+    const map = func.dynamicToString
+      ? await func.dynamicToString({ bindCall, bindOpaqueData, globalExecutionId })
+      : {};
+    const keys = Object.keys(map);
+    const values = keys.map((k) => map[k] ?? "");
+    return wrapResult({ keys, values }, TableFunctionDynamicToStringResultSchema);
+  };
+
+  return {
+    bind,
+    init,
+    tableFunctionCardinality,
+    tableFunctionPlan,
+    tableFunctionStatistics,
+    tableFunctionDynamicToString,
+  };
 }

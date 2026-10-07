@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: LicenseRef-QueryFarm-Source-Available-1.0
 
 // Worker-path test for catalog opaque-data AEAD sealing. Confirms that when a
-// signing key is configured, the catalogUnary wrapper unwraps the
+// signing key is configured, the catalogHandler wrapper unwraps the
 // attach_opaque_data envelope before the handler body runs — and rejects an
 // envelope sealed for a different principal.
 
@@ -65,7 +65,7 @@ class RecordingCatalog extends CatalogInterface {
 }
 
 describe("catalog opaque-data AEAD (worker path)", () => {
-  test("catalogUnary unwraps the sealed envelope before the handler runs", async () => {
+  test("catalogHandler unwraps the sealed envelope before the handler runs", async () => {
     const catalog = new RecordingCatalog();
     const protocol = buildVgiProtocol({
       registry: new FunctionRegistry(),

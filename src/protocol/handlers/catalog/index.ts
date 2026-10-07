@@ -1,25 +1,26 @@
 // Copyright 2025, 2026 Query Farm LLC - https://query.farm
-// Catalog handler orchestrator: registers all catalog_* RPC methods.
+// Catalog handler orchestrator: every catalog_* `vgi.v2` handler.
 
-import { Protocol } from "@query-farm/vgi-rpc";
 import type { CatalogInterface } from "../../../catalog/interface.js";
+import type { VgiService } from "../../../generated/vgi-service.js";
 import { makeGetCatalog } from "./shared.js";
-import { registerCatalogAdminMethods } from "./admin.js";
-import { registerCatalogTableMethods } from "./table.js";
-import { registerCatalogViewMethods } from "./view.js";
-import { registerCatalogMacroMethods } from "./macro.js";
-import { registerCatalogIndexMethods } from "./index_methods.js";
+import { catalogAdminHandlers } from "./admin.js";
+import { catalogTableHandlers } from "./table.js";
+import { catalogViewHandlers } from "./view.js";
+import { catalogMacroHandlers } from "./macro.js";
+import { catalogIndexHandlers } from "./index_methods.js";
 
-export function registerCatalogMethods(
-  protocol: Protocol,
+/** The catalog_* `vgi.v2` handlers, over *catalog* (or `NoCatalogError` without one). */
+export function catalogHandlers(
   catalog: CatalogInterface | undefined,
-  _catalogName: string | undefined,
   signingKey?: Uint8Array,
-): void {
+): Partial<VgiService> {
   const getCatalog = makeGetCatalog(catalog);
-  registerCatalogAdminMethods(protocol, getCatalog, signingKey);
-  registerCatalogTableMethods(protocol, getCatalog, signingKey);
-  registerCatalogViewMethods(protocol, getCatalog, signingKey);
-  registerCatalogMacroMethods(protocol, getCatalog, signingKey);
-  registerCatalogIndexMethods(protocol, getCatalog, signingKey);
+  return {
+    ...catalogAdminHandlers(getCatalog, signingKey),
+    ...catalogTableHandlers(getCatalog, signingKey),
+    ...catalogViewHandlers(getCatalog, signingKey),
+    ...catalogMacroHandlers(getCatalog, signingKey),
+    ...catalogIndexHandlers(getCatalog, signingKey),
+  };
 }
