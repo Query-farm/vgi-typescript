@@ -44,7 +44,13 @@ const TRANSACTION_AAD_PREFIX = _UTF8.encode("vgi.transaction_opaque_data.v1\0");
  * this single error so a probing caller cannot distinguish them.
  */
 export class OpaqueDataRejectedError extends Error {
+  /** Canonical code (vgi-opaque-data-sealing.md rule 4): never `UNKNOWN`. */
+  readonly errorCode = "INVALID_ARGUMENT";
+  /** The classified kind a client branches on; identical for every cause. */
+  readonly errorKind = "opaque_data_not_recognized";
   constructor(field = "opaque data") {
+    // Exactly `<field> not recognized`, no details: a probing caller learns
+    // nothing about which check failed.
     super(`${field} not recognized`);
     this.name = "OpaqueDataRejectedError";
   }

@@ -24,6 +24,7 @@ import type {
   ViewInfo,
 } from "./interface.js";
 import { CatalogInterface } from "./interface.js";
+import { OpaqueDataRejectedError } from "../crypto.js";
 
 function bufferEquals(a: AttachOpaqueData, b: AttachOpaqueData): boolean {
   if (a.length !== b.length) return false;
@@ -52,7 +53,10 @@ export class CompositeCatalogInterface extends CatalogInterface {
     const idx = attachOpaqueData[ROUTE_BYTE];
     const route = this._backends[idx];
     if (!route) {
-      throw new Error(`CompositeCatalog: no backend at route-byte index ${idx} (have ${this._backends.length})`);
+      // Routing is a check too (vgi-opaque-data-sealing.md rule 4): an
+      // unroutable value gets the uniform refusal, never a description of
+      // what this worker serves.
+      throw new OpaqueDataRejectedError("attach_opaque_data");
     }
     return route;
   }

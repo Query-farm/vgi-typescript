@@ -23,6 +23,36 @@ function auth(domain: string, principal: string): AuthContext {
 
 const PAYLOAD = new TextEncoder().encode("readonly-catalog-");
 
+describe("crypto: the uniform refusal (vgi-opaque-data-sealing.md rule 4)", () => {
+  test("every failure is INVALID_ARGUMENT / opaque_data_not_recognized, '<field> not recognized', no details", async () => {
+    const token = await sealBytes(PAYLOAD, KEY, attachAad(auth("test", "alice")), ATTACH_ENVELOPE_VERSION);
+    const tampered = token.slice();
+    tampered[tampered.length - 1] ^= 1;
+    // Thunks, so each rejection is handled the moment it happens.
+    const failures = [
+      () => openBytes(token, KEY, attachAad(auth("test", "bob")), ATTACH_ENVELOPE_VERSION, "attach_opaque_data"),
+      () => openBytes(tampered, KEY, attachAad(auth("test", "alice")), ATTACH_ENVELOPE_VERSION, "attach_opaque_data"),
+      () => openBytes(new Uint8Array(3), KEY, attachAad(undefined), ATTACH_ENVELOPE_VERSION, "attach_opaque_data"),
+      () => openBytes(token, KEY, attachAad(undefined), TRANSACTION_ENVELOPE_VERSION, "transaction_opaque_data"),
+    ];
+    const seen: string[] = [];
+    for (const f of failures) {
+      const e = (await f().catch((x) => x)) as OpaqueDataRejectedError & { errorDetails?: unknown };
+      expect(e).toBeInstanceOf(OpaqueDataRejectedError);
+      expect(e.errorCode).toBe("INVALID_ARGUMENT");
+      expect(e.errorKind).toBe("opaque_data_not_recognized");
+      expect(e.errorDetails).toBeUndefined();
+      seen.push(e.message);
+    }
+    expect(seen).toEqual([
+      "attach_opaque_data not recognized",
+      "attach_opaque_data not recognized",
+      "attach_opaque_data not recognized",
+      "transaction_opaque_data not recognized",
+    ]);
+  });
+});
+
 describe("crypto: AEAD opaque-data envelopes", () => {
   test("seal/open round-trips under the same identity", async () => {
     const aad = attachAad(auth("test", "alice"));
