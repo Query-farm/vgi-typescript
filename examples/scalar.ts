@@ -94,7 +94,7 @@ function promoteForAddition(dtype: DataType): DataType {
     const newPrecision = Math.min(dec.precision + 1, 38);
     return new Decimal(dec.scale, newPrecision, dec.bitWidth);
   }
-  throw new Error(`Unsupported numeric type for addition: ${dtype}`);
+  throw new ArgumentValidationError(`Unsupported numeric type for addition: ${dtype}`);
 }
 
 // ============================================================================

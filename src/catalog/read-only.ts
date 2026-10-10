@@ -32,6 +32,7 @@ import { FunctionStability, NullHandling, OrderPreservation, DEFAULT_MAX_WORKERS
 import { Arguments } from "../arguments/arguments.js";
 import { normalizeSchemaPath, schemaPathDisplay, schemaPathsEqual } from "../schema-path.js";
 import { ForeignKeyInfoSchema } from "../generated/vgi-protocol-schemas.js";
+import { VgiError } from "../errors.js";
 import { encodeFunctionInfoOnce, freezeCatalogItem } from "./item-encoding.js";
 
 /**
@@ -178,7 +179,7 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
     implementationVersion?: string | null,
   ): CatalogAttachResult | Promise<CatalogAttachResult> {
     if (!this.catalogs().includes(name)) {
-      throw new Error(`No worker handles catalog '${name}'`);
+      throw new VgiError(`No worker handles catalog '${name}'`, "NOT_FOUND");
     }
     // Refuse an attach that omits a declared-required option, so the caller
     // gets the option name rather than a catalog that looks mysteriously
@@ -820,11 +821,11 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
     // Find the table descriptor
     const schema = this._descriptor.schemas.find((s) => schemaPathsEqual(schemaDescriptorPath(s), schemaPath));
     if (!schema || !schema.tables) {
-      throw new Error(`Table '${name}' not found in schema ${schemaPathDisplay(schemaPath)}`);
+      throw new VgiError(`Table '${name}' not found in schema ${schemaPathDisplay(schemaPath)}`, "NOT_FOUND");
     }
     const table = schema.tables.find((t) => t.name === name);
     if (!table) {
-      throw new Error(`Table '${name}' not found in schema ${schemaPathDisplay(schemaPath)}`);
+      throw new VgiError(`Table '${name}' not found in schema ${schemaPathDisplay(schemaPath)}`, "NOT_FOUND");
     }
 
     // Reject AT clause on tables that don't support time travel
@@ -1145,7 +1146,7 @@ function serializeArgsBatch(args: Arguments, argSpecSchema: VgiSchema): Uint8Arr
 
 function validateAtParams(atUnit?: string, atValue?: string): void {
   if (Boolean(atUnit) !== Boolean(atValue)) {
-    throw new Error("at_unit and at_value must both be provided or both be absent");
+    throw new VgiError("at_unit and at_value must both be provided or both be absent", "INVALID_ARGUMENT");
   }
 }
 

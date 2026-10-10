@@ -10,7 +10,7 @@ import type { VgiSchema } from "../arrow/index.js";
 import type { VgiFunction } from "./types.js";
 import type { Arguments } from "../arguments/arguments.js";
 import type { ArgumentSpec } from "../arguments/argument-spec.js";
-import { FunctionNotFoundError } from "../errors.js";
+import { FunctionNotFoundError, VgiError } from "../errors.js";
 import { schemaPathDisplay, schemaPathKey } from "../schema-path.js";
 
 export interface OverloadContext {
@@ -289,9 +289,10 @@ export class FunctionRegistry {
       } else if (candidates && candidates.length > 0) {
         const schemas = this.schemasFor(name);
         if (schemas.length > 0) {
-          throw new Error(
+          throw new VgiError(
             `Function '${name}' is not registered in schema ${schemaPathDisplay(schemaPath)}. ` +
               `It is available in: [${schemas.map(schemaPathDisplay).join(", ")}]`,
+            "NOT_FOUND",
           );
         }
       }
