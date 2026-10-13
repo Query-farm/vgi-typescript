@@ -4,11 +4,22 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import {
   decodeCatalogCapabilities, encodeCatalogCapabilities,
+  decodeSqlExpression, encodeSqlExpression,
+  decodeSortKey, encodeSortKey,
+  decodeTableLayout, encodeTableLayout,
+  decodeTableLayoutChange, encodeTableLayoutChange,
   decodeOptionDefinitions, encodeOptionDefinitions,
   decodeOptionChanges, encodeOptionChanges,
   decodeOptionState, encodeOptionState,
   decodeRequiredFilterPaths, encodeRequiredFilterPaths,
 } from "../vgi-protocol-types.js";
+
+import { decodeTableInfo, encodeTableInfo } from "../vgi-client.js";
+import { encodeASD, decodeASD } from "../../codec/asd.js";
+import { TableCreateRequestSchema } from "../vgi-protocol-schemas.js";
+import type { TableCreateRequest } from "../vgi-client.js";
+const encodeTableCreateRequest = (value: TableCreateRequest) => encodeASD(TableCreateRequestSchema, value);
+const decodeTableCreateRequest = (value: Uint8Array) => decodeASD<TableCreateRequest>(TableCreateRequestSchema, value);
 
 const corpus = JSON.parse(readFileSync(new URL("../../../conformance/catalog-contracts.json", import.meta.url), "utf8"));
 const fixture = (name: string): Uint8Array => new Uint8Array(Buffer.from(corpus.records[name], "base64"));
@@ -51,4 +62,35 @@ test("capability profiles and option definitions preserve populated and empty fi
   expect(definitions.defaults).toEqual(fixture("values"));
   expect(definitions.create_names).toEqual(["optional", "record"]);
   expect(definitions.alter_names).toEqual(["optional"]);
+});
+
+test("layouts retain explicit ordering and distinguish clear from unchanged", () => {
+  const expression = decodeSqlExpression(encodeSqlExpression(decodeSqlExpression(fixture("expression"))));
+  expect(expression.schema_path).toEqual(["one.two", "nested"]);
+  const key = decodeSortKey(encodeSortKey(decodeSortKey(fixture("sort_key"))));
+  expect(key.expression).toEqual(fixture("expression"));
+  expect(key.direction).toBe("DESC");
+  expect(key.null_order).toBe("FIRST");
+  const layout = decodeTableLayout(encodeTableLayout(decodeTableLayout(fixture("layout"))));
+  expect(layout.partition_by).toEqual([fixture("expression")]);
+  expect(layout.sorted_by).toEqual([fixture("sort_key")]);
+  expect(layout.coverage).toBe("ALL_ROWS");
+  expect(decodeTableLayout(fixture("empty_layout")).sorted_by).toEqual([]);
+  const change = decodeTableLayoutChange(encodeTableLayoutChange(decodeTableLayoutChange(fixture("layout_change"))));
+  expect(change.mode).toBe("REWRITE");
+  expect(change.partition_by).toEqual([]);
+  expect(change.sorted_by).toEqual([fixture("sort_key")]);
+  const clear = decodeTableLayoutChange(encodeTableLayoutChange(decodeTableLayoutChange(fixture("layout_clear"))));
+  expect(clear.mode).toBe("FUTURE_WRITES");
+  expect(clear.partition_by).toBeNull();
+  expect(clear.sorted_by).toEqual([]);
+  const create = decodeTableCreateRequest(encodeTableCreateRequest(decodeTableCreateRequest(fixture("table_create"))));
+  expect(create.options).toEqual(fixture("values"));
+  expect(create.layout).toEqual(fixture("layout"));
+  expect(create.comment).toBe("kept");
+  const old = decodeTableCreateRequest(encodeTableCreateRequest(decodeTableCreateRequest(fixture("table_create_legacy"))));
+  expect([old.comment, old.tags, old.options, old.layout]).toEqual([null, null, null, null]);
+  const info = decodeTableInfo(encodeTableInfo(decodeTableInfo(fixture("table_info"))));
+  expect(info.options).toEqual(fixture("state"));
+  expect(info.layout).toEqual(fixture("layout"));
 });

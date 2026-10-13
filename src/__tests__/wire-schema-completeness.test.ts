@@ -65,7 +65,7 @@ import { Arguments } from "../arguments/arguments.js";
 import { FunctionType } from "../types.js";
 import { OrderByDirection, OrderByNullOrder, type BindRequest } from "../protocol/types.js";
 import { encodeASD } from "../codec/asd.js";
-import { buildSchemaContents, encodeSchemaContents } from "../generated/vgi-protocol-types.js";
+import { encodeCatalogCapabilities, encodeOptionChanges, encodeOptionDefinitions, encodeOptionState, encodeRequiredFilterPaths, encodeSqlExpression, encodeSortKey, encodeTableLayout, encodeTableLayoutChange, buildSchemaContents, encodeSchemaContents } from "../generated/vgi-protocol-types.js";
 
 // --------------------------------------------------------------------------- //
 // Fixtures
@@ -167,6 +167,16 @@ const ARGUMENTS_BYTES = serializeBatch(
 );
 
 const CASES: WireRecordCase[] = [
+  {origin: "CatalogCapabilities", schema: generated.CatalogCapabilitiesSchema, build: () => encodeCatalogCapabilities(sampleRow(generated.CatalogCapabilitiesSchema) as any)},
+  {origin: "OptionChanges", schema: generated.OptionChangesSchema, build: () => encodeOptionChanges(sampleRow(generated.OptionChangesSchema) as any)},
+  {origin: "OptionDefinitions", schema: generated.OptionDefinitionsSchema, build: () => encodeOptionDefinitions(sampleRow(generated.OptionDefinitionsSchema) as any)},
+  {origin: "OptionState", schema: generated.OptionStateSchema, build: () => encodeOptionState(sampleRow(generated.OptionStateSchema) as any)},
+  {origin: "RequiredFilterPaths", schema: generated.RequiredFilterPathsSchema, build: () => encodeRequiredFilterPaths(sampleRow(generated.RequiredFilterPathsSchema) as any)},
+  {origin: "SqlExpression", schema: generated.SqlExpressionSchema, build: () => encodeSqlExpression(sampleRow(generated.SqlExpressionSchema) as any)},
+  {origin: "SortKey", schema: generated.SortKeySchema, build: () => encodeSortKey(sampleRow(generated.SortKeySchema) as any)},
+  {origin: "TableLayout", schema: generated.TableLayoutSchema, build: () => encodeTableLayout(sampleRow(generated.TableLayoutSchema) as any)},
+  {origin: "TableLayoutChange", schema: generated.TableLayoutChangeSchema, build: () => encodeTableLayoutChange(sampleRow(generated.TableLayoutChangeSchema) as any)},
+
   {
     origin: "CatalogInfo",
     schema: generated.CatalogInfoSchema,

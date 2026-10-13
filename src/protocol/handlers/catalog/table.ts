@@ -1,4 +1,5 @@
 // Copyright 2025, 2026 Query Farm LLC - https://query.farm
+import { MethodNotImplementedError } from "@query-farm/vgi-rpc";
 // Catalog table handlers: table_get/create/drop, scan_function_get,
 // column_statistics_get, comment_set, rename, plus all column_* mutations.
 
@@ -37,6 +38,9 @@ export function catalogTableHandlers(getCatalog: GetCatalog, signingKey?: Uint8A
 
   // catalog_table_create
   const catalogTableCreate = catalogHandler(signingKey, async (params) => {
+    if (params.comment != null || params.tags != null || params.options != null || params.layout != null) {
+      throw new MethodNotImplementedError("catalog_table_create: table metadata/options/layout profiles are not supported");
+    }
     const cat = getCatalog();
     await cat.tableCreate(
       toUint8Array(params.attach_opaque_data),

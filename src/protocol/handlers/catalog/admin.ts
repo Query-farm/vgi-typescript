@@ -1,4 +1,5 @@
 // Copyright 2025, 2026 Query Farm LLC - https://query.farm
+import { MethodNotImplementedError } from "@query-farm/vgi-rpc";
 // Catalog admin handlers: attach/detach/create/drop, version, transactions,
 // schemas (list, get, create, drop), schema contents listings.
 
@@ -240,7 +241,7 @@ export function catalogAdminHandlers(getCatalog: GetCatalog, signingKey?: Uint8A
 
   // catalog_schema_create
   const catalogSchemaCreate = catalogHandler(signingKey, async (params) => {
-    if (params.options != null) throw new Error("catalog_schema_create requires negotiated vgi.schema.options.create.v1");
+    if (params.options != null) throw new MethodNotImplementedError("catalog_schema_create requires negotiated vgi.schema.options.create.v1");
     const cat = getCatalog();
     await cat.schemaCreate(
       toUint8Array(params.attach_opaque_data),
