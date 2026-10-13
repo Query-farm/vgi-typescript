@@ -664,8 +664,9 @@ export abstract class CatalogInterface {
     attachOpaqueData: AttachOpaqueData,
     path: string[],
     comment?: string | null,
-    tags?: any,
-    transactionOpaqueData?: TransactionOpaqueData
+    tags?: Record<string, string> | null,
+    transactionOpaqueData?: TransactionOpaqueData,
+    onConflict?: string
   ): Awaitable<void> {
     throw new CatalogReadOnlyError("schema_create");
   }

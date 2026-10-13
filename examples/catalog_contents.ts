@@ -122,6 +122,7 @@ class ContentsBrokenCatalog extends ReadOnlyCatalogInterface {
 interface SchemaState {
   path: string[];
   comment: string | null;
+  tags: Record<string, string>;
   tables: Map<string, TableInfo>;
   views: Map<string, ViewInfo>;
 }
@@ -151,7 +152,7 @@ abstract class PrivateMemoryCatalog extends CatalogInterface {
     const attach = new Uint8Array(16);
     crypto.getRandomValues(attach);
     const state: MemoryState = { version: 1, schemas: new Map() };
-    state.schemas.set(schemaPathKey(["main"]), { path: ["main"], comment: null, tables: new Map(), views: new Map() });
+    state.schemas.set(schemaPathKey(["main"]), { path: ["main"], comment: null, tags: {}, tables: new Map(), views: new Map() });
     this._states.set(this._key(attach), state);
     return buildCatalogAttachResult({
       attach_opaque_data: attach,
@@ -177,21 +178,24 @@ abstract class PrivateMemoryCatalog extends CatalogInterface {
   schemas(attach: AttachOpaqueData): SchemaInfo[] {
     return [...this._state(attach).schemas.values()].map((s) => ({
       comment: s.comment,
-      tags: {},
+      tags: { ...s.tags },
       attach_opaque_data: attach,
       path: s.path,
       estimated_object_count: null,
     }));
   }
 
-  override schemaCreate(attach: AttachOpaqueData, path: string[], comment?: string | null): void {
+  override schemaCreate(attach: AttachOpaqueData, path: string[], comment?: string | null, tags?: Record<string, string> | null, _tx?: TransactionOpaqueData, onConflict?: string): void {
     const state = this._state(attach);
     const key = schemaPathKey(path);
-    if (state.schemas.has(key)) throw new CatalogAlreadyExistsError("Schema", path.join("."));
+    if (state.schemas.has(key)) {
+      if (onConflict?.toUpperCase() === "IGNORE") return;
+      if (onConflict?.toUpperCase() !== "REPLACE") throw new CatalogAlreadyExistsError("Schema", path.join("."));
+    }
     if (path.length > 1 && !state.schemas.has(schemaPathKey(path.slice(0, -1)))) {
       throw new CatalogNotFoundError("Schema", path.slice(0, -1).join("."));
     }
-    state.schemas.set(key, { path: [...path], comment: comment ?? null, tables: new Map(), views: new Map() });
+    state.schemas.set(key, { path: [...path], comment: comment ?? null, tags: { ...(tags ?? {}) }, tables: new Map(), views: new Map() });
     state.version++;
   }
 

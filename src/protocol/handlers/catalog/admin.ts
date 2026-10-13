@@ -3,6 +3,7 @@ import { MethodNotImplementedError } from "@query-farm/vgi-rpc";
 // Catalog admin handlers: attach/detach/create/drop, version, transactions,
 // schemas (list, get, create, drop), schema contents listings.
 
+import { catalogStringMap } from "./metadata.js";
 import { schema } from "../../../arrow/index.js";
 import type { CallContext } from "@query-farm/vgi-rpc";
 import type { VgiService } from "../../../generated/vgi-service.js";
@@ -245,10 +246,11 @@ export function catalogAdminHandlers(getCatalog: GetCatalog, signingKey?: Uint8A
     const cat = getCatalog();
     await cat.schemaCreate(
       toUint8Array(params.attach_opaque_data),
-      params.path,
+      Array.from(params.path),
       params.comment,
-      null, // tags
-      params.transaction_opaque_data ? toUint8Array(params.transaction_opaque_data) : undefined
+      catalogStringMap(params.tags),
+      params.transaction_opaque_data ? toUint8Array(params.transaction_opaque_data) : undefined,
+      decodeDictValue(params.on_conflict)
     );
     return {};
   });

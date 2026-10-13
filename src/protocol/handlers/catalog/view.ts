@@ -1,12 +1,13 @@
 // Copyright 2025, 2026 Query Farm LLC - https://query.farm
 // Catalog view handlers: view_get/create/drop/rename/comment_set.
 
+import { catalogStringMap } from "./metadata.js";
 import type { VgiService } from "../../../generated/vgi-service.js";
 import { encodeViewInfo } from "../../../generated/vgi-client.js";
 import {
   CatalogViewGetResultSchema,
 } from "../../../generated/vgi-protocol-schemas.js";
-import { decodeDictValue, decodeMapValue } from "../../../util/arrow/index.js";
+import { decodeDictValue } from "../../../util/arrow/index.js";
 import { toUint8Array } from "../../../util/bytes.js";
 import {
   wrapResult,
@@ -15,19 +16,6 @@ import {
   type GetCatalog,
   catalogHandler,
 } from "./shared.js";
-
-function viewStringMap(raw: any): Record<string, string> {
-  raw = decodeMapValue(raw);
-  const result: Record<string, string> = {};
-  if (raw == null) return result;
-  const entries = raw[Symbol.iterator] ? raw : Object.entries(raw);
-  for (const entry of entries) {
-    const [key, value] = Array.isArray(entry) ? entry : [entry.key, entry.value];
-    if (typeof key !== "string" || typeof value !== "string") throw new Error("view metadata must map strings to strings");
-    Object.defineProperty(result, key, { value, enumerable: true, writable: true, configurable: true });
-  }
-  return result;
-}
 
 export function catalogViewHandlers(getCatalog: GetCatalog, signingKey?: Uint8Array): Partial<VgiService> {
   // catalog_view_get
@@ -47,8 +35,8 @@ export function catalogViewHandlers(getCatalog: GetCatalog, signingKey?: Uint8Ar
   // catalog_view_create
   const catalogViewCreate = catalogHandler(signingKey, async (params) => {
     if (params.security !== "regular") throw new Error(`view security mode ${params.security} is unsupported`);
-    const tags = viewStringMap(params.tags);
-    const columnComments = viewStringMap(params.column_comments);
+    const tags = catalogStringMap(params.tags);
+    const columnComments = catalogStringMap(params.column_comments);
     if (Object.keys(columnComments).some((key) => !key || key.includes("\0"))) throw new Error("view column comments require raw output identifiers");
     const cat = getCatalog();
     await cat.viewCreate(

@@ -129,18 +129,20 @@ export class InMemoryCatalog extends CatalogInterface {
     attachOpaqueData: AttachOpaqueData,
     path: string[],
     comment?: string | null,
-    tags?: any,
-    transactionOpaqueData?: TransactionOpaqueData
+    tags?: Record<string, string> | null,
+    transactionOpaqueData?: TransactionOpaqueData,
+    onConflict?: string
   ): void {
     const att = this._getAttachment(attachOpaqueData);
     const key = schemaPathKey(path);
     if (att.schemas.has(key)) {
-      throw new CatalogAlreadyExistsError("Schema", schemaPathDisplay(path));
+      if (onConflict?.toUpperCase() === "IGNORE") return;
+      if (onConflict?.toUpperCase() !== "REPLACE") throw new CatalogAlreadyExistsError("Schema", schemaPathDisplay(path));
     }
     att.schemas.set(key, {
-      path,
+      path: [...path],
       comment: comment ?? null,
-      tags: tags ?? {},
+      tags: { ...(tags ?? {}) },
       tables: new Map(),
       views: new Map(),
     });
