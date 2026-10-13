@@ -880,31 +880,31 @@ export const catalog: CatalogDescriptor = {
         {
           name: "rff_simple",
           columns: RFF_SIMPLE_SCHEMA,
-          requiredFilters: [["a"]],
+          requiredFilters: [[["a"]]],
           comment: "rff_simple — requires a filter referencing column 'a'.",
         },
         {
           name: "rff_struct",
           columns: RFF_STRUCT_SCHEMA,
-          requiredFilters: [["s.a"], ["s.b"]],
+          requiredFilters: [[["s", "a"]], [["s", "b"]]],
           comment: "rff_struct — requires filters on both struct subfields s.a and s.b.",
         },
         {
           name: "rff_nested",
           columns: RFF_NESTED_SCHEMA,
-          requiredFilters: [["wrapper.mid.leaf"]],
+          requiredFilters: [[["wrapper", "mid", "leaf"]]],
           comment: "rff_nested — requires a filter on the 3-deep nested path wrapper.mid.leaf.",
         },
         {
           name: "rff_multi",
           columns: RFF_MULTI_SCHEMA,
-          requiredFilters: [["top"], ["s.a"]],
+          requiredFilters: [[["top"]], [["s", "a"]]],
           comment: "rff_multi — mixed top-level + struct subfield requirements.",
         },
         {
           name: "rff_or",
           columns: RFF_SIMPLE_SCHEMA,
-          requiredFilters: [["a", "b"]],
+          requiredFilters: [[["a"], ["b"]]],
           comment: "rff_or — requires a filter on 'a' OR 'b' (a single OR-group).",
         },
         {
@@ -915,7 +915,7 @@ export const catalog: CatalogDescriptor = {
         {
           name: "rff_rowid",
           columns: RFF_ROWID_SCHEMA,
-          requiredFilters: [["bbox.xmin"], ["bbox.xmax"], ["bbox.ymin"], ["bbox.ymax"]],
+          requiredFilters: [[["bbox", "xmin"]], [["bbox", "xmax"]], [["bbox", "ymin"]], [["bbox", "ymax"]]],
           comment: "rff_rowid — row_id virtual column + required bbox.* filters.",
         },
         // Native read_parquet delegation (scan dispatched in tableScanFunctionGet
@@ -931,7 +931,7 @@ export const catalog: CatalogDescriptor = {
             ]), true),
             new Field("other", new Int64(), true),
           ]),
-          requiredFilters: [["bbox.xmin"], ["bbox.xmax"], ["bbox.ymin"], ["bbox.ymax"]],
+          requiredFilters: [[["bbox", "xmin"]], [["bbox", "xmax"]], [["bbox", "ymin"]], [["bbox", "ymax"]]],
           comment: "rff_parquet — native read_parquet delegation with bbox.* required filters.",
         },
         {
@@ -949,7 +949,7 @@ export const catalog: CatalogDescriptor = {
             new Field("theme", new Utf8(), true),
             new Field("type", new Utf8(), true),
           ]),
-          requiredFilters: [["bbox.xmin"], ["bbox.xmax"], ["bbox.ymin"], ["bbox.ymax"]],
+          requiredFilters: [[["bbox", "xmin"]], [["bbox", "xmax"]], [["bbox", "ymin"]], [["bbox", "ymax"]]],
           comment: "rff_hive — native read_parquet over Hive glob with bbox.* required filters.",
         },
         {
@@ -967,7 +967,7 @@ export const catalog: CatalogDescriptor = {
             new Field("theme", new Utf8(), true),
             new Field("type", new Utf8(), true),
           ]),
-          requiredFilters: [["id"], ["bbox.xmin"], ["bbox.xmax"], ["bbox.ymin"], ["bbox.ymax"]],
+          requiredFilters: [[["id"]], [["bbox", "xmin"]], [["bbox", "xmax"]], [["bbox", "ymin"]], [["bbox", "ymax"]]],
           comment: "rff_hive_mixed — native read_parquet, top-level 'id' + bbox.* required filters.",
         },
         {

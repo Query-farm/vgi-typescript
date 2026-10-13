@@ -1,7 +1,7 @@
 // Copyright 2025, 2026 Query Farm LLC - https://query.farm
 // ReadOnlyCatalogInterface: derives catalog from registered functions + descriptors.
 
-import { type VgiSchema, schema as schema_, type VgiField, field, type VgiDataType, int64, utf8, binary, bool, nullType, list, isInt, typeSignature } from "../arrow/index.js";
+import { type VgiSchema, schema as schema_, type VgiField, field, type VgiDataType, int64, utf8, binary, bool, nullType, list, isInt, isStruct, typeSignature } from "../arrow/index.js";
 import {
   CatalogInterface,
   type AttachOpaqueData,
@@ -373,33 +373,25 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
       const pkIndices = resolveIndexGroups(colSchema, t.primaryKey);
       const fkBytes = serializeForeignKeys(t.foreignKey, path);
 
-      // Validate required_filters: an AND (outer list) of OR-groups (inner
-      // lists). Each OR-group must be non-empty, and the leading dotted segment
-      // of each path must be a real column on this table. Struct subfield
-      // validity is not checked here — DuckDB's binder catches typos at scan
-      // time, and the descriptor doesn't unpack STRUCT subfields. (Mirrors
-      // vgi-python's Table descriptor validation.)
+      // Validate exact raw paths against the full table schema.
       const requiredFilters = t.requiredFilters ?? [];
-      if (requiredFilters.length > 0) {
-        const columnNames = new Set(colSchema.fields.map((f) => f.name));
-        for (const group of requiredFilters) {
-          if (!group || group.length === 0) {
-            throw new Error(
-              `Table '${t.name}': requiredFilters must not contain empty groups`
-            );
-          }
-          for (const path of group) {
-            if (!path) {
-              throw new Error(
-                `Table '${t.name}': requiredFilters must not contain empty strings`
-              );
-            }
-            const head = path.split(".", 1)[0];
-            if (!columnNames.has(head)) {
-              throw new Error(
-                `Table '${t.name}': requiredFilters path '${path}' references ` +
-                  `unknown column '${head}'. Available columns: ${[...columnNames].sort().join(", ")}`
-              );
+      for (const group of requiredFilters) {
+        if (!Array.isArray(group) || group.length === 0) throw new Error("requiredFilters contains an empty group");
+        const seen = new Set<string>();
+        for (const path of group) {
+          if (!Array.isArray(path) || path.length === 0) throw new Error("requiredFilters requires raw nonempty paths");
+          const key = JSON.stringify(path);
+          if (seen.has(key)) throw new Error("requiredFilters contains a duplicate path");
+          seen.add(key);
+          let fields = colSchema.fields;
+          for (let i = 0; i < path.length; ++i) {
+            const part = path[i];
+            if (typeof part !== "string" || !part || part.includes("\0")) throw new Error("invalid requiredFilters component");
+            const matches = fields.filter((f) => f.name === part);
+            if (matches.length !== 1) throw new Error(`unknown or ambiguous requiredFilters component: ${part}`);
+            if (i + 1 < path.length) {
+              if (!isStruct(matches[0].type)) throw new Error(`non-struct requiredFilters parent: ${part}`);
+              fields = (matches[0].type as VgiDataType & { children: readonly VgiField[] }).children;
             }
           }
         }
