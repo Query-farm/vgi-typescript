@@ -137,6 +137,7 @@ describe("ASD codec", () => {
       name: "v1",
       schema_path: ["s1"],
       definition: "SELECT 1",
+      aliases: ["a.b"],
       column_comments: { n: "the only column" },
     };
     const bytes = encodeASD(ViewInfoSchema, v);

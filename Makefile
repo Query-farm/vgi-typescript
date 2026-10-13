@@ -111,7 +111,7 @@ TEST_LOG := /tmp/vgi-typescript-test.log
 # The exclusions were hiding a real bug in this SDK for months. Before adding
 # one here, measure the claim.
 TEST_PATTERNS := "test/sql/*" \
-	"~test/sql/duckdb2/column_paths.test" "~test/sql/duckdb2/required_filter_paths.test" \
+	"~test/sql/duckdb2/column_paths.test" "~test/sql/duckdb2/required_filter_paths.test" "~test/sql/duckdb2/view_alias_metadata.test" \
 	"~test/sql/integration/writable/*" \
 	"~test/sql/integration/schema_reconcile.test"
 

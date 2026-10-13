@@ -180,7 +180,7 @@ class NestedStubCatalog extends CatalogInterface {
   }
   override schemaContentsViews(_attach: AttachOpaqueData, path: string[]): ViewInfo[] {
     this.calls.push(`views:${path.join(".")}`);
-    return [{ comment: null, tags: {}, name: `v_${path.length}`, schema_path: path, definition: "SELECT 1", column_comments: {} }];
+    return [{ comment: null, tags: {}, name: `v_${path.length}`, schema_path: path, definition: "SELECT 1", aliases: [], column_comments: {} }];
   }
 }
 
@@ -765,7 +765,7 @@ describe("deterministic item encoding (map columns in sorted key order)", () => 
       hex(table({ a: "2", z: "1" }, { insert: "y", update: "x" })),
     );
     const view = (cc: Record<string, string>) =>
-      encodeViewInfo({ comment: null, tags: {}, name: "v", schema_path: ["main"], definition: "SELECT 1", column_comments: cc });
+      encodeViewInfo({ comment: null, tags: {}, name: "v", schema_path: ["main"], definition: "SELECT 1", aliases: [], column_comments: cc });
     expect(hex(view({ y: "1", x: "2" }))).toBe(hex(view({ x: "2", y: "1" })));
     expect(Object.keys(decodeViewInfo(view({ y: "1", x: "2" })).column_comments)).toEqual(["x", "y"]);
     expect(decodeTableInfo(table({ z: "1", a: "2" }, {})).name).toBe("t");

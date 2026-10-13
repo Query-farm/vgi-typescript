@@ -38,6 +38,7 @@ interface InMemoryView {
   name: string;
   schemaPath: string[];
   definition: string;
+  aliases?: string[];
   comment: string | null;
   tags: Record<string, string>;
 }
@@ -208,6 +209,7 @@ export class InMemoryCatalog extends CatalogInterface {
       name: v.name,
       schema_path: v.schemaPath,
       definition: v.definition,
+      aliases: [...(v.aliases ?? [])],
       column_comments: {},
     })
     );
@@ -358,6 +360,7 @@ export class InMemoryCatalog extends CatalogInterface {
       name: v.name,
       schema_path: v.schemaPath,
       definition: v.definition,
+      aliases: [...(v.aliases ?? [])],
       column_comments: {},
     });
   }
@@ -368,7 +371,8 @@ export class InMemoryCatalog extends CatalogInterface {
     name: string,
     definition: string,
     onConflict: string,
-    transactionOpaqueData?: TransactionOpaqueData
+    transactionOpaqueData?: TransactionOpaqueData,
+    aliases?: string[]
   ): void {
     const att = this._getAttachment(attachOpaqueData);
     const schema = att.schemas.get(schemaPathKey(schemaPath));
@@ -385,6 +389,7 @@ export class InMemoryCatalog extends CatalogInterface {
       name,
       schemaPath,
       definition,
+      aliases: [...(aliases ?? [])],
       comment: null,
       tags: {},
     });

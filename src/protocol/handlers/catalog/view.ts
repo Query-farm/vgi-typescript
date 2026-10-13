@@ -6,6 +6,7 @@ import { encodeViewInfo } from "../../../generated/vgi-client.js";
 import {
   CatalogViewGetResultSchema,
 } from "../../../generated/vgi-protocol-schemas.js";
+import { decodeDictValue } from "../../../util/arrow/index.js";
 import { toUint8Array } from "../../../util/bytes.js";
 import {
   wrapResult,
@@ -38,8 +39,9 @@ export function catalogViewHandlers(getCatalog: GetCatalog, signingKey?: Uint8Ar
       params.schema_path,
       params.name,
       params.definition,
-      params.on_conflict,
-      params.transaction_opaque_data ? toUint8Array(params.transaction_opaque_data) : undefined
+      decodeDictValue(params.on_conflict),
+      params.transaction_opaque_data ? toUint8Array(params.transaction_opaque_data) : undefined,
+      params.aliases ?? []
     );
     return {};
   });

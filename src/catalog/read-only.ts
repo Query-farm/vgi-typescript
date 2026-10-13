@@ -465,6 +465,7 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
       schema_path: normalizeSchemaPath(path),
       definition: v.definition,
       column_comments: v.columnComments ?? {},
+      aliases: [...(v.aliases ?? [])],
     }));
   }
 

@@ -1451,12 +1451,14 @@ export class VgiClient {
     definition: string,
     onConflict: OnCreateConflict,
     transactionOpaqueData?: TransactionOpaqueData,
+    aliases?: string[],
   ): Promise<void> {
     await this.rpc.call("catalog_view_create", {
       attach_opaque_data: attachOpaqueData,
       schema_path: normalizeSchemaPath(schemaPath),
       name,
       definition,
+      aliases: aliases ?? null,
       on_conflict: onConflict,
       transaction_opaque_data: transactionOpaqueData ?? null,
     });

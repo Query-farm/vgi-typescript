@@ -14,7 +14,7 @@ import {
   decodeRequiredFilterPaths, encodeRequiredFilterPaths,
 } from "../vgi-protocol-types.js";
 
-import { decodeTableInfo, encodeTableInfo } from "../vgi-client.js";
+import { decodeViewInfo, encodeViewInfo, decodeTableInfo, encodeTableInfo } from "../vgi-client.js";
 import { encodeASD, decodeASD } from "../../codec/asd.js";
 import { TableCreateRequestSchema } from "../vgi-protocol-schemas.js";
 import * as schemas from "../vgi-protocol-schemas.js";
@@ -119,4 +119,10 @@ test("layouts retain explicit ordering and distinguish clear from unchanged", ()
   const info = decodeTableInfo(encodeTableInfo(decodeTableInfo(fixture("table_info"))));
   expect(info.options).toEqual(fixture("state"));
   expect(info.layout).toEqual(fixture("layout"));
+});
+
+test("view aliases retain raw dots, quotes and order", () => {
+  const info = decodeViewInfo(encodeViewInfo(decodeViewInfo(fixture("view_info"))));
+  expect(info.aliases).toEqual(["a.b", 'with"quote']);
+  expect(decodeViewInfo(fixture("view_info_implicit")).aliases).toEqual([]);
 });

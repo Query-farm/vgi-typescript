@@ -77,6 +77,8 @@ export interface TableDescriptor {
 
 export interface ViewDescriptor {
   name: string;
+  /** Ordered raw output identifiers; empty uses query names. */
+  aliases?: string[];
   definition: string;
   comment?: string;
   /**

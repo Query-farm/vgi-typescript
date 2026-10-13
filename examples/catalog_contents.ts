@@ -271,11 +271,13 @@ abstract class PrivateMemoryCatalog extends CatalogInterface {
     name: string,
     definition: string,
     onConflict: string,
+    transactionOpaqueData?: TransactionOpaqueData,
+    aliases?: string[],
   ): void {
     const state = this._state(attach);
     const schema = this._requireSchema(attach, schemaPath);
     if (schema.views.has(name) && !this._replace("View", name, onConflict)) return;
-    schema.views.set(name, { comment: null, tags: {}, name, schema_path: schema.path, definition, column_comments: {} });
+    schema.views.set(name, { comment: null, tags: {}, name, schema_path: schema.path, definition, column_comments: {}, aliases: [...(aliases ?? [])] });
     state.version++;
   }
 

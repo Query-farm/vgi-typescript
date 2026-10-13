@@ -912,7 +912,8 @@ export abstract class CatalogInterface {
     name: string,
     definition: string,
     onConflict: string,
-    transactionOpaqueData?: TransactionOpaqueData
+    transactionOpaqueData?: TransactionOpaqueData,
+    aliases?: string[]
   ): Awaitable<void> {
     throw new CatalogReadOnlyError("view_create");
   }
