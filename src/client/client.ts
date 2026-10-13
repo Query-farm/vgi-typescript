@@ -1234,20 +1234,20 @@ export class VgiClient {
     attachOpaqueData: AttachOpaqueData,
     schemaPath: string[] | string,
     name: string,
-    columnName: string,
-    columnType: string,
-    defaultValue?: string | null,
-    ignoreNotFound?: boolean,
+    columnPath: string[],
+    columnDefinition: Uint8Array,
+    ignoreNotFound: boolean = false,
+    ifColumnNotExists: boolean = false,
     transactionOpaqueData?: TransactionOpaqueData,
   ): Promise<void> {
     await this.rpc.call("catalog_table_column_add", {
       attach_opaque_data: attachOpaqueData,
       schema_path: normalizeSchemaPath(schemaPath),
       name,
-      column_name: columnName,
-      column_type: columnType,
-      default_value: defaultValue ?? null,
-      ignore_not_found: ignoreNotFound ?? null,
+      column_path: columnPath,
+      column_definition: columnDefinition,
+      ignore_not_found: ignoreNotFound,
+      if_column_not_exists: ifColumnNotExists,
       transaction_opaque_data: transactionOpaqueData ?? null,
     });
   }
@@ -1257,16 +1257,20 @@ export class VgiClient {
     attachOpaqueData: AttachOpaqueData,
     schemaPath: string[] | string,
     name: string,
-    columnName: string,
-    ignoreNotFound?: boolean,
+    columnPath: string[],
+    ignoreNotFound: boolean = false,
+    ifColumnExists: boolean = false,
+    cascade: boolean = false,
     transactionOpaqueData?: TransactionOpaqueData,
   ): Promise<void> {
     await this.rpc.call("catalog_table_column_drop", {
       attach_opaque_data: attachOpaqueData,
       schema_path: normalizeSchemaPath(schemaPath),
       name,
-      column_name: columnName,
-      ignore_not_found: ignoreNotFound ?? null,
+      column_path: columnPath,
+      ignore_not_found: ignoreNotFound,
+      if_column_exists: ifColumnExists,
+      cascade: cascade,
       transaction_opaque_data: transactionOpaqueData ?? null,
     });
   }
@@ -1276,18 +1280,39 @@ export class VgiClient {
     attachOpaqueData: AttachOpaqueData,
     schemaPath: string[] | string,
     name: string,
-    columnName: string,
-    newName: string,
-    ignoreNotFound?: boolean,
+    columnPath: string[],
+    newColumnName: string,
+    ignoreNotFound: boolean = false,
     transactionOpaqueData?: TransactionOpaqueData,
   ): Promise<void> {
     await this.rpc.call("catalog_table_column_rename", {
       attach_opaque_data: attachOpaqueData,
       schema_path: normalizeSchemaPath(schemaPath),
       name,
-      column_name: columnName,
-      new_name: newName,
-      ignore_not_found: ignoreNotFound ?? null,
+      column_path: columnPath,
+      new_column_name: newColumnName,
+      ignore_not_found: ignoreNotFound,
+      transaction_opaque_data: transactionOpaqueData ?? null,
+    });
+  }
+
+  /** Set or clear the comment on a column. */
+  async tableColumnCommentSet(
+    attachOpaqueData: AttachOpaqueData,
+    schemaPath: string[] | string,
+    name: string,
+    columnPath: string[],
+    comment: string | null,
+    ignoreNotFound: boolean = false,
+    transactionOpaqueData?: TransactionOpaqueData,
+  ): Promise<void> {
+    await this.rpc.call("catalog_table_column_comment_set", {
+      attach_opaque_data: attachOpaqueData,
+      schema_path: normalizeSchemaPath(schemaPath),
+      name,
+      column_path: columnPath,
+      comment,
+      ignore_not_found: ignoreNotFound,
       transaction_opaque_data: transactionOpaqueData ?? null,
     });
   }
@@ -1297,18 +1322,18 @@ export class VgiClient {
     attachOpaqueData: AttachOpaqueData,
     schemaPath: string[] | string,
     name: string,
-    columnName: string,
-    defaultValue: string,
-    ignoreNotFound?: boolean,
+    columnPath: string[],
+    expression: string,
+    ignoreNotFound: boolean = false,
     transactionOpaqueData?: TransactionOpaqueData,
   ): Promise<void> {
     await this.rpc.call("catalog_table_column_default_set", {
       attach_opaque_data: attachOpaqueData,
       schema_path: normalizeSchemaPath(schemaPath),
       name,
-      column_name: columnName,
-      default_value: defaultValue,
-      ignore_not_found: ignoreNotFound ?? null,
+      column_path: columnPath,
+      expression: expression,
+      ignore_not_found: ignoreNotFound,
       transaction_opaque_data: transactionOpaqueData ?? null,
     });
   }
@@ -1318,16 +1343,16 @@ export class VgiClient {
     attachOpaqueData: AttachOpaqueData,
     schemaPath: string[] | string,
     name: string,
-    columnName: string,
-    ignoreNotFound?: boolean,
+    columnPath: string[],
+    ignoreNotFound: boolean = false,
     transactionOpaqueData?: TransactionOpaqueData,
   ): Promise<void> {
     await this.rpc.call("catalog_table_column_default_drop", {
       attach_opaque_data: attachOpaqueData,
       schema_path: normalizeSchemaPath(schemaPath),
       name,
-      column_name: columnName,
-      ignore_not_found: ignoreNotFound ?? null,
+      column_path: columnPath,
+      ignore_not_found: ignoreNotFound,
       transaction_opaque_data: transactionOpaqueData ?? null,
     });
   }
@@ -1343,18 +1368,20 @@ export class VgiClient {
     attachOpaqueData: AttachOpaqueData,
     schemaPath: string[] | string,
     name: string,
+    columnPath: string[],
     columnDefinition: Uint8Array,
-    expression?: string | null,
-    ignoreNotFound?: boolean,
+    expression: string | null = null,
+    ignoreNotFound: boolean = false,
     transactionOpaqueData?: TransactionOpaqueData,
   ): Promise<void> {
     await this.rpc.call("catalog_table_column_type_change", {
       attach_opaque_data: attachOpaqueData,
       schema_path: normalizeSchemaPath(schemaPath),
       name,
+      column_path: columnPath,
       column_definition: columnDefinition,
-      expression: expression ?? null,
-      ignore_not_found: ignoreNotFound ?? false,
+      expression: expression,
+      ignore_not_found: ignoreNotFound,
       transaction_opaque_data: transactionOpaqueData ?? null,
     });
   }
@@ -1364,16 +1391,16 @@ export class VgiClient {
     attachOpaqueData: AttachOpaqueData,
     schemaPath: string[] | string,
     name: string,
-    columnName: string,
-    ignoreNotFound?: boolean,
+    columnPath: string[],
+    ignoreNotFound: boolean = false,
     transactionOpaqueData?: TransactionOpaqueData,
   ): Promise<void> {
     await this.rpc.call("catalog_table_not_null_set", {
       attach_opaque_data: attachOpaqueData,
       schema_path: normalizeSchemaPath(schemaPath),
       name,
-      column_name: columnName,
-      ignore_not_found: ignoreNotFound ?? null,
+      column_path: columnPath,
+      ignore_not_found: ignoreNotFound,
       transaction_opaque_data: transactionOpaqueData ?? null,
     });
   }
@@ -1383,16 +1410,16 @@ export class VgiClient {
     attachOpaqueData: AttachOpaqueData,
     schemaPath: string[] | string,
     name: string,
-    columnName: string,
-    ignoreNotFound?: boolean,
+    columnPath: string[],
+    ignoreNotFound: boolean = false,
     transactionOpaqueData?: TransactionOpaqueData,
   ): Promise<void> {
     await this.rpc.call("catalog_table_not_null_drop", {
       attach_opaque_data: attachOpaqueData,
       schema_path: normalizeSchemaPath(schemaPath),
       name,
-      column_name: columnName,
-      ignore_not_found: ignoreNotFound ?? null,
+      column_path: columnPath,
+      ignore_not_found: ignoreNotFound,
       transaction_opaque_data: transactionOpaqueData ?? null,
     });
   }

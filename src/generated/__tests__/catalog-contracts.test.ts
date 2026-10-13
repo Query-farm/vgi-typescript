@@ -17,6 +17,32 @@ import {
 import { decodeTableInfo, encodeTableInfo } from "../vgi-client.js";
 import { encodeASD, decodeASD } from "../../codec/asd.js";
 import { TableCreateRequestSchema } from "../vgi-protocol-schemas.js";
+import * as schemas from "../vgi-protocol-schemas.js";
+
+test("column request codecs retain literal and nested targets", () => {
+  for (const [operation, paramsSchema] of [
+    ["column_add", schemas.CatalogTableColumnAddParamsSchema],
+    ["column_drop", schemas.CatalogTableColumnDropParamsSchema],
+    ["column_rename", schemas.CatalogTableColumnRenameParamsSchema],
+    ["column_type_change", schemas.CatalogTableColumnTypeChangeParamsSchema],
+    ["column_default_set", schemas.CatalogTableColumnDefaultSetParamsSchema],
+    ["column_default_drop", schemas.CatalogTableColumnDefaultDropParamsSchema],
+    ["column_comment_set", schemas.CatalogTableColumnCommentSetParamsSchema],
+    ["not_null_set", schemas.CatalogTableNotNullSetParamsSchema],
+    ["not_null_drop", schemas.CatalogTableNotNullDropParamsSchema],
+  ] as const) {
+    for (const variant of ["literal", "nested"]) {
+      const name = operation + "_" + variant;
+      const original = decodeASD<Record<string, any>>(paramsSchema, fixture(name));
+      const restored = decodeASD<Record<string, any>>(paramsSchema, encodeASD(paramsSchema, original));
+      expect(restored).toEqual(original);
+      expect(restored.column_path).toEqual(variant === "literal" ? ["a.b"] : ["a", 'b."quoted']);
+      expect(restored.schema_path).toEqual(["one.two", "nested"]);
+      expect(restored.transaction_opaque_data === null).toBe(variant === "literal");
+    }
+  }
+});
+
 import type { TableCreateRequest } from "../vgi-client.js";
 const encodeTableCreateRequest = (value: TableCreateRequest) => encodeASD(TableCreateRequestSchema, value);
 const decodeTableCreateRequest = (value: Uint8Array) => decodeASD<TableCreateRequest>(TableCreateRequestSchema, value);

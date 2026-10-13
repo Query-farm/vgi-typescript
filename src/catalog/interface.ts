@@ -803,86 +803,100 @@ export abstract class CatalogInterface {
     attachOpaqueData: AttachOpaqueData,
     schemaPath: string[],
     name: string,
-    columnName: string,
-    columnType: string,
-    defaultValue?: string,
-    ignoreNotFound?: boolean,
-    transactionOpaqueData?: TransactionOpaqueData
+    columnPath: string[],
+    columnDefinition: Uint8Array,
+    ignoreNotFound: boolean = false,
+    ifColumnNotExists: boolean = false,
+    transactionOpaqueData?: TransactionOpaqueData,
   ): Awaitable<void> {
-    throw new CatalogReadOnlyError("table_column_add");
+    throw new CatalogReadOnlyError("catalog_table_column_add");
   }
   tableColumnDrop(
     attachOpaqueData: AttachOpaqueData,
     schemaPath: string[],
     name: string,
-    columnName: string,
-    ignoreNotFound?: boolean,
-    transactionOpaqueData?: TransactionOpaqueData
+    columnPath: string[],
+    ignoreNotFound: boolean = false,
+    ifColumnExists: boolean = false,
+    cascade: boolean = false,
+    transactionOpaqueData?: TransactionOpaqueData,
   ): Awaitable<void> {
-    throw new CatalogReadOnlyError("table_column_drop");
+    throw new CatalogReadOnlyError("catalog_table_column_drop");
   }
   tableColumnRename(
     attachOpaqueData: AttachOpaqueData,
     schemaPath: string[],
     name: string,
-    columnName: string,
-    newName: string,
-    ignoreNotFound?: boolean,
-    transactionOpaqueData?: TransactionOpaqueData
+    columnPath: string[],
+    newColumnName: string,
+    ignoreNotFound: boolean = false,
+    transactionOpaqueData?: TransactionOpaqueData,
   ): Awaitable<void> {
-    throw new CatalogReadOnlyError("table_column_rename");
+    throw new CatalogReadOnlyError("catalog_table_column_rename");
+  }
+  tableColumnCommentSet(
+    attachOpaqueData: AttachOpaqueData,
+    schemaPath: string[],
+    name: string,
+    columnPath: string[],
+    comment: string | null,
+    ignoreNotFound: boolean = false,
+    transactionOpaqueData?: TransactionOpaqueData,
+  ): Awaitable<void> {
+    throw new CatalogReadOnlyError("catalog_table_column_comment_set");
   }
   tableColumnDefaultSet(
     attachOpaqueData: AttachOpaqueData,
     schemaPath: string[],
     name: string,
-    columnName: string,
-    defaultValue: string,
-    ignoreNotFound?: boolean,
-    transactionOpaqueData?: TransactionOpaqueData
+    columnPath: string[],
+    expression: string,
+    ignoreNotFound: boolean = false,
+    transactionOpaqueData?: TransactionOpaqueData,
   ): Awaitable<void> {
-    throw new CatalogReadOnlyError("table_column_default_set");
+    throw new CatalogReadOnlyError("catalog_table_column_default_set");
   }
   tableColumnDefaultDrop(
     attachOpaqueData: AttachOpaqueData,
     schemaPath: string[],
     name: string,
-    columnName: string,
-    ignoreNotFound?: boolean,
-    transactionOpaqueData?: TransactionOpaqueData
+    columnPath: string[],
+    ignoreNotFound: boolean = false,
+    transactionOpaqueData?: TransactionOpaqueData,
   ): Awaitable<void> {
-    throw new CatalogReadOnlyError("table_column_default_drop");
+    throw new CatalogReadOnlyError("catalog_table_column_default_drop");
   }
   tableColumnTypeChange(
     attachOpaqueData: AttachOpaqueData,
     schemaPath: string[],
     name: string,
-    columnName: string,
-    newType: string,
-    ignoreNotFound?: boolean,
-    transactionOpaqueData?: TransactionOpaqueData
+    columnPath: string[],
+    columnDefinition: Uint8Array,
+    expression: string | null = null,
+    ignoreNotFound: boolean = false,
+    transactionOpaqueData?: TransactionOpaqueData,
   ): Awaitable<void> {
-    throw new CatalogReadOnlyError("table_column_type_change");
+    throw new CatalogReadOnlyError("catalog_table_column_type_change");
   }
   tableNotNullSet(
     attachOpaqueData: AttachOpaqueData,
     schemaPath: string[],
     name: string,
-    columnName: string,
-    ignoreNotFound?: boolean,
-    transactionOpaqueData?: TransactionOpaqueData
+    columnPath: string[],
+    ignoreNotFound: boolean = false,
+    transactionOpaqueData?: TransactionOpaqueData,
   ): Awaitable<void> {
-    throw new CatalogReadOnlyError("table_not_null_set");
+    throw new CatalogReadOnlyError("catalog_table_not_null_set");
   }
   tableNotNullDrop(
     attachOpaqueData: AttachOpaqueData,
     schemaPath: string[],
     name: string,
-    columnName: string,
-    ignoreNotFound?: boolean,
-    transactionOpaqueData?: TransactionOpaqueData
+    columnPath: string[],
+    ignoreNotFound: boolean = false,
+    transactionOpaqueData?: TransactionOpaqueData,
   ): Awaitable<void> {
-    throw new CatalogReadOnlyError("table_not_null_drop");
+    throw new CatalogReadOnlyError("catalog_table_not_null_drop");
   }
   viewGet(
     attachOpaqueData: AttachOpaqueData,

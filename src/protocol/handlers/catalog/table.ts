@@ -19,6 +19,17 @@ import {
   catalogHandler,
 } from "./shared.js";
 
+function requireFlatColumnPath(value: unknown, operation: string): string[] {
+  // The raw RPC codec returns Arrow list scalars as iterable vectors.
+  const path = value != null && typeof value === "object" && Symbol.iterator in value
+    ? Array.from(value as Iterable<unknown>) : value;
+  if (!Array.isArray(path) || path.length !== 1 ||
+      typeof path[0] !== "string" || !path[0] || path[0].includes("\0")) {
+    throw new MethodNotImplementedError(`${operation}: nested column paths require a negotiated capability`);
+  }
+  return path as string[];
+}
+
 export function catalogTableHandlers(getCatalog: GetCatalog, signingKey?: Uint8Array): Partial<VgiService> {
   // catalog_table_get
   const catalogTableGet = catalogHandler(signingKey, async (params) => {
@@ -141,121 +152,139 @@ export function catalogTableHandlers(getCatalog: GetCatalog, signingKey?: Uint8A
 
   // catalog_table_column_add
   const catalogTableColumnAdd = catalogHandler(signingKey, async (params) => {
+    params.column_path = requireFlatColumnPath(params.column_path, "catalog_table_column_add");
     const cat = getCatalog();
     await cat.tableColumnAdd(
       toUint8Array(params.attach_opaque_data),
       params.schema_path,
       params.name,
-      params.column_name,
-      params.column_type,
-      params.default_value,
+      params.column_path,
+      toUint8Array(params.column_definition),
       params.ignore_not_found,
+      params.if_column_not_exists,
       params.transaction_opaque_data ? toUint8Array(params.transaction_opaque_data) : undefined
     );
     return {};
   });
-
   // catalog_table_column_drop
   const catalogTableColumnDrop = catalogHandler(signingKey, async (params) => {
+    params.column_path = requireFlatColumnPath(params.column_path, "catalog_table_column_drop");
     const cat = getCatalog();
     await cat.tableColumnDrop(
       toUint8Array(params.attach_opaque_data),
       params.schema_path,
       params.name,
-      params.column_name,
+      params.column_path,
       params.ignore_not_found,
+      params.if_column_exists,
+      params.cascade,
       params.transaction_opaque_data ? toUint8Array(params.transaction_opaque_data) : undefined
     );
     return {};
   });
-
   // catalog_table_column_rename
   const catalogTableColumnRename = catalogHandler(signingKey, async (params) => {
+    params.column_path = requireFlatColumnPath(params.column_path, "catalog_table_column_rename");
     const cat = getCatalog();
     await cat.tableColumnRename(
       toUint8Array(params.attach_opaque_data),
       params.schema_path,
       params.name,
-      params.column_name,
-      params.new_name,
+      params.column_path,
+      params.new_column_name,
       params.ignore_not_found,
       params.transaction_opaque_data ? toUint8Array(params.transaction_opaque_data) : undefined
     );
     return {};
   });
-
+  // catalog_table_column_comment_set
+  const catalogTableColumnCommentSet = catalogHandler(signingKey, async (params) => {
+    params.column_path = requireFlatColumnPath(params.column_path, "catalog_table_column_comment_set");
+    const cat = getCatalog();
+    await cat.tableColumnCommentSet(
+      toUint8Array(params.attach_opaque_data),
+      params.schema_path,
+      params.name,
+      params.column_path,
+      params.comment,
+      params.ignore_not_found,
+      params.transaction_opaque_data ? toUint8Array(params.transaction_opaque_data) : undefined
+    );
+    return {};
+  });
   // catalog_table_column_default_set
   const catalogTableColumnDefaultSet = catalogHandler(signingKey, async (params) => {
+    params.column_path = requireFlatColumnPath(params.column_path, "catalog_table_column_default_set");
     const cat = getCatalog();
     await cat.tableColumnDefaultSet(
       toUint8Array(params.attach_opaque_data),
       params.schema_path,
       params.name,
-      params.column_name,
-      params.default_value,
+      params.column_path,
+      params.expression,
       params.ignore_not_found,
       params.transaction_opaque_data ? toUint8Array(params.transaction_opaque_data) : undefined
     );
     return {};
   });
-
   // catalog_table_column_default_drop
   const catalogTableColumnDefaultDrop = catalogHandler(signingKey, async (params) => {
+    params.column_path = requireFlatColumnPath(params.column_path, "catalog_table_column_default_drop");
     const cat = getCatalog();
     await cat.tableColumnDefaultDrop(
       toUint8Array(params.attach_opaque_data),
       params.schema_path,
       params.name,
-      params.column_name,
+      params.column_path,
       params.ignore_not_found,
       params.transaction_opaque_data ? toUint8Array(params.transaction_opaque_data) : undefined
     );
     return {};
   });
-
   // catalog_table_column_type_change
   const catalogTableColumnTypeChange = catalogHandler(signingKey, async (params) => {
+    params.column_path = requireFlatColumnPath(params.column_path, "catalog_table_column_type_change");
     const cat = getCatalog();
     await cat.tableColumnTypeChange(
       toUint8Array(params.attach_opaque_data),
       params.schema_path,
       params.name,
-      params.column_name,
-      params.new_type,
+      params.column_path,
+      toUint8Array(params.column_definition),
+      params.expression,
       params.ignore_not_found,
       params.transaction_opaque_data ? toUint8Array(params.transaction_opaque_data) : undefined
     );
     return {};
   });
-
   // catalog_table_not_null_set
   const catalogTableNotNullSet = catalogHandler(signingKey, async (params) => {
+    params.column_path = requireFlatColumnPath(params.column_path, "catalog_table_not_null_set");
     const cat = getCatalog();
     await cat.tableNotNullSet(
       toUint8Array(params.attach_opaque_data),
       params.schema_path,
       params.name,
-      params.column_name,
+      params.column_path,
       params.ignore_not_found,
       params.transaction_opaque_data ? toUint8Array(params.transaction_opaque_data) : undefined
     );
     return {};
   });
-
   // catalog_table_not_null_drop
   const catalogTableNotNullDrop = catalogHandler(signingKey, async (params) => {
+    params.column_path = requireFlatColumnPath(params.column_path, "catalog_table_not_null_drop");
     const cat = getCatalog();
     await cat.tableNotNullDrop(
       toUint8Array(params.attach_opaque_data),
       params.schema_path,
       params.name,
-      params.column_name,
+      params.column_path,
       params.ignore_not_found,
       params.transaction_opaque_data ? toUint8Array(params.transaction_opaque_data) : undefined
     );
     return {};
   });
-
   return {
     catalogTableGet,
     catalogTableCreate,
@@ -268,6 +297,7 @@ export function catalogTableHandlers(getCatalog: GetCatalog, signingKey?: Uint8A
     catalogTableColumnAdd,
     catalogTableColumnDrop,
     catalogTableColumnRename,
+    catalogTableColumnCommentSet,
     catalogTableColumnDefaultSet,
     catalogTableColumnDefaultDrop,
     catalogTableColumnTypeChange,
