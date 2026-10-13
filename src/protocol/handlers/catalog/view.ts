@@ -33,6 +33,7 @@ export function catalogViewHandlers(getCatalog: GetCatalog, signingKey?: Uint8Ar
 
   // catalog_view_create
   const catalogViewCreate = catalogHandler(signingKey, async (params) => {
+    if (params.security !== "regular") throw new Error(`view security mode ${params.security} is unsupported`);
     const cat = getCatalog();
     await cat.viewCreate(
       toUint8Array(params.attach_opaque_data),

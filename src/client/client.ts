@@ -1452,6 +1452,7 @@ export class VgiClient {
     onConflict: OnCreateConflict,
     transactionOpaqueData?: TransactionOpaqueData,
     aliases?: string[],
+    security: "regular" | "barrier" = "regular",
   ): Promise<void> {
     await this.rpc.call("catalog_view_create", {
       attach_opaque_data: attachOpaqueData,
@@ -1459,6 +1460,7 @@ export class VgiClient {
       name,
       definition,
       aliases: aliases ?? null,
+      security,
       on_conflict: onConflict,
       transaction_opaque_data: transactionOpaqueData ?? null,
     });

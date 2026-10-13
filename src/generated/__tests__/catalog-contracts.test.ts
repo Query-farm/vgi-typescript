@@ -126,3 +126,8 @@ test("view aliases retain raw dots, quotes and order", () => {
   expect(info.aliases).toEqual(["a.b", 'with"quote']);
   expect(decodeViewInfo(fixture("view_info_implicit")).aliases).toEqual([]);
 });
+
+test("view security survives codec round trips", () => {
+  expect(decodeViewInfo(encodeViewInfo(decodeViewInfo(fixture("view_info")))).security).toBe("regular");
+  expect(decodeViewInfo(encodeViewInfo(decodeViewInfo(fixture("view_info_barrier")))).security).toBe("barrier");
+});

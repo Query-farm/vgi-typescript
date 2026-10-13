@@ -210,6 +210,7 @@ export class InMemoryCatalog extends CatalogInterface {
       schema_path: v.schemaPath,
       definition: v.definition,
       aliases: [...(v.aliases ?? [])],
+      security: "regular",
       column_comments: {},
     })
     );
@@ -361,6 +362,7 @@ export class InMemoryCatalog extends CatalogInterface {
       schema_path: v.schemaPath,
       definition: v.definition,
       aliases: [...(v.aliases ?? [])],
+      security: "regular",
       column_comments: {},
     });
   }

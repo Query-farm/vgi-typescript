@@ -79,6 +79,8 @@ export interface ViewDescriptor {
   name: string;
   /** Ordered raw output identifiers; empty uses query names. */
   aliases?: string[];
+  /** Optimization barrier mode; readers must enforce or reject it. */
+  security?: "regular" | "barrier";
   definition: string;
   comment?: string;
   /**

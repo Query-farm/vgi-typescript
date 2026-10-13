@@ -466,6 +466,7 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
       definition: v.definition,
       column_comments: v.columnComments ?? {},
       aliases: [...(v.aliases ?? [])],
+      security: v.security ?? "regular",
     }));
   }
 

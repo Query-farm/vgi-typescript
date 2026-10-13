@@ -113,6 +113,7 @@ function handlers(cat: CatalogInterface) {
     },
     async ddlView(attach: Uint8Array, name: string, definition = "SELECT 1 AS x"): Promise<void> {
       await call("catalog_view_create", {
+        security: "regular",
         attach_opaque_data: attach,
         schema_path: ["main"],
         name,
@@ -287,6 +288,7 @@ describe("a DDL-capable catalog behind a composite (the contents_reval fixture)"
       }),
     });
     await h.call("catalog_view_create", {
+        security: "regular",
       attach_opaque_data: attach,
       schema_path: ["main"],
       name: "v1",
@@ -765,7 +767,7 @@ describe("deterministic item encoding (map columns in sorted key order)", () => 
       hex(table({ a: "2", z: "1" }, { insert: "y", update: "x" })),
     );
     const view = (cc: Record<string, string>) =>
-      encodeViewInfo({ comment: null, tags: {}, name: "v", schema_path: ["main"], definition: "SELECT 1", aliases: [], column_comments: cc });
+      encodeViewInfo({ comment: null, tags: {}, name: "v", schema_path: ["main"], definition: "SELECT 1", aliases: [], security: "regular", column_comments: cc });
     expect(hex(view({ y: "1", x: "2" }))).toBe(hex(view({ x: "2", y: "1" })));
     expect(Object.keys(decodeViewInfo(view({ y: "1", x: "2" })).column_comments)).toEqual(["x", "y"]);
     expect(decodeTableInfo(table({ z: "1", a: "2" }, {})).name).toBe("t");
@@ -833,4 +835,22 @@ test("schema options reject before calling a provider without negotiation", asyn
     comment: null, tags: null, transaction_opaque_data: null, options: new Uint8Array([1]),
   })).rejects.toThrow("vgi.schema.options.create.v1");
   expect(called).toBe(false);
+});
+
+test("unsupported view security rejects before replacing or ignoring an existing view", async () => {
+  const h = handlers(new ContentsRevalCatalog());
+  const attach = (await h.attach("contents_reval")).attach_opaque_data;
+  await h.ddlView(attach, "v");
+  const before = await h.contents(attach);
+  for (const security of ["barrier", "unknown", "", null]) {
+    for (const on_conflict of ["ERROR", "IGNORE", "REPLACE"]) {
+      await expect(h.call("catalog_view_create", {
+        attach_opaque_data: attach, schema_path: ["main"], name: "v", definition: "SELECT 2",
+        on_conflict, transaction_opaque_data: null, aliases: [], security,
+      })).rejects.toThrow("security");
+    }
+  }
+  const after = await h.contents(attach);
+  expect(after.response.catalog_version).toBe(before.response.catalog_version);
+  expect(after.wire).toEqual(before.wire);
 });
