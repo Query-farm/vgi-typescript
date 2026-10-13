@@ -1,7 +1,7 @@
 // Copyright 2025, 2026 Query Farm LLC - https://query.farm
 // Read data out of Arrow batches as plain JS values.
 
-import { RecordBatch } from "@query-farm/apache-arrow";
+import { makeVector, RecordBatch } from "@query-farm/apache-arrow";
 import type { VgiBatch, VgiDataType } from "../types.js";
 import { codecFor } from "../codec/registry.js";
 import { readCanonicalValue } from "./canonical.js";
@@ -177,4 +177,12 @@ export function safeNumber(value: any): number {
     return Number(value);
   }
   return value as number;
+}
+
+/** Decode a map parameter carried as opaque Arrow Data by the RPC reader. */
+export function decodeMapValue(value: any, index = 0): any {
+  if (value?.type?.typeId === 17 && value.valueOffsets && value.children) {
+    return readCanonicalValue(value.type, makeVector(value), index);
+  }
+  return value;
 }

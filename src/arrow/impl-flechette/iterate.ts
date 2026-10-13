@@ -142,3 +142,8 @@ export function safeNumber(value: any): number {
   }
   return value as number;
 }
+
+/** Flechette already extracts map parameters as ordinary values. */
+export function decodeMapValue(value: any, _index = 0): any {
+  return value;
+}

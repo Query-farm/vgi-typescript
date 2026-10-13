@@ -273,11 +273,14 @@ abstract class PrivateMemoryCatalog extends CatalogInterface {
     onConflict: string,
     transactionOpaqueData?: TransactionOpaqueData,
     aliases?: string[],
+    comment?: string | null,
+    tags?: Record<string, string> | null,
+    columnComments?: Record<string, string> | null,
   ): void {
     const state = this._state(attach);
     const schema = this._requireSchema(attach, schemaPath);
     if (schema.views.has(name) && !this._replace("View", name, onConflict)) return;
-    schema.views.set(name, { comment: null, tags: {}, name, schema_path: schema.path, definition, column_comments: {}, aliases: [...(aliases ?? [])], security: "regular" });
+    schema.views.set(name, { comment: comment ?? null, tags: { ...(tags ?? {}) }, name, schema_path: schema.path, definition, column_comments: { ...(columnComments ?? {}) }, aliases: [...(aliases ?? [])], security: "regular" });
     state.version++;
   }
 
@@ -288,6 +291,24 @@ abstract class PrivateMemoryCatalog extends CatalogInterface {
       throw new CatalogNotFoundError("View", name);
     }
     state.version++;
+  }
+
+  override viewCommentSet(attach: AttachOpaqueData, schemaPath: string[], name: string, comment?: string | null, ignoreNotFound?: boolean): void {
+    const view = this._schema(attach, schemaPath)?.views.get(name);
+    if (!view) { if (ignoreNotFound) return; throw new CatalogNotFoundError("View", name); }
+    view.comment = comment ?? null;
+    this._state(attach).version++;
+  }
+
+  override viewColumnCommentSet(attach: AttachOpaqueData, schemaPath: string[], name: string, columnPath: string[], comment?: string | null, ignoreNotFound?: boolean): void {
+    if (columnPath.length !== 1 || !columnPath[0] || columnPath[0].includes("\0")) throw new Error("view column comments require one raw output identifier");
+    const view = this._schema(attach, schemaPath)?.views.get(name);
+    if (!view) { if (ignoreNotFound) return; throw new CatalogNotFoundError("View", name); }
+    const comments = { ...view.column_comments };
+    if (comment == null) delete comments[columnPath[0]];
+    else Object.defineProperty(comments, columnPath[0], { value: comment, enumerable: true, writable: true, configurable: true });
+    view.column_comments = comments;
+    this._state(attach).version++;
   }
 
   /** True to replace an existing object, false to keep it; throws on a plain conflict. */

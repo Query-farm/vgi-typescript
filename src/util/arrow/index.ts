@@ -12,7 +12,7 @@ export {
   batchToScalarDict,
   batchToSecretDict,
   safeNumber,
-  decodeDictValue,
+  decodeDictValue, decodeMapValue,
   filterBatch,
   projectSchema,
   projectBatch,

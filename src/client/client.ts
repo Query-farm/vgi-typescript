@@ -1453,6 +1453,9 @@ export class VgiClient {
     transactionOpaqueData?: TransactionOpaqueData,
     aliases?: string[],
     security: "regular" | "barrier" = "regular",
+    comment?: string | null,
+    tags?: Record<string, string> | null,
+    columnComments?: Record<string, string> | null,
   ): Promise<void> {
     await this.rpc.call("catalog_view_create", {
       attach_opaque_data: attachOpaqueData,
@@ -1461,6 +1464,9 @@ export class VgiClient {
       definition,
       aliases: aliases ?? null,
       security,
+      comment: comment ?? null,
+      tags: tags ?? null,
+      column_comments: columnComments ?? null,
       on_conflict: onConflict,
       transaction_opaque_data: transactionOpaqueData ?? null,
     });
@@ -1526,6 +1532,18 @@ export class VgiClient {
   // ==========================================================================
   // Macro Catalog API
   // ==========================================================================
+
+  /** Set or clear a comment on one raw view output name. */
+  async viewColumnCommentSet(
+    attachOpaqueData: AttachOpaqueData, schemaPath: string[] | string, name: string, columnPath: string[],
+    comment?: string | null, ignoreNotFound = false, transactionOpaqueData?: TransactionOpaqueData,
+  ): Promise<void> {
+    await this.rpc.call("catalog_view_column_comment_set", {
+      attach_opaque_data: attachOpaqueData, schema_path: normalizeSchemaPath(schemaPath), name,
+      column_path: columnPath, comment: comment ?? null, ignore_not_found: ignoreNotFound,
+      transaction_opaque_data: transactionOpaqueData ?? null,
+    });
+  }
 
   /** Get a macro by name, or null if not found. */
   async macroGet(

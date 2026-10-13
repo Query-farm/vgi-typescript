@@ -234,6 +234,9 @@ export class CompositeCatalogInterface extends CatalogInterface {
   override async viewCommentSet(...args: Parameters<CatalogInterface["viewCommentSet"]>): Promise<void> {
     await (this._route(args[0]).viewCommentSet as (...a: typeof args) => unknown)(...args);
   }
+  override async viewColumnCommentSet(...args: Parameters<CatalogInterface["viewColumnCommentSet"]>): Promise<void> {
+    await (this._route(args[0]).viewColumnCommentSet as (...a: typeof args) => unknown)(...args);
+  }
   override async macroCreate(...args: Parameters<CatalogInterface["macroCreate"]>): Promise<void> {
     await (this._route(args[0]).macroCreate as (...a: typeof args) => unknown)(...args);
   }

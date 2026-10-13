@@ -913,7 +913,10 @@ export abstract class CatalogInterface {
     definition: string,
     onConflict: string,
     transactionOpaqueData?: TransactionOpaqueData,
-    aliases?: string[]
+    aliases?: string[],
+    comment?: string | null,
+    tags?: Record<string, string> | null,
+    columnComments?: Record<string, string> | null
   ): Awaitable<void> {
     throw new CatalogReadOnlyError("view_create");
   }
@@ -945,6 +948,12 @@ export abstract class CatalogInterface {
     transactionOpaqueData?: TransactionOpaqueData
   ): Awaitable<void> {
     throw new CatalogReadOnlyError("view_comment_set");
+  }
+  viewColumnCommentSet(
+    attachOpaqueData: AttachOpaqueData, schemaPath: string[], name: string, columnPath: string[],
+    comment?: string | null, ignoreNotFound?: boolean, transactionOpaqueData?: TransactionOpaqueData
+  ): Awaitable<void> {
+    throw new CatalogReadOnlyError("view_column_comment_set");
   }
   macroGet(
     attachOpaqueData: AttachOpaqueData,

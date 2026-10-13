@@ -73,7 +73,7 @@ export { VGI_PROTOCOL_NAME };
  * by src/protocol/__tests__/vgi-v2-hash.test.ts; if that test fails, the
  * surface drifted from the reference -- fix the schemas, do not bump this.
  */
-export const VGI_V2_PROTOCOL_HASH = "b1db9b01e3c78a746e627fe18a4e0e0c191389dce42f15368427067f071cdecc";
+export const VGI_V2_PROTOCOL_HASH = "18fc1d304bafc3ea667bc77e20dbbd0028444ec7587cca7f03a428067942a4f7";
 
 /**
  * This worker's `vgi.v2` implementation: the generated UNIMPLEMENTED default

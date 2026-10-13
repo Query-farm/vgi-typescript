@@ -36,7 +36,7 @@ export {
   batchToScalarDict,
   batchToSecretDict,
   safeNumber,
-  decodeDictValue,
+  decodeDictValue, decodeMapValue,
 } from "./iterate.js";
 export { filterBatch } from "./filter.js";
 export { projectSchema, projectBatch } from "./project.js";

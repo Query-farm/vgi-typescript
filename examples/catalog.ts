@@ -35,6 +35,7 @@ interface InMemoryTable {
 }
 
 interface InMemoryView {
+  columnComments?: Record<string, string>;
   name: string;
   schemaPath: string[];
   definition: string;
@@ -211,7 +212,7 @@ export class InMemoryCatalog extends CatalogInterface {
       definition: v.definition,
       aliases: [...(v.aliases ?? [])],
       security: "regular",
-      column_comments: {},
+      column_comments: { ...(v.columnComments ?? {}) },
     })
     );
   }
@@ -363,7 +364,7 @@ export class InMemoryCatalog extends CatalogInterface {
       definition: v.definition,
       aliases: [...(v.aliases ?? [])],
       security: "regular",
-      column_comments: {},
+      column_comments: { ...(v.columnComments ?? {}) },
     });
   }
 
@@ -374,14 +375,17 @@ export class InMemoryCatalog extends CatalogInterface {
     definition: string,
     onConflict: string,
     transactionOpaqueData?: TransactionOpaqueData,
-    aliases?: string[]
+    aliases?: string[],
+    comment?: string | null,
+    tags?: Record<string, string> | null,
+    columnComments?: Record<string, string> | null
   ): void {
     const att = this._getAttachment(attachOpaqueData);
     const schema = att.schemas.get(schemaPathKey(schemaPath));
     if (!schema) throw new CatalogNotFoundError("Schema", schemaPathDisplay(schemaPath));
     if (schema.views.has(name)) {
-      if (onConflict === "ignore") return;
-      if (onConflict === "replace") {
+      if (onConflict.toUpperCase() === "IGNORE") return;
+      if (onConflict.toUpperCase() === "REPLACE") {
         schema.views.delete(name);
       } else {
         throw new CatalogAlreadyExistsError("View", name);
@@ -391,9 +395,10 @@ export class InMemoryCatalog extends CatalogInterface {
       name,
       schemaPath,
       definition,
+      columnComments: { ...(columnComments ?? {}) },
       aliases: [...(aliases ?? [])],
-      comment: null,
-      tags: {},
+      comment: comment ?? null,
+      tags: { ...(tags ?? {}) },
     });
     this._version++;
   }
@@ -454,6 +459,24 @@ export class InMemoryCatalog extends CatalogInterface {
       throw new CatalogNotFoundError("View", name);
     }
     v.comment = comment ?? null;
+    this._version++;
+  }
+
+  override viewColumnCommentSet(
+    attachOpaqueData: AttachOpaqueData, schemaPath: string[], name: string, columnPath: string[],
+    comment?: string | null, ignoreNotFound?: boolean, transactionOpaqueData?: TransactionOpaqueData
+  ): void {
+    if (columnPath.length !== 1 || !columnPath[0] || columnPath[0].includes("\0")) throw new Error("view column comments require one raw output identifier");
+    const schema = this._getAttachment(attachOpaqueData).schemas.get(schemaPathKey(schemaPath));
+    const view = schema?.views.get(name);
+    if (!view) {
+      if (ignoreNotFound) return;
+      throw new CatalogNotFoundError("View", name);
+    }
+    const comments = { ...(view.columnComments ?? {}) };
+    if (comment == null) delete comments[columnPath[0]];
+    else Object.defineProperty(comments, columnPath[0], { value: comment, enumerable: true, writable: true, configurable: true });
+    view.columnComments = comments;
     this._version++;
   }
 

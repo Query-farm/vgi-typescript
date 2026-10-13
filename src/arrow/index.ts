@@ -52,7 +52,7 @@ export {
   backend,
   // batch utilities
   emptyBatch, batchFromRows, batchFromColumns, columnFromArray,
-  iterRows, batchToScalarDict, batchToSecretDict, safeNumber, decodeDictValue,
+  iterRows, batchToScalarDict, batchToSecretDict, safeNumber, decodeDictValue, decodeMapValue,
   filterBatch, projectSchema, projectBatch,
   // per-record-batch metadata attachment
   withBatchMetadata,
