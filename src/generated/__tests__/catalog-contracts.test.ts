@@ -3,6 +3,8 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import {
+  decodeCatalogCapabilities, encodeCatalogCapabilities,
+  decodeOptionDefinitions, encodeOptionDefinitions,
   decodeOptionChanges, encodeOptionChanges,
   decodeOptionState, encodeOptionState,
   decodeRequiredFilterPaths, encodeRequiredFilterPaths,
@@ -38,4 +40,15 @@ describe("Python catalog contract corpus", () => {
         ? [[["a.b"], ["a", "b"]], [["record", 'literal."name']]] : []);
     }
   });
+});
+
+test("capability profiles and option definitions preserve populated and empty fields", () => {
+  const capabilities = decodeCatalogCapabilities(encodeCatalogCapabilities(decodeCatalogCapabilities(fixture("capabilities"))));
+  expect(capabilities.read).toEqual(["vgi.schema.options.read.v1"]);
+  expect(capabilities.ddl).toEqual(["vgi.schema.options.create.v1"]);
+  expect(decodeCatalogCapabilities(fixture("empty_capabilities"))).toEqual({ read: [], ddl: [], write: [], transaction: [] });
+  const definitions = decodeOptionDefinitions(encodeOptionDefinitions(decodeOptionDefinitions(fixture("definitions"))));
+  expect(definitions.defaults).toEqual(fixture("values"));
+  expect(definitions.create_names).toEqual(["optional", "record"]);
+  expect(definitions.alter_names).toEqual(["optional"]);
 });

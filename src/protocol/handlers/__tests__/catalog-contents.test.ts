@@ -820,3 +820,17 @@ describe("catalog_contents revalidation over HTTP, through VgiClient", () => {
     }
   });
 });
+
+
+test("schema options reject before calling a provider without negotiation", async () => {
+  const cat = exampleCatalog();
+  let called = false;
+  cat.schemaCreate = async () => { called = true; };
+  const h = handlers(cat);
+  const attach = await h.attach(catalog.name);
+  await expect(h.call("catalog_schema_create", {
+    attach_opaque_data: attach.attach_opaque_data, path: ["unsupported"], on_conflict: "ERROR",
+    comment: null, tags: null, transaction_opaque_data: null, options: new Uint8Array([1]),
+  })).rejects.toThrow("vgi.schema.options.create.v1");
+  expect(called).toBe(false);
+});
