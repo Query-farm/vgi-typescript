@@ -209,3 +209,49 @@ test("query codecs preserve inline contexts, object identity and nullable result
   expect(request.catalog_version).toBe(0);
   expect(queryRecords.decodeCatalogQueryPrepareResult(fixture("query_declined")).prepared_query_token).toBeNull();
 });
+
+test("macro codecs preserve complete families, typed NULL and expression defaults", () => {
+  for (const name of ["macro_parameter", "macro_parameter_expression", "macro_parameter_untyped"]) {
+    const original = queryRecords.decodeMacroParameter(fixture(name));
+    expect(queryRecords.decodeMacroParameter(queryRecords.encodeMacroParameter(original))).toEqual(original);
+  }
+  const overload = queryRecords.decodeMacroOverload(fixture("macro_overload"));
+  expect(queryRecords.decodeMacroOverload(queryRecords.encodeMacroOverload(overload))).toEqual(overload);
+  expect(overload.parameters.map(parameter => parameter.name)).toEqual(["x", "fallback", "scale"]);
+  for (const [name, schema] of [
+    ["macro_create", schemas.MacroCreateRequestSchema], ["macro_create_legacy", schemas.MacroCreateRequestSchema],
+    ["macro_info", schemas.MacroInfoSchema], ["macro_info_legacy", schemas.MacroInfoSchema],
+  ] as const) {
+    const original = decodeASD<Record<string, any>>(schema, fixture(name));
+    const restored = decodeASD<Record<string, any>>(schema, encodeASD(schema, original));
+    expect(restored).toEqual(original);
+    if (name.endsWith("legacy")) expect(restored.overloads).toBeNull();
+    else expect(restored.overloads).toHaveLength(2);
+  }
+});
+
+test("logical type batches preserve tuple identity, SQL NULL and variant absence", () => {
+  for (const name of ["logical_tuple", "logical_struct", "logical_variant_sql_null", "logical_variant_null", "logical_variant_absent", "logical_variant_null_member"]) {
+    const original = deserializeBatch(fixture(name));
+    const restored = deserializeBatch(serializeBatch(original));
+    expect(restored.schema.fields).toEqual(original.schema.fields);
+    expect(restored.schema.metadata).toEqual(original.schema.metadata);
+    const field = restored.schema.fields[0]!;
+    const value = restored.getChildAt(0)!.get(0);
+    if (name === "logical_tuple") expect(field.metadata.get("vgi.logical_type.v1")).toBe("tuple");
+    if (name === "logical_struct") expect(field.metadata.has("vgi.logical_type.v1")).toBe(false);
+    if (name === "logical_variant_sql_null") expect(value).toBeNull();
+    if (["logical_variant_null", "logical_variant_absent", "logical_variant_null_member"].includes(name)) {
+      expect(field.metadata.get("vgi.logical_type.v1")).toBe("variant");
+      expect(value).toEqual(original.getChildAt(0)!.get(0));
+      const inner = deserializeBatch(value as Uint8Array);
+      if (name === "logical_variant_null") expect(inner.getChildAt(0)!.get(0)).toBeNull();
+      else expect(inner.schema.fields[0]!.type.children).toHaveLength(name === "logical_variant_absent" ? 0 : 1);
+    } else if (name === "logical_tuple" || name === "logical_struct") {
+      const valueBefore = original.getChildAt(0)!.get(0);
+      for (const child of field.type.children!) {
+        expect(value[child.name]).toEqual(valueBefore[child.name]);
+      }
+    }
+  }
+});

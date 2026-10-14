@@ -168,6 +168,8 @@ const ARGUMENTS_BYTES = serializeBatch(
 
 import * as queryRecords from "../generated/vgi-protocol-types.js";
 const CASES: WireRecordCase[] = [
+  {origin: "MacroParameter", schema: generated.MacroParameterSchema, build: () => queryRecords.encodeMacroParameter(sampleRow(generated.MacroParameterSchema) as any)},
+  {origin: "MacroOverload", schema: generated.MacroOverloadSchema, build: () => queryRecords.encodeMacroOverload(sampleRow(generated.MacroOverloadSchema) as any)},
   {origin: "ClientQueryCapabilities", schema: generated.ClientQueryCapabilitiesSchema, build: () => queryRecords.encodeClientQueryCapabilities(sampleRow(generated.ClientQueryCapabilitiesSchema) as any)},
   {origin: "QueryCapabilities", schema: generated.QueryCapabilitiesSchema, build: () => queryRecords.encodeQueryCapabilities(sampleRow(generated.QueryCapabilitiesSchema) as any)},
   {origin: "QueryEvaluationContext", schema: generated.QueryEvaluationContextSchema, build: () => queryRecords.encodeQueryEvaluationContext(sampleRow(generated.QueryEvaluationContextSchema) as any)},

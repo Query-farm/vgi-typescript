@@ -35,6 +35,7 @@ export function catalogMacroHandlers(getCatalog: GetCatalog, signingKey?: Uint8A
 
   // catalog_macro_create
   const catalogMacroCreate = catalogHandler(signingKey, async (params) => {
+    if (params.overloads != null) throw new Error("macro overload families are unsupported by this catalog adapter");
     const cat = getCatalog();
     // catalogHandler already flattened the wrapped request.
     const innerParams = params;
