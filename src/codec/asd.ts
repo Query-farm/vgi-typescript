@@ -182,7 +182,9 @@ function normalizeValue(raw: any, type: VgiDataType): any {
     const valueType = ((entries as any).children as VgiField[])[1].type;
     const out: Record<string, any> = {};
     const put = (k: unknown, v: unknown): void => {
-      out[String(k)] = normalizeValue(v, valueType);
+      Object.defineProperty(out, String(k), {
+        value: normalizeValue(v, valueType), enumerable: true, writable: true, configurable: true,
+      });
     };
     // arrow-js MapRow is iterable of [k,v]; flechette returns [[k,v],...] arrays.
     if (raw[Symbol.iterator]) {

@@ -4,6 +4,7 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import {
   decodeCatalogCapabilities, encodeCatalogCapabilities,
+  decodeCatalogMetadataChanges, encodeCatalogMetadataChanges,
   decodeSqlExpression, encodeSqlExpression,
   decodeSortKey, encodeSortKey,
   decodeTableLayout, encodeTableLayout,
@@ -130,4 +131,19 @@ test("view aliases retain raw dots, quotes and order", () => {
 test("view security survives codec round trips", () => {
   expect(decodeViewInfo(encodeViewInfo(decodeViewInfo(fixture("view_info")))).security).toBe("regular");
   expect(decodeViewInfo(encodeViewInfo(decodeViewInfo(fixture("view_info_barrier")))).security).toBe("barrier");
+});
+
+test("metadata patches retain comment presence and literal tag keys", () => {
+  const patch = decodeCatalogMetadataChanges(encodeCatalogMetadataChanges(decodeCatalogMetadataChanges(fixture("metadata_patch"))));
+  expect(patch.set_comment).toBe(true);
+  expect(patch.comment).toBe("");
+  expect(patch.set_tags).toEqual({ "a.b": "", ["__proto__"]: "literal", "": "empty-key" });
+  expect(patch.remove_tags).toEqual(["old", "OLD"]);
+  for (const name of ["metadata_clear_comment", "metadata_noop"]) {
+    const value = decodeCatalogMetadataChanges(encodeCatalogMetadataChanges(decodeCatalogMetadataChanges(fixture(name))));
+    expect(value.set_comment).toBe(name === "metadata_clear_comment");
+    expect(value.comment).toBeNull();
+    expect(value.set_tags).toEqual({});
+    expect(value.remove_tags).toEqual([]);
+  }
 });
