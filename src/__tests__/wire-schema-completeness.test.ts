@@ -65,7 +65,7 @@ import { Arguments } from "../arguments/arguments.js";
 import { FunctionType } from "../types.js";
 import { OrderByDirection, OrderByNullOrder, type BindRequest } from "../protocol/types.js";
 import { encodeASD } from "../codec/asd.js";
-import { encodeCatalogMetadataChanges, encodeCatalogCapabilities, encodeOptionChanges, encodeOptionDefinitions, encodeOptionState, encodeRequiredFilterPaths, encodeSqlExpression, encodeSortKey, encodeTableLayout, encodeTableLayoutChange, buildSchemaContents, encodeSchemaContents } from "../generated/vgi-protocol-types.js";
+import { encodeCatalogObjectRef, encodeObjectDependency, encodeDependencySnapshot, encodeCatalogMetadataChanges, encodeCatalogCapabilities, encodeOptionChanges, encodeOptionDefinitions, encodeOptionState, encodeRequiredFilterPaths, encodeSqlExpression, encodeSortKey, encodeTableLayout, encodeTableLayoutChange, buildSchemaContents, encodeSchemaContents } from "../generated/vgi-protocol-types.js";
 
 // --------------------------------------------------------------------------- //
 // Fixtures
@@ -168,6 +168,9 @@ const ARGUMENTS_BYTES = serializeBatch(
 
 const CASES: WireRecordCase[] = [
   {origin: "CatalogCapabilities", schema: generated.CatalogCapabilitiesSchema, build: () => encodeCatalogCapabilities(sampleRow(generated.CatalogCapabilitiesSchema) as any)},
+  {origin: "CatalogObjectRef", schema: generated.CatalogObjectRefSchema, build: () => encodeCatalogObjectRef(sampleRow(generated.CatalogObjectRefSchema) as any)},
+  {origin: "ObjectDependency", schema: generated.ObjectDependencySchema, build: () => encodeObjectDependency(sampleRow(generated.ObjectDependencySchema) as any)},
+  {origin: "DependencySnapshot", schema: generated.DependencySnapshotSchema, build: () => encodeDependencySnapshot(sampleRow(generated.DependencySnapshotSchema) as any)},
   {origin: "CatalogMetadataChanges", schema: generated.CatalogMetadataChangesSchema, build: () => encodeCatalogMetadataChanges(sampleRow(generated.CatalogMetadataChangesSchema) as any)},
   {origin: "OptionChanges", schema: generated.OptionChangesSchema, build: () => encodeOptionChanges(sampleRow(generated.OptionChangesSchema) as any)},
   {origin: "OptionDefinitions", schema: generated.OptionDefinitionsSchema, build: () => encodeOptionDefinitions(sampleRow(generated.OptionDefinitionsSchema) as any)},

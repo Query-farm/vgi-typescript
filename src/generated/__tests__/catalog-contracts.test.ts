@@ -4,6 +4,7 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import {
   decodeCatalogCapabilities, encodeCatalogCapabilities,
+  decodeCatalogObjectRef, encodeCatalogObjectRef, decodeObjectDependency, encodeObjectDependency, decodeDependencySnapshot, encodeDependencySnapshot,
   decodeCatalogMetadataChanges, encodeCatalogMetadataChanges,
   decodeSqlExpression, encodeSqlExpression,
   decodeSortKey, encodeSortKey,
@@ -145,5 +146,22 @@ test("metadata patches retain comment presence and literal tag keys", () => {
     expect(value.comment).toBeNull();
     expect(value.set_tags).toEqual({});
     expect(value.remove_tags).toEqual([]);
+  }
+});
+
+test("dependency records retain raw identities and nested graph payloads", () => {
+  const table = decodeCatalogObjectRef(encodeCatalogObjectRef(decodeCatalogObjectRef(fixture("object_ref"))));
+  expect(table.schema_path).toEqual(["one.two", "nested"]);
+  expect(table.owner_table).toBeNull();
+  const trigger = decodeCatalogObjectRef(encodeCatalogObjectRef(decodeCatalogObjectRef(fixture("trigger_ref"))));
+  expect(trigger.owner_table).toBe(table.name);
+  const edge = decodeObjectDependency(encodeObjectDependency(decodeObjectDependency(fixture("object_dependency"))));
+  expect(edge.kind).toBe("owned");
+  expect(Array.from(edge.subject)).toEqual(Array.from(fixture("object_ref")));
+  expect(Array.from(edge.dependent)).toEqual(Array.from(fixture("trigger_ref")));
+  for (const name of ["dependency_snapshot", "empty_dependency_snapshot"]) {
+    const graph = decodeDependencySnapshot(encodeDependencySnapshot(decodeDependencySnapshot(fixture(name))));
+    expect(graph.objects.length).toBe(name === "dependency_snapshot" ? 4 : 0);
+    expect(graph.dependencies.length).toBe(name === "dependency_snapshot" ? 3 : 0);
   }
 });
