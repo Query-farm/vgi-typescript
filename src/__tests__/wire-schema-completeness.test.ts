@@ -166,7 +166,15 @@ const ARGUMENTS_BYTES = serializeBatch(
   batchFromColumns({ arg_0: ["s3://bucket/x.parquet"] }, makeSchema([makeField("arg_0", utf8(), true)])),
 );
 
+import * as queryRecords from "../generated/vgi-protocol-types.js";
 const CASES: WireRecordCase[] = [
+  {origin: "ClientQueryCapabilities", schema: generated.ClientQueryCapabilitiesSchema, build: () => queryRecords.encodeClientQueryCapabilities(sampleRow(generated.ClientQueryCapabilitiesSchema) as any)},
+  {origin: "QueryCapabilities", schema: generated.QueryCapabilitiesSchema, build: () => queryRecords.encodeQueryCapabilities(sampleRow(generated.QueryCapabilitiesSchema) as any)},
+  {origin: "QueryEvaluationContext", schema: generated.QueryEvaluationContextSchema, build: () => queryRecords.encodeQueryEvaluationContext(sampleRow(generated.QueryEvaluationContextSchema) as any)},
+  {origin: "QueryObjectReference", schema: generated.QueryObjectReferenceSchema, build: () => queryRecords.encodeQueryObjectReference(sampleRow(generated.QueryObjectReferenceSchema) as any)},
+  {origin: "CatalogQueryPrepareRequest", schema: generated.CatalogQueryPrepareRequestSchema, build: () => queryRecords.encodeCatalogQueryPrepareRequest(sampleRow(generated.CatalogQueryPrepareRequestSchema) as any)},
+  {origin: "CatalogQueryPrepareResult", schema: generated.CatalogQueryPrepareResultSchema, build: () => queryRecords.encodeCatalogQueryPrepareResult(sampleRow(generated.CatalogQueryPrepareResultSchema) as any)},
+
   {origin: "CatalogCapabilities", schema: generated.CatalogCapabilitiesSchema, build: () => encodeCatalogCapabilities(sampleRow(generated.CatalogCapabilitiesSchema) as any)},
   {origin: "CatalogObjectRef", schema: generated.CatalogObjectRefSchema, build: () => encodeCatalogObjectRef(sampleRow(generated.CatalogObjectRefSchema) as any)},
   {origin: "ObjectDependency", schema: generated.ObjectDependencySchema, build: () => encodeObjectDependency(sampleRow(generated.ObjectDependencySchema) as any)},

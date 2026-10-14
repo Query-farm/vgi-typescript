@@ -14,6 +14,11 @@ import {
   field as f_field,
   Table,
 } from "@query-farm/flechette";
+// Flechette 2.4's public table writer derives batch lengths from columns.
+// Its assembled-IPC writer supports the explicit length needed when there
+// are no columns. Keep this narrow package-internal use covered by both readers.
+// @ts-expect-error The JavaScript subpath has no adjacent TypeScript declaration.
+import { encodeIPC } from "@query-farm/flechette/src/encode/encode-ipc.js";
 
 import type { VgiSchema, VgiBatch } from "../types.js";
 import { readFirstRecordBatchMeta } from "./message-meta.js";
@@ -135,6 +140,13 @@ export function serializeBatch(batch: VgiBatch): Uint8Array {
   // the missing empty batch and attaches the map when there is one. Tables
   // that already have batches and no metadata are unaffected.
   const md: Map<string, string> | undefined = t._vgiRecordMetadata ?? t.metadata;
+  if (batch.schema.fields.length === 0 && batch.numRows > 0) {
+    if (!Number.isSafeInteger(batch.numRows)) throw new RangeError("Invalid zero-column batch row count");
+    return encodeIPC({
+      schema: { version: 5, endianness: 0, fields: [], metadata: batch.schema.metadata ?? null },
+      records: [{ length: batch.numRows, nodes: [], regions: [], variadic: [], buffers: [], byteLength: 0, metadata: md }],
+    }, { format: "stream" }).finish() as Uint8Array;
+  }
   const batchMetadata = [md && md.size > 0 ? md : undefined];
   return tableToIPC(t, { format: "stream", batchMetadata } as any) as Uint8Array;
 }

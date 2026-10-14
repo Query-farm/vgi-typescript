@@ -12,7 +12,7 @@
 import { describe, test, expect } from "bun:test";
 import * as arrow from "@query-farm/apache-arrow";
 import { tableFromIPC } from "@query-farm/flechette";
-import { backend, deserializeBatch, withBatchMetadata } from "../index.js";
+import { backend, deserializeBatch, serializeBatch, withBatchMetadata } from "../index.js";
 
 const ROWS = 3;
 
@@ -24,6 +24,18 @@ function zeroColumnIpc(rows: number): Uint8Array {
 }
 
 describe(`withBatchMetadata on a zero-column batch (backend=${backend.name})`, () => {
+  test("writing zero-column rows preserves both row count and batch metadata", () => {
+    for (const count of [0, 1, ROWS]) {
+      const batch = withBatchMetadata(deserializeBatch(zeroColumnIpc(count)), new Map([["state", "retained"]]));
+      const encoded = serializeBatch(batch);
+      const restored = deserializeBatch(encoded);
+      expect(restored.numRows).toBe(count);
+      expect((restored as any).metadata?.get("state")).toBe("retained");
+      // Read independently: the facade's own reader must not hide a bad length.
+      expect(arrow.tableFromIPC(encoded).numRows).toBe(count);
+    }
+  });
+
   test("the IPC bytes carry the row count", () => {
     expect(arrow.tableFromIPC(zeroColumnIpc(ROWS)).numRows).toBe(ROWS);
   });

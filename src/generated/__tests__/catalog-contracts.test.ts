@@ -20,6 +20,27 @@ import { decodeViewInfo, encodeViewInfo, decodeTableInfo, encodeTableInfo } from
 import { encodeASD, decodeASD } from "../../codec/asd.js";
 import { TableCreateRequestSchema } from "../vgi-protocol-schemas.js";
 import * as schemas from "../vgi-protocol-schemas.js";
+import { deserializeBatch, serializeBatch, typeSignature } from "../../arrow/index.js";
+
+test("query parameter batches retain mapping, typed NULLs, nested metadata and empty rows", () => {
+  for (const name of ["query_parameters", "query_empty_parameters"]) {
+    const original = deserializeBatch(fixture(name));
+    const restored = deserializeBatch(serializeBatch(original));
+    expect(restored.numRows).toBe(1);
+    expect(restored.schema.metadata).toEqual(original.schema.metadata);
+    expect(restored.schema.metadata?.get("vgi.query.parameters.v1")).toBe(
+      name === "query_empty_parameters" ? "positional" : "named");
+    if (name === "query_empty_parameters") expect(restored.schema.fields).toHaveLength(0);
+    else {
+      expect(restored.getChildAt(0)!.get(0)).toBeNull();
+      expect(typeSignature(restored.schema.fields[0]!.type)).toBe(typeSignature(original.schema.fields[0]!.type));
+      expect(restored.schema.fields[0]!.metadata?.get("logical")).toBe("example.optional");
+      const child = restored.schema.fields[1]!.type.children![0]!;
+      expect(child.metadata?.get("nested")).toBe("retained");
+      expect(child.nullable).toBe(false);
+    }
+  }
+});
 
 test("column request codecs retain literal and nested targets", () => {
   for (const [operation, paramsSchema] of [
@@ -164,4 +185,27 @@ test("dependency records retain raw identities and nested graph payloads", () =>
     expect(graph.objects.length).toBe(name === "dependency_snapshot" ? 4 : 0);
     expect(graph.dependencies.length).toBe(name === "dependency_snapshot" ? 3 : 0);
   }
+});
+
+import * as queryRecords from "../vgi-protocol-types.js";
+test("query codecs preserve inline contexts, object identity and nullable results", () => {
+  { const original = queryRecords.decodeClientQueryCapabilities(fixture("query_offer"));
+    expect(queryRecords.decodeClientQueryCapabilities(queryRecords.encodeClientQueryCapabilities(original))).toEqual(original); }
+  { const original = queryRecords.decodeQueryCapabilities(fixture("query_capabilities"));
+    expect(queryRecords.decodeQueryCapabilities(queryRecords.encodeQueryCapabilities(original))).toEqual(original); }
+  { const original = queryRecords.decodeQueryEvaluationContext(fixture("query_context"));
+    expect(queryRecords.decodeQueryEvaluationContext(queryRecords.encodeQueryEvaluationContext(original))).toEqual(original); }
+  { const original = queryRecords.decodeQueryObjectReference(fixture("query_object_reference"));
+    expect(queryRecords.decodeQueryObjectReference(queryRecords.encodeQueryObjectReference(original))).toEqual(original); }
+  { const original = queryRecords.decodeCatalogQueryPrepareRequest(fixture("query_prepare"));
+    expect(queryRecords.decodeCatalogQueryPrepareRequest(queryRecords.encodeCatalogQueryPrepareRequest(original))).toEqual(original); }
+  { const original = queryRecords.decodeCatalogQueryPrepareResult(fixture("query_accepted"));
+    expect(queryRecords.decodeCatalogQueryPrepareResult(queryRecords.encodeCatalogQueryPrepareResult(original))).toEqual(original); }
+  { const original = queryRecords.decodeCatalogQueryPrepareResult(fixture("query_declined"));
+    expect(queryRecords.decodeCatalogQueryPrepareResult(queryRecords.encodeCatalogQueryPrepareResult(original))).toEqual(original); }
+  const request = queryRecords.decodeCatalogQueryPrepareRequest(fixture("query_prepare"));
+  expect(request.evaluation_context.timezone).toBe("UTC");
+  expect(request.referenced_objects[0].object.schema_path).toEqual(["one.two", "nested"]);
+  expect(request.catalog_version).toBe(0);
+  expect(queryRecords.decodeCatalogQueryPrepareResult(fixture("query_declined")).prepared_query_token).toBeNull();
 });
