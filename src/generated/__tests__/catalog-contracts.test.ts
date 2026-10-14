@@ -22,6 +22,66 @@ import { TableCreateRequestSchema } from "../vgi-protocol-schemas.js";
 import * as schemas from "../vgi-protocol-schemas.js";
 import { deserializeBatch, serializeBatch, typeSignature } from "../../arrow/index.js";
 
+test("column expression metadata retains exact IPC bytes through Arrow backends", () => {
+  const source = deserializeBatch(fixture("column_expression_metadata"));
+  const batch = deserializeBatch(serializeBatch(source));
+  for (const [index, key, name] of [[0, "vgi.column.default.v1", "column_default_expression"],
+                                  [1, "vgi.column.generated.v1", "column_generated_expression"]] as const) {
+    const value = batch.schema.fields[index]!.metadata!.get(key)!;
+    expect(new Uint8Array(Buffer.from(value, "base64"))).toEqual(fixture(name));
+  }
+  expect(batch.schema.fields[1]!.metadata!.get("vgi.column.generation.v1")).toBe("virtual");
+});
+
+test("canonical constraint records preserve every field through typed codecs", () => {
+  { const original = queryRecords.decodeSqlStatement(fixture("sql_statement"));
+    expect(queryRecords.decodeSqlStatement(queryRecords.encodeSqlStatement(original))).toEqual(original); }
+  { const original = queryRecords.decodeCatalogObjectRef(fixture("constraint_ref"));
+    expect(queryRecords.decodeCatalogObjectRef(queryRecords.encodeCatalogObjectRef(original))).toEqual(original); }
+  { const original = queryRecords.decodeForeignKeyDefinition(fixture("foreign_key_definition"));
+    expect(queryRecords.decodeForeignKeyDefinition(queryRecords.encodeForeignKeyDefinition(original))).toEqual(original); }
+  { const original = queryRecords.decodeConstraintDefinition(fixture("constraint_definition_not_null"));
+    expect(queryRecords.decodeConstraintDefinition(queryRecords.encodeConstraintDefinition(original))).toEqual(original); }
+  { const original = queryRecords.decodeConstraintDefinition(fixture("constraint_definition_unique"));
+    expect(queryRecords.decodeConstraintDefinition(queryRecords.encodeConstraintDefinition(original))).toEqual(original); }
+  { const original = queryRecords.decodeConstraintDefinition(fixture("constraint_definition_primary"));
+    expect(queryRecords.decodeConstraintDefinition(queryRecords.encodeConstraintDefinition(original))).toEqual(original); }
+  { const original = queryRecords.decodeConstraintDefinition(fixture("constraint_definition_check"));
+    expect(queryRecords.decodeConstraintDefinition(queryRecords.encodeConstraintDefinition(original))).toEqual(original); }
+  { const original = queryRecords.decodeConstraintDefinition(fixture("constraint_definition_foreign"));
+    expect(queryRecords.decodeConstraintDefinition(queryRecords.encodeConstraintDefinition(original))).toEqual(original); }
+  { const original = queryRecords.decodeConstraintInfo(fixture("constraint_info"));
+    expect(queryRecords.decodeConstraintInfo(queryRecords.encodeConstraintInfo(original))).toEqual(original); }
+  { const original = queryRecords.decodeConstraintInfo(fixture("constraint_info_untrusted"));
+    expect(queryRecords.decodeConstraintInfo(queryRecords.encodeConstraintInfo(original))).toEqual(original); }
+  { const original = queryRecords.decodeConstraintChange(fixture("constraint_change_add"));
+    expect(queryRecords.decodeConstraintChange(queryRecords.encodeConstraintChange(original))).toEqual(original); }
+  { const original = queryRecords.decodeConstraintChange(fixture("constraint_change_drop"));
+    expect(queryRecords.decodeConstraintChange(queryRecords.encodeConstraintChange(original))).toEqual(original); }
+  { const original = queryRecords.decodeConstraintChange(fixture("constraint_change_rename"));
+    expect(queryRecords.decodeConstraintChange(queryRecords.encodeConstraintChange(original))).toEqual(original); }
+  { const original = queryRecords.decodeConstraintChange(fixture("constraint_change_unname"));
+    expect(queryRecords.decodeConstraintChange(queryRecords.encodeConstraintChange(original))).toEqual(original); }
+  { const original = queryRecords.decodeConstraintChange(fixture("constraint_change_replace"));
+    expect(queryRecords.decodeConstraintChange(queryRecords.encodeConstraintChange(original))).toEqual(original); }
+  { const original = queryRecords.decodeConstraintSnapshot(fixture("constraint_snapshot"));
+    expect(queryRecords.decodeConstraintSnapshot(queryRecords.encodeConstraintSnapshot(original))).toEqual(original); }
+  { const original = queryRecords.decodeConstraintSnapshot(fixture("constraint_snapshot_empty"));
+    expect(queryRecords.decodeConstraintSnapshot(queryRecords.encodeConstraintSnapshot(original))).toEqual(original); }
+  { const original = queryRecords.decodeConstraintsApplyRequest(fixture("constraints_apply"));
+    expect(queryRecords.decodeConstraintsApplyRequest(queryRecords.encodeConstraintsApplyRequest(original))).toEqual(original); }
+  { const original = queryRecords.decodeConstraintsApplyRequest(fixture("constraints_apply_autocommit"));
+    expect(queryRecords.decodeConstraintsApplyRequest(queryRecords.encodeConstraintsApplyRequest(original))).toEqual(original); }
+  const statement = queryRecords.decodeSqlStatement(fixture("sql_statement"));
+  expect(statement.evaluation_context.default_order).toBe("desc");
+  expect(statement.evaluation_context.default_null_order).toBe("nulls_first");
+  expect(statement.evaluation_context.preserve_insertion_order).toBe(false);
+  const snapshot = queryRecords.decodeConstraintSnapshot(fixture("constraint_snapshot"));
+  expect(snapshot.definition_revision).toEqual(new Uint8Array([0, 114, 101, 118, 105, 115, 105, 111, 110, 255, 128]));
+  expect(snapshot.constraints).toEqual([fixture("constraint_info")]);
+  expect(queryRecords.decodeConstraintInfo(fixture("constraint_info")).ref).toEqual(fixture("constraint_ref"));
+});
+
 test("query parameter batches retain mapping, typed NULLs, nested metadata and empty rows", () => {
   for (const name of ["query_parameters", "query_empty_parameters"]) {
     const original = deserializeBatch(fixture(name));
