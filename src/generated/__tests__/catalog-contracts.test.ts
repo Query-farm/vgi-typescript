@@ -240,13 +240,20 @@ test("logical type batches preserve tuple identity, SQL NULL and variant absence
     const value = restored.getChildAt(0)!.get(0);
     if (name === "logical_tuple") expect(field.metadata.get("vgi.logical_type.v1")).toBe("tuple");
     if (name === "logical_struct") expect(field.metadata.has("vgi.logical_type.v1")).toBe(false);
-    if (name === "logical_variant_sql_null") expect(value).toBeNull();
-    if (["logical_variant_null", "logical_variant_absent", "logical_variant_null_member"].includes(name)) {
-      expect(field.metadata.get("vgi.logical_type.v1")).toBe("variant");
-      expect(value).toEqual(original.getChildAt(0)!.get(0));
-      const inner = deserializeBatch(value as Uint8Array);
-      if (name === "logical_variant_null") expect(inner.getChildAt(0)!.get(0)).toBeNull();
-      else expect(inner.schema.fields[0]!.type.children).toHaveLength(name === "logical_variant_absent" ? 0 : 1);
+    if (name.startsWith("logical_variant_")) {
+      expect(field.metadata.has("vgi.logical_type.v1")).toBe(false);
+      expect(field.metadata.get("ARROW:extension:name")).toBe("arrow.parquet.variant");
+      expect(field.metadata.get("ARROW:extension:metadata")).toBe("");
+      expect(field.type.children!.map(child => [child.name, child.nullable])).toEqual([["metadata", false], ["value", true]]);
+      if (name === "logical_variant_sql_null") expect(value).toBeNull();
+      else {
+        const metadata = name === "logical_variant_null_member" ? [1, 1, 0, 7, 112, 114, 101, 115, 101, 110, 116] : [1, 0, 0];
+        const payload = name === "logical_variant_null" ? [0] : name === "logical_variant_absent" ? [2, 0, 0] : [2, 1, 0, 0, 1, 0];
+        expect(Array.from(value["metadata"])).toEqual(metadata);
+        expect(Array.from(value["value"])).toEqual(payload);
+        expect(value["metadata"]).toEqual(original.getChildAt(0)!.get(0)["metadata"]);
+        expect(value["value"]).toEqual(original.getChildAt(0)!.get(0)["value"]);
+      }
     } else if (name === "logical_tuple" || name === "logical_struct") {
       const valueBefore = original.getChildAt(0)!.get(0);
       for (const child of field.type.children!) {
