@@ -56,7 +56,7 @@ import { serializeAttachOptions } from "../catalog/attach-options.js";
 import { VgiClientError, wrapRpcWithErrorEnrichment } from "./errors.js";
 import { normalizeSchemaPath } from "../schema-path.js";
 import { encodeASD } from "../codec/asd.js";
-import { ClientCapabilitiesSchema, MacroCreateRequestSchema } from "../generated/vgi-protocol-schemas.js";
+import { ClientCapabilitiesSchema, MacroCreateRequestSchema, TableCreateRequestSchema } from "../generated/vgi-protocol-schemas.js";
 import { decodeCatalogContentsResponse } from "../generated/vgi-protocol-types.js";
 import { deserializeInfoList, deserializeTags, toAsyncIterator } from "./helpers.js";
 
@@ -1129,21 +1129,19 @@ export class VgiClient {
     name: string,
     columns: Uint8Array,
     onConflict: OnCreateConflict,
-    notNullConstraints?: number[],
-    uniqueConstraints?: number[][],
-    checkConstraints?: string[],
+    constraintDefinitions: Uint8Array[] = [],
     transactionOpaqueData?: TransactionOpaqueData,
   ): Promise<void> {
     await this.rpc.call("catalog_table_create", {
+      request: encodeASD(TableCreateRequestSchema, {
       attach_opaque_data: attachOpaqueData,
       schema_path: normalizeSchemaPath(schemaPath),
       name,
       columns,
       on_conflict: onConflict,
-      not_null_constraints: notNullConstraints ?? null,
-      unique_constraints: uniqueConstraints ?? null,
-      check_constraints: checkConstraints ?? null,
+      constraint_definitions: constraintDefinitions,
       transaction_opaque_data: transactionOpaqueData ?? null,
+      }),
     });
   }
 

@@ -34,6 +34,7 @@
 // `vgi/_test_fixtures/catalog_contents.py`; driven by
 // `vgi/test/sql/integration/catalog/catalog_contents*.test`.
 
+import { requireUnconstrainedColumns } from "../src/catalog/unconstrained-columns.js";
 import {
   Arguments,
   CatalogInterface,
@@ -235,10 +236,10 @@ abstract class PrivateMemoryCatalog extends CatalogInterface {
     name: string,
     columns: Uint8Array,
     onConflict: string,
-    notNullConstraints?: number[],
-    uniqueConstraints?: number[][],
-    checkConstraints?: string[],
+    constraintDefinitions?: Uint8Array[],
   ): void {
+    if (constraintDefinitions?.length) throw new Error("canonical constraint enforcement is not supported");
+    requireUnconstrainedColumns(columns);
     const state = this._state(attach);
     const schema = this._requireSchema(attach, schemaPath);
     if (schema.tables.has(name) && !this._replace("Table", name, onConflict)) return;
@@ -248,11 +249,8 @@ abstract class PrivateMemoryCatalog extends CatalogInterface {
       name,
       schema_path: schema.path,
       columns,
-      not_null_constraints: notNullConstraints ?? [],
-      unique_constraints: uniqueConstraints ?? [],
-      check_constraints: checkConstraints ?? [],
-      primary_key_constraints: [],
-      foreign_key_constraints: [],
+      constraints: [],
+      definition_revision: null,
       write_result_modes: {},
       supports_column_statistics: false,
       required_filters: [],

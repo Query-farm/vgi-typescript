@@ -15,7 +15,7 @@ import { serializeSchema } from "../src/util/arrow/index.js";
 import { argumentSpecsToSchema } from "../src/arguments/argument-spec.js";
 import { scalarFunctions } from "./scalar.js";
 import * as os from "node:os";
-import { ForeignKeyInfoSchema } from "../src/generated/vgi-protocol-schemas.js";
+import { fixtureConstraint as constraint, FIXTURE_CONSTRAINT_REVISION } from "./canonical_constraints.js";
 
 /**
  * Scratch directory the multi-branch fixtures share with the `.test` files.
@@ -771,10 +771,14 @@ export const catalog: CatalogDescriptor = {
             new Field("name", new Utf8(), true),
             new Field("budget", new Float64(), true),
           ]),
-          primaryKey: [["id"]],
-          notNull: ["id", "name"],
-          unique: [["name"]],
-          check: ["budget >= 0"],
+          constraints: [
+            constraint("departments", "fixture.departments.primary", "PRIMARY_KEY", [["id"]]),
+            constraint("departments", "fixture.departments.id.required", "NOT_NULL", [["id"]]),
+            constraint("departments", "fixture.departments.name.required", "NOT_NULL", [["name"]]),
+            constraint("departments", "fixture.departments.name.unique", "UNIQUE", [["name"]]),
+            constraint("departments", "fixture.departments.budget.check", "CHECK", [], { checkSql: "budget >= 0" }),
+          ],
+          definitionRevision: FIXTURE_CONSTRAINT_REVISION,
           defaults: { budget: 0 },
           statistics: {
             id: {
@@ -804,8 +808,11 @@ export const catalog: CatalogDescriptor = {
             new Field("quantity", new Int64(), true),
             new Field("price", new Float64(), true),
           ]),
-          notNull: ["id"],
-          primaryKey: [["id"]],
+          constraints: [
+            constraint("products", "fixture.products.primary", "PRIMARY_KEY", [["id"]]),
+            constraint("products", "fixture.products.id.required", "NOT_NULL", [["id"]]),
+          ],
+          definitionRevision: FIXTURE_CONSTRAINT_REVISION,
           defaults: { quantity: 0, name: "unknown", price: 9.99 },
           columnComments: {
             id: "Unique product identifier",
@@ -845,14 +852,17 @@ export const catalog: CatalogDescriptor = {
             new Field("email", new Utf8(), true),
             new Field("department_id", new Int64(), true),
           ]),
-          primaryKey: [["id"]],
-          notNull: ["id", "name", "email"],
-          unique: [["email"]],
-          foreignKey: [{
-            columns: ["department_id"],
-            referencedTable: "departments",
-            referencedColumns: ["id"],
-          }],
+          constraints: [
+            constraint("employees", "fixture.employees.primary", "PRIMARY_KEY", [["id"]]),
+            constraint("employees", "fixture.employees.id.required", "NOT_NULL", [["id"]]),
+            constraint("employees", "fixture.employees.name.required", "NOT_NULL", [["name"]]),
+            constraint("employees", "fixture.employees.email.required", "NOT_NULL", [["email"]]),
+            constraint("employees", "fixture.employees.email.unique", "UNIQUE", [["email"]]),
+            constraint("employees", "fixture.employees.department.foreign", "FOREIGN_KEY", [["department_id"]], {
+              targetTable: "departments", targetPaths: [["id"]], targetKey: "fixture.departments.primary",
+            }),
+          ],
+          definitionRevision: FIXTURE_CONSTRAINT_REVISION,
           comment: "Employee table with FK to departments",
         },
         {
@@ -862,13 +872,16 @@ export const catalog: CatalogDescriptor = {
             new Field("project_code", new Utf8(), true),
             new Field("title", new Utf8(), true),
           ]),
-          primaryKey: [["department_id", "project_code"]],
-          notNull: ["department_id", "project_code", "title"],
-          foreignKey: [{
-            columns: ["department_id"],
-            referencedTable: "departments",
-            referencedColumns: ["id"],
-          }],
+          constraints: [
+            constraint("projects", "fixture.projects.primary", "PRIMARY_KEY", [["department_id"], ["project_code"]]),
+            constraint("projects", "fixture.projects.department.required", "NOT_NULL", [["department_id"]]),
+            constraint("projects", "fixture.projects.code.required", "NOT_NULL", [["project_code"]]),
+            constraint("projects", "fixture.projects.title.required", "NOT_NULL", [["title"]]),
+            constraint("projects", "fixture.projects.department.foreign", "FOREIGN_KEY", [["department_id"]], {
+              targetTable: "departments", targetPaths: [["id"]], targetKey: "fixture.departments.primary",
+            }),
+          ],
+          definitionRevision: FIXTURE_CONSTRAINT_REVISION,
           comment: "Projects with composite PK and FK to departments",
         },
         // ----- required_filters fixtures -----
@@ -988,14 +1001,16 @@ export const catalog: CatalogDescriptor = {
             new Field("department_id", new Int64(), true),
           ]),
           supportsTimeTravel: true,
-          notNull: ["id", "name"],
-          primaryKey: [["id"]],
-          unique: [["email"]],
-          foreignKey: [{
-            columns: ["department_id"],
-            referencedTable: "departments",
-            referencedColumns: ["id"],
-          }],
+          constraints: [
+            constraint("versioned_constraints", "fixture.versioned.primary", "PRIMARY_KEY", [["id"]]),
+            constraint("versioned_constraints", "fixture.versioned.id.required", "NOT_NULL", [["id"]]),
+            constraint("versioned_constraints", "fixture.versioned.name.required", "NOT_NULL", [["name"]]),
+            constraint("versioned_constraints", "fixture.versioned.email.unique", "UNIQUE", [["email"]]),
+            constraint("versioned_constraints", "fixture.versioned.department.foreign", "FOREIGN_KEY", [["department_id"]], {
+              targetTable: "departments", targetPaths: [["id"]], targetKey: "fixture.departments.primary",
+            }),
+          ],
+          definitionRevision: FIXTURE_CONSTRAINT_REVISION,
           comment: "Table with constraints that evolve across versions",
         },
       ],
@@ -1032,15 +1047,6 @@ export const catalog: CatalogDescriptor = {
 
 const versionedDataScanFunction = tableFunctions.find((f) => f.meta.name === "versioned_data_scan");
 
-function buildFkBytes(fkCols: string[], pkCols: string[], refTable: string, refSchemaPath: string[]): Uint8Array {
-  return serializeBatch(batchFromColumns({
-    fk_columns: [fkCols],
-    pk_columns: [pkCols],
-    referenced_table: [refTable],
-    referenced_schema_path: [refSchemaPath],
-  }, ForeignKeyInfoSchema));
-}
-
 function buildVersionArgBytes(version: number): Uint8Array {
   const argBatchSchema = new Schema([new Field("version", new Int64(), true)]);
   return serializeBatch(batchFromColumns({ version: [BigInt(version)] }, argBatchSchema));
@@ -1067,11 +1073,8 @@ export function createExampleCatalog(base: ReadOnlyCatalogInterface): ReadOnlyCa
         name,
         schema_path: schemaPath,
         columns: serializeSchema(cols),
-        not_null_constraints: [],
-        unique_constraints: [],
-        check_constraints: [],
-        primary_key_constraints: [],
-        foreign_key_constraints: [],
+        constraints: [],
+        definition_revision: null,
         write_result_modes: {},
         supports_column_statistics: false,
         scan_function: new Uint8Array(0),
@@ -1084,44 +1087,7 @@ export function createExampleCatalog(base: ReadOnlyCatalogInterface): ReadOnlyCa
       };
     }
     if (schemaPath.join(".").toLowerCase() === "data" && name.toLowerCase() === "versioned_constraints" && atUnit) {
-      const version = resolveVersionedConstraintsVersion(atUnit, atValue);
-      const cols = getVersionedConstraintsSchema(version);
-      // Constraints evolve: V1: NOT NULL(id), V2: +NOT NULL(name),PK(id),UNIQUE(email), V3: +FK
-      const colNames = cols.fields.map((f) => f.name);
-      const notNull: number[] = [];
-      const pk: number[][] = [];
-      const unique: number[][] = [];
-      const fk: Uint8Array[] = [];
-      if (version >= 1) notNull.push(colNames.indexOf("id"));
-      if (version >= 2) {
-        notNull.push(colNames.indexOf("name"));
-        pk.push([colNames.indexOf("id")]);
-        unique.push([colNames.indexOf("email")]);
-      }
-      if (version >= 3) {
-        fk.push(buildFkBytes(["department_id"], ["id"], "departments", schemaPath));
-      }
-      return {
-        comment: "Table with constraints that evolve across versions",
-        tags: {},
-        name,
-        schema_path: schemaPath,
-        columns: serializeSchema(cols),
-        not_null_constraints: notNull,
-        unique_constraints: unique,
-        check_constraints: [],
-        primary_key_constraints: pk,
-        foreign_key_constraints: fk,
-        write_result_modes: {},
-        supports_column_statistics: false,
-        scan_function: new Uint8Array(0),
-        insert_function: new Uint8Array(0),
-        update_function: new Uint8Array(0),
-        delete_function: new Uint8Array(0),
-        cardinality_estimate: 0,
-        cardinality_max: 0,
-        required_filters: [],
-      };
+      throw new Error("versioned legacy constraints require canonical provider snapshots");
     }
     // Multi-branch tables: accept AT at table_get and pass it through with AT
     // stripped, so the time-travel guard in the read-only base doesn't fire.

@@ -202,6 +202,14 @@ test("layouts retain explicit ordering and distinguish clear from unchanged", ()
   const info = decodeTableInfo(encodeTableInfo(decodeTableInfo(fixture("table_info"))));
   expect(info.options).toEqual(fixture("state"));
   expect(info.layout).toEqual(fixture("layout"));
+  expect(create.constraint_definitions).toHaveLength(1);
+  expect(old.constraint_definitions).toEqual([]);
+  expect(info.constraints).toHaveLength(1);
+  expect(info.definition_revision).toEqual(new Uint8Array([114, 101, 118, 105, 115, 105, 111, 110, 0, 255]));
+  const constraint = queryRecords.decodeConstraintInfo(info.constraints[0]!);
+  expect(constraint.definition).toEqual(create.constraint_definitions[0]);
+  expect(queryRecords.decodeCatalogObjectRef(constraint.ref).name).toBe("fixture-stable-key");
+  expect(queryRecords.decodeConstraintDefinition(constraint.definition).column_paths).toEqual([["record", "a.b"]]);
 });
 
 test("view aliases retain raw dots, quotes and order", () => {

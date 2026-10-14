@@ -38,7 +38,7 @@ import { SIGNING_KEY_BYTES, serveVgiWorker } from "../../../serve-entry.js";
 import { buildVgiProtocol } from "../../dispatch.js";
 import { wrapRequest } from "../../../client/protocol.js";
 import { batchFromColumns } from "../../../util/arrow/index.js";
-import { schema, field, utf8, binary, batchFromRows, serializeBatch } from "../../../arrow/index.js";
+import { schema, field, struct, utf8, binary, batchFromRows, serializeBatch } from "../../../arrow/index.js";
 import { SchemaInfoSchema } from "../../../generated/vgi-protocol-schemas.js";
 import { serializeSchema } from "../../../util/arrow/index.js";
 import { TableCreateRequestSchema } from "../../../generated/vgi-protocol-schemas.js";
@@ -260,6 +260,30 @@ describe("catalog_contents", () => {
 });
 
 describe("a DDL-capable catalog behind a composite (the contents_reval fixture)", () => {
+  test("unsupported constraints reject before every conflict policy can mutate", async () => {
+    const h = handlers(new ContentsRevalCatalog());
+    const attach = (await h.attach(CATALOG_REVAL)).attach_opaque_data;
+    const columns = serializeSchema(schema([field("a", utf8(), true)]));
+    const request = { attach_opaque_data: attach, schema_path: ["main"], name: "t",
+      columns, on_conflict: "ERROR", constraint_definitions: [], transaction_opaque_data: null };
+    await h.call("catalog_table_create", { request: encodeASD(TableCreateRequestSchema, request) });
+    const before = await h.contents(attach);
+    for (const on_conflict of ["ERROR", "IGNORE", "REPLACE"]) {
+      await expect(h.call("catalog_table_create", { request: encodeASD(TableCreateRequestSchema, {
+        ...request, on_conflict, constraint_definitions: [new Uint8Array([1])],
+      }) })).rejects.toThrow("constraint");
+    }
+    for (const malformed of [schema([field("a", utf8(), false)]),
+      schema([field("record", struct([field("a", utf8(), false)]), true)])]) {
+      await expect(h.call("catalog_table_create", { request: encodeASD(TableCreateRequestSchema, {
+        ...request, on_conflict: "REPLACE", columns: serializeSchema(malformed),
+      }) })).rejects.toThrow("nonnullable");
+    }
+    const after = await h.contents(attach);
+    expect(after.response.catalog_version).toBe(before.response.catalog_version);
+    expect(after.schemas[0]!.tables).toEqual(before.schemas[0]!.tables);
+  });
+
   test("table_create's wrapped request reaches the catalog, and catalog_contents sees it", async () => {
     const h = handlers(new CompositeCatalogInterface([exampleCatalog(), new ContentsRevalCatalog()]));
     const attached = await h.attach(CATALOG_REVAL);
@@ -279,11 +303,7 @@ describe("a DDL-capable catalog behind a composite (the contents_reval fixture)"
         name: "t1",
         columns,
         on_conflict: "ERROR",
-        not_null_constraints: [],
-        unique_constraints: [],
-        check_constraints: [],
-        primary_key_constraints: [],
-        foreign_key_constraints: [],
+        constraint_definitions: [],
         transaction_opaque_data: null,
       }),
     });
@@ -754,11 +774,8 @@ describe("deterministic item encoding (map columns in sorted key order)", () => 
         name: "t",
         schema_path: ["main"],
         columns: serializeSchema(schema([field("a", utf8(), true)])),
-        not_null_constraints: [],
-        unique_constraints: [],
-        check_constraints: [],
-        primary_key_constraints: [],
-        foreign_key_constraints: [],
+        constraints: [],
+        definition_revision: null,
         write_result_modes: modes as any,
         supports_column_statistics: false,
         required_filters: [],

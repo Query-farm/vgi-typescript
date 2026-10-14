@@ -717,9 +717,7 @@ export abstract class CatalogInterface {
     name: string,
     columns: Uint8Array,
     onConflict: string,
-    notNullConstraints?: number[],
-    uniqueConstraints?: number[][],
-    checkConstraints?: string[],
+    constraintDefinitions?: Uint8Array[],
     transactionOpaqueData?: TransactionOpaqueData
   ): Awaitable<void> {
     throw new CatalogReadOnlyError("table_create");

@@ -103,18 +103,15 @@ describe("ASD codec", () => {
     expect(back.tags).toEqual({});
   });
 
-  test("TableInfo round-trip with nested int lists", () => {
+  test("TableInfo round-trip with canonical constraint IPC and revision", () => {
     const v: TableInfo = {
       comment: null,
       tags: {},
       name: "orders",
       schema_path: ["main"],
       columns: new Uint8Array([9, 9, 9]),
-      not_null_constraints: [0, 1, 2],
-      unique_constraints: [[0], [1, 2]],
-      check_constraints: ["a > 0", "b < 10"],
-      primary_key_constraints: [[0]],
-      foreign_key_constraints: [new Uint8Array([7])],
+      constraints: [new Uint8Array([7])],
+      definition_revision: new Uint8Array([8]),
       write_result_modes: { insert: "changes", delete: "count" },
       supports_column_statistics: false,
       required_filters: [],
@@ -122,11 +119,8 @@ describe("ASD codec", () => {
     const bytes = encodeASD(TableInfoSchema, v);
     const back = decodeASD<TableInfo>(TableInfoSchema, bytes);
     expect(back.name).toBe("orders");
-    expect(back.not_null_constraints).toEqual([0, 1, 2]);
-    expect(back.unique_constraints).toEqual([[0], [1, 2]]);
-    expect(back.check_constraints).toEqual(["a > 0", "b < 10"]);
-    expect(back.primary_key_constraints).toEqual([[0]]);
-    expect(back.foreign_key_constraints?.map((u) => Array.from(u))).toEqual([[7]]);
+    expect(back.constraints.map((u) => Array.from(u))).toEqual([[7]]);
+    expect(Array.from(back.definition_revision!)).toEqual([8]);
     expect(back.write_result_modes).toEqual({ insert: "changes", delete: "count" });
   });
 

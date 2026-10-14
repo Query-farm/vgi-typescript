@@ -25,6 +25,9 @@ export interface ForeignKeyDef {
 export type DefaultValue = string | number | boolean | null;
 
 export interface TableDescriptor {
+  /** Canonical ConstraintInfo IPC records with provider-owned stable identities. */
+  constraints?: Uint8Array[];
+  definitionRevision?: Uint8Array | null;
   name: string;
   columns?: VgiSchema;
   function?: VgiFunction;

@@ -367,11 +367,9 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
 
       const columns = serializeSchema(colSchema);
 
-      // Resolve constraint column names → indices
-      const notNullIndices = resolveIndices(colSchema, t.notNull);
-      const uniqueIndices = resolveIndexGroups(colSchema, t.unique);
-      const pkIndices = resolveIndexGroups(colSchema, t.primaryKey);
-      const fkBytes = serializeForeignKeys(t.foreignKey, path);
+      if (t.notNull?.length || t.unique?.length || t.primaryKey?.length || t.check?.length || t.foreignKey?.length) {
+        throw new Error("legacy constraint metadata requires explicit canonical records");
+      }
 
       // Validate exact raw paths against the full table schema.
       const requiredFilters = t.requiredFilters ?? [];
@@ -403,11 +401,8 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
         name: t.name,
         schema_path: normalizeSchemaPath(path),
         columns,
-        not_null_constraints: notNullIndices,
-        unique_constraints: uniqueIndices,
-        check_constraints: t.check ?? [],
-        primary_key_constraints: pkIndices,
-        foreign_key_constraints: fkBytes,
+        constraints: t.constraints ?? [],
+        definition_revision: t.definitionRevision ?? null,
         write_result_modes: {},
         supports_column_statistics: t.statistics != null && Object.keys(t.statistics).length > 0,
         // Inline scan_function only for purely function-backed tables.

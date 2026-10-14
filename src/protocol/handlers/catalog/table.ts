@@ -11,6 +11,7 @@ import {
   ScanFunctionResultSchema,
 } from "../../../generated/vgi-protocol-schemas.js";
 import { toUint8Array } from "../../../util/bytes.js";
+import { requireUnconstrainedColumns } from "../../../catalog/unconstrained-columns.js";
 import {
   wrapResult,
 } from "../shared.js";
@@ -49,9 +50,14 @@ export function catalogTableHandlers(getCatalog: GetCatalog, signingKey?: Uint8A
 
   // catalog_table_create
   const catalogTableCreate = catalogHandler(signingKey, async (params) => {
+    if (params.constraint_definitions == null) throw new Error("constraint_definitions is required");
+    if (Array.from(params.constraint_definitions as Iterable<unknown>).length > 0) {
+      throw new MethodNotImplementedError("catalog_table_create: canonical constraint enforcement is not supported");
+    }
     if (params.comment != null || params.tags != null || params.options != null || params.layout != null) {
       throw new MethodNotImplementedError("catalog_table_create: table metadata/options/layout profiles are not supported");
     }
+    requireUnconstrainedColumns(toUint8Array(params.columns));
     const cat = getCatalog();
     await cat.tableCreate(
       toUint8Array(params.attach_opaque_data),
@@ -59,9 +65,7 @@ export function catalogTableHandlers(getCatalog: GetCatalog, signingKey?: Uint8A
       params.name,
       toUint8Array(params.columns),
       params.on_conflict,
-      params.not_null_constraints ?? [],
-      params.unique_constraints ?? [],
-      params.check_constraints ?? [],
+      [],
       params.transaction_opaque_data ? toUint8Array(params.transaction_opaque_data) : undefined
     );
     return {};
@@ -286,6 +290,9 @@ export function catalogTableHandlers(getCatalog: GetCatalog, signingKey?: Uint8A
     return {};
   });
   return {
+    catalogTableConstraintsApply: async () => {
+      throw new MethodNotImplementedError("catalog_table_constraints_apply");
+    },
     catalogTableGet,
     catalogTableCreate,
     catalogTableDrop,

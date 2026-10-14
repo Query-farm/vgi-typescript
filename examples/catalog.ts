@@ -2,6 +2,7 @@
 // InMemoryCatalog: full read-write CatalogInterface implementation.
 // Matches Python vgi/examples/catalog.py
 
+import { requireUnconstrainedColumns } from "../src/catalog/unconstrained-columns.js";
 import {
   CatalogInterface,
   type AttachOpaqueData,
@@ -180,11 +181,8 @@ export class InMemoryCatalog extends CatalogInterface {
       name: t.name,
       schema_path: t.schemaPath,
       columns: t.columns,
-      not_null_constraints: t.notNullConstraints,
-      unique_constraints: t.uniqueConstraints,
-      check_constraints: t.checkConstraints,
-      primary_key_constraints: [],
-      foreign_key_constraints: [],
+      constraints: [],
+      definition_revision: null,
       write_result_modes: {},
       supports_column_statistics: false,
       scan_function: new Uint8Array(0),
@@ -236,11 +234,8 @@ export class InMemoryCatalog extends CatalogInterface {
       name: t.name,
       schema_path: t.schemaPath,
       columns: t.columns,
-      not_null_constraints: t.notNullConstraints,
-      unique_constraints: t.uniqueConstraints,
-      check_constraints: t.checkConstraints,
-      primary_key_constraints: [],
-      foreign_key_constraints: [],
+      constraints: [],
+      definition_revision: null,
       write_result_modes: {},
       supports_column_statistics: false,
       scan_function: new Uint8Array(0),
@@ -259,11 +254,11 @@ export class InMemoryCatalog extends CatalogInterface {
     name: string,
     columns: Uint8Array,
     onConflict: string,
-    notNullConstraints?: number[],
-    uniqueConstraints?: number[][],
-    checkConstraints?: string[],
+    constraintDefinitions?: Uint8Array[],
     transactionOpaqueData?: TransactionOpaqueData
   ): void {
+    if (constraintDefinitions?.length) throw new Error("canonical constraint enforcement is not supported");
+    requireUnconstrainedColumns(columns);
     const att = this._getAttachment(attachOpaqueData);
     const schema = att.schemas.get(schemaPathKey(schemaPath));
     if (!schema) throw new CatalogNotFoundError("Schema", schemaPathDisplay(schemaPath));
@@ -279,9 +274,9 @@ export class InMemoryCatalog extends CatalogInterface {
       name,
       schemaPath,
       columns,
-      notNullConstraints: notNullConstraints ?? [],
-      uniqueConstraints: uniqueConstraints ?? [],
-      checkConstraints: checkConstraints ?? [],
+      notNullConstraints: [],
+      uniqueConstraints: [],
+      checkConstraints: [],
       comment: null,
       tags: {},
     });

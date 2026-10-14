@@ -29,7 +29,7 @@
     "node": ">=22.15"
   },
   "type": "module",
-  "//sideEffects": "Entry modules are listed so the bundler cannot tree-shake them away. Under a bare `sideEffects: false`, an entry consisting only of re-exports builds to a dangling export list with no imports and no definitions — invalid ESM that throws on first import. Modules not listed stay side-effect-free, so consumers still tree-shake normally.",
+  "//sideEffects": "Entry modules are listed so the bundler cannot tree-shake them away. Under a bare `sideEffects: false`, an entry consisting only of re-exports builds to a dangling export list with no imports and no definitions \u2014 invalid ESM that throws on first import. Modules not listed stay side-effect-free, so consumers still tree-shake normally.",
   "sideEffects": [
     "./src/index.ts",
     "./src/client-entry.ts",
@@ -75,7 +75,7 @@
     "!src/**/*.test.ts",
     "!src/**/*.spec.ts"
   ],
-  "//imports": "`browser` maps to arrow-js DELIBERATELY, not flechette. Measured on the client surface (VgiClient + Arguments + batch helpers), a minified browser bundle is 84 KB gzip via arrow-js vs 116 KB via flechette — arrow-js tree-shakes to the subset the client touches, while flechette links as a unit. Flechette still wins for `worker-cf`, which exercises far more of the Arrow API and cannot take a peer dep. Keep `browser` AFTER `workerd`/`worker`: conditions match in key order, so a workerd build (which sets both) must hit flechette first.",
+  "//imports": "`browser` maps to arrow-js DELIBERATELY, not flechette. Measured on the client surface (VgiClient + Arguments + batch helpers), a minified browser bundle is 84 KB gzip via arrow-js vs 116 KB via flechette \u2014 arrow-js tree-shakes to the subset the client touches, while flechette links as a unit. Flechette still wins for `worker-cf`, which exercises far more of the Arrow API and cannot take a peer dep. Keep `browser` AFTER `workerd`/`worker`: conditions match in key order, so a workerd build (which sets both) must hit flechette first.",
   "imports": {
     "#arrow-impl": {
       "flechette": "./src/arrow/impl-flechette/index.ts",
@@ -108,6 +108,7 @@
     "build:js": "bun build ./src/index.ts --outdir dist --target node --format esm --sourcemap=external --external @query-farm/apache-arrow --external @query-farm/vgi-rpc && bun build ./src/client-entry.ts --outdir dist --target browser --format esm --sourcemap=external --external @query-farm/apache-arrow --external @query-farm/vgi-rpc && bun build ./src/worker-cf-entry.ts --outdir dist --target node --format esm --sourcemap=external --external @query-farm/apache-arrow --external @query-farm/vgi-rpc && bun build ./src/serve-entry.ts --outdir dist --target bun --format esm --sourcemap=external --external @query-farm/apache-arrow --external @query-farm/vgi-rpc",
     "postinstall": "node scripts/postinstall.cjs",
     "build:browser-test": "bun build examples/browser/main.ts --outdir examples/browser/dist --target browser --format esm --sourcemap=external",
-    "test": "bun test"
+    "test": "bun test",
+    "build:landing-client": "bun build ./scripts/landing-client-entry.ts --outfile dist/vgi-client.js --target browser --format esm --minify"
   }
 }
