@@ -118,12 +118,10 @@ export interface MacroDescriptor {
 
 export interface IndexDescriptor {
   name: string;
-  tableName: string;
-  expressions: string[];
-  /** UNIQUE / PRIMARY / NONE; defaults to NONE. */
-  constraintType?: "NONE" | "UNIQUE" | "PRIMARY";
-  indexType?: string;
-  options?: Record<string, string>;
+  /** Complete provider-authored definition; no expression strings or options are inferred. */
+  definition: Uint8Array;
+  /** Effective values and persisted override names, including explicit NULL. */
+  options: Uint8Array;
   comment?: string;
   tags?: Record<string, string>;
 }

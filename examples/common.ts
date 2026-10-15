@@ -16,6 +16,7 @@ import { argumentSpecsToSchema } from "../src/arguments/argument-spec.js";
 import { scalarFunctions } from "./scalar.js";
 import * as os from "node:os";
 import { fixtureConstraint as constraint, FIXTURE_CONSTRAINT_REVISION } from "./canonical_constraints.js";
+import { fixtureIndex } from "./canonical_indexes.js";
 
 /**
  * Scratch directory the multi-branch fixtures share with the `.test` files.
@@ -1025,16 +1026,13 @@ export const catalog: CatalogDescriptor = {
       indexes: [
         {
           name: "idx_numbers_value",
-          tableName: "numbers",
-          expressions: ["value"],
-          comment: "Index on numbers.value",
+          ...fixtureIndex("numbers", "value", "NONE"),
+          comment: "Metadata-only index descriptor for numbers.value",
         },
         {
           name: "idx_numbers_value_unique",
-          tableName: "numbers",
-          expressions: ["value"],
-          constraintType: "UNIQUE",
-          comment: "Unique index on numbers.value",
+          ...fixtureIndex("numbers", "value", "NONE"),
+          comment: "Metadata-only descriptor; no uniqueness is claimed",
         },
       ],
     },

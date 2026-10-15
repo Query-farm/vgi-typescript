@@ -41,7 +41,8 @@ import { batchFromColumns } from "../../../util/arrow/index.js";
 import { schema, field, struct, utf8, binary, batchFromRows, serializeBatch } from "../../../arrow/index.js";
 import { SchemaInfoSchema } from "../../../generated/vgi-protocol-schemas.js";
 import { serializeSchema } from "../../../util/arrow/index.js";
-import { TableCreateRequestSchema } from "../../../generated/vgi-protocol-schemas.js";
+import { TableCreateRequestSchema, IndexCreateRequestSchema, IndexDefinitionSchema, CatalogObjectRefSchema } from "../../../generated/vgi-protocol-schemas.js";
+import { fixtureIndex } from "../../../../examples/canonical_indexes.js";
 import {
   CATALOG_HASH,
   CATALOG_MEMORY,
@@ -260,6 +261,37 @@ describe("catalog_contents", () => {
 });
 
 describe("a DDL-capable catalog behind a composite (the contents_reval fixture)", () => {
+  test("unsupported typed index operations preserve catalog contents and version", async () => {
+    const h = handlers(new ContentsRevalCatalog());
+    const attach = (await h.attach(CATALOG_REVAL)).attach_opaque_data;
+    await h.call("catalog_table_create", { request: encodeASD(TableCreateRequestSchema, {
+      attach_opaque_data: attach, schema_path: ["main"], name: "t", on_conflict: "ERROR",
+      columns: serializeSchema(schema([field("a", utf8(), true)])), constraint_definitions: [],
+      transaction_opaque_data: null,
+    }) });
+    const before = await h.contents(attach);
+    const table = encodeASD(CatalogObjectRefSchema, { kind: "table", schema_path: ["main"], name: "t", owner_table: null });
+    const definition = encodeASD(IndexDefinitionSchema, {
+      ...decodeASD(IndexDefinitionSchema, fixtureIndex("t", "a", "NONE").definition), table,
+    });
+    for (const on_conflict of ["ERROR", "IGNORE", "REPLACE"]) {
+      await expect(h.call("catalog_index_create", { request: encodeASD(IndexCreateRequestSchema, {
+        attach_opaque_data: attach, schema_path: ["main"], name: "t", definition, on_conflict,
+        transaction_opaque_data: null,
+      }) })).rejects.toThrow("not implemented");
+    }
+    await expect(h.call("catalog_index_drop", {
+      attach_opaque_data: attach, schema_path: ["main"], name: "t", ignore_not_found: true,
+      cascade: true, transaction_opaque_data: null,
+    })).rejects.toThrow("not implemented");
+    await expect(h.call("catalog_index_option_definitions", {
+      attach_opaque_data: attach, table, algorithm: "ART", transaction_opaque_data: null,
+    })).rejects.toThrow("not implemented");
+    const after = await h.contents(attach);
+    expect(after.response.catalog_version).toBe(before.response.catalog_version);
+    expect(after.schemas).toEqual(before.schemas);
+  });
+
   test("unsupported constraints reject before every conflict policy can mutate", async () => {
     const h = handlers(new ContentsRevalCatalog());
     const attach = (await h.attach(CATALOG_REVAL)).attach_opaque_data;

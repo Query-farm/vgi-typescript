@@ -14,7 +14,6 @@ import {
   type FunctionInfo,
   type MacroInfo,
   type IndexInfo,
-  type IndexConstraintType,
   type CopyFromFormatInfo,
   encodeAttachCatalogInfo,
   encodeScanFunctionResult,
@@ -761,17 +760,19 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
   ): IndexInfo[] {
     const schema = this._descriptor.schemas.find((s) => schemaPathsEqual(schemaDescriptorPath(s), path));
     if (!schema || !schema.indexes) return [];
-    return schema.indexes.map((idx) => ({
-      comment: idx.comment ?? null,
-      tags: idx.tags ?? {},
-      name: idx.name,
-      schema_path: normalizeSchemaPath(path),
-      table_name: idx.tableName,
-      index_type: idx.indexType ?? "ART",
-      constraint_type: (idx.constraintType ?? "NONE") as IndexConstraintType,
-      expressions: idx.expressions,
-      options: idx.options ?? {},
-    }));
+    return schema.indexes.map((idx) => {
+      if (!idx.definition || !idx.options) {
+        throw new Error("index discovery requires a canonical definition and typed option state");
+      }
+      return {
+        comment: idx.comment ?? null,
+        tags: idx.tags ?? {},
+        name: idx.name,
+        schema_path: normalizeSchemaPath(path),
+        definition: idx.definition,
+        options: idx.options,
+      };
+    });
   }
 
   override indexGet(

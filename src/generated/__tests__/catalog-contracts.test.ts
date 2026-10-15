@@ -22,6 +22,29 @@ import { TableCreateRequestSchema } from "../vgi-protocol-schemas.js";
 import * as schemas from "../vgi-protocol-schemas.js";
 import { deserializeBatch, serializeBatch, typeSignature } from "../../arrow/index.js";
 
+test("typed indexes preserve raw paths, contextual keys and typed option state", () => {
+  for (const [name, schema] of [
+    ["index_key_column", schemas.IndexKeySchema], ["index_key_nested", schemas.IndexKeySchema],
+    ["index_key_expression", schemas.IndexKeySchema], ["index_definition", schemas.IndexDefinitionSchema],
+    ["index_definition_primary", schemas.IndexDefinitionSchema], ["index_info", schemas.IndexInfoSchema],
+    ["index_create", schemas.IndexCreateRequestSchema], ["index_create_cross_schema", schemas.IndexCreateRequestSchema],
+  ] as const) {
+    const original = decodeASD<Record<string, any>>(schema, fixture(name));
+    expect(decodeASD(schema, encodeASD(schema, original))).toEqual(original);
+  }
+  const definition = queryRecords.decodeIndexDefinition(fixture("index_definition"));
+  expect(definition.keys).toEqual([fixture("index_key_column"), fixture("index_key_expression")]);
+  expect(definition.options).toEqual(fixture("values"));
+  expect(queryRecords.decodeIndexKey(fixture("index_key_column")).column_path).toEqual(["a.b"]);
+  expect(queryRecords.decodeIndexKey(fixture("index_key_nested")).column_path).toEqual(["record", "a.b"]);
+  const info = decodeASD<Record<string, any>>(schemas.IndexInfoSchema, fixture("index_info"));
+  expect(info.definition).toEqual(fixture("index_definition"));
+  expect(info.options).toEqual(fixture("state"));
+  const create = decodeASD<Record<string, any>>(schemas.IndexCreateRequestSchema, fixture("index_create"));
+  expect(create.definition).toEqual(info.definition);
+  expect(create.transaction_opaque_data).toEqual(new Uint8Array([116, 120, 110, 0, 255]));
+});
+
 test("column expression metadata retains exact IPC bytes through Arrow backends", () => {
   const source = deserializeBatch(fixture("column_expression_metadata"));
   const batch = deserializeBatch(serializeBatch(source));

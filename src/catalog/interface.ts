@@ -67,8 +67,8 @@ export type { MacroInfo };
 export { encodeMacroInfo, decodeMacroInfo } from "../generated/vgi-client.js";
 
 // IndexInfo wire shape — declarative indexes a worker advertises and DuckDB
-// surfaces under duckdb_indexes(). Constraint type maps to is_unique /
-// is_primary on the DuckDB side.
+// surfaces under duckdb_indexes(). Definitions preserve raw paths, contextual
+// expressions, typed options and explicit logical-constraint associations.
 import type { IndexInfo, IndexConstraintType } from "../generated/vgi-client.js";
 export type { IndexInfo, IndexConstraintType };
 export { encodeIndexInfo, decodeIndexInfo } from "../generated/vgi-client.js";
