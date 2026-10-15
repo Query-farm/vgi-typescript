@@ -269,6 +269,34 @@ test("dependency records retain raw identities and nested graph payloads", () =>
   expect(trigger.owner_table).toBe(table.name);
   const edge = decodeObjectDependency(encodeObjectDependency(decodeObjectDependency(fixture("object_dependency"))));
   expect(edge.kind).toBe("owned");
+  expect(edge.blocks_alter).toBe(true);
+  expect(edge.subject_column_paths).toBeNull();
+  expect(edge.dependent_column_path).toBeNull();
+  const dependency = (name: string) => {
+    const original = decodeObjectDependency(fixture(name));
+    const restored = decodeObjectDependency(encodeObjectDependency(original));
+    expect(restored).toEqual(original);
+    return restored;
+  };
+  const membership = dependency("dependency_membership");
+  expect(membership.blocks_alter).toBe(false);
+  expect(membership.subject_column_paths).toBeNull();
+  expect(membership.dependent_column_path).toBeNull();
+  const literal = dependency("dependency_column_literal");
+  expect(literal.blocks_alter).toBe(true);
+  expect(literal.subject_column_paths).toEqual([["a.b"]]);
+  expect(literal.dependent_column_path).toBeNull();
+  expect(dependency("dependency_column_nested").subject_column_paths).toEqual([["record", "a.b"]]);
+  const generated = dependency("dependency_generated");
+  expect(generated.dependent).toEqual(generated.subject);
+  expect(generated.dependent_column_path).toEqual(["generated"]);
+  expect(generated.subject_column_paths).toEqual([["a.b"], ["record", "a.b"]]);
+  const chain = dependency("dependency_generated_chain");
+  expect(chain.dependent_column_path).toEqual(["second.generated"]);
+  expect(chain.subject_column_paths).toEqual([["generated"]]);
+  const columns = decodeDependencySnapshot(encodeDependencySnapshot(decodeDependencySnapshot(fixture("dependency_column_snapshot"))));
+  expect(columns.dependencies).toEqual([fixture("dependency_column_literal"), fixture("dependency_generated"), fixture("dependency_generated_chain")]);
+
   expect(Array.from(edge.subject)).toEqual(Array.from(fixture("object_ref")));
   expect(Array.from(edge.dependent)).toEqual(Array.from(fixture("trigger_ref")));
   for (const name of ["dependency_snapshot", "empty_dependency_snapshot"]) {

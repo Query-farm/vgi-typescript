@@ -261,6 +261,18 @@ describe("catalog_contents", () => {
 });
 
 describe("a DDL-capable catalog behind a composite (the contents_reval fixture)", () => {
+  test("unported dependency discovery refuses instead of inventing an empty graph", async () => {
+    const h = handlers(new ContentsRevalCatalog());
+    const attached = await h.attach(CATALOG_REVAL);
+    expect(attached.catalog_capabilities ?? null).toBeNull();
+    expect(attached.selected_capabilities ?? null).toBeNull();
+    const before = await h.contents(attached.attach_opaque_data);
+    await expect(h.call("catalog_dependencies", {
+      attach_opaque_data: attached.attach_opaque_data, transaction_opaque_data: null,
+    })).rejects.toThrow("not implemented");
+    expect(await h.contents(attached.attach_opaque_data)).toEqual(before);
+  });
+
   test("unsupported typed index operations preserve catalog contents and version", async () => {
     const h = handlers(new ContentsRevalCatalog());
     const attach = (await h.attach(CATALOG_REVAL)).attach_opaque_data;
