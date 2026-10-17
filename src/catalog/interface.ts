@@ -168,6 +168,7 @@ export const encodeAttachCatalogInfo = (v: AttachCatalogInfo): Uint8Array =>
 // ============================================================================
 
 import { deserializeBatch, serializeBatch, batchFromColumns } from "../util/arrow/index.js";
+import { conformColumns } from "../codec/conform.js";
 import { schema as schema_, field as field_, type VgiDataType, type VgiField } from "../arrow/index.js";
 import { toUint8Array } from "../util/bytes.js";
 import { ScanBranchSchema, ScanFunctionResultSchema } from "../generated/vgi-protocol-schemas.js";
@@ -221,12 +222,12 @@ export function encodeScanFunctionResult(
 ): Uint8Array {
   return serializeBatch(
     batchFromColumns(
-      {
+      conformColumns(ScanFunctionResultSchema as any, {
         function_name: [functionName],
         arguments: [argumentsBytes],
         required_extensions: [requiredExtensions],
         schema_path: [schemaPath],
-      },
+      }),
       ScanFunctionResultSchema as any,
     ),
   );
@@ -345,7 +346,7 @@ function encodeScanBranch(cols: {
 }): Uint8Array {
   return serializeBatch(
     batchFromColumns(
-      {
+      conformColumns(ScanBranchSchema as any, {
         function_name: [cols.function_name],
         arguments: [cols.arguments],
         branch_filter: [cols.branch_filter ?? null],
@@ -357,7 +358,7 @@ function encodeScanBranch(cols: {
         format_locations: [cols.format_locations ?? null],
         format_options: [cols.format_options ?? null],
         schema_path: [cols.schema_path ?? null],
-      },
+      }),
       ScanBranchSchema as any,
     ),
   );

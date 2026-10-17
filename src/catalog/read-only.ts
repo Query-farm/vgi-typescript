@@ -32,6 +32,7 @@ import { FunctionStability, NullHandling, OrderPreservation, DEFAULT_MAX_WORKERS
 import { Arguments } from "../arguments/arguments.js";
 import { normalizeSchemaPath, schemaPathDisplay, schemaPathsEqual } from "../schema-path.js";
 import { ForeignKeyInfoSchema } from "../generated/vgi-protocol-schemas.js";
+import { conformColumns } from "../codec/conform.js";
 import { VgiError } from "../errors.js";
 import { encodeFunctionInfoOnce, freezeCatalogItem } from "./item-encoding.js";
 
@@ -959,12 +960,12 @@ function serializeForeignKeys(fks?: ForeignKeyDef[], schemaPath?: string[]): Uin
   return fks.map((fk) =>
     serializeBatch(
       batchFromColumns(
-        {
+        conformColumns(ForeignKeyInfoSchema, {
           fk_columns: [fk.columns],
           pk_columns: [fk.referencedColumns],
           referenced_table: [fk.referencedTable],
           referenced_schema_path: [fk.referencedSchemaPath ?? schemaPath ?? ["main"]],
-        },
+        }),
         ForeignKeyInfoSchema
       )
     )

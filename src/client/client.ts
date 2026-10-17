@@ -78,6 +78,14 @@ import type {
 } from "./types.js";
 
 /**
+ * `on_conflict` as it goes on the wire: the vgi-python `OnConflict` member
+ * NAME (`ERROR` / `IGNORE` / `REPLACE`), not the lower-case API spelling.
+ */
+function onConflictName(onConflict: OnCreateConflict): string {
+  return String(onConflict).toUpperCase();
+}
+
+/**
  * High-level client for calling VGI worker functions and catalog API.
  *
  * Works with any RpcClient transport (subprocess or HTTP):
@@ -906,7 +914,7 @@ export class VgiClient {
     }
     await this.rpc.call("catalog_create", {
       name,
-      on_conflict: onConflict,
+      on_conflict: onConflictName(onConflict),
       options: wireOptions,
     });
   }
@@ -1013,7 +1021,7 @@ export class VgiClient {
     await this.rpc.call("catalog_schema_create", {
       attach_opaque_data: attachOpaqueData,
       path: normalizeSchemaPath(path),
-      on_conflict: opts?.onConflict ?? "error",
+      on_conflict: onConflictName(opts?.onConflict ?? "error"),
       comment: opts?.comment ?? null,
       tags: tagsMap,
       transaction_opaque_data: opts?.transactionOpaqueData ?? null,
@@ -1139,7 +1147,7 @@ export class VgiClient {
       schema_path: normalizeSchemaPath(schemaPath),
       name,
       columns,
-      on_conflict: onConflict,
+      on_conflict: onConflictName(onConflict),
       not_null_constraints: notNullConstraints ?? null,
       unique_constraints: uniqueConstraints ?? null,
       check_constraints: checkConstraints ?? null,
@@ -1430,7 +1438,7 @@ export class VgiClient {
       schema_path: normalizeSchemaPath(schemaPath),
       name,
       definition,
-      on_conflict: onConflict,
+      on_conflict: onConflictName(onConflict),
       transaction_opaque_data: transactionOpaqueData ?? null,
     });
   }
@@ -1554,7 +1562,7 @@ export class VgiClient {
         macro_type: [macroType],
         parameters: [parameters],
         definition: [definition],
-        on_conflict: [onConflict],
+        on_conflict: [onConflictName(onConflict)],
         parameter_default_values: [parameterDefaultValues ?? null],
         arguments_schema: [argumentsSchema ?? null],
         transaction_opaque_data: [transactionOpaqueData ?? null],

@@ -31,16 +31,19 @@ import {
   serializeBatch,
   deserializeBatch,
 } from "../arrow/index.js";
+import { conformRecord } from "./conform.js";
 
 /**
  * Encode a typed object as a single-row Arrow IPC stream using `schema`.
- * Matches Python's `ArrowSerializableDataclass.serialize_to_bytes()`.
+ * Matches Python's `ArrowSerializableDataclass.serialize_to_bytes()`, including
+ * its container rules: a non-nullable list/map left out or null is written as
+ * empty, and list items / map values are never null (see `conformRecord`).
  */
 export function encodeASD(
   schema: VgiSchema,
   obj: Record<string, any>,
 ): Uint8Array {
-  return serializeBatch(batchFromRows([sortMapsForSchema(schema, obj)], schema));
+  return serializeBatch(batchFromRows([sortMapsForSchema(schema, conformRecord(schema, obj))], schema));
 }
 
 // --------------------------------------------------------------------------- //

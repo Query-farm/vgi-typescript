@@ -8,6 +8,7 @@ import {
   batchFromColumns,
 } from "../../arrow/index.js";
 import { toUint8Array as toUint8ArrayBase } from "../../util/bytes.js";
+import { conformRecord } from "../../codec/conform.js";
 
 /**
  * Coerce a wire value (string / Uint8Array / Buffer / etc.) to a Uint8Array.
@@ -25,7 +26,8 @@ export function toUint8Array(val: any): Uint8Array {
 
 /**
  * Build a single-row RecordBatch from a {fieldName: value} dict matching the
- * given schema. Auto-coerces JS numbers to BigInt for Int64 fields.
+ * given schema. Auto-coerces JS numbers to BigInt for Int64 fields, and
+ * applies the protocol's container rules (`conformRecord`).
  */
 export function buildSingleRowBatch(
   schema: VgiSchema,
@@ -35,8 +37,9 @@ export function buildSingleRowBatch(
   // declares one — vectorFromArray/columnFromArray rejects plain Number for
   // 64-bit ints under both backends.
   const cols: Record<string, any[]> = {};
+  const row = conformRecord(schema, values);
   for (const f of schema.fields) {
-    let val = values[f.name];
+    let val = row[f.name];
     if (isInt(f.type) && (f.type as any).bitWidth === 64 && typeof val === "number") {
       val = BigInt(val);
     }

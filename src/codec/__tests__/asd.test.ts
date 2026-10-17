@@ -9,6 +9,7 @@ import {
   ViewInfoSchema,
 } from "../../generated/vgi-protocol-schemas.js";
 import { encodeASD, decodeASD } from "../asd.js";
+import { batchFromRows, serializeBatch } from "../../arrow/index.js";
 import type {
   CatalogInfo,
   SchemaInfo,
@@ -85,7 +86,11 @@ describe("ASD codec", () => {
       tags: { owner: null },
       estimated_object_count: { table: null },
     };
-    const back = decodeASD<any>(SchemaInfoSchema, encodeASD(SchemaInfoSchema, v as any));
+    // A decoder test: the bytes are built raw, because encodeASD never writes
+    // a null map value (vgi-python's maps have no optional values; it writes
+    // the value type's zero value instead -- see conform.ts).
+    const raw = serializeBatch(batchFromRows([{ ...v, tags: [["owner", null]], estimated_object_count: [["table", null]] }], SchemaInfoSchema));
+    const back = decodeASD<any>(SchemaInfoSchema, raw);
     expect(back.tags).toEqual({ owner: null });
     expect(back.estimated_object_count).toEqual({ table: null });
   });

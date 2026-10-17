@@ -72,7 +72,9 @@ export function serializeBindRequest(req: BindRequest): VgiBatch {
   return buildSingleRowBatch(BIND_REQUEST_SCHEMA, {
     function_name: req.function_name,
     arguments: serializeArguments(req.arguments),
-    function_type: req.function_type,
+    // The wire carries the Python enum member NAME ("TABLE"), not the TS
+    // enum's value ("table"); each FunctionType value upper-cases to its name.
+    function_type: req.function_type == null ? req.function_type : String(req.function_type).toUpperCase(),
     input_schema: req.input_schema ? serializeSchema(req.input_schema) : null,
     settings: req.settings ? serializeBatch(req.settings) : null,
     secrets: req.secrets ? serializeBatch(req.secrets) : null,
