@@ -7,7 +7,7 @@
 //   1. alice (a fresh login) attaches ticket_probe with region + api_key and
 //      reads main.probe;
 //   2. she calls seal_attach (vgi.attach_tickets.v1) and issue_grant
-//      (vgi_rpc.Identity.v1);
+//      (vgi_rpc.Identity.v2);
 //   3. a second client authenticated only by `Bearer <grant>` attaches with
 //      nothing but {vgi_attach_ticket: <ticket>} and reads the same row;
 //   4. bob's grant with alice's ticket is refused.
@@ -122,12 +122,13 @@ async function sealAttachAs(authorization: string, options: Record<string, strin
     ),
   );
   const result = await call(authorization, "vgi.attach_tickets.v1", "seal_attach", { request });
-  expect(Number(result.expires_at)).toBeGreaterThan(Date.now() / 1000);
+  // timestamp[us, UTC]: the canonical value is the raw microsecond count.
+  expect(BigInt(result.expires_at as bigint)).toBeGreaterThan(BigInt(Date.now()) * 1000n);
   return String(result.ticket);
 }
 
 async function grantFor(authorization: string): Promise<string> {
-  const result = await call(authorization, "vgi_rpc.Identity.v1", "issue_grant", {
+  const result = await call(authorization, "vgi_rpc.Identity.v2", "issue_grant", {
     purpose: "reattach",
     scopes: [],
     ttl_seconds: 600,
@@ -174,8 +175,9 @@ describe("attach tickets over HTTP", () => {
     const protocols = (out.protocols ?? []) as Array<Record<string, unknown>>;
     const entry = [...protocols].find((p) => p.protocol === "vgi.attach_tickets.v1");
     expect(entry).toBeDefined();
-    expect(entry!.protocol_version).toBe("1.0.0");
-    // compute_protocol_hash("vgi.attach_tickets.v1", rpc_methods(AttachTickets)) in vgi-python f5e99c7.
+    expect(entry!.protocol_version).toBe("2.0.0");
+    // compute_protocol_hash("vgi.attach_tickets.v1", rpc_methods(AttachTickets)) in vgi-python f5e99c7,
+    // unchanged at 7681695 (2.0.0): AttachTicket travels inside the binary result column.
     expect(entry!.protocol_hash).toBe("241fffa801dd073c76fa933b9ad5ac790a95b81fee02e73a8332da4d3526b4e0");
   });
 });

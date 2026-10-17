@@ -5,7 +5,7 @@
 // that user (`vgi.attach_tickets.v1`).
 //
 // A ticket is the *what* half of an unattended session; a sealed grant
-// (`vgi_rpc.Identity.v1` `issue_grant`) is the *who*. While the user is
+// (`vgi_rpc.Identity.v2` `issue_grant`) is the *who*. While the user is
 // attached and logged in, the client asks the worker to seal the options it
 // attached with -- secret ones included -- into a ticket only this worker can
 // open. Later any runner holding the user's grant attaches with the single
@@ -35,7 +35,7 @@ import {
   errorInfo,
   preconditionFailure,
 } from "@query-farm/vgi-rpc";
-import { field, float64, schema, utf8, binary, int64, batchFromColumns, serializeBatch } from "./arrow/index.js";
+import { field, schema, utf8, binary, int64, timestamp, TimeUnit, batchFromColumns, serializeBatch } from "./arrow/index.js";
 import { deserializeBatch } from "./util/arrow/index.js";
 import { openBytes, OpaqueDataRejectedError, sealBytes } from "./crypto.js";
 import type { CatalogInterface } from "./catalog/interface.js";
@@ -51,8 +51,9 @@ export const ATTACH_TICKET_PREFIX = "vgia1.";
 export const ATTACH_TICKET_OPTION = RESERVED_ATTACH_OPTION;
 /** Wire name of the protocol hosting `seal_attach`. */
 export const ATTACH_TICKETS_PROTOCOL_NAME = "vgi.attach_tickets.v1";
-/** Its declared version. */
-export const ATTACH_TICKETS_PROTOCOL_VERSION = "1.0.0";
+/** Its declared version. 2.0.0 made `AttachTicket.expires_at` a nullable
+ *  `timestamp[us, UTC]` (1.0.0: float64 unix seconds, `+inf` = no expiry). */
+export const ATTACH_TICKETS_PROTOCOL_VERSION = "2.0.0";
 /** The envelope's version byte, fixed by this format. */
 export const TICKET_ENVELOPE_VERSION = 0x01;
 /** Largest options record (serialized Arrow IPC bytes) a ticket may carry. */
@@ -455,11 +456,41 @@ export const SEAL_ATTACH_REQUEST_SCHEMA = schema([
   field("ttl_seconds", int64(), false),
 ]);
 
-/** `AttachTicket`, field for field with vgi-python. */
+/**
+ * `AttachTicket`, field for field with vgi-python: `expires_at` is the UTC
+ * instant after which the worker refuses the ticket, null when the worker sets
+ * no maximum lifetime.
+ */
 export const ATTACH_TICKET_SCHEMA = schema([
   field("ticket", utf8(), false),
-  field("expires_at", float64(), false),
+  field("expires_at", timestamp(TimeUnit.MICROSECOND, "UTC"), true),
 ]);
+
+/** A sealed ticket, as `seal_attach` returns it. */
+export interface AttachTicket {
+  /** `vgia1.` text. Not a credential, but never logged. */
+  ticket: string;
+  /** When the worker stops honouring it; `null` = no expiry. */
+  expires_at: Date | null;
+}
+
+/** `expires_at` as the wire's microsecond count (the codec's raw unit). */
+function expiresAtMicros(value: Date | null): bigint | null {
+  if (value === null) return null;
+  const ms = value.getTime();
+  if (!Number.isFinite(ms)) throw new TypeError("AttachTicket.expires_at must be a valid Date or null");
+  return BigInt(ms) * 1000n;
+}
+
+/** Encode an {@link AttachTicket} as a single-row Arrow IPC stream. */
+export function encodeAttachTicket(ticket: AttachTicket): Uint8Array {
+  return serializeBatch(
+    batchFromColumns(
+      { ticket: [ticket.ticket], expires_at: [expiresAtMicros(ticket.expires_at)] },
+      ATTACH_TICKET_SCHEMA,
+    ),
+  );
+}
 
 /**
  * The ticket lifetime ceiling: the worker's grant maximum, or `null`.
@@ -517,7 +548,7 @@ export async function sealAttach(
   config: AttachTicketsConfig,
   request: Record<string, unknown>,
   auth: AuthContext | undefined,
-): Promise<{ ticket: string; expires_at: number }> {
+): Promise<AttachTicket> {
   const principal = callerPrincipal(auth);
   if (principal === null) throw new SealAttachDeniedError("an anonymous caller cannot seal an attach ticket");
 
@@ -582,7 +613,8 @@ export async function sealAttach(
   } catch (e) {
     throw new AttachTicketRequestError("seal_attach request is invalid", [["request", (e as Error).message]]);
   }
-  return { ticket: token, expires_at: expiresAt === 0 ? Number.POSITIVE_INFINITY : expiresAt };
+  // The sealed claim keeps seconds with 0 = none; the reply is an instant or null.
+  return { ticket: token, expires_at: expiresAt === 0 ? null : new Date(expiresAt * 1000) };
 }
 
 /**
@@ -600,11 +632,7 @@ export function buildAttachTicketsProtocol(config: AttachTicketsConfig): Protoco
     handler: async (params: Record<string, unknown>, ctx: unknown) => {
       const request = unwrapRequest(params.request);
       const sealed = await sealAttach(config, request, (ctx as CallContext | undefined)?.auth);
-      const batch = batchFromColumns(
-        { ticket: [sealed.ticket], expires_at: [sealed.expires_at] },
-        ATTACH_TICKET_SCHEMA,
-      );
-      return { result: serializeBatch(batch) };
+      return { result: encodeAttachTicket(sealed) };
     },
   });
   return p;

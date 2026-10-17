@@ -572,9 +572,9 @@ new Worker({ functions, hostedProtocols: () => [reports] }).run();
   changes how DuckDB's `vgi.v2` calls are dispatched.
 - The protocol is the unit of optionality: an optional capability is its own protocol.
 
-### Token introspection and grants (`vgi_rpc.Identity.v1`)
+### Token introspection and grants (`vgi_rpc.Identity.v2`)
 
-A worker opts into `vgi_rpc.Identity.v1` by supplying `resolveToken` and/or
+A worker opts into `vgi_rpc.Identity.v2` by supplying `resolveToken` and/or
 `mintGrant` (accepted by `Worker`, `serveVgiWorker`, `createVgiWorkerFetch` and
 `createVgiFetch`). It is hosted on **HTTP only** — the transport that authenticates
 callers — and only the methods whose hooks exist are hosted; with neither, the
@@ -672,6 +672,9 @@ ATTACH 'ticket_probe' AS p (TYPE vgi, LOCATION 'https://worker.example.com',
   options (`invalid_request` with one `BadRequest` violation per field). The lifetime
   is capped at the grant maximum (`VGI_RPC_GRANT_MAX_TTL_SECONDS`, default 7 days with
   grant keys); `ttl_seconds: 0` asks for the maximum.
+  The reply's `expires_at` is a nullable `timestamp[us, tz=UTC]` (`Date | null` in
+  TypeScript), null when the worker sets no maximum lifetime; protocol version
+  `2.0.0` (1.0.0 carried float64 unix seconds with `+inf` for "no expiry").
 - **Redeeming.** `catalog_attach` redeems a `vgi_attach_ticket` option (any letter
   case) before any catalog code runs: it must be the only option (`invalid_request`),
   it opens only under the caller's principal and this worker's key

@@ -68,7 +68,7 @@ jobs:
     # vgi-rpc's hosted-protocols group (MULTI_PROTOCOL_HOSTING.md §7) against
     # the example fixture worker: the worker lists vgi.v2 then
     # conformance.Secondary.v1 on stdio, AF_UNIX and HTTP, the secondary passes
-    # the shared error-model groups, and over HTTP vgi_rpc.Identity.v1 passes
+    # the shared error-model groups, and over HTTP vgi_rpc.Identity.v2 passes
     # the identity fixture groups. The reference is unpinned main, by design: a
     # reference change that breaks this SDK should turn it red the day it lands.
     name: Hosted protocols (stdio, unix, http + identity)

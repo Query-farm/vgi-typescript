@@ -11,8 +11,11 @@ import { join } from "node:path";
 import { AuthContext, GrantKeys, Protocol } from "@query-farm/vgi-rpc";
 import { Utf8 } from "@query-farm/apache-arrow";
 import {
+  ATTACH_TICKET_SCHEMA,
   ATTACH_TICKETS_PROTOCOL_NAME,
+  ATTACH_TICKETS_PROTOCOL_VERSION,
   attachTicketAad,
+  encodeAttachTicket,
   encodeAttachTicketPayload,
   mintAttachTicket,
   openAttachTicket,
@@ -30,7 +33,7 @@ import {
 import { serializeAttachOptions } from "../catalog/attach-options.js";
 import { buildRpcServer, type ServerTransport } from "../rpc-server.js";
 import { batchFromColumns, serializeBatch } from "../util/arrow/index.js";
-import { schema, field, utf8 } from "../arrow/index.js";
+import { schema, field, utf8, TimeUnit, TypeId, deserializeBatch } from "../arrow/index.js";
 
 // Read as UTF-8 explicitly: the vectors carry a non-ASCII principal.
 const V = JSON.parse(readFileSync(join(import.meta.dir, "data", "attach_ticket_vectors.json"), "utf8"));
@@ -217,7 +220,7 @@ describe("seal_attach", () => {
   test("seals the caller's options, which redeem back for the same principal", async () => {
     const sealed = await sealAttach(sealConfig(3600), request({ region: "eu-west-2", api_key: "sk" }), auth("alice"));
     expect(sealed.ticket.startsWith("vgia1.")).toBe(true);
-    expect(sealed.expires_at).toBe(DEFAULT_NOW + 3600);
+    expect(sealed.expires_at).toEqual(at(DEFAULT_NOW + 3600));
     const restored = await redeemAttachTicket({ vgi_attach_ticket: sealed.ticket }, b64(DEFAULT_KEY), auth("alice"), DEFAULT_NOW);
     expect(restored?.options).toEqual({ region: "eu-west-2", api_key: "sk" });
     expect(await kindOf(redeemAttachTicket({ vgi_attach_ticket: sealed.ticket }, b64(DEFAULT_KEY), auth("bob"), DEFAULT_NOW))).toBe(
@@ -231,13 +234,13 @@ describe("seal_attach", () => {
     );
   });
 
-  test("lifetime: 0 is the ceiling, a request is capped, no ceiling is +inf or the request", async () => {
+  test("lifetime: 0 is the ceiling, a request is capped, no ceiling is null or the request", async () => {
     const a = auth("alice");
-    expect((await sealAttach(sealConfig(600), request({ api_key: "k" }), a)).expires_at).toBe(DEFAULT_NOW + 600);
-    expect((await sealAttach(sealConfig(600), request({ api_key: "k" }, { ttl_seconds: 60 }), a)).expires_at).toBe(DEFAULT_NOW + 60);
-    expect((await sealAttach(sealConfig(600), request({ api_key: "k" }, { ttl_seconds: 6000 }), a)).expires_at).toBe(DEFAULT_NOW + 600);
-    expect((await sealAttach(sealConfig(null), request({ api_key: "k" }), a)).expires_at).toBe(Number.POSITIVE_INFINITY);
-    expect((await sealAttach(sealConfig(null), request({ api_key: "k" }, { ttl_seconds: 90 }), a)).expires_at).toBe(DEFAULT_NOW + 90);
+    expect((await sealAttach(sealConfig(600), request({ api_key: "k" }), a)).expires_at).toEqual(at(DEFAULT_NOW + 600));
+    expect((await sealAttach(sealConfig(600), request({ api_key: "k" }, { ttl_seconds: 60 }), a)).expires_at).toEqual(at(DEFAULT_NOW + 60));
+    expect((await sealAttach(sealConfig(600), request({ api_key: "k" }, { ttl_seconds: 6000 }), a)).expires_at).toEqual(at(DEFAULT_NOW + 600));
+    expect((await sealAttach(sealConfig(null), request({ api_key: "k" }), a)).expires_at).toBeNull();
+    expect((await sealAttach(sealConfig(null), request({ api_key: "k" }, { ttl_seconds: 90 }), a)).expires_at).toEqual(at(DEFAULT_NOW + 90));
   });
 
   test("validation reports every violation together", async () => {
@@ -283,6 +286,42 @@ describe("seal_attach", () => {
 // Reserved option name
 // ---------------------------------------------------------------------------
 
+/** Unix seconds as the instant `expires_at` carries. */
+function at(seconds: number): Date {
+  return new Date(seconds * 1000);
+}
+
+describe("AttachTicket wire shape (protocol 2.0.0)", () => {
+  test("the protocol version is 2.0.0, so a 1.0.0 (float64 expires_at) peer is refused", () => {
+    expect(ATTACH_TICKETS_PROTOCOL_VERSION).toBe("2.0.0");
+  });
+
+  test("expires_at is a nullable timestamp[us, tz=UTC]", () => {
+    const f = ATTACH_TICKET_SCHEMA.fields.find((x) => x.name === "expires_at")!;
+    expect(f.nullable).toBe(true);
+    expect(f.type.typeId).toBe(TypeId.Timestamp);
+    expect((f.type as any).unit).toBe(TimeUnit.MICROSECOND);
+    expect((f.type as any).timezone).toBe("UTC");
+  });
+
+  test("an instant is written as exact microseconds; no expiry as null", () => {
+    // 2026-09-21T15:13:20Z
+    const one = deserializeBatch(encodeAttachTicket({ ticket: "vgia1.x", expires_at: at(1790003600) }));
+    expect(one.schema.fields.find((x) => x.name === "expires_at")!.type.typeId).toBe(TypeId.Timestamp);
+    const col = one.getChild("expires_at")!;
+    expect(col.nullCount).toBe(0);
+    expect(BigInt((col as any).data[0].values[0])).toBe(1790003600000000n);
+
+    const none = deserializeBatch(encodeAttachTicket({ ticket: "vgia1.x", expires_at: null }));
+    expect(none.getChild("expires_at")!.nullCount).toBe(1);
+    expect(none.getChild("expires_at")!.get(0)).toBeNull();
+  });
+
+  test("an invalid Date is refused rather than written", () => {
+    expect(() => encodeAttachTicket({ ticket: "vgia1.x", expires_at: new Date(Number.NaN) })).toThrow(/valid Date/);
+  });
+});
+
 describe("the reserved attach option name", () => {
   for (const name of ["vgi_attach_ticket", "VGI_Attach_Ticket"]) {
     test(`declaring '${name}' is refused`, async () => {
@@ -313,7 +352,7 @@ describe("hosting vgi.attach_tickets.v1", () => {
   function hosted(transport: ServerTransport, configured: boolean, env: Record<string, string>, mintGrant = false) {
     const server = buildRpcServer(
       new Protocol("vgi.v2", { protocolVersion: "2.0.0" }),
-      mintGrant ? { mintGrant: () => ({ token: "t", expiresAt: 0 }) } : {},
+      mintGrant ? { mintGrant: () => ({ token: "t", expiresAt: new Date(0) }) } : {},
       {
         transport,
         env,

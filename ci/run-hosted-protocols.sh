@@ -2,7 +2,7 @@
 # Copyright 2025, 2026 Query Farm LLC - https://query.farm
 #
 # Run vgi-rpc's hosted-protocols conformance group against the example fixture
-# worker on stdio, AF_UNIX and HTTP (with vgi_rpc.Identity.v1), the way every
+# worker on stdio, AF_UNIX and HTTP (with vgi_rpc.Identity.v2), the way every
 # VGI SDK does (MULTI_PROTOCOL_HOSTING.md §5/§7). The fixture hosts vgi.v2 and,
 # through the `hostedProtocols` hook, conformance.Secondary.v1; over HTTP it
 # opts into Identity under the IDENTITY_CONFORMANCE_FIXTURE.md policy.

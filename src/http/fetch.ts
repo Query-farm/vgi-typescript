@@ -207,7 +207,7 @@ export function createVgiFetch(opts: VgiFetchOptions): (req: Request) => Promise
 
   // The same builder every other transport uses: `vgi.v2`, the worker's
   // hostedProtocols(), reflection, and -- HTTP being the transport that
-  // authenticates callers -- vgi_rpc.Identity.v1 when the worker opts in.
+  // authenticates callers -- vgi_rpc.Identity.v2 when the worker opts in.
   // Built at construction, so a worker that opts into introspection without an
   // allowlist fails here rather than serving traffic.
   const server = buildRpcServer(protocol, opts, {
