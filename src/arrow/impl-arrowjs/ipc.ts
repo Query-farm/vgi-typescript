@@ -1,3 +1,4 @@
+import { batchFromRows } from "./build.js";
 // Copyright 2025, 2026 Query Farm LLC - https://query.farm
 // Arrow IPC stream serialization/deserialization for schemas and batches.
 
@@ -64,4 +65,26 @@ export function deserializeBatch(bytes: Uint8Array): RecordBatch {
     return emptyBatch(sch);
   }
   return batches[0];
+}
+
+/** Decode every data batch of a collection stream (including dictionary replacements). */
+export function deserializeBatches(bytes: Uint8Array): VgiBatch[] {
+  return [...RecordBatchReader.from(bytes)];
+}
+
+/** Write all batches to one IPC stream. */
+export function serializeBatches(batches: VgiBatch[], schema: VgiSchema): Uint8Array {
+  const writer = new RecordBatchStreamWriter();
+  writer.reset(undefined, schema as Schema);
+  for (const batch of batches) (writer as any)._writeRecordBatch(batch as RecordBatch);
+  writer.close();
+  return writer.toUint8Array(true);
+}
+
+/** Build shared dictionaries once and emit bounded slices of the collection. */
+export function serializeCollectionRows(schema: VgiSchema, rows: Record<string, any>[], maxBatchRows: number): Uint8Array {
+  const batch = batchFromRows(rows, schema);
+  const batches: VgiBatch[] = [];
+  for (let offset = 0; offset < batch.numRows; offset += maxBatchRows) batches.push(batch.slice(offset, offset + maxBatchRows));
+  return serializeBatches(batches, schema);
 }

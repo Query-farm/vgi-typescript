@@ -1,3 +1,4 @@
+import { batchFromRows } from "./build.js";
 // Copyright 2025, 2026 Query Farm LLC - https://query.farm
 // Arrow IPC stream serialization/deserialization for the flechette backend.
 //
@@ -10,6 +11,7 @@
 import {
   tableFromIPC,
   tableToIPC,
+  tablesToIPC,
   columnFromArray,
   field as f_field,
   Table,
@@ -173,4 +175,21 @@ export function deserializeBatch(input: Uint8Array): VgiBatch {
       return Reflect.get(target, prop, receiver);
     },
   }) as unknown as VgiBatch;
+}
+
+/** Flechette resolves all record batches and their dictionaries into one logical table. */
+export function deserializeBatches(bytes: Uint8Array): VgiBatch[] {
+  return [deserializeBatch(bytes)];
+}
+
+/** The input batches must share dictionaries; collection encoding builds them together. */
+export function serializeBatches(batches: VgiBatch[], schema: VgiSchema): Uint8Array {
+  if (batches.length === 0) return serializeSchema(schema);
+  return tablesToIPC(batches as any[], { format: "stream" }) as Uint8Array;
+}
+
+/** Build bounded batches together so their dictionary indices share one value table. */
+export function serializeCollectionRows(schema: VgiSchema, rows: Record<string, any>[], maxBatchRows: number): Uint8Array {
+  const table = batchFromRows(rows, schema, maxBatchRows);
+  return tableToIPC(table as any, { format: "stream" }) as Uint8Array;
 }

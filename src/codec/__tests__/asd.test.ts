@@ -44,7 +44,7 @@ describe("ASD codec", () => {
     };
     const bytes = encodeASD(SchemaInfoSchema, v);
     const back = decodeASD<SchemaInfo>(SchemaInfoSchema, bytes);
-    expect(Array.from(back.attach_opaque_data)).toEqual([1, 2, 3, 4]);
+    expect("attach_opaque_data" in back).toBe(false);
     expect(back.path).toEqual(["analytics", "public"]);
     expect(back.comment).toBe("hello");
     expect(back.tags).toEqual({ env: "prod", owner: "rusty" });

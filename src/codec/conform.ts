@@ -74,7 +74,8 @@ function mapPairs(raw: any): Array<[unknown, unknown]> {
 
 /** The value a non-null slot of `type` takes when the sender left it null. */
 export function zeroValue(type: VgiDataType): unknown {
-  if (isUtf8(type) || isDictionary(type)) return "";
+  if (isDictionary(type)) return zeroValue((type as any).dictionary as VgiDataType);
+  if (isUtf8(type)) return "";
   if (isBinary(type)) return new Uint8Array(0);
   if (isBool(type)) return false;
   if (isInt(type)) return (type as any).bitWidth === 64 ? 0n : 0;

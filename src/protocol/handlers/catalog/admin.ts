@@ -207,10 +207,13 @@ export function catalogAdminHandlers(getCatalog: GetCatalog, signingKey?: Uint8A
   // the committed catalog at catalog_version. `if_none_match` revalidates a
   // snapshot the client holds (etag / not_modified); see ./contents.ts for the
   // rules, the content-hash etag and the frozen-catalog cache.
-  const catalogContents = catalogHandler(signingKey, async (params) => {
-    const ifNoneMatch = params.if_none_match == null ? null : String(params.if_none_match);
-    return serveCatalogContents(getCatalog(), toUint8Array(params.attach_opaque_data), ifNoneMatch);
-  });
+  const catalogContents: VgiService["catalogContents"] = async (params, ctx) => {
+    const sealedAttach = toUint8Array(params.attach_opaque_data).slice();
+    return catalogHandler(signingKey, async (opened, context) => {
+      const ifNoneMatch = opened.if_none_match == null ? null : String(opened.if_none_match);
+      return serveCatalogContents(getCatalog(), toUint8Array(opened.attach_opaque_data), ifNoneMatch, context, sealedAttach);
+    })(params, ctx);
+  };
 
   // catalog_copy_from_formats — catalog-level (not schema-scoped). Lists the
   // custom COPY ... FROM formats this catalog advertises; empty list when none.

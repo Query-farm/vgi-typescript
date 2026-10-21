@@ -30,6 +30,10 @@ import {
   batchFromRows,
   serializeBatch,
   deserializeBatch,
+  deserializeSchema,
+  deserializeBatches,
+  serializeCollectionRows,
+  typeSignature,
 } from "../arrow/index.js";
 import { conformRecord } from "./conform.js";
 
@@ -213,7 +217,7 @@ function normalizeValue(raw: any, type: VgiDataType): any {
   }
 
   if (isDictionary(type)) {
-    return raw == null ? null : String(raw);
+    return normalizeValue(raw, (type as any).dictionary as VgiDataType);
   }
 
   if (isBinary(type)) {
@@ -246,4 +250,39 @@ function toUint8Array(val: any): Uint8Array {
     return new Uint8Array(val.buffer, val.byteOffset, val.byteLength);
   }
   return new Uint8Array(0);
+}
+
+/** Encode ordinary metadata records directly, sharing one schema and dictionary per category. */
+export function encodeASDCollection(schema: VgiSchema, records: readonly Record<string, any>[]): Uint8Array | null {
+  if (records.length === 0) return null;
+  return serializeCollectionRows(schema, records.map((record) => sortMapsForSchema(schema, conformRecord(schema, record))), 1024);
+}
+
+/** Decode every row of every batch and reject incompatible collection schemas. */
+export function decodeASDCollection<T>(schema: VgiSchema, bytes: Uint8Array | null | undefined): T[] {
+  if (bytes == null) return [];
+  const output: T[] = [];
+  const batches = deserializeBatches(bytes);
+  const validateSchema = (actualSchema: VgiSchema) => {
+    if (actualSchema.fields.length !== schema.fields.length || schema.fields.some((field, i) => {
+      const actual = actualSchema.fields[i];
+      return actual.name !== field.name || actual.nullable !== field.nullable || typeSignature(actual.type) !== typeSignature(field.type);
+    })) throw new Error("catalog collection has an incompatible metadata schema");
+  };
+  // Schema-only streams have no data batch whose schema could otherwise be
+  // checked. Empty or malformed bytes must not silently count as null.
+  if (batches.length === 0) validateSchema(deserializeSchema(bytes));
+  for (const batch of batches) {
+    validateSchema(batch.schema);
+    for (let row = 0; row < batch.numRows; row++) {
+      const item: Record<string, any> = {};
+      for (const field of schema.fields) {
+        const value = batch.getChild(field.name)?.get(row);
+        if (value == null && !field.nullable) throw new Error(`catalog collection has null ${field.name}`);
+        item[field.name] = normalizeValue(value, field.type);
+      }
+      output.push(item as T);
+    }
+  }
+  return output;
 }

@@ -62,6 +62,7 @@ export function writeCanonicalBatch(
   columns: Record<string, unknown[]>,
   schema: VgiSchema,
   numRows: number,
+  maxBatchRows?: number,
 ): VgiBatch {
   const childCols: Column<any>[] = [];
   const fields: any[] = [];
@@ -69,8 +70,8 @@ export function writeCanonicalBatch(
     const ftype = toFlechetteType(f.type);
     const values = columns[f.name];
     const col: Column<any> = values
-      ? f_columnFromArray(prepareForFlechette(f.type, values), ftype, COLUMN_OPTS)
-      : f_columnFromArray(new Array(numRows).fill(null), ftype, COLUMN_OPTS);
+      ? f_columnFromArray(prepareForFlechette(f.type, values), ftype, { ...COLUMN_OPTS, maxBatchRows })
+      : f_columnFromArray(new Array(numRows).fill(null), ftype, { ...COLUMN_OPTS, maxBatchRows });
     childCols.push(col);
     const nullable = (f as any).nullable ?? true;
     const metadata = (f as any).metadata ?? null;
@@ -93,6 +94,9 @@ export function writeCanonicalBatch(
  */
 export function prepareForFlechette(type: VgiDataType, values: unknown[]): unknown[] {
   const tid = type.typeId;
+  if (tid === -1) {
+    return prepareForFlechette((type as any).dictionary as VgiDataType, values);
+  }
   if (tid === 8) {
     const isDay = (type as any).unit === 0;
     return values.map((v) => {
@@ -173,6 +177,7 @@ export function prepareForFlechette(type: VgiDataType, values: unknown[]): unkno
 
 function needsPrepare(type: VgiDataType): boolean {
   const tid = type.typeId;
+  if (tid === -1) return needsPrepare((type as any).dictionary as VgiDataType);
   if (tid === 8 || tid === 17) return true;
   if (tid === 11 && (type as any).unit === MONTH_DAY_NANO) return true;
   if (tid === 13) return ((type as any).children ?? []).some((c: any) => needsPrepare(c.type));

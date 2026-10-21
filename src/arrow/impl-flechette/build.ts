@@ -30,13 +30,14 @@ export function columnFromArray(values: any[], type: VgiDataType): VgiColumnData
 export function batchFromRows(
   rows: Record<string, any>[],
   schema: VgiSchema,
+  maxBatchRows?: number,
 ): VgiBatch {
   if (rows.length === 0) return emptyBatch(schema);
   const columns: Record<string, any[]> = {};
   for (const f of schema.fields) {
     columns[f.name] = rows.map((r) => r[f.name] ?? null);
   }
-  return batchFromColumns(columns, schema);
+  return batchFromColumns(columns, schema, "rich", maxBatchRows);
 }
 
 /**
@@ -48,6 +49,7 @@ export function batchFromColumns(
   columns: Record<string, any[]>,
   schema: VgiSchema,
   repr: "rich" | "raw" = "rich",
+  maxBatchRows?: number,
 ): VgiBatch {
   let numRows = 0;
   for (const f of schema.fields) {
@@ -61,5 +63,5 @@ export function batchFromColumns(
     const toCanon = repr === "raw" ? codec.rawToCanonical : codec.richToCanonical;
     canonicalColumns[f.name] = values.map((v) => toCanon.call(codec, v));
   }
-  return writeCanonicalBatch(canonicalColumns, schema, numRows);
+  return writeCanonicalBatch(canonicalColumns, schema, numRows, maxBatchRows);
 }
