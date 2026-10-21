@@ -35,6 +35,14 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+  actions: read
+
+env:
+  # Test sources and statically linked binaries come from this exact native commit.
+  VGI_REF: 3a2249f815ff6e2a8b5289a3e6284326084e3630
+
 jobs:
   unit:
     name: Unit (bun test on both backends + build + parity)
@@ -155,9 +163,7 @@ jobs:
         with:
           repository: Query-farm/vgi
           path: vgi-upstream
-          # Pin to the tag matching the published extension when you cut
-          # releases; main is fine while tracking head.
-          ref: main
+          ref: ${{ env.VGI_REF }}
 
       - uses: oven-sh/setup-bun@v2
         with:
@@ -166,36 +172,14 @@ jobs:
       - name: Install dependencies
         run: bash ci/install-dependencies.sh
 
-      # Resolve the latest haybarn release so the unittest host matches the
-      # rebuilt community vgi extension's DuckDB ABI. A stale pin SIGSEGVs on
-      # load. Mirrors the vgi-go / vgi-python integration jobs.
-      - name: Resolve latest haybarn release
+      - name: Download native runner matching the test suite
         run: |
-          REL=$(gh release view --repo Query-farm-haybarn/haybarn --json tagName --jq .tagName)
-          echo "HAYBARN_RELEASE=$REL" >> "$GITHUB_ENV"
-          echo "Latest haybarn release: $REL"
+          python3 "$VGI_SRC/scripts/ci_fetch_native_runner.py" \
+            --source "$VGI_SRC" --output "$RUNNER_TEMP/vgi-native"
         env:
+          VGI_SRC: ${{ github.workspace }}/vgi-upstream
           GH_TOKEN: ${{ github.token }}
 
-      - name: Download haybarn-unittest
-        run: |
-          gh release download "$HAYBARN_RELEASE" \
-            --repo Query-farm-haybarn/haybarn \
-            --pattern 'haybarn_unittest-linux-amd64.zip' \
-            --output /tmp/haybarn-unittest.zip --clobber
-          unzip -o -q /tmp/haybarn-unittest.zip -d /tmp/haybarn-unittest
-          UNITTEST=$(find /tmp/haybarn-unittest -name 'haybarn-unittest' -type f | head -1)
-          chmod +x "$UNITTEST"
-          echo "HAYBARN_UNITTEST=$UNITTEST" >> "$GITHUB_ENV"
-        env:
-          GH_TOKEN: ${{ github.token }}
-
-      # The harness stages a rewritten copy of the suite, boots the example HTTP
-      # workers, warms the extension cache (FORCE INSTALL vgi FROM community;
-      # everything else FROM core), runs one unittest invocation, and then
-      # enforces the skip contract: every skip must match an expected reason and
-      # at least MIN_EXECUTED test cases must actually execute. Note that
-      # LOCAL_EXTENSION_REPO is deliberately NOT set anywhere in this file.
       - name: Integration suite (${{ matrix.lane }} / ${{ matrix.backend }})
         run: ci/run-integration.sh
         env:

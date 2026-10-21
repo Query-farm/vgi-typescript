@@ -3,8 +3,8 @@
 #
 # Run the canonical Query-farm/vgi integration sqllogictest suite against the
 # TypeScript (bun) example workers, using a prebuilt standalone
-# `haybarn-unittest` and the signed community vgi extension — no C++ build from
-# source. See ci/README.md.
+# `haybarn-unittest`. CI uses a matching development build; local standalone
+# runs default to the signed community extension. See ci/README.md.
 #
 # Ported from vgi-go / vgi-python, which share this harness verbatim apart from
 # the worker wiring. The TypeScript differences:
@@ -42,6 +42,7 @@
 #                     (space-separated; used for tests that are version-skewed
 #                      against the *prebuilt* community extension)
 #   MIN_EXECUTED      floor on executed test cases (default: per-transport, below)
+#   RUNNER_LINKS_EXTENSIONS  1 uses the native runner's linked extensions and disables installs
 #   PREPROCESS        1 (default) rewrites every `require` gate into a signed
 #                     INSTALL+LOAD for the standalone runner; 0 leaves the gates
 #                     alone (still injecting LOAD httpfs on the http lane) — use
@@ -59,6 +60,9 @@ BIN_DIR="${BIN_DIR:-$REPO/bin}"
 STAGE="${STAGE:-$(mktemp -d)}"
 TRANSPORT="${TRANSPORT:-http}"
 PREPROCESS="${PREPROCESS:-1}"
+if [ "${RUNNER_LINKS_EXTENSIONS:-0}" = "1" ]; then
+  PREPROCESS=0
+fi
 INTEGRATION="$VGI_SRC/test/sql/integration"
 [ -d "$INTEGRATION" ] || { echo "::error::no test/sql/integration under VGI_SRC=$VGI_SRC"; exit 1; }
 
