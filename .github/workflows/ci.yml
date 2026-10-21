@@ -47,7 +47,7 @@ jobs:
           bun-version: latest
 
       - name: Install dependencies
-        run: bun install
+        run: bash ci/install-dependencies.sh
 
       - name: Build (types + bundles)
         run: bun run build
@@ -93,7 +93,7 @@ jobs:
           python-version: "3.14"
 
       - name: Install dependencies
-        run: bun install
+        run: bash ci/install-dependencies.sh
 
       - name: Install the reference
         run: pip install "./.vgi-rpc-python[http,conformance]" pytest pytest-timeout
@@ -164,7 +164,7 @@ jobs:
           bun-version: latest
 
       - name: Install dependencies
-        run: bun install
+        run: bash ci/install-dependencies.sh
 
       # Resolve the latest haybarn release so the unittest host matches the
       # rebuilt community vgi extension's DuckDB ABI. A stale pin SIGSEGVs on
