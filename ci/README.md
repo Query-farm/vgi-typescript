@@ -56,8 +56,8 @@ CI downloads a native runner built by `Query-farm/vgi` at the exact `VGI_REF`
 commit used for the test suite. Development wire changes can therefore be
 verified before their public extension release.
 
-1. **Install dependencies** — `ci/install-dependencies.sh` builds the pinned RPC
-   source revision until its package release is available.
+1. **Install dependencies** — `bun install --frozen-lockfile` installs published
+   registry packages at the versions and integrity hashes in `bun.lock`.
 2. **Checkout the test suite** — `Query-farm/vgi` at the pinned `VGI_REF`.
 3. **Download matching binaries** — the checkout's
    `scripts/ci_fetch_native_runner.py` verifies artifact provenance and exports

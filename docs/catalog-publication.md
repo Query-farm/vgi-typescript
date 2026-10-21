@@ -1,5 +1,9 @@
 # Catalog collections and external publication
 
+SDK 0.45.0 requires a client using VGI wire major/minor `2.2`, including the
+DuckDB extension and browser/WASM clients. Wire `2.1` peers are incompatible;
+upgrade both ends together. The protocol routing name remains `vgi.v2`.
+
 Wire `vgi.v2` revision `2.2.0` carries six nullable Arrow streams in
 `catalog_contents`: schemas, tables, views, functions, macros and indexes. Each
 stream spans all schemas and may contain multiple record batches. The client
@@ -88,6 +92,5 @@ Import validates object readback before durable CAS commit. Invalidation waits
 for this manager's pending publication and conditionally removes its manifest;
 immutable objects remain under the configured retention policy.
 
-TypeScript requires `@query-farm/vgi-rpc >=0.29.1` for gzip object resolution in
-runtimes that return the compressed body directly. Release that RPC package
-before publishing this SDK. No package is published by the implementation tests.
+TypeScript requires the published `@query-farm/vgi-rpc ^0.29.1` package for gzip
+object resolution in runtimes that return the compressed body directly.

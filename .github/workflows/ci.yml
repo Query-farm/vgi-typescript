@@ -55,7 +55,7 @@ jobs:
           bun-version: latest
 
       - name: Install dependencies
-        run: bash ci/install-dependencies.sh
+        run: bun install --frozen-lockfile
 
       - name: Build (types + bundles)
         run: bun run build
@@ -101,7 +101,7 @@ jobs:
           python-version: "3.14"
 
       - name: Install dependencies
-        run: bash ci/install-dependencies.sh
+        run: bun install --frozen-lockfile
 
       - name: Install the reference
         run: pip install "./.vgi-rpc-python[http,conformance]" pytest pytest-timeout
@@ -170,7 +170,7 @@ jobs:
           bun-version: latest
 
       - name: Install dependencies
-        run: bash ci/install-dependencies.sh
+        run: bun install --frozen-lockfile
 
       - name: Download native runner matching the test suite
         run: |
