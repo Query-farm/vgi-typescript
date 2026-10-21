@@ -4,7 +4,7 @@
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
-rpc_revision=0ded8a92ea08f3a63305dbee2f5b53b9bdec62ab
+rpc_revision=b5d04776db8583c196a03294ffcb0051ce5f632c
 rpc_stage=$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/vgi-rpc-ci.XXXXXX")
 trap 'rm -rf "$rpc_stage"' EXIT
 
