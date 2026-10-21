@@ -265,7 +265,6 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
 
   schemas(attachOpaqueData: AttachOpaqueData, transactionOpaqueData?: TransactionOpaqueData): SchemaInfo[] {
     return this._descriptor.schemas.map((s) => ({
-      attach_opaque_data: this.itemAttachId(attachOpaqueData),
       path: schemaDescriptorPath(s),
       comment: s.comment ?? null,
       tags: s.tags ?? {},
@@ -303,7 +302,6 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
     const desc = this._descriptor.schemas.find((s) => schemaPathsEqual(schemaDescriptorPath(s), path));
     if (!desc) return null;
     return {
-      attach_opaque_data: this.itemAttachId(attachOpaqueData),
       path: schemaDescriptorPath(desc),
       comment: desc.comment ?? null,
       tags: desc.tags ?? {},

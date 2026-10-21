@@ -1,3 +1,4 @@
+import type { CatalogSnapshotPolicy } from "./publication.js";
 // Copyright 2025, 2026 Query Farm LLC - https://query.farm
 // CatalogInterface abstract class with ~35 methods.
 // Matching Python's vgi/catalog/catalog_interface.py
@@ -561,6 +562,8 @@ function isPromise<T>(v: Awaitable<T>): v is Promise<T> {
 }
 
 export abstract class CatalogInterface {
+  /** Opt-in immutable external delivery for catalog_contents. */
+  catalogSnapshotPolicy: CatalogSnapshotPolicy | null = null;
   /**
    * Opt-in framework etag for `catalog_contents`. `"content-hash"`: when
    * `catalogContents` returns no etag of its own, the worker uses the hex

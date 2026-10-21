@@ -57,6 +57,7 @@ import { VgiClientError, wrapRpcWithErrorEnrichment } from "./errors.js";
 import { normalizeSchemaPath } from "../schema-path.js";
 import { encodeASD } from "../codec/asd.js";
 import { ClientCapabilitiesSchema, MacroCreateRequestSchema } from "../generated/vgi-protocol-schemas.js";
+import { decodeCatalogStreams } from "../catalog/contents-codec.js";
 import { decodeCatalogContentsResponse } from "../generated/vgi-protocol-types.js";
 import { deserializeInfoList, deserializeTags, toAsyncIterator } from "./helpers.js";
 
@@ -713,25 +714,7 @@ export class VgiClient {
     });
     if (!result) throw new VgiClientError("catalog_contents returned null");
     const response = decodeCatalogContentsResponse(toUint8Array(result.result));
-    const schemas = response.schemas.map((c) => {
-      const schema = decodeSchemaInfo(c.schema);
-      if (JSON.stringify(c.path) !== JSON.stringify(schema.path)) {
-        throw new VgiClientError(
-          `catalog_contents: SchemaContents.path ${JSON.stringify(c.path)} != SchemaInfo.path ${JSON.stringify(schema.path)}`,
-        );
-      }
-      return {
-        schema,
-        tables: c.tables.map(decodeTableInfo),
-        views: c.views.map(decodeViewInfo),
-        scalar_functions: c.scalar_functions.map(decodeFunctionInfo),
-        aggregate_functions: c.aggregate_functions.map(decodeFunctionInfo),
-        table_functions: c.table_functions.map(decodeFunctionInfo),
-        scalar_macros: c.scalar_macros.map(decodeMacroInfo),
-        table_macros: c.table_macros.map(decodeMacroInfo),
-        indexes: c.indexes.map(decodeIndexInfo),
-      };
-    });
+    const schemas = decodeCatalogStreams(response, ifNoneMatch);
     return {
       catalog_version: Number(response.catalog_version ?? 0),
       etag: response.etag ?? null,

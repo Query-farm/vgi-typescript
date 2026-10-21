@@ -54,6 +54,7 @@ export {
   deserializeSchema,
   serializeBatch,
   deserializeBatch,
+  deserializeBatches, serializeBatches, serializeCollectionRows,
 } from "./ipc.js";
 
 // Column statistics — sparse-union min/max via the codec/canonical path.

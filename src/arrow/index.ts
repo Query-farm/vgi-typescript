@@ -61,7 +61,7 @@ export {
   // canonical single-value read (backend-agnostic, lossless)
   readCanonicalValue,
   // IPC
-  serializeSchema, deserializeSchema, serializeBatch, deserializeBatch,
+  serializeSchema, deserializeSchema, serializeBatch, deserializeBatch, deserializeBatches, serializeBatches, serializeCollectionRows,
   // Column statistics
   buildStatisticsBatch,
 } from "#arrow-impl";

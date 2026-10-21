@@ -1,31 +1,24 @@
 // Copyright 2025, 2026 Query Farm LLC - https://query.farm
 // SPDX-License-Identifier: LicenseRef-QueryFarm-Source-Available-1.0
 
-// catalog_contents: the worker side of the protocol 2.1.0 bulk enumeration,
+// catalog_contents: the worker side of the wire 2.2 bulk enumeration,
 // with etag revalidation and the frozen-catalog response cache. Mirrors
 // vgi-python's Worker.catalog_contents / _catalog_contents_response.
 
 import {
-  encodeSchemaInfo,
-  encodeTableInfo,
-  encodeViewInfo,
-  encodeMacroInfo,
-  encodeIndexInfo,
-} from "../../../generated/vgi-client.js";
-import {
   buildCatalogContentsResponse,
-  buildSchemaContents,
   type CatalogContentsResponse,
-  type SchemaContents,
 } from "../../../generated/vgi-protocol-types.js";
+import { ExternalRef, type CallContext } from "@query-farm/vgi-rpc";
+import { CatalogSnapshotManager, type CatalogSnapshotPolicy } from "../../../catalog/publication.js";
 import { CatalogContentsResultSchema } from "../../../generated/vgi-protocol-schemas.js";
-import { encodeFunctionInfoOnce } from "../../../catalog/item-encoding.js";
+import { encodeCatalogStreams, decodeCatalogStreams } from "../../../catalog/contents-codec.js";
 import type { AttachOpaqueData, CatalogInterface } from "../../../catalog/interface.js";
 import { catalogContentsDigest } from "../../../catalog/contents-digest.js";
-import { schemaPathKey } from "../../../schema-path.js";
 import { wrapResult } from "../shared.js";
 
 type Wire = { result: Uint8Array };
+const schemaPathKey = (path: readonly string[]) => JSON.stringify(path.map((part) => part.toLowerCase()));
 
 /** One cached answer per catalog instance, valid for one catalog version. */
 interface ContentsSnapshot {
@@ -39,6 +32,8 @@ interface ContentsSnapshot {
  * (weak, so a dropped catalog takes its snapshot with it). Holds the build
  * promise, so concurrent first calls build once.
  */
+const PUBLICATIONS = new WeakMap<CatalogSnapshotPolicy, CatalogSnapshotManager>();
+
 const CACHE = new WeakMap<CatalogInterface, Promise<ContentsSnapshot>>();
 
 /**
@@ -47,9 +42,8 @@ const CACHE = new WeakMap<CatalogInterface, Promise<ContentsSnapshot>>();
  * Enforces the revalidation rules: `not_modified` needs an etag equal to
  * `ifNoneMatch` and no schemas; a catalog with no etag never yields
  * `not_modified` (and so ignores `ifNoneMatch`). Validates the schema paths
- * (unique, parent present) and orders them parent-first. Every item is
- * encoded with the SAME encoder its per-schema RPC uses, so items are
- * byte-identical to catalog_schemas / catalog_schema_contents_* items.
+ * (unique, parent present) and orders them parent-first. The six collection
+ * streams retain the fields used by the existing per-schema RPC metadata.
  */
 export async function buildCatalogContents(
   cat: CatalogInterface,
@@ -83,31 +77,17 @@ export async function buildCatalogContents(
     }
   }
 
-  // Same parent-before-child order catalog_schemas guarantees (stable sort).
-  const schemas: SchemaContents[] = infos
-    .sort((a, b) => a.schema.path.length - b.schema.path.length)
-    .map((c) =>
-      buildSchemaContents({
-        path: [...c.schema.path],
-        schema: encodeSchemaInfo(c.schema),
-        tables: c.tables.map((t) => encodeTableInfo(t)),
-        views: c.views.map((v) => encodeViewInfo(v)),
-        scalar_functions: c.scalar_functions.map((f) => encodeFunctionInfoOnce(f)),
-        aggregate_functions: c.aggregate_functions.map((f) => encodeFunctionInfoOnce(f)),
-        table_functions: c.table_functions.map((f) => encodeFunctionInfoOnce(f)),
-        scalar_macros: c.scalar_macros.map((m) => encodeMacroInfo(m)),
-        table_macros: c.table_macros.map((m) => encodeMacroInfo(m)),
-        indexes: c.indexes.map((i) => encodeIndexInfo(i)),
-      }),
-    );
+  const streams = encodeCatalogStreams(infos.sort((a, b) => a.schema.path.length - b.schema.path.length));
   let etag = etag0;
   if (etag === null && owner.catalogContentsEtag === "content-hash") {
-    etag = await catalogContentsDigest(schemas);
+    etag = await catalogContentsDigest(streams, version);
   }
   if (etag !== null && ifNoneMatch !== null && etag === ifNoneMatch) {
     return buildCatalogContentsResponse({ catalog_version: version, etag, not_modified: true });
   }
-  return buildCatalogContentsResponse({ catalog_version: version, etag, schemas });
+  const response = buildCatalogContentsResponse({ catalog_version: version, etag, ...streams });
+  decodeCatalogStreams(response);
+  return response;
 }
 
 /**
@@ -123,9 +103,44 @@ export async function serveCatalogContents(
   cat: CatalogInterface,
   attach: AttachOpaqueData,
   ifNoneMatch: string | null,
-): Promise<Wire> {
+  callContext?: CallContext,
+  sealedAttach: Uint8Array = attach,
+): Promise<Wire | ExternalRef> {
   const owner = cat.catalogContentsOwner(attach);
   const version = Number(await cat.version(attach));
+  const policy = owner.catalogSnapshotPolicy;
+  if (policy?.delivery === "published") {
+    const request = { catalog: cat, attachOpaqueData: attach, callContext, catalogVersion: version };
+    const inline = (etag: string) => wrapResult(buildCatalogContentsResponse({ catalog_version: version, etag, not_modified: true }), CatalogContentsResultSchema);
+    const cheapEtag = await policy.etag?.(request);
+    if (cheapEtag != null && cheapEtag === ifNoneMatch) return inline(cheapEtag);
+    let manager = PUBLICATIONS.get(policy);
+    if (!manager) { manager = new CatalogSnapshotManager(policy); PUBLICATIONS.set(policy, manager); }
+    const scopeBytes = new Uint8Array(await crypto.subtle.digest("SHA-256", sealedAttach as BufferSource));
+    const attachmentScope = "attachment:" + Array.from(scopeBytes, (b) => b.toString(16).padStart(2, "0")).join("");
+    const identify = async (input: typeof request) => { const id = await policy.identity(input); return { ...id, visibilityScope: id.visibilityScope ?? attachmentScope }; };
+    const identity = await identify(request);
+    if (identity.catalogVersion !== version) throw new Error("snapshot identity version differs from the attached catalog");
+    const assertCurrentIdentity = async () => {
+      const currentVersion = Number(await cat.version(attach));
+      const current = await identify({ ...request, catalogVersion: currentVersion });
+      if (currentVersion !== version || await manager!.key(identity) !== await manager!.key(current)) throw new Error("catalog changed while resolving its publication");
+    };
+    const buildSnapshot = async (validator: string | null) => {
+      const response = await buildCatalogContents(cat, owner, attach, version, validator);
+      await assertCurrentIdentity();
+      return response;
+    };
+    try {
+      const manifest = await manager.warm(identity, () => buildSnapshot(null));
+      await assertCurrentIdentity();
+      if (manifest.etag === ifNoneMatch) return inline(manifest.etag);
+      return new ExternalRef(manifest.url, manifest.sha256);
+    } catch (error) {
+      if (policy.onPublicationFailure !== "ordinary") throw error;
+      return wrapResult(await buildSnapshot(ifNoneMatch), CatalogContentsResultSchema);
+    }
+  }
   if (owner.catalogContentsCacheable()) {
     let pending = CACHE.get(owner);
     let snapshot = pending ? await pending.catch(() => null) : null;
