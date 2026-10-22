@@ -87,16 +87,16 @@
   },
   "dependencies": {
     "@noble/ciphers": "^2.3.0",
-    "@query-farm/flechette": "^2.4.1"
+    "@query-farm/flechette": "^2.7.1"
   },
   "peerDependencies": {
     "@query-farm/apache-arrow": "^21.1.1",
-    "@query-farm/vgi-rpc": "^0.29.1"
+    "@query-farm/vgi-rpc": "^0.29.2"
   },
   "devDependencies": {
     "@duckdb/node-api": "^1.5.5-r.4",
     "@query-farm/apache-arrow": "^21.1.1",
-    "@query-farm/vgi-rpc": "^0.29.1",
+    "@query-farm/vgi-rpc": "^0.29.2",
     "@types/bun": "latest",
     "typescript": "^7.0.2"
   },

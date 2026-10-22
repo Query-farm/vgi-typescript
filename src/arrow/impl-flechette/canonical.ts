@@ -9,9 +9,10 @@
 //
 // flechette's `columnFromArray` already handles the complex cases (List, Map,
 // Struct, Decimal, Timestamp[ns]) when given the right options, so the WRITE
-// side is mostly delegation. The one wrinkle is Date: flechette stores a Date
-// column correctly only when fed JS `Date` objects, but our canonical date32 is
-// a day-number and date64 is ms-bigint — so we convert canonical -> Date here.
+// side is mostly delegation. Date32 needs epoch milliseconds rather than our
+// canonical day-number. Date64 takes canonical bigint milliseconds directly:
+// Flechette 2.7.1 preserves raw bigint storage, while Date/number inputs are
+// normalized to midnight and would lose an existing time-of-day component.
 //
 // On the READ side, flechette's Column/Data `.at()` already decodes every
 // scalar to its canonical JS value LOSSLESSLY (timestamp/duration/time64 ->
@@ -88,7 +89,7 @@ export function writeCanonicalBatch(
 
 /**
  * Convert canonical values into the shape flechette's columnFromArray needs.
- * Date columns: canonical day-number / ms-bigint -> JS Date. Map columns:
+ * Date32 columns: canonical day-number -> JS Date; Date64 stays ms-bigint. Map columns:
  * canonical Array<[k,v]> -> Map. Struct/List recurse. Everything else passes
  * through.
  */
@@ -101,9 +102,10 @@ export function prepareForFlechette(type: VgiDataType, values: unknown[]): unkno
     const isDay = (type as any).unit === 0;
     return values.map((v) => {
       if (v == null) return null;
+      if (!isDay) return typeof v === "bigint" ? v : BigInt(v instanceof Date ? v.getTime() : v as number);
       if (v instanceof Date) return v;
       const n = typeof v === "bigint" ? Number(v) : (v as number);
-      return new Date(isDay ? n * MS_PER_DAY : n);
+      return new Date(n * MS_PER_DAY);
     });
   }
   if (tid === 11 && (type as any).unit === MONTH_DAY_NANO) {

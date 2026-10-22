@@ -116,7 +116,8 @@ describe(`codec round-trip (backend=${backend.name})`, () => {
 
   test("date64 -> Date (incl. far-past / far-future)", () => {
     expectRoundTrip("date64", dateMillisecond(), [
-      new Date(Date.UTC(2025, 3, 20, 12, 34, 56)),
+      new Date(Date.UTC(2025, 3, 20, 12, 34, 56, 123)),
+      new Date(-1),
       new Date(Date.UTC(1970, 0, 1)),
       new Date(Date.UTC(1850, 5, 15)),
       new Date(Date.UTC(2250, 0, 1)),

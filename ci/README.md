@@ -80,8 +80,8 @@ build's own source tree, ignoring every exclusion and every rewrite.
 ## Transport lanes
 
 `run-integration.sh` honours `TRANSPORT=http|stdio|launch`, mirroring the
-Makefile's `test-http` / `test-subprocess` / `test` targets. CI runs three legs:
-`http` × {arrow-js, flechette} and `launch` × arrow-js.
+Makefile's `test-http` / `test-subprocess` / `test` targets. CI runs four legs:
+{`http`, `launch`} × {arrow-js, flechette}.
 
 - **`http`** — the whole suite over the stateless HTTP transport, against the four
   long-lived `bin/vgi-example-*-http-worker` servers. Staging injects
@@ -103,8 +103,9 @@ Makefile's `test-http` / `test-subprocess` / `test` targets. CI runs three legs:
 
 `VGI_BUN_CONDITIONS` selects the Arrow backend and is read by the `bin/` wrappers,
 so the script only has to pass it through: unset = arrow-js, `flechette` =
-flechette. flechette is HTTP-only (no stdio incremental streaming), hence no
-launch leg for it.
+flechette. Both backends support HTTP and byte-stream workers with
+`@query-farm/vgi-rpc` 0.29.2 or later. The HTTP lane's subprocess probes use
+the same backend as its HTTP workers.
 
 ## Excluded tests
 
