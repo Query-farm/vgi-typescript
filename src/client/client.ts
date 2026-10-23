@@ -665,7 +665,7 @@ export class VgiClient {
       catalog_version_frozen: inner.catalog_version_frozen ?? false,
       catalog_version: Number(inner.catalog_version ?? 0),
       attach_opaque_data_required: inner.attach_opaque_data_required ?? true,
-      default_schema: inner.default_schema ?? "main",
+      default_schema: inner.default_schema ?? null,
       settings: inner.settings
         ? (Array.isArray(inner.settings) ? inner.settings : [...inner.settings]).map(toUint8Array)
         : [],

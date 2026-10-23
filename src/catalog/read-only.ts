@@ -97,6 +97,10 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
     options: { perAttachItemIds?: boolean } = {},
   ) {
     super();
+    if (descriptor.defaultSchema != null &&
+        (descriptor.defaultSchema.length === 0 || descriptor.defaultSchema.includes("\0"))) {
+      throw new Error("defaultSchema must be a non-empty raw root identifier without NUL, or null");
+    }
     this._descriptor = descriptor;
     this._registry = registry;
     if (options.perAttachItemIds) this.perAttachItemIds = true;
@@ -214,7 +218,7 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
       catalog_version_frozen: true,
       catalog_version: this._version,
       attach_opaque_data_required: true,
-      default_schema: this._descriptor.defaultSchema ?? "main",
+      default_schema: this._descriptor.defaultSchema === undefined ? "main" : this._descriptor.defaultSchema,
       settings,
       secret_types: secretTypes,
       attach_catalogs: attachCatalogs,

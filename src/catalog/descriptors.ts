@@ -154,7 +154,8 @@ export interface SecretTypeDescriptor {
 
 export interface CatalogDescriptor {
   name: string;
-  defaultSchema?: string;
+  /** One raw root identifier; null means no implicit default, omitted means main. */
+  defaultSchema?: string | null;
   schemas: SchemaDescriptor[];
   settings?: SettingDescriptor[];
   secretTypes?: SecretTypeDescriptor[];
