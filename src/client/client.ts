@@ -1315,13 +1315,13 @@ export class VgiClient {
     });
   }
 
-  /** Set the default value for a column. */
+  /** Set the default using a serialized canonical SqlExpression record. */
   async tableColumnDefaultSet(
     attachOpaqueData: AttachOpaqueData,
     schemaPath: string[] | string,
     name: string,
     columnPath: string[],
-    expression: string,
+    expression: Uint8Array,
     ignoreNotFound: boolean = false,
     transactionOpaqueData?: TransactionOpaqueData,
   ): Promise<void> {
@@ -1360,7 +1360,8 @@ export class VgiClient {
    *
    * `columnDefinition` is a serialized Arrow Schema with a single field whose
    * name identifies the target column and whose type is the new column type.
-   * `expression` is an optional SQL expression used to convert existing values.
+   * `expression` is a serialized canonical SqlExpression for USING, or null
+   * when no conversion expression was supplied.
    */
   async tableColumnTypeChange(
     attachOpaqueData: AttachOpaqueData,
@@ -1368,7 +1369,7 @@ export class VgiClient {
     name: string,
     columnPath: string[],
     columnDefinition: Uint8Array,
-    expression: string | null = null,
+    expression: Uint8Array | null = null,
     ignoreNotFound: boolean = false,
     transactionOpaqueData?: TransactionOpaqueData,
   ): Promise<void> {

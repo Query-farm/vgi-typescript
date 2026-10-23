@@ -225,7 +225,7 @@ export function catalogTableHandlers(getCatalog: GetCatalog, signingKey?: Uint8A
       params.schema_path,
       params.name,
       params.column_path,
-      params.expression,
+      toUint8Array(params.expression),
       params.ignore_not_found,
       params.transaction_opaque_data ? toUint8Array(params.transaction_opaque_data) : undefined
     );
@@ -255,7 +255,7 @@ export function catalogTableHandlers(getCatalog: GetCatalog, signingKey?: Uint8A
       params.name,
       params.column_path,
       toUint8Array(params.column_definition),
-      params.expression,
+      params.expression == null ? null : toUint8Array(params.expression),
       params.ignore_not_found,
       params.transaction_opaque_data ? toUint8Array(params.transaction_opaque_data) : undefined
     );

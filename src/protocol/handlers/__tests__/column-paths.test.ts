@@ -66,3 +66,47 @@ test("unnegotiated nested targets are rejected before the provider is called", a
     expect(dispatched).toBe(false);
   }
 });
+
+test("column expression clients preserve canonical bytes and absent USING", async () => {
+  const context = {
+    timezone: "UTC", collation: "binary", default_order: "desc",
+    default_null_order: "nulls_first", preserve_insertion_order: false,
+  };
+  const expression = encodeASD(schemas.SqlExpressionSchema, {
+    sql: "CAST(NULL AS BIGINT)", profile: "vgi.expression.duckdb.scalar.v1",
+    schema_path: ["main"], evaluation_context: context,
+  });
+  const params = decodeASD<Record<string, any>>(schemas.CatalogTableColumnTypeChangeParamsSchema,
+    new Uint8Array(Buffer.from(corpus.records.column_type_change_literal, "base64")));
+  const received: (Uint8Array | null)[] = [];
+  const provider = Object.create(CatalogInterface.prototype) as CatalogInterface;
+  provider.tableColumnDefaultSet = async (_attach, _schema, _name, _path, value) => {
+    received.push(value);
+  };
+  provider.tableColumnTypeChange = async (_attach, _schema, _name, _path, _definition, value) => {
+    received.push(value ?? null);
+  };
+  const handlers = catalogTableHandlers(() => provider);
+  const client = new VgiClient({
+    async call(method: string, values: Record<string, unknown>) {
+      const isDefault = method === "catalog_table_column_default_set";
+      const schema = isDefault ? schemas.CatalogTableColumnDefaultSetParamsSchema
+        : schemas.CatalogTableColumnTypeChangeParamsSchema;
+      const handler = isDefault ? handlers.catalogTableColumnDefaultSet!
+        : handlers.catalogTableColumnTypeChange!;
+      const wire = batchToScalarDict(deserializeBatch(encodeASD(schema, values)));
+      return await (handler as any)(wire, {});
+    },
+  } as unknown as RpcClient);
+  const attach = new Uint8Array([1, 0, 255]);
+  await client.tableColumnDefaultSet(attach, ["main"], "t", ["a.b"], expression);
+  await client.tableColumnTypeChange(attach, ["main"], "t", ["a.b"], params.column_definition, expression);
+  await client.tableColumnTypeChange(attach, ["main"], "t", ["a.b"], params.column_definition);
+  expect(received).toEqual([expression, expression, null]);
+  for (const value of received.slice(0, 2)) {
+    const decoded = decodeASD<Record<string, any>>(schemas.SqlExpressionSchema, value!);
+    expect(decoded.sql).toBe("CAST(NULL AS BIGINT)");
+    expect(decoded.schema_path).toEqual(["main"]);
+    expect(decoded.evaluation_context).toEqual(context);
+  }
+});

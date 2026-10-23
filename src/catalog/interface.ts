@@ -849,7 +849,7 @@ export abstract class CatalogInterface {
     schemaPath: string[],
     name: string,
     columnPath: string[],
-    expression: string,
+    expression: Uint8Array,
     ignoreNotFound: boolean = false,
     transactionOpaqueData?: TransactionOpaqueData,
   ): Awaitable<void> {
@@ -871,7 +871,7 @@ export abstract class CatalogInterface {
     name: string,
     columnPath: string[],
     columnDefinition: Uint8Array,
-    expression: string | null = null,
+    expression: Uint8Array | null = null,
     ignoreNotFound: boolean = false,
     transactionOpaqueData?: TransactionOpaqueData,
   ): Awaitable<void> {
