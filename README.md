@@ -226,7 +226,14 @@ Five factories, each mapping to a DuckDB function shape with its own lifecycle:
 - **`defineTableInOutFunction`** — table-in / table-out
   (`SELECT * FROM f(TABLE t, …)`). Per-partition `state`, a streaming `process` per
   input batch, and a `finalize` that sees every worker's state — for windowing,
-  reshaping, enrichment, sessionization.
+  reshaping, enrichment, sessionization. `defineRowTransformFunction` is its
+  blended form, whose positional args are per-row input columns
+  (`FROM t, f(t.x)`); `inputRowsPerCall` caps the input rows one call receives.
+  Either can answer one input with several replies (an upstream API read a page
+  at a time): emit each reply but the last with `moreOutputMetadata(true)`, and
+  implement `resume(params, state, out)`, which the framework calls for each
+  next reply. It continues from `initialState`'s state alone, which over HTTP
+  rides the stream's state token, so keep positions there, not rows.
 - **`defineTableBufferingFunction`** — table-in / table-out that must observe **all**
   input before producing output (global sort, top-N, pivot). Sink (`process`) →
   `combine` → source (`finalize`), with explicit sink/source ordering controls.

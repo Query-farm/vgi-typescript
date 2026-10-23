@@ -53,6 +53,12 @@ export {
   type RowTransformProcessParams,
 } from "./functions/table-in-out.js";
 export {
+  moreOutputMetadata,
+  STATUS_KEY,
+  HAVE_MORE_OUTPUT,
+  CONTINUE,
+} from "./functions/continuation.js";
+export {
   defineTableBufferingFunction,
   type TableBufferingConfig,
   type TableBufferingBindParams,

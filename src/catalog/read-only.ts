@@ -687,6 +687,12 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
           // mirrors Python's `input_from_args=False if is_scalar else ...`.
           input_from_args:
             f.kind === "table_in_out" && f.meta.inputFromArgs === true,
+          // Blended only: the most input rows per worker call (null = a whole
+          // chunk). Mirrors Python's `None if is_scalar else ...`.
+          input_rows_per_call:
+            f.kind === "table_in_out" && f.meta.inputFromArgs === true
+              ? (f.meta.inputRowsPerCall ?? null)
+              : null,
           required_settings: meta.requiredSettings,
           required_secrets: requiredSecrets.map((s) => ({
             secret_type: s.secret_type,

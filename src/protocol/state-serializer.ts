@@ -50,6 +50,9 @@ export const EXCHANGE_STATE_SCHEMA = makeSchema([
   // null when no delta has been applied. Bounded by the number of predicate
   // ids, so the token stays flat-sized however many turns the scan takes.
   field("filter_history", binary(), true),
+  // A table-in-out exchange's last reply said HAVE_MORE_OUTPUT, so the next
+  // input must be a continuation tick (functions/continuation.ts). A flag bit.
+  field("more_pending", bool(), false),
 ]);
 
 const TEXT_ENCODER = new TextEncoder();
@@ -61,6 +64,7 @@ const FLAG_PRODUCER = 1;
 const FLAG_OPAQUE_DATA = 2;
 const FLAG_USER_STATE = 4;
 const FLAG_FILTER_HISTORY = 8;
+const FLAG_MORE_PENDING = 16;
 
 /**
  * Child field name for an inferred list. Arrow matches list children by
@@ -243,7 +247,8 @@ export const arrowStateSerializer: StateSerializer = {
       (state.isProducer ? FLAG_PRODUCER : 0) |
       (opaqueData ? FLAG_OPAQUE_DATA : 0) |
       (userState ? FLAG_USER_STATE : 0) |
-      (filterHistory ? FLAG_FILTER_HISTORY : 0);
+      (filterHistory ? FLAG_FILTER_HISTORY : 0) |
+      (state.morePending ? FLAG_MORE_PENDING : 0);
     const chunks = [functionName, initRequest, executionId];
     if (opaqueData) chunks.push(opaqueData);
     if (userState) chunks.push(userState);
@@ -302,6 +307,7 @@ export const arrowStateSerializer: StateSerializer = {
       __isProducer: isProducer,
       userState: deserializeUserState(userStateBytes),
       filterHistory: decodeFilterHistory(filterHistoryBytes),
+      morePending: (flags & FLAG_MORE_PENDING) !== 0,
     };
   },
 };

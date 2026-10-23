@@ -20,6 +20,7 @@ import {
   parentRowsMetadata,
   PARENT_ROW_METADATA_KEY,
   cacheControlMetadata,
+  moreOutputMetadata,
   batchFromColumns,
   emptyBatch,
   serializeBatch,
@@ -1097,6 +1098,296 @@ const cached_reval_double = defineRowTransformFunction({
   categories: ["blended", "cache", "test"],
 });
 
+// ============================================================================
+// Continued output: blended_paged / blended_sliced / paged_explode
+//
+// One input batch answered with several replies. process() emits the first
+// with moreOutputMetadata(true), and the framework calls resume() for each
+// next one, answering the client's continuation ticks. The state holds only
+// the input's counts and a position in them, never output rows, so it stays
+// small in an HTTP state token. Contracts: the extension's
+// test/sql/integration/table_in_out/{lateral_continuation,input_rows_per_call,
+// continuation_classic,continuation_resume_error_revalidate}.test headers.
+// Ports vgi-python's BlendedPagedFunction / BlendedSlicedFunction /
+// PagedExplodeFunction.
+// ============================================================================
+
+/** Where the next reply resumes: the input's fan-out counts and a position in them. */
+interface PagedState {
+  counts: number[];
+  row: number;
+  offset: number;
+  /** blended_sliced: the input rows of the current call. */
+  callRows: number;
+  /** Replies sent for the current input. */
+  page: number;
+  /** not_modified_more: the first reply is empty and says more. */
+  emptyFirst: boolean;
+  /** Added to every output value (revalidate: the data changed); -1 = one reply. */
+  bump: number;
+}
+
+const newPagedState = (): PagedState => ({
+  counts: [],
+  row: 0,
+  offset: 0,
+  callRows: 0,
+  page: 0,
+  emptyFirst: false,
+  bump: 0,
+});
+
+interface PagedArgs {
+  page_size: number;
+  cache_ttl: number;
+  fail_on_page: number;
+  revalidate: boolean;
+  not_modified_more: boolean;
+}
+
+const PAGED_NAMED_ARGS = {
+  page_size: new Int64(),
+  cache_ttl: new Int64(),
+  fail_on_page: new Int64(),
+  revalidate: new Bool(),
+  not_modified_more: new Bool(),
+};
+const PAGED_ARG_DEFAULTS = {
+  page_size: 2,
+  cache_ttl: 0,
+  fail_on_page: 0,
+  revalidate: false,
+  not_modified_more: false,
+};
+const PAGED_ARG_DOCS = {
+  page_size: "Output rows per reply",
+  cache_ttl: "When > 0, advertise vgi.cache.ttl on the first reply",
+  fail_on_page: "When > 0, fail instead of sending that (1-based) reply",
+  revalidate: "Answer conditional requests with changed, paged output",
+  not_modified_more:
+    "With revalidate, answer a conditional request with an empty not_modified reply that says more",
+};
+
+function checkPagedBindArgs(args: { page_size: number; cache_ttl: number }): void {
+  if (Number(args.page_size) < 1) throw new Error(`page_size must be at least 1, got ${args.page_size}`);
+  if (Number(args.cache_ttl) < 0) throw new Error(`cache_ttl must not be negative, got ${args.cache_ttl}`);
+}
+
+/** An input column of fan-out counts, NULL or negative counting as 0. */
+function fanOutCounts(col: any, numRows: number): number[] {
+  const counts: number[] = [];
+  for (let r = 0; r < numRows; r++) {
+    const raw = col?.get(r);
+    counts.push(raw === null || raw === undefined || Number(raw) < 0 ? 0 : Number(raw));
+  }
+  return counts;
+}
+
+/**
+ * Start a new input for blended_paged / paged_explode; return its first
+ * reply's cache control (as emit metadata), or undefined.
+ *
+ * `revalidate` makes the output depend on the request alone. A plain request
+ * gets the whole output in one reply, cacheable but immediately stale (ttl 0,
+ * etag v1, revalidatable), so the client stores it and revalidates every
+ * repeat. A conditional request is told the data changed: every value is 1000
+ * larger, the etag is v2, and the output is paged by page_size, so the client
+ * must return the new pages and store nothing.
+ *
+ * `not_modified_more` (with revalidate) breaks the protocol on purpose: a
+ * conditional request is answered with an empty not_modified reply (etag v1)
+ * that also says more, then the changed pages. A client must refuse it.
+ */
+function pagedBegin(
+  params: TableInOutProcessParams<PagedArgs>,
+  state: PagedState,
+  counts: number[],
+): Map<string, string> | undefined {
+  state.counts = counts;
+  state.row = 0;
+  state.offset = 0;
+  state.page = 0;
+  state.bump = 0;
+  state.emptyFirst = false;
+  const { cache_ttl: ttl, revalidate, not_modified_more } = params.args;
+  if (!revalidate) return ttl > 0 ? cacheControlMetadata({ ttl }) : undefined;
+  if (params.ifNoneMatch == null) {
+    state.bump = -1; // one reply: the whole output
+    return cacheControlMetadata({ ttl: 0, etag: "v1", revalidatable: true });
+  }
+  state.bump = 1000;
+  if (not_modified_more) {
+    state.emptyFirst = true;
+    return cacheControlMetadata({ notModified: true, ttl: 0, etag: "v1", revalidatable: true });
+  }
+  return cacheControlMetadata({ ttl: 0, etag: "v2", revalidatable: true });
+}
+
+/**
+ * The next `pageSize` rows: 0..n-1 for each input row in order (a page may
+ * span input rows), their parent rows, and whether more follow. Input rows
+ * with no output after the last non-empty page are skipped, so the last page
+ * is never followed by an empty one.
+ */
+function nextPage(state: PagedState, pageSize: number): { vals: bigint[]; parents: number[]; more: boolean } {
+  const { counts } = state;
+  const vals: bigint[] = [];
+  const parents: number[] = [];
+  while (state.row < counts.length && vals.length < pageSize) {
+    const take = Math.min(counts[state.row] - state.offset, pageSize - vals.length);
+    for (let k = 0; k < take; k++) {
+      vals.push(BigInt(state.offset + k));
+      parents.push(state.row);
+    }
+    state.offset += take;
+    if (state.offset === counts[state.row]) {
+      state.row++;
+      state.offset = 0;
+    }
+  }
+  while (state.row < counts.length && counts[state.row] === 0) state.row++;
+  return { vals, parents, more: state.row < counts.length };
+}
+
+/** The next reply of blended_paged / paged_explode, or the failure fail_on_page asks for. */
+function pagedNext(
+  params: TableInOutProcessParams<PagedArgs>,
+  state: PagedState,
+): { vals: bigint[]; parents: number[]; more: boolean } {
+  state.page++;
+  if (state.page === params.args.fail_on_page) throw new Error(`failing on page ${state.page} as asked`);
+  if (state.page === 1 && state.emptyFirst) return { vals: [], parents: [], more: true };
+  if (state.bump < 0) return nextPage(state, Number.MAX_SAFE_INTEGER);
+  const page = nextPage(state, params.args.page_size);
+  const bump = BigInt(state.bump);
+  return { ...page, vals: page.vals.map((v) => v + bump) };
+}
+
+const PAGED_SCHEMA = new Schema([new Field("i", new Int64(), true)]);
+
+function emitBlendedPage(
+  params: TableInOutProcessParams<PagedArgs>,
+  state: PagedState,
+  out: OutputCollector,
+  cacheControl?: Map<string, string>,
+): void {
+  const { vals, parents, more } = pagedNext(params, state);
+  out.emit(
+    batchFromColumns({ i: vals }, PAGED_SCHEMA),
+    moreOutputMetadata(more, parentRowsMetadata(parents, vals.length, cacheControl)),
+  );
+}
+
+// blended_paged(n, page_size := 2, ...) -> i: blended_explode's output, page_size rows per reply.
+const blended_paged = defineRowTransformFunction<PagedArgs, PagedState>({
+  name: "blended_paged",
+  description: "Blended 1->N fan-out (emit 0..n-1 per input row), page_size rows per reply",
+  args: { n: new Int64() },
+  namedArgs: PAGED_NAMED_ARGS,
+  argDefaults: PAGED_ARG_DEFAULTS,
+  argDocs: { n: "Fan-out count: emit rows 0..n-1 for this input row", ...PAGED_ARG_DOCS },
+  onBind: (params) => {
+    checkPagedBindArgs(params.args);
+    return { outputSchema: PAGED_SCHEMA };
+  },
+  initialState: newPagedState,
+  process: (params, batch, out, state) => {
+    const cc = pagedBegin(params, state, fanOutCounts(batch.getChild("n"), batch.numRows));
+    emitBlendedPage(params, state, out, cc);
+  },
+  resume: (params, state, out) => emitBlendedPage(params, state, out),
+  categories: ["blended", "test"],
+});
+
+interface SlicedArgs {
+  page_size: number;
+  cache_ttl: number;
+}
+
+const SLICED_SCHEMA = new Schema([
+  new Field("i", new Int64(), true),
+  new Field("call_rows", new Int64(), true),
+]);
+
+function emitSlicedPage(
+  params: TableInOutProcessParams<SlicedArgs>,
+  state: PagedState,
+  out: OutputCollector,
+  cacheControl?: Map<string, string>,
+): void {
+  const { vals, parents, more } = nextPage(state, params.args.page_size);
+  out.emit(
+    batchFromColumns({ i: vals, call_rows: vals.map(() => BigInt(state.callRows)) }, SLICED_SCHEMA),
+    moreOutputMetadata(more, parentRowsMetadata(parents, vals.length, cacheControl)),
+  );
+}
+
+// blended_sliced(n, page_size := 1000000, cache_ttl := 0) -> (i, call_rows):
+// blended_paged taking at most 3 input rows per call, reporting each call's size.
+const blended_sliced = defineRowTransformFunction<SlicedArgs, PagedState>({
+  name: "blended_sliced",
+  description: "Blended 1->N fan-out taking at most 3 input rows per call, reporting each call's size",
+  args: { n: new Int64() },
+  namedArgs: { page_size: new Int64(), cache_ttl: new Int64() },
+  argDefaults: { page_size: 1_000_000, cache_ttl: 0 },
+  argDocs: {
+    n: "Fan-out count: emit rows 0..n-1 for this input row",
+    page_size: "Output rows per reply",
+    cache_ttl: "If > 0, per-value cacheable for this many seconds",
+  },
+  inputRowsPerCall: 3,
+  onBind: (params) => {
+    checkPagedBindArgs(params.args);
+    return { outputSchema: SLICED_SCHEMA };
+  },
+  initialState: newPagedState,
+  process: (params, batch, out, state) => {
+    if (batch.numRows > 3) {
+      throw new Error(`blended_sliced declares inputRowsPerCall = 3 but got ${batch.numRows} rows`);
+    }
+    state.counts = fanOutCounts(batch.getChild("n"), batch.numRows);
+    state.row = 0;
+    state.offset = 0;
+    state.callRows = batch.numRows;
+    const ttl = params.args.cache_ttl;
+    emitSlicedPage(params, state, out, ttl > 0 ? cacheControlMetadata({ ttl, perValue: true }) : undefined);
+  },
+  resume: (params, state, out) => emitSlicedPage(params, state, out),
+  categories: ["blended", "test"],
+});
+
+function emitClassicPage(
+  params: TableInOutProcessParams<PagedArgs>,
+  state: PagedState,
+  out: OutputCollector,
+  cacheControl?: Map<string, string>,
+): void {
+  const { vals, more } = pagedNext(params, state);
+  out.emit(batchFromColumns({ i: vals }, PAGED_SCHEMA), moreOutputMetadata(more, cacheControl));
+}
+
+// paged_explode(data TABLE, page_size := 2, ...) -> i: the classic (TABLE-input)
+// counterpart of blended_paged, run through the stock in-out path. The input
+// table's first column is the fan-out count.
+const paged_explode = defineTableInOutFunction<PagedArgs, PagedState>({
+  name: "paged_explode",
+  description: "Classic table-in-out 1->N fan-out, page_size rows per reply",
+  namedArgs: PAGED_NAMED_ARGS,
+  argDefaults: PAGED_ARG_DEFAULTS,
+  argDocs: PAGED_ARG_DOCS,
+  onBind: (params) => {
+    checkPagedBindArgs(params.args);
+    return { outputSchema: PAGED_SCHEMA };
+  },
+  initialState: newPagedState,
+  process: (params, state, batch, out) => {
+    const counts = batch.schema.fields.length > 0 ? fanOutCounts(batch.getChildAt(0), batch.numRows) : [];
+    emitClassicPage(params, state, out, pagedBegin(params, state, counts));
+  },
+  resume: (params, state, out) => emitClassicPage(params, state, out),
+  categories: ["table_in_out", "test"],
+});
+
 export const tableInOutFunctions: VgiFunction[] = [
   echo,
   repeat_inputs,
@@ -1112,6 +1403,9 @@ export const tableInOutFunctions: VgiFunction[] = [
   row_sum,
   blended_drop,
   blended_explode,
+  blended_paged,
+  blended_sliced,
+  paged_explode,
   blended_any,
   blended_any_varargs,
   cached_explode,
