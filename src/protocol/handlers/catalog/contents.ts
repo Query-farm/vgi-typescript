@@ -5,9 +5,9 @@
 // with etag revalidation and the frozen-catalog response cache. Mirrors
 // vgi-python's Worker.catalog_contents / _catalog_contents_response.
 
+import { encodeValidatedTableInfo } from "../../../catalog/column-metadata.js";
 import {
   encodeSchemaInfo,
-  encodeTableInfo,
   encodeViewInfo,
   encodeMacroInfo,
   encodeIndexInfo,
@@ -90,7 +90,7 @@ export async function buildCatalogContents(
       buildSchemaContents({
         path: [...c.schema.path],
         schema: encodeSchemaInfo(c.schema),
-        tables: c.tables.map((t) => encodeTableInfo(t)),
+        tables: c.tables.map((t) => encodeValidatedTableInfo(t)),
         views: c.views.map((v) => encodeViewInfo(v)),
         scalar_functions: c.scalar_functions.map((f) => encodeFunctionInfoOnce(f)),
         aggregate_functions: c.aggregate_functions.map((f) => encodeFunctionInfoOnce(f)),

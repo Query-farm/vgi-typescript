@@ -1,10 +1,10 @@
 // Copyright 2025, 2026 Query Farm LLC - https://query.farm
+import { encodeValidatedTableInfo, validateColumnMetadataIpc } from "../../../catalog/column-metadata.js";
 import { MethodNotImplementedError } from "@query-farm/vgi-rpc";
 // Catalog table handlers: table_get/create/drop, scan_function_get,
 // column_statistics_get, comment_set, rename, plus all column_* mutations.
 
 import type { VgiService } from "../../../generated/vgi-service.js";
-import { encodeTableInfo } from "../../../generated/vgi-client.js";
 import {
   CatalogTableGetResultSchema,
   ScanBranchesResultSchema,
@@ -44,7 +44,7 @@ export function catalogTableHandlers(getCatalog: GetCatalog, signingKey?: Uint8A
       params.transaction_opaque_data ? toUint8Array(params.transaction_opaque_data) : undefined
     );
     return wrapResult({
-      items: info ? [encodeTableInfo(info)] : [],
+      items: info ? [encodeValidatedTableInfo(info)] : [],
     }, CatalogTableGetResultSchema);
   });
 
@@ -57,6 +57,7 @@ export function catalogTableHandlers(getCatalog: GetCatalog, signingKey?: Uint8A
     if (params.comment != null || params.tags != null || params.options != null || params.layout != null) {
       throw new MethodNotImplementedError("catalog_table_create: table metadata/options/layout profiles are not supported");
     }
+    validateColumnMetadataIpc(toUint8Array(params.columns));
     requireUnconstrainedColumns(toUint8Array(params.columns));
     const cat = getCatalog();
     await cat.tableCreate(
@@ -157,6 +158,7 @@ export function catalogTableHandlers(getCatalog: GetCatalog, signingKey?: Uint8A
   // catalog_table_column_add
   const catalogTableColumnAdd = catalogHandler(signingKey, async (params) => {
     params.column_path = requireFlatColumnPath(params.column_path, "catalog_table_column_add");
+    validateColumnMetadataIpc(toUint8Array(params.column_definition));
     const cat = getCatalog();
     await cat.tableColumnAdd(
       toUint8Array(params.attach_opaque_data),

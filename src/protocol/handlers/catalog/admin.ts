@@ -1,4 +1,5 @@
 // Copyright 2025, 2026 Query Farm LLC - https://query.farm
+import { encodeValidatedTableInfo } from "../../../catalog/column-metadata.js";
 import { MethodNotImplementedError } from "@query-farm/vgi-rpc";
 // Catalog admin handlers: attach/detach/create/drop, version, transactions,
 // schemas (list, get, create, drop), schema contents listings.
@@ -9,7 +10,6 @@ import type { CallContext } from "@query-farm/vgi-rpc";
 import type { VgiService } from "../../../generated/vgi-service.js";
 import {
   encodeSchemaInfo,
-  encodeTableInfo,
   encodeViewInfo,
   encodeCatalogInfo,
 } from "../../../generated/vgi-client.js";
@@ -277,7 +277,7 @@ export function catalogAdminHandlers(getCatalog: GetCatalog, signingKey?: Uint8A
       params.transaction_opaque_data ? toUint8Array(params.transaction_opaque_data) : undefined
     );
     return wrapResult({
-      items: tables.map((t) => encodeTableInfo(t)),
+      items: tables.map((t) => encodeValidatedTableInfo(t)),
     }, CatalogSchemaContentsTablesResultSchema);
   });
 

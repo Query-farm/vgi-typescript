@@ -1,3 +1,4 @@
+import { validateColumnMetadata } from "./column-metadata.js";
 // Copyright 2025, 2026 Query Farm LLC - https://query.farm
 // ReadOnlyCatalogInterface: derives catalog from registered functions + descriptors.
 
@@ -369,6 +370,7 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
         colSchema = applyColumnComments(colSchema, t.columnComments);
       }
 
+      validateColumnMetadata(colSchema);
       const columns = serializeSchema(colSchema);
 
       if (t.notNull?.length || t.unique?.length || t.primaryKey?.length || t.check?.length || t.foreignKey?.length) {
@@ -1000,16 +1002,15 @@ function applyGeneratedColumns(schema: VgiSchema, generated: Record<string, stri
 function applyColumnComments(schema: VgiSchema, comments: Record<string, string>): VgiSchema {
   let result = schema;
   for (const [colName, comment] of Object.entries(comments)) {
-    if (!comment) continue;
     const idx = result.fields.findIndex((f) => f.name === colName);
-    if (idx < 0) continue;
+    if (idx < 0) throw new Error(`column comment references unknown field ${colName}`);
     const f = result.fields[idx];
     const existingMeta = f.metadata ? new Map(f.metadata) : new Map<string, string>();
     existingMeta.set("comment", comment);
     const newField = field(f.name, f.type, f.nullable, existingMeta);
     const fields = [...result.fields];
     fields[idx] = newField;
-    result = schema_(fields);
+    result = schema_(fields, result.metadata);
   }
   return result;
 }
