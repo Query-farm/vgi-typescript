@@ -21,10 +21,11 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { httpConnect, OutputCollector, type RpcClient, type StreamSession } from "@query-farm/vgi-rpc";
+import { VgiClient } from "../../client/client.js";
 import { tableInOutFunctions } from "../../../examples/table_in_out.js";
-import { field, int64, schema, utf8, type VgiBatch } from "../../arrow/index.js";
+import { field, int64, schema, utf8, type VgiBatch, withBatchMetadata } from "../../arrow/index.js";
 import { Arguments } from "../../arguments/arguments.js";
-import { CACHE_IF_NONE_MATCH_KEY } from "../../cache-control.js";
+import { CACHE_IF_NONE_MATCH_KEY, cacheControlMetadata } from "../../cache-control.js";
 import { ReadOnlyCatalogInterface } from "../../catalog/read-only.js";
 import { unwrapResult, wrapRequest } from "../../client/protocol.js";
 import { FilteringOutputCollector } from "../../filter-pushdown/index.js";
@@ -35,15 +36,67 @@ import { SIGNING_KEY_BYTES, serveVgiWorker, type VgiHttpServer } from "../../ser
 import { FunctionType, TableInOutPhase } from "../../types.js";
 import { batchFromColumns, iterRows } from "../../util/arrow/index.js";
 import { decodeParentRows, encodeParentRows, PARENT_ROW_METADATA_KEY } from "../../util/parent-rows.js";
-import { CONTINUE, HAVE_MORE_OUTPUT, moreOutputMetadata, refuseMoreOutput, STATUS_KEY } from "../continuation.js";
+import {
+  CONTINUE,
+  continuationTurn,
+  HAVE_MORE_OUTPUT,
+  moreOutputMetadata,
+  refuseMoreOutput,
+  STATUS_KEY,
+} from "../continuation.js";
 import { FunctionRegistry } from "../registry.js";
 import { FunctionStorageSqlite, resolveStorageFromEnv, setStorage } from "../storage.js";
+import { defineScalarFunction } from "../scalar.js";
+import { defineTableFunction } from "../table.js";
 import { defineRowTransformFunction, defineTableInOutFunction } from "../table-in-out.js";
 
 const FIXTURES = ["blended_paged", "blended_sliced", "paged_explode", "blended_explode"].map(
   (name) => tableInOutFunctions.find((f) => f.meta.name === name)!,
 );
 const INPUT_SCHEMA = schema([field("n", int64(), true)]);
+const I_SCHEMA = schema([field("i", int64(), true)]);
+const page = (vals: number[]) => batchFromColumns({ i: vals.map(BigInt) }, I_SCHEMA);
+
+// Functions that break the protocol, one way each, to reach the framework's
+// refusals (and the dispatcher's, for streams that cannot continue).
+const rowTransform = (name: string, rest: Record<string, unknown>) =>
+  defineRowTransformFunction<Record<string, any>, { left: number }>({
+    name,
+    args: { n: int64() },
+    onBind: () => ({ outputSchema: I_SCHEMA }),
+    process: (_p, _b, out) => out.emit(page([1]), moreOutputMetadata(true)),
+    ...rest,
+  } as any);
+const BROKEN = [
+  // resume() answers its tick with cache control.
+  rowTransform("tick_cache", {
+    initialState: () => ({ left: 1 }),
+    resume: (_p: unknown, _s: unknown, out: OutputCollector) => out.emit(page([2]), cacheControlMetadata({ ttl: 60 })),
+  }),
+  // resume() answers its tick with nothing.
+  rowTransform("silent_resume", { initialState: () => ({ left: 1 }), resume: () => {} }),
+  // Says more, but has no resume() to answer the tick.
+  rowTransform("more_no_resume", {}),
+  // process() answers real input with nothing.
+  rowTransform("silent_process", { process: () => {} }),
+  defineTableInOutFunction({ name: "silent_classic", process: () => {} }),
+  // A scalar and a table function (producer) saying more: refused by the dispatcher.
+  defineScalarFunction({
+    name: "scalar_more",
+    params: { n: int64() },
+    returns: int64(),
+    compute: (batch) =>
+      withBatchMetadata(
+        batchFromColumns({ result: Array.from({ length: batch.numRows }, () => 1n) }, schema([field("result", int64(), true)])),
+        moreOutputMetadata(true),
+      ),
+  }),
+  defineTableFunction({
+    name: "table_more",
+    onBind: () => ({ outputSchema: I_SCHEMA }),
+    process: (_p, _s, out) => out.emit(page([1]), moreOutputMetadata(true)),
+  }),
+];
 
 let dir: string;
 let server: VgiHttpServer;
@@ -54,8 +107,11 @@ beforeAll(() => {
   dir = mkdtempSync(join(tmpdir(), "vgi-continuation-"));
   setStorage(new FunctionStorageSqlite(join(dir, "state.db")));
   const registry = new FunctionRegistry();
-  for (const f of FIXTURES) registry.register(f);
-  catalog = new ReadOnlyCatalogInterface({ name: "demo", schemas: [{ name: "main", functions: FIXTURES }] }, registry);
+  for (const f of [...FIXTURES, ...BROKEN]) registry.register(f);
+  catalog = new ReadOnlyCatalogInterface(
+    { name: "demo", schemas: [{ name: "main", functions: [...FIXTURES, ...BROKEN] }] },
+    registry,
+  );
   server = serveVgiWorker({
     name: "demo",
     doc: "Continued output test worker.",
@@ -239,15 +295,127 @@ describe("continued output over HTTP", () => {
     }
   });
 
-  test("a function without resume() may not say more", async () => {
+  test("a tick to a function that never says more is refused", async () => {
     const s = await open("blended_explode");
     try {
-      // blended_explode never says more; a tick to it is refused.
+      // blended_explode never says more, so no output is ever pending.
       expect((await send(s, [2])).more).toBe(false);
       await expect(tick(s)).rejects.toThrow(/no output is pending/);
     } finally {
       s.close();
     }
+  });
+
+  test("a function without resume() may not say more", async () => {
+    const s = await open("more_no_resume");
+    try {
+      await expect(send(s, [1])).rejects.toThrow(/emitted HAVE_MORE_OUTPUT but does not implement resume\(\)/);
+    } finally {
+      s.close();
+    }
+  });
+
+  test("cache control on a tick's reply is refused", async () => {
+    const s = await open("tick_cache");
+    try {
+      expect((await send(s, [1])).more).toBe(true);
+      await expect(tick(s)).rejects.toThrow(/cache control is only valid on an input's first reply.*vgi\.cache\.ttl/);
+    } finally {
+      s.close();
+    }
+  });
+
+  test("a tick resume() answers with nothing is refused", async () => {
+    const s = await open("silent_resume");
+    try {
+      expect((await send(s, [1])).more).toBe(true);
+      await expect(tick(s)).rejects.toThrow(/resume\(\) must emit a batch for every continuation tick/);
+    } finally {
+      s.close();
+    }
+  });
+
+  test("real input process() answers with nothing is refused", async () => {
+    for (const name of ["silent_process", "silent_classic"]) {
+      const s = await open(name);
+      try {
+        await expect(send(s, [1])).rejects.toThrow(/No data batch was emitted/);
+      } finally {
+        s.close();
+      }
+    }
+  });
+
+  test("not_modified_more: an empty not_modified first reply that says more, then the changed pages", async () => {
+    // The framework need not block it (only the client does); the empty first
+    // reply is a page of its own.
+    const s = await open("paged_explode", { page_size: 2, revalidate: true, not_modified_more: true });
+    try {
+      const first = await send(s, [3], new Map([[CACHE_IF_NONE_MATCH_KEY, "v1"]]));
+      expect([first.i, first.more]).toEqual([[], true]);
+      expect([first.metadata.get("vgi.cache.not_modified"), first.metadata.get("vgi.cache.etag")]).toEqual(["1", "v1"]);
+      const second = await tick(s);
+      expect([second.i, second.more, second.metadata.has("vgi.cache.not_modified")]).toEqual([[1000, 1001], true, false]);
+      const last = await tick(s);
+      expect([last.i, last.more]).toEqual([[1002], false]);
+    } finally {
+      s.close();
+    }
+  });
+
+  test("not_modified_more: the empty first reply counts toward fail_on_page", async () => {
+    const s = await open("paged_explode", { page_size: 2, revalidate: true, not_modified_more: true, fail_on_page: 2 });
+    try {
+      // Page 1 is the empty not_modified reply, so the first tick is page 2.
+      expect((await send(s, [3], new Map([[CACHE_IF_NONE_MATCH_KEY, "v1"]]))).i).toEqual([]);
+      await expect(tick(s)).rejects.toThrow(/failing on page 2 as asked/);
+    } finally {
+      s.close();
+    }
+  });
+});
+
+describe("HAVE_MORE_OUTPUT outside a table-in-out exchange (dispatcher)", () => {
+  test("a scalar function's stream refuses it", async () => {
+    const client = new VgiClient(httpConnect(`http://localhost:${server.port}`, { prefix: "" }));
+    const run = async () => {
+      for await (const _ of client.scalarFunction({
+        functionName: "scalar_more",
+        input: [batchFromColumns({ n: [1n, 2n] }, INPUT_SCHEMA)],
+      })) {
+        // drain
+      }
+    };
+    await expect(run()).rejects.toThrow(/scalar_more: HAVE_MORE_OUTPUT .* only valid in a table-in-out/);
+  });
+
+  test("a table function's (producer) stream refuses it", async () => {
+    const client = new VgiClient(httpConnect(`http://localhost:${server.port}`, { prefix: "" }));
+    const run = async () => {
+      for await (const _ of client.tableFunctionRows({ functionName: "table_more" })) {
+        // drain
+      }
+    };
+    await expect(run()).rejects.toThrow(/table_more: HAVE_MORE_OUTPUT .* only valid in a table-in-out/);
+  });
+});
+
+describe("tick status off the collector (byte-stream transports)", () => {
+  // vgi-rpc's stdio/pipe dispatch may hand the exchange an input batch rebuilt
+  // to the declared input schema, and the status then reaches the turn only
+  // through out.inputMetadata.
+  test("a tick marked only on out.inputMetadata is a tick", async () => {
+    const eState = { morePending: true };
+    const bare = batchFromColumns({ n: [] }, INPUT_SCHEMA);
+    const out = new OutputCollector(I_SCHEMA, false, "", null, undefined, undefined, undefined, {
+      inputMetadata: new Map([[STATUS_KEY, CONTINUE]]),
+    } as any);
+    const seen: boolean[] = [];
+    await continuationTurn("t", eState, bare, out, true, async (tick) => {
+      seen.push(tick);
+      out.emit(page([7]));
+    });
+    expect([seen, eState.morePending]).toEqual([[true], false]);
   });
 });
 

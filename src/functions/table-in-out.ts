@@ -548,8 +548,13 @@ export function defineTableInOutFunction<
             }
           });
 
-          // Auto-persist accumulated state for FINALIZE recovery (matches Python/Go pattern)
-          if (eState.state != null) {
+          // Auto-persist accumulated state for FINALIZE recovery (matches
+          // Python/Go pattern) -- every turn, ticks included, since resume()
+          // advances the state finalize() must see. Only the FINALIZE phase
+          // reads it back, and only finalize() uses what it reads: a function
+          // without one advertises has_finalize=false, so nothing would ever
+          // collect the write.
+          if (config.finalize && eState.state != null) {
             const serialized = serializeUserState(eState.state);
             if (serialized != null) {
               await boundStorage.put(serialized);

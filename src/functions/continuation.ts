@@ -123,14 +123,24 @@ export async function continuationTurn(
   await run(tick);
 
   const md = replyMetadata(out);
-  const more = md?.get(STATUS_KEY) === HAVE_MORE_OUTPUT;
+  // One reply per turn: a turn that emits none leaves the client waiting on
+  // the byte-stream transports (and, over HTTP, answers with a token-only body
+  // the client cannot tell from an empty result). An empty answer is a 0-row
+  // batch. Matches vgi-rpc-python's OutputCollector.validate(). (Several data
+  // batches are already refused by vgi-rpc's OutputCollector.emit.)
+  if (md == null) {
+    throw new Error(
+      tick
+        ? `${name}: resume() must emit a batch for every continuation tick`
+        : `${name}: process() must emit a batch for every input batch (No data batch was emitted)`,
+    );
+  }
+  const more = md.get(STATUS_KEY) === HAVE_MORE_OUTPUT;
   if (more && !resumable) {
     throw new Error(`${name}: emitted HAVE_MORE_OUTPUT but does not implement resume()`);
   }
   if (tick) {
-    // Every tick must be answered: an empty HTTP body or end-of-stream in
-    // answer to one is a protocol violation.
-    if (md == null) throw new Error(`${name}: resume() must emit a batch for every continuation tick`);
+    // Every tick must be answered (above), and never with cache control.
     for (const key of md.keys()) {
       if (key.startsWith(CACHE_KEY_PREFIX)) {
         throw new Error(
