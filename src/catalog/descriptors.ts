@@ -103,11 +103,12 @@ export interface MacroDescriptor {
   macroType: "scalar" | "table";
   parameters: string[];
   parameterDefaultValues?: Uint8Array | null;
+  /** Complete canonical family; simple-definition fields must be empty when supplied. */
+  overloads?: import("../generated/vgi-client.js").MacroOverload[];
   /**
    * Optional mapping of parameter name to a human/agent-facing description.
    * Keys must appear in `parameters`. Descriptions flow over the wire via the
-   * macro `arguments_schema`'s `vgi_doc` field metadata (the same channel
-   * functions use for per-argument docs), so the DuckDB extension's
+   * canonical parameter's `documentation` field, so the DuckDB extension's
    * `vgi_function_arguments()` can surface them. Empty/omitted = no docs.
    */
   parameterDocs?: Record<string, string>;

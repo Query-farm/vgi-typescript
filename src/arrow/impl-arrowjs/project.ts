@@ -41,7 +41,7 @@ export function projectSchema(
   if (!projectionIds) return a;
   const validIds = validateProjectionIds("projectSchema", projectionIds, a.fields.length);
   if (validIds.length === 0) return a;
-  return new Schema(validIds.map((i) => a.fields[i]));
+  return new Schema(validIds.map((i) => a.fields[i]), a.metadata);
 }
 
 /**

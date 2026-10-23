@@ -23,7 +23,7 @@ import { schemaDescriptorPath, type CatalogDescriptor, type SchemaDescriptor, ty
 import { serializeColumnStatistics } from "../util/statistics.js";
 import type { VgiFunction } from "../functions/types.js";
 import type { FunctionRegistry } from "../functions/registry.js";
-import { argumentSpecsToSchema, macroArgumentsSchema } from "../arguments/argument-spec.js";
+import { argumentSpecsToSchema } from "../arguments/argument-spec.js";
 import { serializeSchema, serializeBatch, emptyBatch, batchFromColumns } from "../util/arrow/index.js";
 import { resolveMetadata } from "../metadata/resolve.js";
 import { type AttachOptionSpec, validateRequiredAttachOptions } from "./attach-option.js";
@@ -32,6 +32,7 @@ import { Arguments } from "../arguments/arguments.js";
 import { normalizeSchemaPath, schemaPathDisplay, schemaPathsEqual } from "../schema-path.js";
 import { ForeignKeyInfoSchema } from "../generated/vgi-protocol-schemas.js";
 import { encodeFunctionInfoOnce, freezeCatalogItem } from "./item-encoding.js";
+import { macroOverloads } from "./macro-overloads.js";
 
 /**
  * The fixed attach id ReadOnlyCatalogInterface writes into its items (same
@@ -744,16 +745,7 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
         name: m.name,
         schema_path: normalizeSchemaPath(path),
         macro_type: (m.macroType === "scalar" ? "SCALAR" : "TABLE") as "SCALAR" | "TABLE",
-        parameters: m.parameters,
-        parameter_default_values: m.parameterDefaultValues ?? new Uint8Array(0),
-        definition: m.definition,
-        // One nullable Arrow field per parameter (in order), carrying each
-        // documented parameter's description via the vgi_doc field-metadata key
-        // (the same channel functions use). Type = default-value type when known
-        // else null. Serialized as IPC bytes into the generated schema slot.
-        arguments_schema: serializeSchema(
-          macroArgumentsSchema(m.parameters, m.parameterDefaultValues, m.parameterDocs),
-        ),
+        overloads: macroOverloads(m, normalizeSchemaPath(path)),
       }));
   }
 

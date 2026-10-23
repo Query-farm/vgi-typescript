@@ -72,8 +72,8 @@ describe("macro arguments_schema vgi_doc", () => {
   });
 });
 
-describe("ReadOnlyCatalogInterface macro arguments_schema", () => {
-  test("descriptor parameterDocs flow into MacroInfo.arguments_schema vgi_doc", () => {
+describe("ReadOnlyCatalogInterface canonical macro parameters", () => {
+  test("descriptor parameterDocs flow into canonical parameter documentation", () => {
     const catalog = new ReadOnlyCatalogInterface(
       {
         name: "test",
@@ -99,14 +99,10 @@ describe("ReadOnlyCatalogInterface macro arguments_schema", () => {
     expect(macros).toHaveLength(1);
 
     const info = macros[0]!;
-    // arguments_schema is always populated (non-nullable wire slot, IPC bytes).
-    expect(info.arguments_schema).toBeInstanceOf(Uint8Array);
-    expect((info.arguments_schema as Uint8Array).length).toBeGreaterThan(0);
-
-    const argSchema = deserializeSchema(info.arguments_schema as Uint8Array);
-    expect(argSchema.fields.map((f) => f.name)).toEqual(["x", "y"]);
-
-    // Documented -> vgi_doc present; undocumented -> key omitted.
-    expect(macroParameterDocsFromSchema(argSchema)).toEqual({ x: "the documented x" });
+    expect(info.overloads).toHaveLength(1);
+    expect(info.overloads[0]!.parameters.map(p => p.name)).toEqual(["x", "y"]);
+    expect(info.overloads[0]!.parameters[0]!.documentation).toBe("the documented x");
+    expect(info.overloads[0]!.parameters[0]!.declared_type).toBeNull();
+    expect(info.overloads[0]!.schema_path).toEqual(["main"]);
   });
 });

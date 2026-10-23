@@ -1,7 +1,7 @@
 // Copyright 2025, 2026 Query Farm LLC - https://query.farm
 // Schema/batch projection by column index for the flechette backend.
 
-import { tableFromColumns } from "@query-farm/flechette";
+import { Table } from "@query-farm/flechette";
 import type { VgiSchema, VgiBatch } from "../types.js";
 
 function validateProjectionIds(
@@ -54,11 +54,9 @@ export function projectBatch(
   );
   if (valid.length === 0) return batch;
 
-  // Rebuild a Table with only the kept columns, in the requested order.
-  const cols: Record<string, any> = {};
-  for (const i of valid) {
-    const f = t.schema.fields[i];
-    cols[f.name] = t.getChild(f.name);
-  }
-  return tableFromColumns(cols) as unknown as VgiBatch;
+  // Keep the original fields and schema metadata; rebuilding inferred fields
+  // would discard logical type annotations and declared nullability.
+  const projectedSchema = { ...t.schema, fields: valid.map((i) => t.schema.fields[i]) };
+  const columns = valid.map((i) => t.getChild(t.schema.fields[i].name));
+  return new Table(projectedSchema, columns) as unknown as VgiBatch;
 }

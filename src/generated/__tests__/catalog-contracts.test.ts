@@ -338,13 +338,13 @@ test("macro codecs preserve complete families, typed NULL and expression default
   expect(queryRecords.decodeMacroOverload(queryRecords.encodeMacroOverload(overload))).toEqual(overload);
   expect(overload.parameters.map(parameter => parameter.name)).toEqual(["x", "fallback", "scale"]);
   for (const [name, schema] of [
-    ["macro_create", schemas.MacroCreateRequestSchema], ["macro_create_legacy", schemas.MacroCreateRequestSchema],
-    ["macro_info", schemas.MacroInfoSchema], ["macro_info_legacy", schemas.MacroInfoSchema],
+    ["macro_create", schemas.MacroCreateRequestSchema], ["macro_create_single", schemas.MacroCreateRequestSchema],
+    ["macro_info", schemas.MacroInfoSchema], ["macro_info_single", schemas.MacroInfoSchema],
   ] as const) {
     const original = decodeASD<Record<string, any>>(schema, fixture(name));
     const restored = decodeASD<Record<string, any>>(schema, encodeASD(schema, original));
     expect(restored).toEqual(original);
-    if (name.endsWith("legacy")) expect(restored.overloads).toBeNull();
+    if (name.endsWith("single")) expect(restored.overloads).toHaveLength(1);
     else expect(restored.overloads).toHaveLength(2);
   }
 });

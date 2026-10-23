@@ -5,11 +5,14 @@ import type { VgiService } from "../../../generated/vgi-service.js";
 import { encodeMacroInfo } from "../../../generated/vgi-client.js";
 import {
   CatalogMacroGetResultSchema,
+  MacroCreateRequestSchema,
   CatalogSchemaContentsMacrosResultSchema,
 } from "../../../generated/vgi-protocol-schemas.js";
 import type { MacroType } from "../../../catalog/interface.js";
 import { toUint8Array } from "../../../util/bytes.js";
 import { decodeDictValue } from "../../../util/arrow/index.js";
+import { decodeASD, encodeASD } from "../../../codec/asd.js";
+import type { MacroCreateRequest } from "../../../generated/vgi-client.js";
 import {
   wrapResult,
 } from "../shared.js";
@@ -35,20 +38,17 @@ export function catalogMacroHandlers(getCatalog: GetCatalog, signingKey?: Uint8A
 
   // catalog_macro_create
   const catalogMacroCreate = catalogHandler(signingKey, async (params) => {
-    if (params.overloads != null) throw new Error("macro overload families are unsupported by this catalog adapter");
     const cat = getCatalog();
     // catalogHandler already flattened the wrapped request.
-    const innerParams = params;
+    const innerParams = decodeASD<MacroCreateRequest>(MacroCreateRequestSchema, encodeASD(MacroCreateRequestSchema, params));
+    if (!innerParams.overloads?.length) throw new Error("macro overload family must be nonempty");
     await cat.macroCreate(
       toUint8Array(innerParams.attach_opaque_data),
       innerParams.schema_path,
       innerParams.name,
       innerParams.macro_type as MacroType,
-      innerParams.parameters ? (Array.isArray(innerParams.parameters) ? innerParams.parameters : [...innerParams.parameters]) : [],
-      innerParams.definition,
+      innerParams.overloads,
       innerParams.on_conflict,
-      innerParams.parameter_default_values ? toUint8Array(innerParams.parameter_default_values) : null,
-      innerParams.arguments_schema ? toUint8Array(innerParams.arguments_schema) : null,
       innerParams.transaction_opaque_data ? toUint8Array(innerParams.transaction_opaque_data) : undefined
     );
     return {};
