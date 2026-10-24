@@ -184,6 +184,7 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
     options?: Record<string, unknown>,
     dataVersionSpec?: string | null,
     implementationVersion?: string | null,
+    clientCapabilities?: Uint8Array | null,
   ): CatalogAttachResult | Promise<CatalogAttachResult> {
     if (!this.catalogs().includes(name)) {
       throw new VgiError(`No worker handles catalog '${name}'`, "NOT_FOUND");

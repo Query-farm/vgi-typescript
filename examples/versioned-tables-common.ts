@@ -31,6 +31,7 @@ import {
   type SchemaInfo,
   type TableInfo,
 } from "../src/index.js";
+import { field, schema } from "../src/arrow/index.js";
 import type { VgiSchema } from "../src/index.js";
 
 const CATALOG_NAME = "versioned_tables";
@@ -270,7 +271,10 @@ class VersionedTablesCatalog extends CatalogInterface {
       tags: {},
       name,
       schema_path: ["main"],
-      columns: serializeSchema(table.columns),
+      // These version fixtures advertise no canonical constraints. Keep table metadata
+      // nullable instead of treating scan-schema nullability as a NOT_NULL fact.
+      columns: serializeSchema(schema(table.columns.fields.map(column =>
+        field(column.name, column.type, true, column.metadata)), table.columns.metadata)),
       constraints: [],
       definition_revision: null,
       write_result_modes: {},

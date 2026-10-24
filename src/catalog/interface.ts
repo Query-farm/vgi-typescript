@@ -627,6 +627,7 @@ export abstract class CatalogInterface {
     options?: Record<string, unknown>,
     dataVersionSpec?: string | null,
     implementationVersion?: string | null,
+    clientCapabilities?: Uint8Array | null,
   ): Awaitable<CatalogAttachResult>;
   /**
    * List the catalogs this worker exposes with their version metadata. The

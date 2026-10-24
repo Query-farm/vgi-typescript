@@ -110,8 +110,9 @@ TEST_LOG := /tmp/vgi-typescript-test.log
 #                            a single response (fixed in vgi-rpc-typescript).
 # The exclusions were hiding a real bug in this SDK for months. Before adding
 # one here, measure the claim.
+# duckdb2/default_schema uses its dedicated Python reference runner, not an SDK example worker.
 TEST_PATTERNS := "test/sql/*" \
-	"~test/sql/duckdb2/column_paths.test" "~test/sql/duckdb2/required_filter_paths.test" "~test/sql/duckdb2/view_alias_metadata.test" "~test/sql/duckdb2/schema_dependencies.test" \
+	"~test/sql/duckdb2/default_schema.test" "~test/sql/duckdb2/column_paths.test" "~test/sql/duckdb2/required_filter_paths.test" "~test/sql/duckdb2/view_alias_metadata.test" "~test/sql/duckdb2/schema_dependencies.test" \
 	"~test/sql/integration/writable/*" \
 	"~test/sql/integration/schema_reconcile.test"
 

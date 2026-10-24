@@ -1,3 +1,6 @@
+import { decodeASD } from "../src/codec/asd.js";
+import { ClientCapabilitiesSchema } from "../src/generated/vgi-protocol-schemas.js";
+import { decodeCatalogCapabilities, encodeCatalogCapabilities } from "../src/generated/vgi-protocol-types.js";
 // Copyright 2025, 2026 Query Farm LLC - https://query.farm
 // Shared function and catalog registration for example workers.
 // Used by both the IPC worker (worker.ts) and HTTP worker (http-worker.ts).
@@ -15,7 +18,7 @@ import { serializeSchema } from "../src/util/arrow/index.js";
 import { argumentSpecsToSchema } from "../src/arguments/argument-spec.js";
 import { scalarFunctions } from "./scalar.js";
 import * as os from "node:os";
-import { fixtureConstraint as constraint, FIXTURE_CONSTRAINT_REVISION } from "./canonical_constraints.js";
+import { fixtureConstraint as constraint, versionedFixtureConstraints, FIXTURE_CONSTRAINT_REVISION } from "./canonical_constraints.js";
 import { fixtureIndex } from "./canonical_indexes.js";
 
 /**
@@ -771,8 +774,8 @@ export const catalog: CatalogDescriptor = {
         {
           name: "departments",
           columns: new Schema([
-            new Field("id", new Int64(), true),
-            new Field("name", new Utf8(), true),
+            new Field("id", new Int64(), false),
+            new Field("name", new Utf8(), false),
             new Field("budget", new Float64(), true),
           ]),
           constraints: [
@@ -807,7 +810,7 @@ export const catalog: CatalogDescriptor = {
         {
           name: "products",
           columns: new Schema([
-            new Field("id", new Int64(), true),
+            new Field("id", new Int64(), false),
             new Field("name", new Utf8(), true),
             new Field("quantity", new Int64(), true),
             new Field("price", new Float64(), true),
@@ -851,9 +854,9 @@ export const catalog: CatalogDescriptor = {
         {
           name: "employees",
           columns: new Schema([
-            new Field("id", new Int64(), true),
-            new Field("name", new Utf8(), true),
-            new Field("email", new Utf8(), true),
+            new Field("id", new Int64(), false),
+            new Field("name", new Utf8(), false),
+            new Field("email", new Utf8(), false),
             new Field("department_id", new Int64(), true),
           ]),
           constraints: [
@@ -872,9 +875,9 @@ export const catalog: CatalogDescriptor = {
         {
           name: "projects",
           columns: new Schema([
-            new Field("department_id", new Int64(), true),
-            new Field("project_code", new Utf8(), true),
-            new Field("title", new Utf8(), true),
+            new Field("department_id", new Int64(), false),
+            new Field("project_code", new Utf8(), false),
+            new Field("title", new Utf8(), false),
           ]),
           constraints: [
             constraint("projects", "fixture.projects.primary", "PRIMARY_KEY", [["department_id"], ["project_code"]]),
@@ -999,8 +1002,8 @@ export const catalog: CatalogDescriptor = {
         {
           name: "versioned_constraints",
           columns: new Schema([
-            new Field("id", new Int64(), true),
-            new Field("name", new Utf8(), true),
+            new Field("id", new Int64(), false),
+            new Field("name", new Utf8(), false),
             new Field("email", new Utf8(), true),
             new Field("department_id", new Int64(), true),
           ]),
@@ -1054,6 +1057,21 @@ function buildVersionArgBytes(version: number): Uint8Array {
 }
 
 export function createExampleCatalog(base: ReadOnlyCatalogInterface): ReadOnlyCatalogInterface {
+  const origAttach = base.attach.bind(base);
+  base.attach = async (name, options, dataVersionSpec, implementationVersion, clientCapabilities) => {
+    const result = await origAttach(name, options, dataVersionSpec, implementationVersion, clientCapabilities);
+    const profiles = ["vgi.constraint.records.read.v1", "vgi.expression.duckdb.scalar.v1"];
+    const client = clientCapabilities == null ? null : decodeASD(ClientCapabilitiesSchema, clientCapabilities);
+    const offer = client?.catalog == null ? [] : decodeCatalogCapabilities(client.catalog).read;
+    const selected = profiles.filter(profile => offer.includes(profile));
+    // Scalar CHECK import depends on reading canonical constraint records.
+    const read = selected.includes(profiles[0]!) ? selected : [];
+    // Existing transaction_storage fixture support remains available.
+    result.supports_transactions = true;
+    result.catalog_capabilities = encodeCatalogCapabilities({ read: profiles, ddl: [], write: [], transaction: [] });
+    result.selected_capabilities = encodeCatalogCapabilities({ read, ddl: [], write: [], transaction: [] });
+    return result;
+  };
   const origTableGet = base.tableGet.bind(base);
   const origTableScanFunctionGet = base.tableScanFunctionGet.bind(base);
 
@@ -1088,7 +1106,13 @@ export function createExampleCatalog(base: ReadOnlyCatalogInterface): ReadOnlyCa
       };
     }
     if (schemaPath.join(".").toLowerCase() === "data" && name.toLowerCase() === "versioned_constraints" && atUnit) {
-      throw new Error("versioned legacy constraints require canonical provider snapshots");
+      const version = resolveVersionedConstraintsVersion(atUnit, atValue);
+      const current = await origTableGet(attachOpaqueData, schemaPath, name, undefined, undefined, transactionOpaqueData);
+      if (!current) return null;
+      return { ...current, columns: serializeSchema(getVersionedConstraintsSchema(version)),
+        constraints: versionedFixtureConstraints(version),
+        definition_revision: new TextEncoder().encode(`fixture.constraints.v1.version.${version}`) };
+
     }
     // Multi-branch tables: accept AT at table_get and pass it through with AT
     // stripped, so the time-travel guard in the read-only base doesn't fire.
@@ -1289,20 +1313,6 @@ export function createExampleCatalog(base: ReadOnlyCatalogInterface): ReadOnlyCa
     }
 
     return origTableScanBranchesGet(attachOpaqueData, schemaPath, name, atUnit, atValue, transactionOpaqueData);
-  };
-
-  // Transaction support — required by tx_cached_value (transaction_storage).
-  // attach() must advertise supports_transactions=true so the C++ extension
-  // populates BindRequest.transaction_opaque_data inside BEGIN/COMMIT blocks.
-  const origAttach = base.attach.bind(base);
-  base.attach = async (
-    name: string,
-    options?: Record<string, unknown>,
-    dataVersionSpec?: string | null,
-    implementationVersion?: string | null,
-  ) => {
-    const result = await origAttach(name, options, dataVersionSpec, implementationVersion);
-    return { ...result, supports_transactions: true };
   };
 
   // Each BEGIN mints a fresh random transaction token; the scope it implies

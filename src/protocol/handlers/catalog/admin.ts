@@ -99,6 +99,7 @@ export function catalogAdminHandlers(getCatalog: GetCatalog, signingKey?: Uint8A
       optionsDict,
       innerParams.data_version_spec ?? null,
       innerParams.implementation_version ?? null,
+      innerParams.client_capabilities == null ? null : toUint8Array(innerParams.client_capabilities),
     );
     // Seal the attach value into an AEAD envelope bound to the caller's
     // identity before it leaves the worker (HTTP transport; pass-through

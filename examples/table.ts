@@ -1,3 +1,4 @@
+import { IMMUTABLE_CONSTRAINT_ROWS, IMMUTABLE_VERSIONED_ROWS } from "./immutable_constraint_rows.js";
 // Copyright 2025, 2026 Query Farm LLC - https://query.farm
 // Example table function implementations.
 // Ports all 18 table function groups from vgi-python/vgi/examples/table.py.
@@ -2891,63 +2892,45 @@ function defineStaticScanFunction(
 // ============================================================================
 
 const DEPARTMENTS_SCHEMA = new Schema([
-  new Field("id", new Int64(), true),
-  new Field("name", new Utf8(), true),
+  new Field("id", new Int64(), false),
+  new Field("name", new Utf8(), false),
   new Field("budget", new Float64(), true),
 ]);
 
 const departments_scan = defineStaticScanFunction(
-  "departments_scan", "Scan departments table", DEPARTMENTS_SCHEMA, {
-    id: [1n, 2n, 3n],
-    name: ["Engineering", "Sales", "HR"],
-    budget: [500000.0, 300000.0, 200000.0],
-  },
+  "departments_scan", "Scan departments table", DEPARTMENTS_SCHEMA, IMMUTABLE_CONSTRAINT_ROWS.departments,
 );
 
 const EMPLOYEES_SCHEMA = new Schema([
-  new Field("id", new Int64(), true),
-  new Field("name", new Utf8(), true),
-  new Field("email", new Utf8(), true),
+  new Field("id", new Int64(), false),
+  new Field("name", new Utf8(), false),
+  new Field("email", new Utf8(), false),
   new Field("department_id", new Int64(), true),
 ]);
 
 const employees_scan = defineStaticScanFunction(
-  "employees_scan", "Scan employees table", EMPLOYEES_SCHEMA, {
-    id: [1n, 2n, 3n, 4n, 5n],
-    name: ["Alice", "Bob", "Carol", "Dave", "Eve"],
-    email: ["alice@co.com", "bob@co.com", "carol@co.com", "dave@co.com", "eve@co.com"],
-    department_id: [1n, 1n, 2n, 2n, 3n],
-  },
+  "employees_scan", "Scan employees table", EMPLOYEES_SCHEMA, IMMUTABLE_CONSTRAINT_ROWS.employees,
 );
 
 const PRODUCTS_SCHEMA = new Schema([
-  new Field("id", new Int64(), true),
+  new Field("id", new Int64(), false),
   new Field("name", new Utf8(), true),
   new Field("quantity", new Int64(), true),
   new Field("price", new Float64(), true),
 ]);
 
 const products_scan = defineStaticScanFunction(
-  "products_scan", "Scan products table", PRODUCTS_SCHEMA, {
-    id: [1n, 2n, 3n],
-    name: ["Widget", "Gadget", "Doohickey"],
-    quantity: [100n, 50n, 200n],
-    price: [9.99, 24.99, 4.99],
-  },
+  "products_scan", "Scan products table", PRODUCTS_SCHEMA, IMMUTABLE_CONSTRAINT_ROWS.products,
 );
 
 const PROJECTS_SCHEMA = new Schema([
-  new Field("department_id", new Int64(), true),
-  new Field("project_code", new Utf8(), true),
-  new Field("title", new Utf8(), true),
+  new Field("department_id", new Int64(), false),
+  new Field("project_code", new Utf8(), false),
+  new Field("title", new Utf8(), false),
 ]);
 
 const projects_scan = defineStaticScanFunction(
-  "projects_scan", "Scan projects table", PROJECTS_SCHEMA, {
-    department_id: [1n, 1n, 2n],
-    project_code: ["P001", "P002", "P003"],
-    title: ["Backend API", "Frontend UI", "Sales Portal"],
-  },
+  "projects_scan", "Scan projects table", PROJECTS_SCHEMA, IMMUTABLE_CONSTRAINT_ROWS.projects,
 );
 
 // ============================================================================
@@ -3140,28 +3123,21 @@ const geo_points_scan = (() => {
 // ============================================================================
 
 const VC_SCHEMAS: Record<number, Schema> = {
-  1: new Schema([new Field("id", new Int64(), true), new Field("name", new Utf8(), true)]),
+  1: new Schema([new Field("id", new Int64(), false), new Field("name", new Utf8(), true)]),
   2: new Schema([
-    new Field("id", new Int64(), true),
-    new Field("name", new Utf8(), true),
+    new Field("id", new Int64(), false),
+    new Field("name", new Utf8(), false),
     new Field("email", new Utf8(), true),
   ]),
   3: new Schema([
-    new Field("id", new Int64(), true),
-    new Field("name", new Utf8(), true),
+    new Field("id", new Int64(), false),
+    new Field("name", new Utf8(), false),
     new Field("email", new Utf8(), true),
     new Field("department_id", new Int64(), true),
   ]),
 };
 
-const VC_DATA: Record<number, Record<string, any[]>> = {
-  1: { id: [1n, 2n], name: ["Alice", "Bob"] },
-  2: { id: [1n, 2n, 3n], name: ["Alice", "Bob", "Carol"], email: ["a@co", "b@co", "c@co"] },
-  3: {
-    id: [1n, 2n, 3n], name: ["Alice", "Bob", "Carol"],
-    email: ["a@co", "b@co", "c@co"], department_id: [1n, 2n, 1n],
-  },
-};
+const VC_DATA = IMMUTABLE_VERSIONED_ROWS;
 
 const VC_CURRENT = 3;
 

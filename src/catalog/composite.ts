@@ -96,11 +96,12 @@ export class CompositeCatalogInterface extends CatalogInterface {
     options?: Record<string, unknown>,
     dataVersionSpec?: string | null,
     implementationVersion?: string | null,
+    clientCapabilities?: Uint8Array | null,
   ): Promise<CatalogAttachResult> {
     for (let i = 0; i < this._backends.length; i++) {
       const b = this._backends[i];
       if (b.catalogs().includes(name)) {
-        const result = await b.attach(name, options, dataVersionSpec, implementationVersion);
+        const result = await b.attach(name, options, dataVersionSpec, implementationVersion, clientCapabilities);
         // Stamp the route-byte so other workers in the pool can decode the
         // backend without needing in-memory state. Mutate in place so the
         // wire returns the rewritten id.
