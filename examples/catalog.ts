@@ -2,6 +2,7 @@
 // InMemoryCatalog: full read-write CatalogInterface implementation.
 // Matches Python vgi/examples/catalog.py
 
+import { validateColumnExpressionsIpc } from "../src/catalog/column-expressions.js";
 import { requireUnconstrainedColumns } from "../src/catalog/unconstrained-columns.js";
 import {
   CatalogInterface,
@@ -258,6 +259,7 @@ export class InMemoryCatalog extends CatalogInterface {
     transactionOpaqueData?: TransactionOpaqueData
   ): void {
     if (constraintDefinitions?.length) throw new Error("canonical constraint enforcement is not supported");
+    validateColumnExpressionsIpc(columns, schemaPath, false);
     requireUnconstrainedColumns(columns);
     const att = this._getAttachment(attachOpaqueData);
     const schema = att.schemas.get(schemaPathKey(schemaPath));

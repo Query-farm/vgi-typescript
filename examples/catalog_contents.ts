@@ -34,6 +34,7 @@
 // `vgi/_test_fixtures/catalog_contents.py`; driven by
 // `vgi/test/sql/integration/catalog/catalog_contents*.test`.
 
+import { validateColumnExpressionsIpc } from "../src/catalog/column-expressions.js";
 import { requireUnconstrainedColumns } from "../src/catalog/unconstrained-columns.js";
 import {
   Arguments,
@@ -239,6 +240,7 @@ abstract class PrivateMemoryCatalog extends CatalogInterface {
     constraintDefinitions?: Uint8Array[],
   ): void {
     if (constraintDefinitions?.length) throw new Error("canonical constraint enforcement is not supported");
+    validateColumnExpressionsIpc(columns, schemaPath, false);
     requireUnconstrainedColumns(columns);
     const state = this._state(attach);
     const schema = this._requireSchema(attach, schemaPath);

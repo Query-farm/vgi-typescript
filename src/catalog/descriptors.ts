@@ -43,7 +43,7 @@ export interface TableDescriptor {
   /**
    * Generated (virtual) columns: map of column name → SQL expression computed
    * from other physical columns. Applied as Arrow field metadata
-   * `generated_expression`, which the DuckDB VGI extension reads at table
+   * canonical SqlExpression IPC with explicit owner/context, which DuckDB reads at table
    * registration. The backing scan function should not return these columns —
    * DuckDB evaluates the expressions client-side.
    */

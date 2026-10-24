@@ -1,3 +1,4 @@
+import { generatedExpressionMetadata, GENERATED_EXPRESSION_KEY, GENERATION_KEY, validateColumnExpressions } from "./column-expressions.js";
 import { validateColumnMetadata } from "./column-metadata.js";
 // Copyright 2025, 2026 Query Farm LLC - https://query.farm
 // ReadOnlyCatalogInterface: derives catalog from registered functions + descriptors.
@@ -358,11 +359,11 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
         colSchema = applyDefaults(colSchema, t.defaults);
       }
       // Apply generated-column expressions as Arrow field metadata
-      // (`generated_expression`). DuckDB registers these columns as GENERATED
+      // (canonical SqlExpression IPC). DuckDB registers these columns as GENERATED
       // and evaluates the SQL expression client-side — the scan function
       // should not return values for them.
       if (t.generatedColumns) {
-        colSchema = applyGeneratedColumns(colSchema, t.generatedColumns);
+        colSchema = applyGeneratedColumns(colSchema, t.generatedColumns, path);
       }
       // Apply per-column comments as Arrow field metadata (matches Python's
       // `comment` metadata key on columns).
@@ -371,6 +372,7 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
       }
 
       validateColumnMetadata(colSchema);
+      validateColumnExpressions(colSchema, path);
       const columns = serializeSchema(colSchema);
 
       if (t.notNull?.length || t.unique?.length || t.primaryKey?.length || t.check?.length || t.foreignKey?.length) {
@@ -983,18 +985,20 @@ function applyDefaults(schema: VgiSchema, defaults: Record<string, DefaultValue>
   return result;
 }
 
-function applyGeneratedColumns(schema: VgiSchema, generated: Record<string, string>): VgiSchema {
+function applyGeneratedColumns(schema: VgiSchema, generated: Record<string, string>, owner: string[]): VgiSchema {
   let result = schema;
   for (const [colName, expression] of Object.entries(generated)) {
     const idx = result.fields.findIndex((f) => f.name === colName);
-    if (idx < 0) continue;
+    if (idx < 0) throw new Error(`generated expression references unknown column ${colName}`);
     const f = result.fields[idx];
     const existingMeta = f.metadata ? new Map(f.metadata) : new Map<string, string>();
-    existingMeta.set("generated_expression", expression);
+    if (existingMeta.has(GENERATED_EXPRESSION_KEY) || existingMeta.has("generated_expression")) throw new Error("generated convenience conflicts with existing expression metadata");
+    existingMeta.set(GENERATED_EXPRESSION_KEY, generatedExpressionMetadata(expression, owner));
+    existingMeta.set(GENERATION_KEY, "virtual");
     const newField = field(f.name, f.type, f.nullable, existingMeta);
     const fields = [...result.fields];
     fields[idx] = newField;
-    result = schema_(fields);
+    result = schema_(fields, result.metadata);
   }
   return result;
 }

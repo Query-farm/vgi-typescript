@@ -1,4 +1,5 @@
 // Copyright 2025, 2026 Query Farm LLC - https://query.farm
+import { validateColumnExpressionsIpc } from "./column-expressions.js";
 import type { VgiSchema } from "../arrow/index.js";
 import { encodeTableInfo, type TableInfo } from "../generated/vgi-client.js";
 
@@ -142,6 +143,6 @@ export function validateColumnMetadataIpc(bytes: Uint8Array): void {
   vector(schema, 1, (f) => field(f, 0));
 }
 export function encodeValidatedTableInfo(info: TableInfo): Uint8Array {
-  if (info.columns.length) validateColumnMetadataIpc(info.columns);
+  if (info.columns.length) { validateColumnMetadataIpc(info.columns); validateColumnExpressionsIpc(info.columns, info.schema_path); }
   return encodeTableInfo(info);
 }
