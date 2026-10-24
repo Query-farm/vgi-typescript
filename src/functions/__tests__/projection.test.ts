@@ -1,10 +1,13 @@
 // Copyright 2025, 2026 Query Farm LLC - https://query.farm
 import { test, expect } from "bun:test";
-import { schema, field, int32, int64 } from "../../arrow/index.js";
+import {
+  schema, field, int32, int64, batchFromColumns, serializeBatch,
+} from "../../arrow/index.js";
 import { generatedExpressionMetadata } from "../../catalog/column-expressions.js";
 import {
   validateProjectionAcceptance,
   validateProjectionOffer,
+  projectionRecord,
   SCALAR_PROJECTION_PROFILE,
   type ProjectionProposal,
   type ProjectionAcceptance,
@@ -119,4 +122,21 @@ test("unknown well-formed profiles remain valid offers", () => {
       ],
     }),
   ).toThrow();
+});
+
+test("projection records permit complete EOF and reject partial or trailing framing", () => {
+  const bytes = serializeBatch(batchFromColumns({ n: [7] }, source));
+  const eos = new Uint8Array([255, 255, 255, 255, 0, 0, 0, 0]);
+  expect(bytes.slice(-8)).toEqual(eos);
+  const body = bytes.slice(0, -8);
+  const join = (...parts: Uint8Array[]) => new Uint8Array(parts.flatMap((p) => [...p]));
+  for (const complete of [bytes, body, join(body, new Uint8Array(4))])
+    expect(projectionRecord(complete, source).n).toBe(7);
+  for (const invalid of [
+    join(bytes, eos),
+    join(bytes, new Uint8Array([1])),
+    join(body, eos.slice(0, 4)),
+    join(body, eos.slice(0, 7)),
+    body.slice(0, -1),
+  ]) expect(() => projectionRecord(invalid, source)).toThrow();
 });

@@ -34,14 +34,16 @@ export function projectionRecord(
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   let offset = 0,
     schemas = 0,
-    batches = 0,
-    ended = false;
+    batches = 0;
   while (offset < bytes.length) {
+    if (bytes.length - offset < 4)
+      throw new Error("truncated projection IPC prefix");
     const prefix = view.getInt32(offset, true) === -1 ? 8 : 4;
+    if (bytes.length - offset < prefix)
+      throw new Error("truncated projection IPC prefix");
     const length = view.getInt32(offset + prefix - 4, true);
     offset += prefix;
     if (length === 0) {
-      ended = true;
       break;
     }
     if (length < 0 || offset + length > bytes.length)
@@ -71,7 +73,8 @@ export function projectionRecord(
     else throw new Error("projection requires one complete IPC batch");
     offset += length + body;
   }
-  if (!ended || offset !== bytes.length || schemas !== 1 || batches !== 1)
+  // Arrow permits physical EOF after a complete message, with or without EOS.
+  if (offset !== bytes.length || schemas !== 1 || batches !== 1)
     throw new Error("projection requires one complete IPC batch");
   const batch = deserializeBatch(bytes);
   // IPC dictionary ids are stream-local and may be reassigned on re-encoding.
