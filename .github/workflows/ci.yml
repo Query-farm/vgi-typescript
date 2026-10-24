@@ -35,6 +35,14 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+  actions: read
+
+env:
+  # Test sources and statically linked binaries come from this exact native commit.
+  VGI_REF: fc3e08f7e7fd800165a0edc00313de46fed15329
+
 jobs:
   unit:
     name: Unit (bun test on both backends + build + parity)
@@ -47,7 +55,7 @@ jobs:
           bun-version: latest
 
       - name: Install dependencies
-        run: bun install
+        run: bun install --frozen-lockfile
 
       - name: Build (types + bundles)
         run: bun run build
@@ -68,7 +76,7 @@ jobs:
     # vgi-rpc's hosted-protocols group (MULTI_PROTOCOL_HOSTING.md §7) against
     # the example fixture worker: the worker lists vgi.v2 then
     # conformance.Secondary.v1 on stdio, AF_UNIX and HTTP, the secondary passes
-    # the shared error-model groups, and over HTTP vgi_rpc.Identity.v1 passes
+    # the shared error-model groups, and over HTTP vgi_rpc.Identity.v2 passes
     # the identity fixture groups. The reference is unpinned main, by design: a
     # reference change that breaks this SDK should turn it red the day it lands.
     name: Hosted protocols (stdio, unix, http + identity)
@@ -93,7 +101,7 @@ jobs:
           python-version: "3.14"
 
       - name: Install dependencies
-        run: bun install
+        run: bun install --frozen-lockfile
 
       - name: Install the reference
         run: pip install "./.vgi-rpc-python[http,conformance]" pytest pytest-timeout
@@ -124,28 +132,8 @@ jobs:
           # and it covers what http structurally cannot: the launcher-only tests
           # and the four subprocess-pool-semantics files.
           - { lane: launch, backend: arrow-js, conditions: '' }
-          # There is deliberately NO launch/flechette lane. flechette cannot drive
-          # the lockstep stream encoder — an empty table encodes with no
-          # RecordBatch message to slice, and the option that synthesises one
-          # throws on the `tableFromIPC` passthroughs every table-in-out exchange
-          # produces — so it drops per-batch metadata, throws, or hangs. Measured
-          # here: 23 of 295 files failed on this transport, all table-in-out /
-          # exchange, against 0 on arrow-js.
-          #
-          # As of @query-farm/vgi-rpc 0.22.0 that boundary is NOT enforced by a
-          # refusal (an older note here claimed 0.15.3 made a flechette worker
-          # refuse to start on a byte-stream transport; it does not). It fails
-          # later and less legibly: IpcStreamReader decodes the request stream
-          # with a hard arrow-js import rather than the `#vgi-rpc-arrow`
-          # backend, so the worker rejects the FIRST method with a non-empty
-          # params schema — "expected type [object Object], got Binary". The
-          # http lane trips over this because it wires two *subprocess*
-          # versioned workers; ci/run-integration.sh's stdio_shim clears
-          # VGI_BUN_CONDITIONS for those. See the comment on stdio_shim.
-          #
-          # Consequence worth knowing: the six http-excluded files below are
-          # never exercised against flechette. Revisit if flechette's
-          # assembleRecordBatch learns to walk those tables.
+          # RPC 0.29.2 adapts incoming IPC to the selected Arrow backend.
+          - { lane: launch, backend: flechette, conditions: flechette }
     steps:
       - name: Checkout vgi-typescript
         uses: actions/checkout@v4
@@ -155,47 +143,23 @@ jobs:
         with:
           repository: Query-farm/vgi
           path: vgi-upstream
-          # Pin to the tag matching the published extension when you cut
-          # releases; main is fine while tracking head.
-          ref: main
+          ref: ${{ env.VGI_REF }}
 
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
 
       - name: Install dependencies
-        run: bun install
+        run: bun install --frozen-lockfile
 
-      # Resolve the latest haybarn release so the unittest host matches the
-      # rebuilt community vgi extension's DuckDB ABI. A stale pin SIGSEGVs on
-      # load. Mirrors the vgi-go / vgi-python integration jobs.
-      - name: Resolve latest haybarn release
+      - name: Download native runner matching the test suite
         run: |
-          REL=$(gh release view --repo Query-farm-haybarn/haybarn --json tagName --jq .tagName)
-          echo "HAYBARN_RELEASE=$REL" >> "$GITHUB_ENV"
-          echo "Latest haybarn release: $REL"
+          python3 "$VGI_SRC/scripts/ci_fetch_native_runner.py" \
+            --source "$VGI_SRC" --output "$RUNNER_TEMP/vgi-native"
         env:
+          VGI_SRC: ${{ github.workspace }}/vgi-upstream
           GH_TOKEN: ${{ github.token }}
 
-      - name: Download haybarn-unittest
-        run: |
-          gh release download "$HAYBARN_RELEASE" \
-            --repo Query-farm-haybarn/haybarn \
-            --pattern 'haybarn_unittest-linux-amd64.zip' \
-            --output /tmp/haybarn-unittest.zip --clobber
-          unzip -o -q /tmp/haybarn-unittest.zip -d /tmp/haybarn-unittest
-          UNITTEST=$(find /tmp/haybarn-unittest -name 'haybarn-unittest' -type f | head -1)
-          chmod +x "$UNITTEST"
-          echo "HAYBARN_UNITTEST=$UNITTEST" >> "$GITHUB_ENV"
-        env:
-          GH_TOKEN: ${{ github.token }}
-
-      # The harness stages a rewritten copy of the suite, boots the example HTTP
-      # workers, warms the extension cache (FORCE INSTALL vgi FROM community;
-      # everything else FROM core), runs one unittest invocation, and then
-      # enforces the skip contract: every skip must match an expected reason and
-      # at least MIN_EXECUTED test cases must actually execute. Note that
-      # LOCAL_EXTENSION_REPO is deliberately NOT set anywhere in this file.
       - name: Integration suite (${{ matrix.lane }} / ${{ matrix.backend }})
         run: ci/run-integration.sh
         env:

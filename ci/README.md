@@ -5,13 +5,12 @@ runs the canonical [Query-farm/vgi](https://github.com/Query-farm/vgi)
 integration sqllogictest suite against this repo's TypeScript example workers on
 every push / PR. The same `.test` files run against the Python, Go, Java and Rust
 ports, so a green run here is real wire-compatibility evidence — it exercises the
-worker through the *published* DuckDB extension, not a mock, and not the
-in-process `VgiClient` that the unit tests use.
+worker through the native DuckDB extension built at the same pinned commit as
+the tests. Unit tests separately exercise the in-process `VgiClient`.
 
-This harness is a port of `vgi-go/ci/` and `vgi-python/ci/`, which are byte-identical
-apart from worker wiring. [`preprocess-require.awk`](preprocess-require.awk) is the
-sibling file plus one additive flag (`-v install=0`, below); with the flag unset its
-output is byte-identical to theirs.
+This harness shares its staging and skip-accounting approach with the other SDKs.
+[`preprocess-require.awk`](preprocess-require.awk) supports both a standalone
+release runner and a development runner with statically linked extensions.
 
 ## Why it exists
 
@@ -53,24 +52,26 @@ The fix is two-sided, and the second half matters more than the first:
 
 ## How it works (no C++ build)
 
-Rather than building the vgi DuckDB extension from source (which needs the
-Haybarn vcpkg pipeline), CI drives a **prebuilt** standalone `haybarn-unittest`
-and installs the **signed** vgi extension from the Haybarn community channel:
+CI downloads a native runner built by `Query-farm/vgi` at the exact `VGI_REF`
+commit used for the test suite. Development wire changes can therefore be
+verified before their public extension release.
 
-1. **Install deps** — `bun install`. The workers are the `bin/vgi-example-*`
-   wrappers, which `exec bun run examples/<entry>.ts`; nothing is compiled.
-2. **Checkout the test suite** — `Query-farm/vgi`; its
-   `test/sql/integration/*.test` files are the suite.
-3. **Download the runner** — `haybarn_unittest-linux-amd64.zip` from the latest
-   Haybarn release (resolved at run time, so the unittest host stays ABI-compatible
-   with the rebuilt community extension).
-4. **Preprocess + stage** — `run-integration.sh` copies the suite through
-   `preprocess-require.awk` into a scratch tree, dropping the out-of-scope files.
-5. **Run** — it boots the four HTTP example workers, warms the extension cache
-   (`FORCE INSTALL vgi FROM community` + the deps `FROM core`), and runs the whole
-   lane in a single `haybarn-unittest` invocation, pointed at the staged tree with
-   `--test-dir`.
-6. **Account** — it then enforces the skip contract described above.
+1. **Install dependencies** — `bun install --frozen-lockfile` installs published
+   registry packages at the versions and integrity hashes in `bun.lock`.
+2. **Checkout the test suite** — `Query-farm/vgi` at the pinned `VGI_REF`.
+3. **Download matching binaries** — the checkout's
+   `scripts/ci_fetch_native_runner.py` verifies artifact provenance and exports
+   `HAYBARN_UNITTEST`, `HAYBARN_CLI`, and `RUNNER_LINKS_EXTENSIONS=1`.
+4. **Stage** — `run-integration.sh` preserves `require` gates for the linked
+   runner, ensures HTTP lanes load httpfs, and keeps existing exclusions.
+5. **Run** — each transport/backend lane runs the staged suite with `--test-dir`.
+6. **Account** — unexpected skips and counts below the existing executed-case
+   floor fail the job.
+
+Local invocations default to the standalone release-runner behavior, including
+signed community/core installs and cache warming. `RUNNER_LINKS_EXTENSIONS=1`
+selects the linked mode by setting `PREPROCESS=0`. Public release publication is
+separate from this development CI path.
 
 `--test-dir` is not cosmetic: a *from-source* `unittest` bakes
 `DUCKDB_ROOT_DIRECTORY` in at compile time and would otherwise silently run the
@@ -79,8 +80,8 @@ build's own source tree, ignoring every exclusion and every rewrite.
 ## Transport lanes
 
 `run-integration.sh` honours `TRANSPORT=http|stdio|launch`, mirroring the
-Makefile's `test-http` / `test-subprocess` / `test` targets. CI runs three legs:
-`http` × {arrow-js, flechette} and `launch` × arrow-js.
+Makefile's `test-http` / `test-subprocess` / `test` targets. CI runs four legs:
+{`http`, `launch`} × {arrow-js, flechette}.
 
 - **`http`** — the whole suite over the stateless HTTP transport, against the four
   long-lived `bin/vgi-example-*-http-worker` servers. Staging injects
@@ -102,8 +103,9 @@ Makefile's `test-http` / `test-subprocess` / `test` targets. CI runs three legs:
 
 `VGI_BUN_CONDITIONS` selects the Arrow backend and is read by the `bin/` wrappers,
 so the script only has to pass it through: unset = arrow-js, `flechette` =
-flechette. flechette is HTTP-only (no stdio incremental streaming), hence no
-launch leg for it.
+flechette. Both backends support HTTP and byte-stream workers with
+`@query-farm/vgi-rpc` 0.29.2 or later. The HTTP lane's subprocess probes use
+the same backend as its HTTP workers.
 
 ## Excluded tests
 
@@ -189,6 +191,7 @@ the two modes run the same set.
 | `HAYBARN_UNITTEST` | path to the runner binary (required) |
 | `TRANSPORT` | `http` (default) \| `stdio` \| `launch` |
 | `VGI_BUN_CONDITIONS` | Arrow backend: unset (arrow-js) \| `flechette` |
+| `RUNNER_LINKS_EXTENSIONS` | `1` selects linked extensions and disables installs |
 | `PREPROCESS` | `1` (default) rewrite `require` gates; `0` for a from-source runner |
 | `MIN_EXECUTED` | floor on executed test cases (default 245 on http/stdio, 240 on launch) |
 | `EXTRA_EXCLUDES` | extra integration-relative paths to drop from staging |

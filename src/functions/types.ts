@@ -32,6 +32,12 @@ export interface HandlerState<T = any> {
    * rebuilds the filters this one left.
    */
   filterHistory?: import("../filter-pushdown/history.js").FilterDeltaHistory;
+  /**
+   * A table-in-out exchange's continued-output flag: the last reply said
+   * HAVE_MORE_OUTPUT, so the next input must be a continuation tick. Carried
+   * in the HTTP cursor like `filterHistory`.
+   */
+  morePending?: boolean;
   [key: string]: any;
 }
 
@@ -109,6 +115,13 @@ export interface FunctionMeta {
    * ResolvedMetadata.input_from_args.
    */
   inputFromArgs?: boolean;
+  /**
+   * Blended only: the most input rows one worker call receives; the client
+   * splits each input chunk into calls of at most this many rows. Unset sends
+   * a whole chunk per call. Set by {@link defineRowTransformFunction}'s
+   * `inputRowsPerCall`; surfaces as FunctionInfo.input_rows_per_call.
+   */
+  inputRowsPerCall?: number;
   /**
    * table_buffering: force ParallelSink=false in the C++ operator
    * (single-thread, source-ordered ingest).
@@ -222,6 +235,13 @@ export interface StreamHandlers {
    * from DuckDB's Top-N optimizer).
    */
   onTick?: (state: any, tickMetadata: Map<string, string> | undefined) => void | Promise<void>;
+  /**
+   * A table-in-out exchange, which may continue one input's output across
+   * replies (see functions/continuation.ts). It keeps `morePending` on its
+   * handler state, which the dispatcher carries in the HTTP state token. Every
+   * other stream's reply is refused if it says HAVE_MORE_OUTPUT.
+   */
+  continuesOutput?: boolean;
 }
 
 /**

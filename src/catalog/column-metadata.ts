@@ -142,7 +142,10 @@ export function validateColumnMetadataIpc(bytes: Uint8Array): void {
   if (!schema) throw new Error("missing column schema");
   vector(schema, 1, (f) => field(f, 0));
 }
-export function encodeValidatedTableInfo(info: TableInfo): Uint8Array {
+export function validateTableInfoColumns(info: TableInfo): void {
   if (info.columns.length) { validateColumnMetadataIpc(info.columns); validateColumnExpressionsIpc(info.columns, info.schema_path); }
+}
+export function encodeValidatedTableInfo(info: TableInfo): Uint8Array {
+  validateTableInfoColumns(info);
   return encodeTableInfo(info);
 }

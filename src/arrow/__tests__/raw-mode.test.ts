@@ -48,8 +48,8 @@ describe(`raw-mode round-trip (backend=${backend.name})`, () => {
   });
 
   test("date64 raw is a branded ms-bigint (NOT a Date)", () => {
-    const out = rawRoundTrip(dateMillisecond(), [asDate64Ms(1745107200000n), null]);
-    expect(out).toEqual([1745107200000n, null]);
+    const out = rawRoundTrip(dateMillisecond(), [asDate64Ms(1745152496123n), asDate64Ms(-1n), null]);
+    expect(out).toEqual([1745152496123n, -1n, null]);
     expect(out[0]).not.toBeInstanceOf(Date);
   });
 

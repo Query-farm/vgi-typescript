@@ -1,3 +1,4 @@
+import type { CatalogSnapshotPolicy } from "./publication.js";
 // Copyright 2025, 2026 Query Farm LLC - https://query.farm
 // CatalogInterface abstract class with ~35 methods.
 // Matching Python's vgi/catalog/catalog_interface.py
@@ -168,6 +169,7 @@ export const encodeAttachCatalogInfo = (v: AttachCatalogInfo): Uint8Array =>
 // ============================================================================
 
 import { deserializeBatch, serializeBatch, batchFromColumns } from "../util/arrow/index.js";
+import { conformColumns } from "../codec/conform.js";
 import { schema as schema_, field as field_, type VgiDataType, type VgiField } from "../arrow/index.js";
 import { toUint8Array } from "../util/bytes.js";
 import { ScanBranchSchema, ScanFunctionResultSchema } from "../generated/vgi-protocol-schemas.js";
@@ -221,12 +223,12 @@ export function encodeScanFunctionResult(
 ): Uint8Array {
   return serializeBatch(
     batchFromColumns(
-      {
+      conformColumns(ScanFunctionResultSchema as any, {
         function_name: [functionName],
         arguments: [argumentsBytes],
         required_extensions: [requiredExtensions],
         schema_path: [schemaPath],
-      },
+      }),
       ScanFunctionResultSchema as any,
     ),
   );
@@ -345,7 +347,7 @@ function encodeScanBranch(cols: {
 }): Uint8Array {
   return serializeBatch(
     batchFromColumns(
-      {
+      conformColumns(ScanBranchSchema as any, {
         function_name: [cols.function_name],
         arguments: [cols.arguments],
         branch_filter: [cols.branch_filter ?? null],
@@ -357,7 +359,7 @@ function encodeScanBranch(cols: {
         format_locations: [cols.format_locations ?? null],
         format_options: [cols.format_options ?? null],
         schema_path: [cols.schema_path ?? null],
-      },
+      }),
       ScanBranchSchema as any,
     ),
   );
@@ -561,6 +563,8 @@ function isPromise<T>(v: Awaitable<T>): v is Promise<T> {
 }
 
 export abstract class CatalogInterface {
+  /** Opt-in immutable external delivery for catalog_contents. */
+  catalogSnapshotPolicy: CatalogSnapshotPolicy | null = null;
   /**
    * Opt-in framework etag for `catalog_contents`. `"content-hash"`: when
    * `catalogContents` returns no etag of its own, the worker uses the hex

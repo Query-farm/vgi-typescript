@@ -7,7 +7,9 @@ import { type VgiSchema, schema as schema_, type VgiField, field, type VgiBatch,
 // emits `import {} from "@query-farm/vgi-rpc"`, a side-effect import of the
 // package root — which re-exports the whole framework, server included, into
 // every browser bundle. See the note in ./errors.
-import type { RpcClient, StreamSession } from "@query-farm/vgi-rpc";
+import type { RawStreamSession, RpcClient, StreamSession } from "@query-farm/vgi-rpc";
+import { CACHE_NOT_MODIFIED_KEY } from "../cache-control.js";
+import { CONTINUE, HAVE_MORE_OUTPUT, STATUS_KEY } from "../functions/continuation.js";
 import {
   serializeBindRequest,
   deserializeBindResponse,
@@ -25,6 +27,7 @@ import { Arguments } from "../arguments/arguments.js";
 import {
   batchFromRows,
   batchFromColumns,
+  emptyBatch,
   iterRows,
 } from "../util/arrow/index.js";
 import {
@@ -57,6 +60,7 @@ import { VgiClientError, wrapRpcWithErrorEnrichment } from "./errors.js";
 import { normalizeSchemaPath } from "../schema-path.js";
 import { encodeASD } from "../codec/asd.js";
 import { ClientCapabilitiesSchema, MacroCreateRequestSchema, TableCreateRequestSchema } from "../generated/vgi-protocol-schemas.js";
+import { decodeCatalogStreams } from "../catalog/contents-codec.js";
 import { decodeCatalogContentsResponse } from "../generated/vgi-protocol-types.js";
 import { deserializeInfoList, deserializeTags, toAsyncIterator } from "./helpers.js";
 
@@ -76,6 +80,82 @@ import type {
   CatalogSnapshot,
   LoadCatalogOptions,
 } from "./types.js";
+
+/**
+ * `on_conflict` as it goes on the wire: the vgi-python `OnConflict` member
+ * NAME (`ERROR` / `IGNORE` / `REPLACE`), not the lower-case API spelling.
+ */
+function onConflictName(onConflict: OnCreateConflict): string {
+  return String(onConflict).toUpperCase();
+}
+
+/** Whether reply metadata carries `vgi.cache.not_modified` set. */
+function isNotModified(md: Map<string, string>): boolean {
+  const v = md.get(CACHE_NOT_MODIFIED_KEY);
+  return v != null && v !== "0" && v.toLowerCase() !== "false";
+}
+
+/**
+ * Send one input batch on a table-in-out exchange and yield the rows of every
+ * reply it gets (continued output, docs/table_in_out.md "Continued Output").
+ *
+ * A reply saying `vgi.status: HAVE_MORE_OUTPUT` has more output for the same
+ * input: ask for the next with a continuation tick (a zero-row batch of the
+ * input schema carrying `vgi.status: CONTINUE`) until a reply stops saying
+ * more. Only then may the next input go out, or the input close. The row-level
+ * `StreamSession.exchange` drops reply metadata, so this uses the raw exchange
+ * every transport's session implements.
+ *
+ * Refused, as the extension refuses them: `not_modified` on a reply that says
+ * more or answers a tick (a 304 stands for an input's whole output), and the
+ * worker ending the stream while output is pending.
+ *
+ * Exported for tests only (not re-exported from the package entry points).
+ * @internal
+ */
+export async function* exchangeContinued(
+  session: StreamSession,
+  functionName: string,
+  input: VgiBatch,
+): AsyncGenerator<Record<string, any>[]> {
+  const raw = session as unknown as Partial<Pick<RawStreamSession, "exchangeRaw">>;
+  if (typeof raw.exchangeRaw !== "function") {
+    throw new VgiClientError(
+      `tableInOutFunction(${functionName}): the transport's stream session has no exchangeRaw(), ` +
+        `which continued output needs to read each reply's vgi.status`,
+    );
+  }
+  const exchangeRaw = raw.exchangeRaw.bind(session);
+  let tick = false;
+  let reply = await exchangeRaw({ batch: input as any, metadata: new Map() });
+  for (;;) {
+    if (reply === null) {
+      if (tick) {
+        throw new VgiClientError(
+          `tableInOutFunction(${functionName}): the worker ended the stream while output was pending`,
+        );
+      }
+      return;
+    }
+    const md = new Map<string, string>([...((reply.batch as any).metadata ?? []), ...reply.metadata]);
+    const more = md.get(STATUS_KEY) === HAVE_MORE_OUTPUT;
+    if (isNotModified(md) && (more || tick)) {
+      throw new VgiClientError(
+        `tableInOutFunction(${functionName}): the worker answered not_modified on a continued reply ` +
+          `(${tick ? "answering a continuation tick" : "one saying HAVE_MORE_OUTPUT"}); ` +
+          `not_modified must be an input's only reply`,
+      );
+    }
+    const rows = [...iterRows(reply.batch as unknown as VgiBatch)];
+    if (rows.length > 0) yield rows;
+    if (!more) return;
+    tick = true;
+    reply = await exchangeRaw({
+      batch: emptyBatch(input.schema) as any,
+      metadata: new Map([[STATUS_KEY, CONTINUE]]),
+    });
+  }
+}
 
 /**
  * High-level client for calling VGI worker functions and catalog API.
@@ -417,12 +497,9 @@ export class VgiClient {
     );
 
     try {
-      const outRows = await inputSession.exchange([...iterRows(firstBatch)]);
-      if (outRows.length > 0) yield outRows;
-
+      yield* exchangeContinued(inputSession, opts.functionName, firstBatch);
       for await (const batch of { [Symbol.asyncIterator]: () => inputIter }) {
-        const result = await inputSession.exchange([...iterRows(batch)]);
-        if (result.length > 0) yield result;
+        yield* exchangeContinued(inputSession, opts.functionName, batch);
       }
     } finally {
       inputSession.close();
@@ -498,12 +575,13 @@ export class VgiClient {
 
     const outputSchema = bindResp.output_schema;
     try {
-      const outRows = await inputSession.exchange([...iterRows(firstBatch)]);
-      if (outRows.length > 0) yield batchFromRows(outRows, outputSchema);
-
+      for await (const rows of exchangeContinued(inputSession, opts.functionName, firstBatch)) {
+        yield batchFromRows(rows, outputSchema);
+      }
       for await (const batch of { [Symbol.asyncIterator]: () => inputIter }) {
-        const result = await inputSession.exchange([...iterRows(batch)]);
-        if (result.length > 0) yield batchFromRows(result, outputSchema);
+        for await (const rows of exchangeContinued(inputSession, opts.functionName, batch)) {
+          yield batchFromRows(rows, outputSchema);
+        }
       }
     } finally {
       inputSession.close();
@@ -713,25 +791,7 @@ export class VgiClient {
     });
     if (!result) throw new VgiClientError("catalog_contents returned null");
     const response = decodeCatalogContentsResponse(toUint8Array(result.result));
-    const schemas = response.schemas.map((c) => {
-      const schema = decodeSchemaInfo(c.schema);
-      if (JSON.stringify(c.path) !== JSON.stringify(schema.path)) {
-        throw new VgiClientError(
-          `catalog_contents: SchemaContents.path ${JSON.stringify(c.path)} != SchemaInfo.path ${JSON.stringify(schema.path)}`,
-        );
-      }
-      return {
-        schema,
-        tables: c.tables.map(decodeTableInfo),
-        views: c.views.map(decodeViewInfo),
-        scalar_functions: c.scalar_functions.map(decodeFunctionInfo),
-        aggregate_functions: c.aggregate_functions.map(decodeFunctionInfo),
-        table_functions: c.table_functions.map(decodeFunctionInfo),
-        scalar_macros: c.scalar_macros.map(decodeMacroInfo),
-        table_macros: c.table_macros.map(decodeMacroInfo),
-        indexes: c.indexes.map(decodeIndexInfo),
-      };
-    });
+    const schemas = decodeCatalogStreams(response, ifNoneMatch);
     return {
       catalog_version: Number(response.catalog_version ?? 0),
       etag: response.etag ?? null,
@@ -906,7 +966,7 @@ export class VgiClient {
     }
     await this.rpc.call("catalog_create", {
       name,
-      on_conflict: onConflict,
+      on_conflict: onConflictName(onConflict),
       options: wireOptions,
     });
   }
@@ -1013,7 +1073,7 @@ export class VgiClient {
     await this.rpc.call("catalog_schema_create", {
       attach_opaque_data: attachOpaqueData,
       path: normalizeSchemaPath(path),
-      on_conflict: opts?.onConflict ?? "error",
+      on_conflict: onConflictName(opts?.onConflict ?? "error"),
       comment: opts?.comment ?? null,
       tags: tagsMap,
       transaction_opaque_data: opts?.transactionOpaqueData ?? null,
@@ -1138,7 +1198,7 @@ export class VgiClient {
       schema_path: normalizeSchemaPath(schemaPath),
       name,
       columns,
-      on_conflict: onConflict,
+      on_conflict: onConflictName(onConflict),
       constraint_definitions: constraintDefinitions,
       transaction_opaque_data: transactionOpaqueData ?? null,
       }),
@@ -1466,7 +1526,7 @@ export class VgiClient {
       comment: comment ?? null,
       tags: tags ?? null,
       column_comments: columnComments ?? null,
-      on_conflict: onConflict,
+      on_conflict: onConflictName(onConflict),
       transaction_opaque_data: transactionOpaqueData ?? null,
     });
   }
@@ -1598,7 +1658,7 @@ export class VgiClient {
         name: [name],
         macro_type: [macroType],
         overloads: [overloads],
-        on_conflict: [onConflict],
+        on_conflict: [onConflictName(onConflict)],
         transaction_opaque_data: [transactionOpaqueData ?? null],
       },
       MacroCreateRequestSchema,

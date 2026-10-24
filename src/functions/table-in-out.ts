@@ -43,6 +43,8 @@ import {
 import { FunctionStability } from "../types.js";
 import { BoundStorage, storage as defaultStorage, FrameworkNS } from "./storage.js";
 import { serializeUserState, deserializeUserState } from "../protocol/state-serializer.js";
+import { PARENT_ROW_METADATA_KEY, encodeParentRows } from "../util/parent-rows.js";
+import { checkInputRowsPerCall, checkResumeContract, continuationTurn } from "./continuation.js";
 
 /**
  * State-log key the streaming FINALIZE drain uses within
@@ -140,6 +142,26 @@ export interface TableInOutConfig<
     batch: VgiBatch,
     out: OutputCollector
   ) => void | Promise<void>;
+  /**
+   * Resume: emit the next reply for the last input batch (continued output).
+   *
+   * One input batch can produce several replies: `process()` emits the first
+   * with {@link moreOutputMetadata}`(true)`, and the framework then calls
+   * `resume()`, with no input, for each next reply until one is emitted
+   * without it. Like `process()`, each call emits exactly one batch.
+   *
+   * `resume()` continues from `state` alone, so a function that defines it
+   * must define `initialState`. Mutate the state in place: it survives between
+   * calls on every transport -- over HTTP inside the stream's state token -- so
+   * keep it small (positions to resume from, never buffered output). Not
+   * allowed with `maxWorkers: 1`, which runs on one connection shared by every
+   * pipeline and so cannot leave output pending.
+   */
+  resume?: (
+    params: TableInOutProcessParams<TArgs>,
+    state: TState,
+    out: OutputCollector,
+  ) => void | Promise<void>;
   /** Finalize: emit final batches after all input processed.
    *  Receives all worker states collected from storage (matches Python's finish(params, states)). */
   finalize?: (
@@ -164,7 +186,9 @@ export function defineTableInOutFunction<
   TState = null,
 >(config: TableInOutConfig<TArgs, TState>): VgiFunction {
   assertArrowTypes((config as any).args, `defineTableInOutFunction("${config.name}"): args`);
-
+  checkResumeContract(config.name, config);
+  // A classic (TABLE-input) function cannot split its input into calls.
+  checkInputRowsPerCall(config.name, (config as any).inputRowsPerCall, false);
 
   // Build argument specs
   const specs: ArgumentSpec[] = [];
@@ -485,37 +509,52 @@ export function defineTableInOutFunction<
       return {
         outputSchema,
         inputSchema: request.bind_call.input_schema,
-        exchangeInit: () => ({ state, processParams, filterHistory: carriedFilterHistory }),
+        continuesOutput: true,
+        exchangeInit: () => ({ state, processParams, filterHistory: carriedFilterHistory, morePending: false }),
         exchangeFn: async (
           eState: {
             state: TState;
             processParams: TableInOutProcessParams<TArgs>;
             filterHistory: FilterDeltaHistory;
+            morePending: boolean;
           },
           input: VgiBatch,
           out: OutputCollector
         ) => {
-          // Surface conditional-revalidation validators off the input batch's
-          // custom metadata (attached by the C++ WriteInputBatch), so process()
-          // can answer a 0-row `notModified` batch instead of recomputing.
-          applyRevalidationValidators(eState.processParams, input);
-          applyDynamicFilterUpdate(eState, input);
-          // Bake emit metadata onto the batch (0-row HTTP survival), then
-          // reconcile emitted batches to the (possibly projected) output schema
-          // by name — a process() may emit its full declared schema and let the
-          // framework project (mirrors Python's OutputCollector.emit reconcile).
-          let wrappedOut: OutputCollector = makeMetadataBakingCollector(out);
-          if (projIds) {
-            wrappedOut = makeSchemaReconcilingCollector(wrappedOut, outputSchema);
-          }
-          const currentFilters = eState.processParams.pushdownFilters;
-          if (config.autoApplyFilters && currentFilters) {
-            wrappedOut = new FilteringOutputCollector(wrappedOut, currentFilters) as unknown as OutputCollector;
-          }
-          await processFn(eState.processParams, eState.state, input, wrappedOut);
+          await continuationTurn(config.name, eState, input, out, config.resume != null, async (tick) => {
+            // Surface conditional-revalidation validators off the input batch's
+            // custom metadata (attached by the C++ WriteInputBatch), so process()
+            // can answer a 0-row `notModified` batch instead of recomputing. A
+            // tick never carries them, so this also withdraws the last input's
+            // from resume().
+            applyRevalidationValidators(eState.processParams, input);
+            applyDynamicFilterUpdate(eState, input);
+            // Bake emit metadata onto the batch (0-row HTTP survival), then
+            // reconcile emitted batches to the (possibly projected) output schema
+            // by name — a process() may emit its full declared schema and let the
+            // framework project (mirrors Python's OutputCollector.emit reconcile).
+            let wrappedOut: OutputCollector = makeMetadataBakingCollector(out);
+            if (projIds) {
+              wrappedOut = makeSchemaReconcilingCollector(wrappedOut, outputSchema);
+            }
+            const currentFilters = eState.processParams.pushdownFilters;
+            if (config.autoApplyFilters && currentFilters) {
+              wrappedOut = new FilteringOutputCollector(wrappedOut, currentFilters) as unknown as OutputCollector;
+            }
+            if (tick) {
+              await config.resume!(eState.processParams, eState.state, wrappedOut);
+            } else {
+              await processFn(eState.processParams, eState.state, input, wrappedOut);
+            }
+          });
 
-          // Auto-persist accumulated state for FINALIZE recovery (matches Python/Go pattern)
-          if (eState.state != null) {
+          // Auto-persist accumulated state for FINALIZE recovery (matches
+          // Python/Go pattern) -- every turn, ticks included, since resume()
+          // advances the state finalize() must see. Only the FINALIZE phase
+          // reads it back, and only finalize() uses what it reads: a function
+          // without one advertises has_finalize=false, so nothing would ever
+          // collect the write.
+          if (config.finalize && eState.state != null) {
             const serialized = serializeUserState(eState.state);
             if (serialized != null) {
               await boundStorage.put(serialized);
@@ -661,10 +700,7 @@ function makeSchemaReconcilingCollector(
 // Per-output-row provenance (batched correlated LATERAL)
 // ============================================================================
 
-/** Metadata key carrying per-output-row provenance: base64 of a raw
- *  little-endian int32[] mapping each output row to the input row that
- *  produced it. Shared by string with the C++ extension and vgi-python. */
-export const PARENT_ROW_METADATA_KEY = "vgi_rpc.parent_row#b64";
+export { PARENT_ROW_METADATA_KEY };
 
 /**
  * Fold per-output-row provenance into an emit metadata map.
@@ -703,22 +739,8 @@ export function parentRowsMetadata(
     // Nothing to map; skip the base64+pack for an empty emit.
     return md;
   }
-  const raw = new Uint8Array(parentRows.length * 4);
-  const dv = new DataView(raw.buffer);
-  for (let i = 0; i < parentRows.length; i++) {
-    dv.setInt32(i * 4, parentRows[i], true);
-  }
-  md.set(PARENT_ROW_METADATA_KEY, base64Encode(raw));
+  md.set(PARENT_ROW_METADATA_KEY, encodeParentRows(parentRows));
   return md;
-}
-
-function base64Encode(bytes: Uint8Array): string {
-  if (typeof (globalThis as any).Buffer !== "undefined") {
-    return (globalThis as any).Buffer.from(bytes).toString("base64");
-  }
-  let bin = "";
-  for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
-  return (globalThis as any).btoa(bin);
 }
 
 // ============================================================================
@@ -734,7 +756,7 @@ function base64Encode(bytes: Uint8Array): string {
 export type RowTransformProcessParams<TArgs = Record<string, any>> =
   TableInOutProcessParams<TArgs>;
 
-export interface RowTransformConfig<TArgs = Record<string, any>> {
+export interface RowTransformConfig<TArgs = Record<string, any>, TState = null> {
   name: string;
   description?: string;
   /**
@@ -774,12 +796,47 @@ export interface RowTransformConfig<TArgs = Record<string, any>> {
    * per-row map (DuckDB forbids FinalExecute under correlated LATERAL, one of
    * the call shapes blended must serve). Accumulating functions use a classic
    * TableInput table-in-out or a TableBufferingFunction.
+   *
+   * `state` is the stream's state from {@link initialState} (`null` without
+   * one); a function that continues its output keeps its resume position there.
    */
   process: (
     params: RowTransformProcessParams<TArgs>,
     batch: VgiBatch,
     out: OutputCollector,
+    state: TState,
   ) => void | Promise<void>;
+  /**
+   * The stream's initial state, needed only by a function with {@link resume}:
+   * where the next reply resumes. Mutate it in place; it survives between
+   * calls on every transport (over HTTP inside the stream's state token), so
+   * keep it small: positions to resume from, never buffered output rows.
+   */
+  initialState?: (params: RowTransformProcessParams<TArgs>) => TState;
+  /**
+   * Continued output: emit the next reply for the last input batch.
+   *
+   * Large output for one input batch (an upstream API paged across many
+   * requests) need not be built into one batch: `process()` emits the first
+   * reply with {@link moreOutputMetadata}`(true)`, and the framework calls
+   * `resume()`, with no input, for each next reply until one is emitted
+   * without it. Each call emits exactly one batch, whose parent rows index the
+   * input batch `process()` received. Requires {@link initialState}; not
+   * allowed with `maxWorkers: 1`.
+   */
+  resume?: (
+    params: RowTransformProcessParams<TArgs>,
+    state: TState,
+    out: OutputCollector,
+  ) => void | Promise<void>;
+  /**
+   * The most input rows one worker call receives: the client's batched-LATERAL
+   * operator splits each input chunk (after dedup) into calls of at most this
+   * many rows, in order. Unset sends a whole chunk per call. A positive
+   * integer. Surfaces as `FunctionInfo.input_rows_per_call`; mirrors
+   * vgi-python's `Meta.input_rows_per_call`.
+   */
+  inputRowsPerCall?: number;
   // Metadata
   projectionPushdown?: boolean;
   filterPushdown?: boolean;
@@ -806,7 +863,8 @@ export interface RowTransformConfig<TArgs = Record<string, any>> {
  */
 export function defineRowTransformFunction<
   TArgs = Record<string, any>,
->(config: RowTransformConfig<TArgs>): VgiFunction {
+  TState = null,
+>(config: RowTransformConfig<TArgs, TState>): VgiFunction {
   // Foot-gun guard (mirrors Python's resolve_metadata check): a blended
   // function needs at least one positional Arg — its per-row input column.
   const numPositional = Object.keys(config.args ?? {}).length + (config.varargs ? 1 : 0);
@@ -816,6 +874,8 @@ export function defineRowTransformFunction<
         `positional arg (its per-row input column); found none.`,
     );
   }
+  checkResumeContract(config.name, config);
+  const inputRowsPerCall = checkInputRowsPerCall(config.name, config.inputRowsPerCall, true);
 
   // Positional args are the per-row input columns — REAL typed args on the
   // wire (no TableInput placeholder). Named args follow.
@@ -884,6 +944,7 @@ export function defineRowTransformFunction<
     // Map-shaped, per-row: a blended function never has a finalize.
     hasFinalize: false,
     inputFromArgs: true,
+    inputRowsPerCall,
   };
 
   // Only NAMED args are on the wire — positional args are the input columns,
@@ -1018,30 +1079,44 @@ export function defineRowTransformFunction<
         );
       }
 
+      const state = config.initialState
+        ? config.initialState(processParams)
+        : (null as TState);
+
       return {
         outputSchema,
         inputSchema: request.bind_call.input_schema,
-        exchangeInit: () => ({ state: null, processParams, filterHistory: carriedFilterHistory }),
+        continuesOutput: true,
+        exchangeInit: () => ({ state, processParams, filterHistory: carriedFilterHistory, morePending: false }),
         exchangeFn: async (
           eState: {
-            state: null;
+            state: TState;
             processParams: RowTransformProcessParams<TArgs>;
             filterHistory: FilterDeltaHistory;
+            morePending: boolean;
           },
           input: VgiBatch,
           out: OutputCollector,
         ) => {
-          applyRevalidationValidators(eState.processParams, input);
-          applyDynamicFilterUpdate(eState, input);
-          let wrappedOut: OutputCollector = makeMetadataBakingCollector(out);
-          if (projIds) {
-            wrappedOut = makeSchemaReconcilingCollector(wrappedOut, outputSchema);
-          }
-          const currentFilters = eState.processParams.pushdownFilters;
-          if (config.autoApplyFilters && currentFilters) {
-            wrappedOut = new FilteringOutputCollector(wrappedOut, currentFilters) as unknown as OutputCollector;
-          }
-          await config.process(eState.processParams, input, wrappedOut);
+          await continuationTurn(config.name, eState, input, out, config.resume != null, async (tick) => {
+            // A tick carries no validators, so this also withdraws the last
+            // input's from resume().
+            applyRevalidationValidators(eState.processParams, input);
+            applyDynamicFilterUpdate(eState, input);
+            let wrappedOut: OutputCollector = makeMetadataBakingCollector(out);
+            if (projIds) {
+              wrappedOut = makeSchemaReconcilingCollector(wrappedOut, outputSchema);
+            }
+            const currentFilters = eState.processParams.pushdownFilters;
+            if (config.autoApplyFilters && currentFilters) {
+              wrappedOut = new FilteringOutputCollector(wrappedOut, currentFilters) as unknown as OutputCollector;
+            }
+            if (tick) {
+              await config.resume!(eState.processParams, eState.state, wrappedOut);
+            } else {
+              await config.process(eState.processParams, input, wrappedOut, eState.state);
+            }
+          });
         },
       };
     },

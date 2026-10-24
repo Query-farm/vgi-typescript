@@ -6,6 +6,7 @@ import type { OverloadContext } from "../../functions/registry.js";
 import { batchToScalarDict, deserializeBatch, serializeBatch, batchFromColumns } from "../../util/arrow/index.js";
 import { toUint8Array } from "../../util/bytes.js";
 import { normalizeSchemaPath } from "../../schema-path.js";
+import { conformRecord } from "../../codec/conform.js";
 
 // The Python vgi-rpc framework wraps ALL non-void unary results in a single
 // "result" column. For ArrowSerializableDataclass types, the result is serialized
@@ -39,7 +40,8 @@ export function normalizeRequestSchemaPaths(params: Record<string, any>): void {
 
 /**
  * Wrap a dict of values into a single "result" Binary column.
- * Builds a 1-row batch from the values using the given schema,
+ * Builds a 1-row batch from the values using the given schema (conformed to
+ * the protocol's container rules, see `conformRecord`),
  * serializes it to IPC bytes, and returns { result: bytes }.
  */
 export function wrapResult(
@@ -47,8 +49,12 @@ export function wrapResult(
   innerSchema: VgiSchema | import("../../arrow/index.js").VgiSchema,
 ): { result: Uint8Array } {
   const a = innerSchema as VgiSchema;
+  // Python's container rules (a non-nullable list/map is never null, list
+  // items never are): `conformRecord` writes `[]` where a handler left a list
+  // out, and an unset list item as its zero value.
+  const row = conformRecord(a, values);
   const batch = batchFromColumns(
-    Object.fromEntries(a.fields.map(f => [f.name, [values[f.name] ?? null]])),
+    Object.fromEntries(a.fields.map(f => [f.name, [row[f.name] ?? null]])),
     a,
   );
   return { result: serializeBatch(batch) };

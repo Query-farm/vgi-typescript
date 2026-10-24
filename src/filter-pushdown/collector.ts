@@ -5,7 +5,8 @@
 
 import { type VgiBatch, type VgiSchema, isBatch } from "../arrow/index.js";
 import type { OutputCollector } from "@query-farm/vgi-rpc";
-import { batchFromColumns } from "../util/arrow/index.js";
+import { batchFromColumns, filterBatch } from "../util/arrow/index.js";
+import { decodeParentRows, encodeParentRows, PARENT_ROW_METADATA_KEY } from "../util/parent-rows.js";
 import { ComparisonOp, type FilterExpression } from "./types.js";
 import { expressionToSql, PushdownFilters } from "./evaluate.js";
 
@@ -107,6 +108,21 @@ export class FilteringOutputCollector {
       batch = batchOrColumns;
     } else {
       batch = batchFromColumns(batchOrColumns as Record<string, any[]>, this.inner.outputSchema as any);
+    }
+    const encoded = metadata?.get(PARENT_ROW_METADATA_KEY);
+    if (encoded !== undefined && batch.numRows > 0 && this.filters.filters.length > 0) {
+      // Provenance is per output row, so it must lose the rows the filter
+      // does: filter both with one mask. Mirrors vgi-python's
+      // _FilteringOutputCollector.
+      const mask = this.filters.evaluate(batch as any);
+      const parents = decodeParentRows(encoded);
+      const kept: number[] = [];
+      for (let i = 0; i < parents.length; i++) if (mask[i]) kept.push(parents[i]);
+      const md = new Map(metadata);
+      if (kept.length > 0) md.set(PARENT_ROW_METADATA_KEY, encodeParentRows(kept));
+      else md.delete(PARENT_ROW_METADATA_KEY);
+      this.inner.emit(filterBatch(batch as any, mask) as any, md);
+      return;
     }
     const filtered = this.filters.apply(batch as any);
     this.inner.emit(filtered as any, metadata);

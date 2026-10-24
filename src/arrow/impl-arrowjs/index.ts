@@ -49,6 +49,7 @@ export {
   deserializeSchema,
   serializeBatch,
   deserializeBatch,
+  deserializeBatches, serializeBatches, serializeCollectionRows,
 } from "./ipc.js";
 
 // Column statistics (sparse-union heavy — backend-specific).

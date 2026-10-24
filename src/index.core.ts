@@ -53,6 +53,12 @@ export {
   type RowTransformProcessParams,
 } from "./functions/table-in-out.js";
 export {
+  moreOutputMetadata,
+  STATUS_KEY,
+  HAVE_MORE_OUTPUT,
+  CONTINUE,
+} from "./functions/continuation.js";
+export {
   defineTableBufferingFunction,
   type TableBufferingConfig,
   type TableBufferingBindParams,
@@ -187,8 +193,10 @@ export {
   AttachTicketInvalidError,
   AttachTicketRequestError,
   SealAttachDeniedError,
+  type AttachTicket,
   type AttachTicketClaims,
   type RestoredAttach,
+  encodeAttachTicket,
   attachTicketAad,
   mintAttachTicket,
   openAttachTicket,
@@ -339,7 +347,7 @@ export { str, bytes, int, int32, float, float32, bool, toSchema, OutputCollector
 export { subprocessConnect, httpConnect, tcpConnect } from "@query-farm/vgi-rpc";
 export type { RpcClient, StreamSession, LogMessage } from "@query-farm/vgi-rpc";
 
-// Hosting additional protocols and opting into vgi_rpc.Identity.v1. The errors
+// Hosting additional protocols and opting into vgi_rpc.Identity.v2. The errors
 // are re-exported so a worker's resolveToken/mintGrant can throw the right one:
 // AuthUnavailableError (or IdentityUnavailableError) for "could not find out",
 // GrantRefusedError to decline a grant.

@@ -20,8 +20,8 @@ import { createVgiFetch } from "../../http/fetch.js";
 import { VGI_PROTOCOL_NAME, VGI_V2_PROTOCOL_HASH } from "../dispatch.js";
 import { UNIMPLEMENTED_METHODS, unimplementedMessage } from "../handlers/unimplemented.js";
 
-/** The reference (vgi-python 0.43.0) hosts exactly this many vgi.v2 methods. */
-const REFERENCE_METHOD_COUNT = 84;
+/** The combined canonical Python reference hosts exactly this many vgi.v2 methods. */
+const REFERENCE_METHOD_COUNT = 85;
 
 let server: { port: number; stop(force?: boolean): void };
 let baseUrl: string;

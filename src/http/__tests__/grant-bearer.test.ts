@@ -5,7 +5,7 @@
 // in (WIRE_PROTOCOL.md §16, "Accepting identity credentials").
 //
 //   1. A caller who authenticated recently mints a grant through
-//      vgi_rpc.Identity.v1's issue_grant -- sealed by the framework, because
+//      vgi_rpc.Identity.v2's issue_grant -- sealed by the framework, because
 //      the worker configured grant keys and no mintGrant hook.
 //   2. Automation presents it as `Authorization: Bearer <grant>` to a vgi.v2
 //      method (catalog_attach, then a table scan).
@@ -82,7 +82,7 @@ afterAll(() => server?.stop(true));
 
 async function mintGrant(): Promise<string> {
   const rpc = httpConnect(baseUrl, {
-    protocol: "vgi_rpc.Identity.v1",
+    protocol: "vgi_rpc.Identity.v2",
     fetch: ((input: RequestInfo | URL, init?: RequestInit) => {
       const headers = new Headers(init?.headers);
       headers.set("x-test-user", OWNER);

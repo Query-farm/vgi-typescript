@@ -226,7 +226,14 @@ Five factories, each mapping to a DuckDB function shape with its own lifecycle:
 - **`defineTableInOutFunction`** — table-in / table-out
   (`SELECT * FROM f(TABLE t, …)`). Per-partition `state`, a streaming `process` per
   input batch, and a `finalize` that sees every worker's state — for windowing,
-  reshaping, enrichment, sessionization.
+  reshaping, enrichment, sessionization. `defineRowTransformFunction` is its
+  blended form, whose positional args are per-row input columns
+  (`FROM t, f(t.x)`); `inputRowsPerCall` caps the input rows one call receives.
+  Either can answer one input with several replies (an upstream API read a page
+  at a time): emit each reply but the last with `moreOutputMetadata(true)`, and
+  implement `resume(params, state, out)`, which the framework calls for each
+  next reply. It continues from `initialState`'s state alone, which over HTTP
+  rides the stream's state token, so keep positions there, not rows.
 - **`defineTableBufferingFunction`** — table-in / table-out that must observe **all**
   input before producing output (global sort, top-N, pivot). Sink (`process`) →
   `combine` → source (`finalize`), with explicit sink/source ordering controls.
@@ -572,9 +579,9 @@ new Worker({ functions, hostedProtocols: () => [reports] }).run();
   changes how DuckDB's `vgi.v2` calls are dispatched.
 - The protocol is the unit of optionality: an optional capability is its own protocol.
 
-### Token introspection and grants (`vgi_rpc.Identity.v1`)
+### Token introspection and grants (`vgi_rpc.Identity.v2`)
 
-A worker opts into `vgi_rpc.Identity.v1` by supplying `resolveToken` and/or
+A worker opts into `vgi_rpc.Identity.v2` by supplying `resolveToken` and/or
 `mintGrant` (accepted by `Worker`, `serveVgiWorker`, `createVgiWorkerFetch` and
 `createVgiFetch`). It is hosted on **HTTP only** — the transport that authenticates
 callers — and only the methods whose hooks exist are hosted; with neither, the
@@ -672,6 +679,9 @@ ATTACH 'ticket_probe' AS p (TYPE vgi, LOCATION 'https://worker.example.com',
   options (`invalid_request` with one `BadRequest` violation per field). The lifetime
   is capped at the grant maximum (`VGI_RPC_GRANT_MAX_TTL_SECONDS`, default 7 days with
   grant keys); `ttl_seconds: 0` asks for the maximum.
+  The reply's `expires_at` is a nullable `timestamp[us, tz=UTC]` (`Date | null` in
+  TypeScript), null when the worker sets no maximum lifetime; protocol version
+  `2.0.0` (1.0.0 carried float64 unix seconds with `+inf` for "no expiry").
 - **Redeeming.** `catalog_attach` redeems a `vgi_attach_ticket` option (any letter
   case) before any catalog code runs: it must be the only option (`invalid_request`),
   it opens only under the caller's principal and this worker's key

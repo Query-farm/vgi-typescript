@@ -9,9 +9,10 @@
 //
 // flechette's `columnFromArray` already handles the complex cases (List, Map,
 // Struct, Decimal, Timestamp[ns]) when given the right options, so the WRITE
-// side is mostly delegation. The one wrinkle is Date: flechette stores a Date
-// column correctly only when fed JS `Date` objects, but our canonical date32 is
-// a day-number and date64 is ms-bigint — so we convert canonical -> Date here.
+// side is mostly delegation. Date32 needs epoch milliseconds rather than our
+// canonical day-number. Date64 takes canonical bigint milliseconds directly:
+// Flechette 2.7.1 preserves raw bigint storage, while Date/number inputs are
+// normalized to midnight and would lose an existing time-of-day component.
 //
 // On the READ side, flechette's Column/Data `.at()` already decodes every
 // scalar to its canonical JS value LOSSLESSLY (timestamp/duration/time64 ->
@@ -62,6 +63,7 @@ export function writeCanonicalBatch(
   columns: Record<string, unknown[]>,
   schema: VgiSchema,
   numRows: number,
+  maxBatchRows?: number,
 ): VgiBatch {
   const childCols: Column<any>[] = [];
   const fields: any[] = [];
@@ -69,8 +71,8 @@ export function writeCanonicalBatch(
     const ftype = toFlechetteType(f.type);
     const values = columns[f.name];
     const col: Column<any> = values
-      ? f_columnFromArray(prepareForFlechette(f.type, values), ftype, COLUMN_OPTS)
-      : f_columnFromArray(new Array(numRows).fill(null), ftype, COLUMN_OPTS);
+      ? f_columnFromArray(prepareForFlechette(f.type, values), ftype, { ...COLUMN_OPTS, maxBatchRows })
+      : f_columnFromArray(new Array(numRows).fill(null), ftype, { ...COLUMN_OPTS, maxBatchRows });
     childCols.push(col);
     const nullable = (f as any).nullable ?? true;
     const metadata = (f as any).metadata ?? null;
@@ -87,19 +89,23 @@ export function writeCanonicalBatch(
 
 /**
  * Convert canonical values into the shape flechette's columnFromArray needs.
- * Date columns: canonical day-number / ms-bigint -> JS Date. Map columns:
+ * Date32 columns: canonical day-number -> JS Date; Date64 stays ms-bigint. Map columns:
  * canonical Array<[k,v]> -> Map. Struct/List recurse. Everything else passes
  * through.
  */
 export function prepareForFlechette(type: VgiDataType, values: unknown[]): unknown[] {
   const tid = type.typeId;
+  if (tid === -1) {
+    return prepareForFlechette((type as any).dictionary as VgiDataType, values);
+  }
   if (tid === 8) {
     const isDay = (type as any).unit === 0;
     return values.map((v) => {
       if (v == null) return null;
+      if (!isDay) return typeof v === "bigint" ? v : BigInt(v instanceof Date ? v.getTime() : v as number);
       if (v instanceof Date) return v;
       const n = typeof v === "bigint" ? Number(v) : (v as number);
-      return new Date(isDay ? n * MS_PER_DAY : n);
+      return new Date(n * MS_PER_DAY);
     });
   }
   if (tid === 11 && (type as any).unit === MONTH_DAY_NANO) {
@@ -173,6 +179,7 @@ export function prepareForFlechette(type: VgiDataType, values: unknown[]): unkno
 
 function needsPrepare(type: VgiDataType): boolean {
   const tid = type.typeId;
+  if (tid === -1) return needsPrepare((type as any).dictionary as VgiDataType);
   if (tid === 8 || tid === 17) return true;
   if (tid === 11 && (type as any).unit === MONTH_DAY_NANO) return true;
   if (tid === 13) return ((type as any).children ?? []).some((c: any) => needsPrepare(c.type));

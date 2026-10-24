@@ -11,6 +11,7 @@ import type { AuthContext } from "@query-farm/vgi-rpc";
 import { exchangeStream, type VgiService } from "../../generated/vgi-service.js";
 import type { FunctionRegistry } from "../../functions/registry.js";
 import type { StreamHandlers, HandlerState } from "../../functions/types.js";
+import { refuseMoreOutput } from "../../functions/continuation.js";
 import {
   deserializeBindRequest,
   serializeBindResponse,
@@ -417,6 +418,11 @@ export function functionHandlers(config: FunctionHandlerConfig): Partial<VgiServ
         if (state.userState != null && handlerState?.state !== undefined) {
           handlerState!.state = state.userState;
         }
+        // Whether the last reply said more, so only a continuation tick is
+        // valid now (functions/continuation.ts).
+        if (handlers.continuesOutput) {
+          handlerState!.morePending = state.morePending === true;
+        }
       }
 
       if (state.isProducer && handlers.producerFn) {
@@ -434,6 +440,11 @@ export function functionHandlers(config: FunctionHandlerConfig): Partial<VgiServ
       } else if (handlers.exchangeFn) {
         await handlers.exchangeFn(handlerState, input, out);
       }
+      // Only a table-in-out exchange can continue its output; anywhere else
+      // the client would never send the tick.
+      if (!handlers.continuesOutput) {
+        refuseMoreOutput(state.functionName, out);
+      }
 
       // Save mutated user state for the next exchange round
       if (handlerState?.state !== undefined) {
@@ -442,6 +453,7 @@ export function functionHandlers(config: FunctionHandlerConfig): Partial<VgiServ
       // And the dynamic-filter history this turn left (compacted: bounded by
       // the number of predicate ids, not the number of turns).
       state.filterHistory = handlerState?.filterHistory ?? null;
+      state.morePending = handlerState?.morePending === true;
     },
     headerInit: (params: any, state: any, ctx: any) => {
       // During init, _initResponse is still in memory.

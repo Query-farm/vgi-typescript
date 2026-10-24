@@ -101,10 +101,10 @@ describe.skipIf(skip)("VgiClient — schemas", () => {
     expect(nope).toBeNull();
   });
 
-  test("each SchemaInfo carries a byte attach_opaque_data", async () => {
+  test("SchemaInfo excludes attachment state", async () => {
     const schemas = await client.schemas(attachOpaqueData);
     for (const s of schemas) {
-      expect(s.attach_opaque_data).toBeInstanceOf(Uint8Array);
+      expect("attach_opaque_data" in s).toBe(false);
     }
   });
 });

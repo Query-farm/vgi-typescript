@@ -65,7 +65,7 @@ import { Arguments } from "../arguments/arguments.js";
 import { FunctionType } from "../types.js";
 import { OrderByDirection, OrderByNullOrder, type BindRequest } from "../protocol/types.js";
 import { encodeASD } from "../codec/asd.js";
-import { encodeCatalogObjectRef, encodeObjectDependency, encodeDependencySnapshot, encodeCatalogMetadataChanges, encodeCatalogCapabilities, encodeOptionChanges, encodeOptionDefinitions, encodeOptionState, encodeRequiredFilterPaths, encodeSqlExpression, encodeSortKey, encodeTableLayout, encodeTableLayoutChange, buildSchemaContents, encodeSchemaContents } from "../generated/vgi-protocol-types.js";
+import { encodeConstraintChange, encodeConstraintDefinition, encodeConstraintInfo, encodeConstraintSnapshot, encodeConstraintsApplyRequest, encodeForeignKeyDefinition, encodeSqlStatement, encodeCatalogObjectRef, encodeObjectDependency, encodeDependencySnapshot, encodeCatalogMetadataChanges, encodeCatalogCapabilities, encodeOptionChanges, encodeOptionDefinitions, encodeOptionState, encodeRequiredFilterPaths, encodeSqlExpression, encodeSortKey, encodeTableLayout, encodeTableLayoutChange, buildSchemaContents, encodeSchemaContents } from "../generated/vgi-protocol-types.js";
 
 // --------------------------------------------------------------------------- //
 // Fixtures
@@ -180,6 +180,13 @@ const CASES: WireRecordCase[] = [
   {origin: "CatalogQueryPrepareResult", schema: generated.CatalogQueryPrepareResultSchema, build: () => queryRecords.encodeCatalogQueryPrepareResult(sampleRow(generated.CatalogQueryPrepareResultSchema) as any)},
 
   {origin: "CatalogCapabilities", schema: generated.CatalogCapabilitiesSchema, build: () => encodeCatalogCapabilities(sampleRow(generated.CatalogCapabilitiesSchema) as any)},
+  {origin: "ConstraintChange", schema: generated.ConstraintChangeSchema, build: () => encodeConstraintChange(sampleRow(generated.ConstraintChangeSchema) as any)},
+  {origin: "ConstraintDefinition", schema: generated.ConstraintDefinitionSchema, build: () => encodeConstraintDefinition(sampleRow(generated.ConstraintDefinitionSchema) as any)},
+  {origin: "ConstraintInfo", schema: generated.ConstraintInfoSchema, build: () => encodeConstraintInfo(sampleRow(generated.ConstraintInfoSchema) as any)},
+  {origin: "ConstraintSnapshot", schema: generated.ConstraintSnapshotSchema, build: () => encodeConstraintSnapshot(sampleRow(generated.ConstraintSnapshotSchema) as any)},
+  {origin: "ConstraintsApplyRequest", schema: generated.ConstraintsApplyRequestSchema, build: () => encodeConstraintsApplyRequest(sampleRow(generated.ConstraintsApplyRequestSchema) as any)},
+  {origin: "ForeignKeyDefinition", schema: generated.ForeignKeyDefinitionSchema, build: () => encodeForeignKeyDefinition(sampleRow(generated.ForeignKeyDefinitionSchema) as any)},
+  {origin: "SqlStatement", schema: generated.SqlStatementSchema, build: () => encodeSqlStatement(sampleRow(generated.SqlStatementSchema) as any)},
   {origin: "CatalogObjectRef", schema: generated.CatalogObjectRefSchema, build: () => encodeCatalogObjectRef(sampleRow(generated.CatalogObjectRefSchema) as any)},
   {origin: "ObjectDependency", schema: generated.ObjectDependencySchema, build: () => encodeObjectDependency(sampleRow(generated.ObjectDependencySchema) as any)},
   {origin: "DependencySnapshot", schema: generated.DependencySnapshotSchema, build: () => encodeDependencySnapshot(sampleRow(generated.DependencySnapshotSchema) as any)},
@@ -488,6 +495,7 @@ function sampleBindRequest(): BindRequest {
  * between covering it and writing down why not.
  */
 const NOT_BUILT_BY_TYPESCRIPT: Record<string, string> = {
+  TableFunctionProjectionRequest: "native planner builds proposals; the worker validates and decodes them before callback",
   // Request records the CLIENT builds and this worker SDK only ever reads.
   // Deserialization is by name and forgiving, so there is no builder here whose
   // column set could drift — the schema these are validated against is the

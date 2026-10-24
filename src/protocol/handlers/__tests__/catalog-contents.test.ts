@@ -51,6 +51,7 @@ import {
   ContentsMemoryCatalog,
   ContentsRevalCatalog,
 } from "../../../../examples/catalog_contents.js";
+import { decodeCatalogStreams } from "../../../catalog/contents-codec.js";
 import { catalogContentsDigest } from "../../../catalog/contents-digest.js";
 import { compareCodePoints } from "../../../codec/asd.js";
 import {
@@ -60,6 +61,7 @@ import {
   encodeSchemaInfo,
   encodeTableInfo,
   encodeViewInfo,
+  encodeFunctionInfo, encodeMacroInfo, encodeIndexInfo,
 } from "../../../generated/vgi-client.js";
 import type { CatalogContentsResult, SchemaContentsInfo } from "../../../catalog/interface.js";
 
@@ -110,7 +112,12 @@ function handlers(cat: CatalogInterface) {
     ): Promise<{ response: CatalogContentsResponse; schemas: SchemaContents[]; wire: Uint8Array }> {
       const r = await call("catalog_contents", { attach_opaque_data: attach, if_none_match: ifNoneMatch });
       const response = decodeASD<CatalogContentsResponse>(CatalogContentsResultSchema, r.result);
-      return { response, schemas: response.schemas, wire: r.result };
+      const schemas = decodeCatalogStreams(response, ifNoneMatch).map((c) => ({
+        path: c.schema.path, schema: encodeSchemaInfo(c.schema), tables: c.tables.map(encodeTableInfo), views: c.views.map(encodeViewInfo),
+        scalar_functions: c.scalar_functions.map(encodeFunctionInfo), aggregate_functions: c.aggregate_functions.map(encodeFunctionInfo), table_functions: c.table_functions.map(encodeFunctionInfo),
+        scalar_macros: c.scalar_macros.map(encodeMacroInfo), table_macros: c.table_macros.map(encodeMacroInfo), indexes: c.indexes.map(encodeIndexInfo),
+      }));
+      return { response, schemas, wire: r.result };
     },
     async ddlView(attach: Uint8Array, name: string, definition = "SELECT 1 AS x"): Promise<void> {
       await call("catalog_view_create", {
@@ -182,7 +189,7 @@ class NestedStubCatalog extends CatalogInterface {
   }
   override schemaContentsViews(_attach: AttachOpaqueData, path: string[]): ViewInfo[] {
     this.calls.push(`views:${path.join(".")}`);
-    return [{ comment: null, tags: {}, name: `v_${path.length}`, schema_path: path, definition: "SELECT 1", aliases: [], column_comments: {} }];
+    return [{ comment: null, tags: {}, name: `v_${path.length}`, schema_path: path, definition: "SELECT 1", aliases: [], security: "regular", column_comments: {} }];
   }
 }
 
@@ -489,9 +496,9 @@ describe("catalog_contents v2 wire", () => {
   test("each struct row's path equals its SchemaInfo.path", async () => {
     const h = handlers(exampleCatalog());
     const attach = (await h.attach(catalog.name)).attach_opaque_data;
-    const { response } = await h.contents(attach);
-    expect(response.schemas.length).toBe(catalog.schemas.length);
-    for (const sc of response.schemas) expect(sc.path).toEqual(decodeSchemaInfo(sc.schema).path);
+    const { schemas } = await h.contents(attach);
+    expect(schemas.length).toBe(catalog.schemas.length);
+    for (const sc of schemas) expect(sc.path).toEqual(decodeSchemaInfo(sc.schema).path);
   });
 
   test("a catalog without an etag ignores if_none_match and never answers not_modified", async () => {
@@ -520,7 +527,7 @@ describe("catalog_contents revalidation (contents_reval: generation-counter etag
     expect(reval.builds).toBe(1);
 
     const same = await h.contents(attach, "gen-1");
-    expect(same.response).toEqual({ catalog_version: 1, etag: "gen-1", not_modified: true, schemas: [] });
+    expect(same.response).toEqual({ catalog_version: 1, etag: "gen-1", not_modified: true, schemas: null, tables: null, views: null, functions: null, macros: null, indexes: null });
     expect(reval.builds).toBe(1); // the cheap validator answered; nothing was built
 
     const other = await h.contents(attach, "gen-not-current");
@@ -545,7 +552,7 @@ describe("catalog_contents revalidation (contents_reval: generation-counter etag
     expect(response.catalog_version).toBe(0);
     expect(response.etag).toBeNull();
     expect(response.not_modified).toBe(false);
-    expect(response.schemas[0].views.length).toBe(1);
+    expect(decodeCatalogStreams(response)[0].views.length).toBe(1);
   });
 });
 
@@ -562,7 +569,7 @@ describe("catalog_contents worker rules", () => {
     await expect(h.contents(attach, "e1")).rejects.toThrow(/not_modified/);
     cat.answer = () => ({ etag: "e1", not_modified: true });
     const ok = await h.contents(attach, "e1");
-    expect(ok.response).toEqual({ catalog_version: 42, etag: "e1", not_modified: true, schemas: [] });
+    expect(ok.response).toEqual({ catalog_version: 42, etag: "e1", not_modified: true, schemas: null, tables: null, views: null, functions: null, macros: null, indexes: null });
   });
 
   test("not_modified with schemas is refused", async () => {
@@ -579,7 +586,7 @@ describe("catalog_contents worker rules", () => {
       catalog_version: 42,
       etag: "e1",
       not_modified: true,
-      schemas: [],
+      schemas: null, tables: null, views: null, functions: null, macros: null, indexes: null,
     });
     const full = await h.contents(attach, "e0");
     expect(full.response.etag).toBe("e1");
@@ -606,7 +613,7 @@ describe("catalog_contents content-hash etag", () => {
     const a = await h.contents(attach);
     const etag = a.response.etag!;
     expect(etag).toMatch(/^[0-9a-f]{64}$/);
-    expect(etag).toBe(await catalogContentsDigest(a.schemas));
+    expect(etag).toBe(await catalogContentsDigest(a.response, Number(a.response.catalog_version)));
     expect((await h.contents(attach)).response.etag).toBe(etag);
     const same = await h.contents(attach, etag);
     expect(same.response.not_modified).toBe(true);
@@ -754,26 +761,20 @@ describe("catalog_contents worker cache (frozen + attach-independent)", () => {
     expect(builds).toBe(1);
     expect(r2.wire).toBe(r1.wire);
     for (const sc of r1.schemas) {
-      expect(hex(decodeSchemaInfo(sc.schema).attach_opaque_data)).toBe(hex(READ_ONLY_ITEM_ATTACH_ID));
+      expect("attach_opaque_data" in decodeSchemaInfo(sc.schema)).toBe(false);
     }
     // The per-schema RPCs agree (same fixed id), for either attach.
     const listed = await h.items("catalog_schemas", { attach_opaque_data: a2.attach_opaque_data });
     expectSameBytes(r1.schemas.map((s) => s.schema), listed, "schemas");
   });
 
-  test("perAttachItemIds opts back in to per-attach ids in items, and out of the cache", async () => {
-    const r = registry();
-    const ro = createExampleCatalog(new ReadOnlyCatalogInterface(catalog, r, { perAttachItemIds: true }));
-    expect(ro.catalogContentsCacheable()).toBe(false);
+  test("legacy perAttachItemIds never restores attachment state into SchemaInfo", async () => {
+    const ro = createExampleCatalog(new ReadOnlyCatalogInterface(catalog, registry(), { perAttachItemIds: true }));
     const h = handlers(ro);
-    const a1 = await h.attach(catalog.name);
-    const a2 = await h.attach(catalog.name);
-    const ids = async (a: Uint8Array) =>
-      (await h.contents(a)).schemas.map((sc) => hex(decodeSchemaInfo(sc.schema).attach_opaque_data));
-    const i1 = await ids(a1.attach_opaque_data);
-    const i2 = await ids(a2.attach_opaque_data);
-    expect(i1[0]).not.toBe(hex(READ_ONLY_ITEM_ATTACH_ID));
-    expect(i1[0]).not.toBe(i2[0]);
+    const a = await h.attach(catalog.name);
+    for (const item of (await h.contents(a.attach_opaque_data)).schemas) {
+      expect("attach_opaque_data" in decodeSchemaInfo(item.schema)).toBe(false);
+    }
   });
 });
 

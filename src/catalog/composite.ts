@@ -25,6 +25,7 @@ import type {
 } from "./interface.js";
 import { CatalogInterface } from "./interface.js";
 import { OpaqueDataRejectedError } from "../crypto.js";
+import { VgiError } from "../errors.js";
 
 function bufferEquals(a: AttachOpaqueData, b: AttachOpaqueData): boolean {
   if (a.length !== b.length) return false;
@@ -109,7 +110,7 @@ export class CompositeCatalogInterface extends CatalogInterface {
         return result;
       }
     }
-    throw new Error(`No worker handles catalog '${name}'`);
+    throw new VgiError(`No worker handles catalog '${name}'`, "NOT_FOUND");
   }
 
   async detach(attachOpaqueData: AttachOpaqueData): Promise<void> {

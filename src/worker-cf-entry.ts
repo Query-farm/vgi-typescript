@@ -42,6 +42,9 @@ export {
   defineRowTransformFunction,
   parentRowsMetadata,
   PARENT_ROW_METADATA_KEY,
+  // Continued output: a table-in-out reply that says more follow, answered
+  // through the function's resume(). Composes with parentRowsMetadata.
+  moreOutputMetadata,
   // Encodes ArgumentConstraints into the discovery-facing ArgumentSpec fields.
   // The blended config has no `argConstraints` of its own, so a worker that
   // wants ge/le/choices/pattern on a row-transform's args applies them itself.

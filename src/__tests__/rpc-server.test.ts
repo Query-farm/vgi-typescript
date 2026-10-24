@@ -39,11 +39,11 @@ describe("buildRpcServer", () => {
 
   test("identity is hosted on HTTP only, and only when opted into", () => {
     const opted: HostingOptions = { resolveToken, introspectPrincipals: ["proxy"] };
-    expect(hosted(opted, "http")).toContain("vgi_rpc.Identity.v1");
+    expect(hosted(opted, "http")).toContain("vgi_rpc.Identity.v2");
     for (const transport of ALL.filter((t) => t !== "http")) {
-      expect(hosted(opted, transport)).not.toContain("vgi_rpc.Identity.v1");
+      expect(hosted(opted, transport)).not.toContain("vgi_rpc.Identity.v2");
     }
-    expect(hosted({}, "http")).not.toContain("vgi_rpc.Identity.v1");
+    expect(hosted({}, "http")).not.toContain("vgi_rpc.Identity.v2");
   });
 
   test("introspection without an allowlist refuses to start", () => {
@@ -51,13 +51,13 @@ describe("buildRpcServer", () => {
     expect(() => hosted({ resolveToken, introspectPrincipals: [" ", ""] }, "http")).toThrow(/allowlist/);
     // The environment is the fallback.
     expect(hosted({ resolveToken }, "http", { VGI_INTROSPECT_PRINCIPALS: "proxy, other" })).toContain(
-      "vgi_rpc.Identity.v1",
+      "vgi_rpc.Identity.v2",
     );
   });
 
   test("minting alone needs no allowlist", () => {
-    const mintGrant = () => ({ token: "t", expiresAt: 0 });
-    expect(hosted({ mintGrant }, "http")).toContain("vgi_rpc.Identity.v1");
+    const mintGrant = () => ({ token: "t", expiresAt: new Date(0) });
+    expect(hosted({ mintGrant }, "http")).toContain("vgi_rpc.Identity.v2");
   });
 
   test("hook violations are startup errors naming the hook", () => {
@@ -86,22 +86,22 @@ describe("sealed grants", () => {
   test("grant keys from the environment host issue_grant on HTTP only, minted by the framework", () => {
     const env = { VGI_RPC_GRANT_KEYS: KEY };
     const http = buildRpcServer(primary(), {}, { transport: "http", env });
-    expect([...http.bindings().keys()]).toContain("vgi_rpc.Identity.v1");
+    expect([...http.bindings().keys()]).toContain("vgi_rpc.Identity.v2");
     expect([...(http.identity?.offeredMethods() ?? [])]).toEqual(["issue_grant"]);
     expect(http.identity?.grantKeys).toBeDefined();
     for (const transport of ALL.filter((t) => t !== "http")) {
-      expect(hosted({}, transport, env)).not.toContain("vgi_rpc.Identity.v1");
+      expect(hosted({}, transport, env)).not.toContain("vgi_rpc.Identity.v2");
     }
   });
 
   test("no key, no change; null turns grants off; a malformed key refuses to start", () => {
-    expect(hosted({}, "http", {})).not.toContain("vgi_rpc.Identity.v1");
-    expect(hosted({ grantKeys: null }, "http", { VGI_RPC_GRANT_KEYS: KEY })).not.toContain("vgi_rpc.Identity.v1");
+    expect(hosted({}, "http", {})).not.toContain("vgi_rpc.Identity.v2");
+    expect(hosted({ grantKeys: null }, "http", { VGI_RPC_GRANT_KEYS: KEY })).not.toContain("vgi_rpc.Identity.v2");
     expect(() => hosted({}, "http", { VGI_RPC_GRANT_KEYS: "bad*" })).toThrow(/base64/);
   });
 
   test("a worker's own mintGrant wins; resolveToken still needs its allowlist", () => {
-    const mintGrant = () => ({ token: "mine", expiresAt: 0 });
+    const mintGrant = () => ({ token: "mine", expiresAt: new Date(0) });
     const server = buildRpcServer(primary(), { mintGrant }, { transport: "http", env: { VGI_RPC_GRANT_KEYS: KEY } });
     expect(server.identity?.grantKeys).toBeDefined();
     expect(() => hosted({ resolveToken }, "http", { VGI_RPC_GRANT_KEYS: KEY })).toThrow(/VGI_INTROSPECT_PRINCIPALS/);

@@ -9,17 +9,8 @@
  */
 
 import type { SchemaContents } from "../generated/vgi-protocol-types.js";
-
-const KINDS = [
-  "tables",
-  "views",
-  "scalar_functions",
-  "aggregate_functions",
-  "table_functions",
-  "scalar_macros",
-  "table_macros",
-  "indexes",
-] as const;
+import type { CatalogStreams } from "./contents-codec.js";
+import { CATALOG_STREAM_KINDS } from "./contents-codec.js";
 
 /**
  * Hex SHA-256 over a `catalog_contents` snapshot: the `content-hash` etag.
@@ -38,7 +29,7 @@ const KINDS = [
  * @param schemas The snapshot, in wire order.
  * @returns The lowercase hex digest.
  */
-export async function catalogContentsDigest(schemas: readonly SchemaContents[]): Promise<string> {
+export async function catalogContentsDigest(streams: CatalogStreams | readonly SchemaContents[], version: number = 0): Promise<string> {
   const utf8 = new TextEncoder();
   const parts: Uint8Array[] = [];
   let total = 0;
@@ -58,11 +49,23 @@ export async function catalogContentsDigest(schemas: readonly SchemaContents[]):
     for (const v of values) chunk(v);
   };
 
-  count(schemas.length);
-  for (const entry of schemas) {
-    chunks(entry.path.map((p) => utf8.encode(p)));
-    chunk(entry.schema);
-    for (const kind of KINDS) chunks(entry[kind]);
+  if (Array.isArray(streams)) {
+    // Compatibility helper for author-side legacy inventories; the wire writer
+    // hashes the six streams below.
+    count(streams.length);
+    for (const entry of streams) {
+      chunks(entry.path.map((p: string) => utf8.encode(p)));
+      chunk(entry.schema);
+      for (const kind of ["tables", "views", "scalar_functions", "aggregate_functions", "table_functions", "scalar_macros", "table_macros", "indexes"] as const) chunks(entry[kind]);
+    }
+  } else {
+    chunk(utf8.encode("vgi.catalog-contents.2.2"));
+    count(version);
+    for (const kind of CATALOG_STREAM_KINDS) {
+      const value = (streams as CatalogStreams)[kind];
+      count(value == null ? 0 : 1);
+      if (value != null) chunk(value);
+    }
   }
 
   const buf = new Uint8Array(total);

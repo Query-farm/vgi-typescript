@@ -13,7 +13,7 @@
 //   2. The worker's `hostedProtocols()`, in the order returned -- on EVERY
 //      transport.
 //   3. `vgi_rpc.Reflection.v1` -- on every transport.
-//   4. `vgi_rpc.Identity.v1` -- HTTP only, and only when the worker supplies
+//   4. `vgi_rpc.Identity.v2` -- HTTP only, and only when the worker supplies
 //      `resolveToken` and/or `mintGrant` (or grant keys are configured).
 //   5. `vgi.attach_tickets.v1` -- HTTP only, and only when the signing key was
 //      configured explicitly (never a generated one) *and* the worker can
@@ -44,7 +44,7 @@ export type ServerTransport = "pipe" | "unix" | "tcp" | "iroh" | "stream" | "htt
 const TRANSPORTS: ReadonlySet<string> = new Set<ServerTransport>(["pipe", "unix", "tcp", "iroh", "stream", "http"]);
 
 /** Transports that authenticate their callers, and so may host
- *  `vgi_rpc.Identity.v1`. Identity answers questions about *other* callers'
+ *  `vgi_rpc.Identity.v2`. Identity answers questions about *other* callers'
  *  credentials; its allowlist is a list of principals, which a transport with
  *  no caller identity cannot check. */
 const IDENTITY_TRANSPORTS: ReadonlySet<string> = new Set<ServerTransport>(["http"]);
@@ -78,14 +78,14 @@ export interface HostingOptions {
    *
    * Each needs a distinct wire name, which may not be `vgi.v2` and may not
    * use the reserved `vgi_rpc.` prefix: reflection is hosted automatically and
-   * `vgi_rpc.Identity.v1` is enabled through {@link resolveToken} /
+   * `vgi_rpc.Identity.v2` is enabled through {@link resolveToken} /
    * {@link mintGrant}. Violations are a startup error naming this hook.
    */
   hostedProtocols?: () => Iterable<Protocol>;
 
   /**
    * Resolve an opaque bearer credential to the identity it authenticates as.
-   * Supplying it hosts `vgi_rpc.Identity.v1`'s `introspect_token` -- on HTTP,
+   * Supplying it hosts `vgi_rpc.Identity.v2`'s `introspect_token` -- on HTTP,
    * the transport that authenticates callers. Absent, the method is absent
    * (not hosted-and-refusing), which keeps a dependency upgrade from growing a
    * credential-to-identity oracle on every existing worker.
@@ -232,7 +232,7 @@ function validatedHostedProtocols(hosting: HostingOptions, primary: Protocol): P
       throw new Error(
         `${owner} entry ${index} is named '${name}', which claims the reserved '${RESERVED_PREFIX}' prefix. ` +
           "Framework protocols are not supplied through this hook: reflection is hosted automatically, and " +
-          "vgi_rpc.Identity.v1 is enabled by supplying resolveToken and/or mintGrant.",
+          "vgi_rpc.Identity.v2 is enabled by supplying resolveToken and/or mintGrant.",
       );
     }
     if (!/^[A-Za-z_][A-Za-z0-9_.]*$/.test(name)) {
@@ -259,7 +259,7 @@ function validatedHostedProtocols(hosting: HostingOptions, primary: Protocol): P
   return out;
 }
 
-/** Build the `vgi_rpc.Identity.v1` implementation, or `undefined`.
+/** Build the `vgi_rpc.Identity.v2` implementation, or `undefined`.
  *
  *  `undefined` unless the worker supplies at least one hook -- and that is the
  *  point: the server then does not host the protocol at all, rather than
@@ -329,7 +329,7 @@ function resolveIntrospectPrincipals(
   }
   if (principals.length === 0) {
     throw new Error(
-      "This worker supplies resolveToken, which hosts the vgi_rpc.Identity.v1 protocol, but no " +
+      "This worker supplies resolveToken, which hosts the vgi_rpc.Identity.v2 protocol, but no " +
         `introspector allowlist was configured. Set ${INTROSPECT_PRINCIPALS_ENV} (comma-separated) or pass ` +
         "introspectPrincipals.\n\n" +
         "There is no permissive default on purpose: introspection is a separate capability from " +

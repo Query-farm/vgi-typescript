@@ -265,8 +265,8 @@ export class InMemoryCatalog extends CatalogInterface {
     const schema = att.schemas.get(schemaPathKey(schemaPath));
     if (!schema) throw new CatalogNotFoundError("Schema", schemaPathDisplay(schemaPath));
     if (schema.tables.has(name)) {
-      if (onConflict === "ignore") return;
-      if (onConflict === "replace") {
+      if (String(onConflict).toUpperCase() === "IGNORE") return;
+      if (String(onConflict).toUpperCase() === "REPLACE") {
         schema.tables.delete(name);
       } else {
         throw new CatalogAlreadyExistsError("Table", name);
@@ -383,8 +383,8 @@ export class InMemoryCatalog extends CatalogInterface {
     const schema = att.schemas.get(schemaPathKey(schemaPath));
     if (!schema) throw new CatalogNotFoundError("Schema", schemaPathDisplay(schemaPath));
     if (schema.views.has(name)) {
-      if (onConflict.toUpperCase() === "IGNORE") return;
-      if (onConflict.toUpperCase() === "REPLACE") {
+      if (String(onConflict).toUpperCase() === "IGNORE") return;
+      if (String(onConflict).toUpperCase() === "REPLACE") {
         schema.views.delete(name);
       } else {
         throw new CatalogAlreadyExistsError("View", name);

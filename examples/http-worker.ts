@@ -124,7 +124,7 @@ const server = serveVgiWorker({
   authenticate: fixtureAuthenticate,
   // The cross-SDK fixture protocol, hosted beside vgi.v2 through the public hook.
   hostedProtocols: () => [buildSecondaryProtocol()],
-  // vgi_rpc.Identity.v1 under the pinned IDENTITY_CONFORMANCE_FIXTURE.md
+  // vgi_rpc.Identity.v2 under the pinned IDENTITY_CONFORMANCE_FIXTURE.md
   // policy -- both hooks, the one-principal allowlist, the 900 s auth age --
   // so `vgi-rpc-test-hosted --url ... --identity` can assert against it.
   resolveToken: conformanceResolveToken,

@@ -33,6 +33,8 @@ import { FunctionStability, NullHandling, OrderPreservation, DEFAULT_MAX_WORKERS
 import { Arguments } from "../arguments/arguments.js";
 import { normalizeSchemaPath, schemaPathDisplay, schemaPathsEqual } from "../schema-path.js";
 import { ForeignKeyInfoSchema } from "../generated/vgi-protocol-schemas.js";
+import { conformColumns } from "../codec/conform.js";
+import { VgiError } from "../errors.js";
 import { encodeFunctionInfoOnce, freezeCatalogItem } from "./item-encoding.js";
 import { macroOverloads } from "./macro-overloads.js";
 
@@ -184,7 +186,7 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
     implementationVersion?: string | null,
   ): CatalogAttachResult | Promise<CatalogAttachResult> {
     if (!this.catalogs().includes(name)) {
-      throw new Error(`No worker handles catalog '${name}'`);
+      throw new VgiError(`No worker handles catalog '${name}'`, "NOT_FOUND");
     }
     // Refuse an attach that omits a declared-required option, so the caller
     // gets the option name rather than a catalog that looks mysteriously
@@ -271,7 +273,6 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
 
   schemas(attachOpaqueData: AttachOpaqueData, transactionOpaqueData?: TransactionOpaqueData): SchemaInfo[] {
     return this._descriptor.schemas.map((s) => ({
-      attach_opaque_data: this.itemAttachId(attachOpaqueData),
       path: schemaDescriptorPath(s),
       comment: s.comment ?? null,
       tags: s.tags ?? {},
@@ -309,7 +310,6 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
     const desc = this._descriptor.schemas.find((s) => schemaPathsEqual(schemaDescriptorPath(s), path));
     if (!desc) return null;
     return {
-      attach_opaque_data: this.itemAttachId(attachOpaqueData),
       path: schemaDescriptorPath(desc),
       comment: desc.comment ?? null,
       tags: desc.tags ?? {},
@@ -684,6 +684,12 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
           // mirrors Python's `input_from_args=False if is_scalar else ...`.
           input_from_args:
             f.kind === "table_in_out" && f.meta.inputFromArgs === true,
+          // Blended only: the most input rows per worker call (null = a whole
+          // chunk). Mirrors Python's `None if is_scalar else ...`.
+          input_rows_per_call:
+            f.kind === "table_in_out" && f.meta.inputFromArgs === true
+              ? (f.meta.inputRowsPerCall ?? null)
+              : null,
           required_settings: meta.requiredSettings,
           required_secrets: requiredSecrets.map((s) => ({
             secret_type: s.secret_type,
@@ -810,11 +816,11 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
     // Find the table descriptor
     const schema = this._descriptor.schemas.find((s) => schemaPathsEqual(schemaDescriptorPath(s), schemaPath));
     if (!schema || !schema.tables) {
-      throw new Error(`Table '${name}' not found in schema ${schemaPathDisplay(schemaPath)}`);
+      throw new VgiError(`Table '${name}' not found in schema ${schemaPathDisplay(schemaPath)}`, "NOT_FOUND");
     }
     const table = schema.tables.find((t) => t.name === name);
     if (!table) {
-      throw new Error(`Table '${name}' not found in schema ${schemaPathDisplay(schemaPath)}`);
+      throw new VgiError(`Table '${name}' not found in schema ${schemaPathDisplay(schemaPath)}`, "NOT_FOUND");
     }
 
     // Reject AT clause on tables that don't support time travel
@@ -948,12 +954,12 @@ function serializeForeignKeys(fks?: ForeignKeyDef[], schemaPath?: string[]): Uin
   return fks.map((fk) =>
     serializeBatch(
       batchFromColumns(
-        {
+        conformColumns(ForeignKeyInfoSchema, {
           fk_columns: [fk.columns],
           pk_columns: [fk.referencedColumns],
           referenced_table: [fk.referencedTable],
           referenced_schema_path: [fk.referencedSchemaPath ?? schemaPath ?? ["main"]],
-        },
+        }),
         ForeignKeyInfoSchema
       )
     )
@@ -1136,7 +1142,7 @@ function serializeArgsBatch(args: Arguments, argSpecSchema: VgiSchema): Uint8Arr
 
 function validateAtParams(atUnit?: string, atValue?: string): void {
   if (Boolean(atUnit) !== Boolean(atValue)) {
-    throw new Error("at_unit and at_value must both be provided or both be absent");
+    throw new VgiError("at_unit and at_value must both be provided or both be absent", "INVALID_ARGUMENT");
   }
 }
 
