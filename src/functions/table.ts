@@ -21,6 +21,7 @@ import type {
 import type {
   BindRequest,
   BindResponse,
+  BindRepeatability,
   InitRequest,
   GlobalInitResponse,
   TableFunctionCardinalityRequest,
@@ -217,6 +218,7 @@ export interface TableFunctionConfig<
         outputSchema: VgiSchema;
         opaqueData?: Uint8Array;
         projectionExpressionProfiles?: string[];
+        repeatability?: BindRepeatability;
         lookupSecretTypes?: string[];
         lookupScopes?: string[];
         lookupNames?: string[];
@@ -225,6 +227,7 @@ export interface TableFunctionConfig<
         outputSchema: VgiSchema;
         opaqueData?: Uint8Array;
         projectionExpressionProfiles?: string[];
+        repeatability?: BindRepeatability;
         lookupSecretTypes?: string[];
         lookupScopes?: string[];
         lookupNames?: string[];
@@ -464,6 +467,7 @@ export function defineTableFunction<
         output_schema: result.outputSchema,
         opaque_data: result.opaqueData ?? null,
         projection_expression_profiles: result.projectionExpressionProfiles ?? [],
+        repeatability: result.repeatability === undefined ? "UNKNOWN" : result.repeatability,
         lookup_secret_types: result.lookupSecretTypes,
         lookup_scopes: result.lookupScopes,
         lookup_names: result.lookupNames,

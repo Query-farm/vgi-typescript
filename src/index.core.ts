@@ -100,6 +100,7 @@ export {
 export type {
   BindRequest,
   BindResponse,
+  BindRepeatability,
   CopyFromContext,
   CopyToContext,
   InitRequest,

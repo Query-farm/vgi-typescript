@@ -104,7 +104,12 @@ export interface BindRequest {
   argument_names?: (string | null)[] | null;
 }
 
+/** Equivalent scans of one bound state within a query; independent binds may differ. */
+export type BindRepeatability = "UNKNOWN" | "STABLE_WITHIN_QUERY";
+
 export interface BindResponse {
+  /** Omitted provider values serialize as UNKNOWN. Wire values are required. */
+  repeatability?: BindRepeatability;
   projection_expression_profiles?: string[];
   output_schema: VgiSchema;
   opaque_data: Uint8Array | null;

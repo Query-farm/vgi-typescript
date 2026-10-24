@@ -13,6 +13,7 @@ export const projectionSequence = defineTableFunction<
   onBind: () => ({
     outputSchema: schema([field("n", int32(), true)]),
     projectionExpressionProfiles: [SCALAR_PROJECTION_PROFILE],
+    repeatability: "STABLE_WITHIN_QUERY",
   }),
   projection: (_, p) => {
     const acceptedIndices = p.expressions.flatMap((raw, i) => {
@@ -44,6 +45,7 @@ export const projectionSequence = defineTableFunction<
             ),
             projection_expression_profiles:
               p.bindResult.projection_expression_profiles,
+            repeatability: p.bindResult.repeatability,
           }
         : null,
     };

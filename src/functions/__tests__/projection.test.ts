@@ -25,6 +25,7 @@ const proposal: ProjectionProposal = {
     output_schema: source,
     opaque_data: null,
     projection_expression_profiles: [SCALAR_PROJECTION_PROFILE],
+    repeatability: "STABLE_WITHIN_QUERY",
   },
   expressions: [
     new Uint8Array(
@@ -42,6 +43,7 @@ const accepted = (): ProjectionAcceptance => ({
     output_schema: schema([...source.fields, candidate], source.metadata),
     opaque_data: new Uint8Array([7]),
     projection_expression_profiles: [SCALAR_PROJECTION_PROFILE],
+    repeatability: "STABLE_WITHIN_QUERY",
   },
 });
 test("projection acceptance preserves schema metadata and replacement state", () => {
@@ -61,6 +63,7 @@ for (const kind of [
   "metadata",
   "offer",
   "secret",
+  "repeatability",
   "missing",
 ]) {
   test(`reject malformed provider acceptance ${kind}`, () => {
@@ -86,6 +89,9 @@ for (const kind of [
         break;
       case "offer":
         result.bindResult!.projection_expression_profiles = [];
+        break;
+      case "repeatability":
+        result.bindResult!.repeatability = "UNKNOWN";
         break;
       case "secret":
         result.bindResult!.lookup_names = ["secret"];

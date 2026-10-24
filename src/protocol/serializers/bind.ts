@@ -6,7 +6,7 @@
 import { type VgiSchema, schema, field, type VgiBatch, type VgiDataType, utf8, binary, bool, struct, dictionary, int16, list } from "../../arrow/index.js";
 import { Arguments } from "../../arguments/arguments.js";
 import { FunctionType } from "../../types.js";
-import type { BindRequest, BindResponse, CopyFromContext, CopyToContext } from "../types.js";
+import type { BindRequest, BindResponse, BindRepeatability, CopyFromContext, CopyToContext } from "../types.js";
 import {
   serializeSchema,
   deserializeSchema,
@@ -182,6 +182,18 @@ export function deserializeBindRequest(
   };
 }
 
+/** Validate required wire enum values, including rejecting NULL and absent values. */
+export function parseBindRepeatability(value: unknown): BindRepeatability {
+  if (value !== "UNKNOWN" && value !== "STABLE_WITHIN_QUERY")
+    throw new Error("invalid bind repeatability");
+  return value;
+}
+
+/** Only omitted provider declarations default; explicit NULL remains invalid. */
+export function normalizeBindRepeatability(value: unknown): BindRepeatability {
+  return parseBindRepeatability(value === undefined ? "UNKNOWN" : value);
+}
+
 export function serializeBindResponse(
   resp: BindResponse
 ): Record<string, any> {
@@ -192,6 +204,7 @@ export function serializeBindResponse(
     lookup_secret_types: resp.lookup_secret_types ?? [],
     lookup_scopes: resp.lookup_scopes ?? [],
     lookup_names: resp.lookup_names ?? [],
+    repeatability: normalizeBindRepeatability(resp.repeatability),
   };
 }
 
@@ -210,6 +223,7 @@ export function deserializeBindResponse(
     lookup_secret_types: toStrArray(params.lookup_secret_types),
     lookup_scopes: toStrArray(params.lookup_scopes),
     lookup_names: toStrArray(params.lookup_names),
+    repeatability: parseBindRepeatability(params.repeatability),
   };
 }
 

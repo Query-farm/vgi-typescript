@@ -9,6 +9,10 @@ import { validateEncoded } from "../catalog/column-expressions.js";
 import { decodeSqlExpression } from "../generated/vgi-protocol-types.js";
 import { batchToScalarDict } from "../util/arrow/index.js";
 import type { BindRequest, BindResponse } from "../protocol/types.js";
+import {
+  normalizeBindRepeatability,
+  parseBindRepeatability,
+} from "../protocol/serializers/bind.js";
 export const SCALAR_PROJECTION_PROFILE = "vgi.expression.duckdb.scalar.v1";
 export interface ProjectionProposal {
   bindCall: BindRequest;
@@ -105,6 +109,7 @@ export function validateProjectionOffer(result: BindResponse): void {
     throw new Error("unsupported projection profile offer");
 }
 export function validateProjectionProposal(p: ProjectionProposal): void {
+  parseBindRepeatability(p.bindResult.repeatability);
   validateProjectionOffer(p.bindResult);
   if (
     p.bindCall.function_type !== "table" ||
@@ -170,6 +175,11 @@ export function validateProjectionAcceptance(
   }
   if (!r.bindResult) return;
   validateProjectionOffer(r.bindResult);
+  if (
+    normalizeBindRepeatability(r.bindResult.repeatability) !==
+    p.bindResult.repeatability
+  )
+    throw new Error("accepted projection changed bind repeatability");
   if (
     JSON.stringify(r.bindResult.projection_expression_profiles ?? []) !==
       JSON.stringify(p.bindResult.projection_expression_profiles ?? []) ||
