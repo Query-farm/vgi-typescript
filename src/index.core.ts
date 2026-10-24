@@ -359,3 +359,6 @@ export {
 } from "@query-farm/vgi-rpc";
 export type { GrantMinter, IssuedGrant, TokenIdentity, TokenResolver } from "@query-farm/vgi-rpc";
 export { normalizeSchemaPath, schemaPathDisplay, schemaPathKey, schemaPathsEqual, type SchemaPath } from "./schema-path.js";
+
+// Optional scalar projection negotiation and its explicit offer.
+export { SCALAR_PROJECTION_PROFILE, type ProjectionProposal, type ProjectionAcceptance } from "./functions/projection.js";

@@ -105,6 +105,7 @@ export interface BindRequest {
 }
 
 export interface BindResponse {
+  projection_expression_profiles?: string[];
   output_schema: VgiSchema;
   opaque_data: Uint8Array | null;
   lookup_secret_types?: string[];

@@ -41,7 +41,6 @@ function expression(value: SqlExpression, owner: string[]): void {
     throw new Error("unsupported generated expression profile or empty SQL");
   if (
     !Array.isArray(value.schema_path) ||
-    !value.schema_path.length ||
     value.schema_path.length > 32
   )
     throw new Error("invalid generated expression owner");
@@ -144,7 +143,7 @@ function shape(schema: VgiSchema): string {
   ];
   return JSON.stringify(schema.fields.map(field));
 }
-function validateEncoded(encoded: string, owner: string[]): void {
+export function validateEncoded(encoded: string, owner: string[]): void {
   if (!encoded.length || encoded.length > 4 * Math.ceil(MAX_BYTES / 3))
     throw new Error("invalid generated expression size");
   const bytes = Uint8Array.from(atob(encoded), (c) => c.charCodeAt(0));

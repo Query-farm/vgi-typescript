@@ -188,6 +188,7 @@ export function serializeBindResponse(
   return {
     output_schema: serializeSchema(resp.output_schema),
     opaque_data: resp.opaque_data ?? null,
+    projection_expression_profiles: resp.projection_expression_profiles ?? [],
     lookup_secret_types: resp.lookup_secret_types ?? [],
     lookup_scopes: resp.lookup_scopes ?? [],
     lookup_names: resp.lookup_names ?? [],
@@ -204,6 +205,7 @@ export function deserializeBindResponse(
   };
   return {
     output_schema: deserializeSchema(toUint8Array(params.output_schema)),
+    projection_expression_profiles: toStrArray(params.projection_expression_profiles),
     opaque_data: params.opaque_data ? toUint8Array(params.opaque_data) : null,
     lookup_secret_types: toStrArray(params.lookup_secret_types),
     lookup_scopes: toStrArray(params.lookup_scopes),

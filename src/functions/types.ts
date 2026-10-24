@@ -253,6 +253,7 @@ export interface VgiFunction {
    * function is not split-capable: the whole scan is one unit of work, and the
    * framework answers with a single empty-payload split.
    */
+  projection?(proposal: import("./projection.js").ProjectionProposal): import("./projection.js").ProjectionAcceptance | Promise<import("./projection.js").ProjectionAcceptance>;
   plan?(request: import("../protocol/serializers/splits.js").TableFunctionPlanRequest):
     | import("../protocol/serializers/splits.js").PlanResult
     | Promise<import("../protocol/serializers/splits.js").PlanResult>;

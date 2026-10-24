@@ -4,6 +4,9 @@
 // implements VgiFunction.bind/globalInit/createStreamHandlers.
 
 import { type VgiSchema, schema, type VgiField, field, type VgiDataType, binary, int64 } from "../../arrow/index.js";
+import { projectionRecord, validateProjectionOffer, validateProjectionProposal, validateProjectionAcceptance, type ProjectionProposal } from "../../functions/projection.js";
+import { deserializeBindResponse } from "../serializers/bind.js";
+import { deserializeSchema } from "../../arrow/index.js";
 import type { AuthContext } from "@query-farm/vgi-rpc";
 import { exchangeStream, type VgiService } from "../../generated/vgi-service.js";
 import type { FunctionRegistry } from "../../functions/registry.js";
@@ -22,6 +25,9 @@ import { toUint8Array } from "../../util/bytes.js";
 import { serializeColumnStatistics } from "../../util/statistics.js";
 import {
   BindResultSchema,
+  BindRequestSchema,
+  TableFunctionProjectionRequestSchema,
+  TableFunctionProjectionResultSchema,
   TableFunctionCardinalityResultSchema,
   TableFunctionDynamicToStringResultSchema,
 } from "../../generated/vgi-protocol-schemas.js";
@@ -239,6 +245,7 @@ export function functionHandlers(config: FunctionHandlerConfig): Partial<VgiServ
     request.attach_opaque_data = await stripAttach(request.attach_opaque_data, ctx);
     const func = registry.get(request.function_name, overloadContext(request, catalogInterface));
     const response = await func.bind(request);
+    validateProjectionOffer(response);
     const serialized = serializeBindResponse(response);
     return wrapResult(serialized, BindResultSchema);
   };
@@ -587,7 +594,66 @@ export function functionHandlers(config: FunctionHandlerConfig): Partial<VgiServ
     return wrapResult({ keys, values }, TableFunctionDynamicToStringResultSchema);
   };
 
+  const tableFunctionProjection: VgiService["tableFunctionProjection"] = async (
+    params,
+  ) => {
+    if (toUint8Array(params.request).length > 8 * 1024 * 1024)
+      throw new Error("projection exceeds 8MiB");
+    const inner = projectionRecord(toUint8Array(params.request), TableFunctionProjectionRequestSchema);
+    const size =
+      toUint8Array(inner.bind_call).length +
+      toUint8Array(inner.bind_result).length +
+      toUint8Array(inner.result_schema).length +
+      Array.from(
+        inner.expressions as any[],
+        (v) => toUint8Array(v).length,
+      ).reduce((a, b) => a + b, 0);
+    if (size > 8 * 1024 * 1024) throw new Error("projection exceeds 8MiB");
+    const proposal: ProjectionProposal = {
+      bindCall: deserializeBindRequest(
+        projectionRecord(toUint8Array(inner.bind_call), BindRequestSchema),
+      ),
+      bindResult: deserializeBindResponse(
+        projectionRecord(toUint8Array(inner.bind_result), BindResultSchema),
+      ),
+      expressions: Array.from(inner.expressions as any[], toUint8Array),
+      resultSchema: deserializeSchema(toUint8Array(inner.result_schema)),
+    };
+    validateProjectionProposal(proposal);
+    const func = registry.get(
+      proposal.bindCall.function_name,
+      await strippedContext(proposal.bindCall),
+    );
+    if (func.kind !== "table")
+      throw new Error("projection requires an ordinary table");
+    const response = func.projection
+      ? await func.projection(proposal)
+      : { acceptedIndices: [], bindResult: null };
+    validateProjectionAcceptance(proposal, response);
+    const packed = wrapResult(
+      {
+        accepted_indices: response.acceptedIndices,
+        bind_result: response.bindResult
+          ? serializeBatch(
+              batchFromColumns(
+                Object.fromEntries(
+                  Object.entries(
+                    serializeBindResponse(response.bindResult),
+                  ).map(([k, v]) => [k, [v]]),
+                ),
+                BindResultSchema,
+              ),
+            )
+          : null,
+      },
+      TableFunctionProjectionResultSchema,
+    );
+    if (packed.result.length > 8 * 1024 * 1024)
+      throw new Error("projection response exceeds 8MiB");
+    return packed;
+  };
   return {
+    tableFunctionProjection,
     bind,
     init,
     tableFunctionCardinality,

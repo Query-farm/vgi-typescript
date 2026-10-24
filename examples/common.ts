@@ -84,6 +84,7 @@ import {
 } from "./global_functions.js";
 
 // Find functions for table-backed catalog entries
+import {projectionSequence} from "./projection_sequence.js";
 const sequenceFunction = tableFunctions.find((f) => f.meta.name === "sequence");
 const rowIdSequenceFunction = tableFunctions.find((f) => f.meta.name === "rowid_sequence");
 const lateMaterializationFunction = tableFunctions.find((f) => f.meta.name === "late_materialization");
@@ -159,6 +160,7 @@ export const allFunctions = [
   ...splitFunctions,
   ...scalarFunctions,
   ...tableFunctions,
+  projectionSequence,
   ...cacheTableFunctions,
   ...cachePartitionScopeTableFunctions,
   // Secret-dependent cacheable fixtures (producer, scalar, blended map): their
@@ -281,6 +283,7 @@ export const catalog: CatalogDescriptor = {
       },
       functions: catalogFunctions,
       tables: [
+        {name:"projection_rows",function:projectionSequence},
         // Schema-disambiguation probe (table dispatch): same declared table
         // name as the data-schema table below, backed by THIS schema's own
         // scan-function implementation (test_same_name_table_scan, declared in

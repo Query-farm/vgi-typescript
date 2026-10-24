@@ -216,6 +216,7 @@ export interface TableFunctionConfig<
     | {
         outputSchema: VgiSchema;
         opaqueData?: Uint8Array;
+        projectionExpressionProfiles?: string[];
         lookupSecretTypes?: string[];
         lookupScopes?: string[];
         lookupNames?: string[];
@@ -223,10 +224,12 @@ export interface TableFunctionConfig<
     | Promise<{
         outputSchema: VgiSchema;
         opaqueData?: Uint8Array;
+        projectionExpressionProfiles?: string[];
         lookupSecretTypes?: string[];
         lookupScopes?: string[];
         lookupNames?: string[];
       }>;
+  projection?: (params: TableBindParams<TArgs>, proposal: import("./projection.js").ProjectionProposal) => import("./projection.js").ProjectionAcceptance | Promise<import("./projection.js").ProjectionAcceptance>;
   /** Init (optional). May be async — common when storage is HTTP-backed. */
   onInit?: (params: {
     args: TArgs;
@@ -460,11 +463,14 @@ export function defineTableFunction<
       return {
         output_schema: result.outputSchema,
         opaque_data: result.opaqueData ?? null,
+        projection_expression_profiles: result.projectionExpressionProfiles ?? [],
         lookup_secret_types: result.lookupSecretTypes,
         lookup_scopes: result.lookupScopes,
         lookup_names: result.lookupNames,
       };
     },
+
+    projection: config.projection ? (proposal) => config.projection!({args: extractArgs(proposal.bindCall), bindCall:proposal.bindCall, settings:batchToScalarDict(proposal.bindCall.settings),secrets:batchToSecretDict(proposal.bindCall.secrets),resolvedSecretsProvided:proposal.bindCall.resolved_secrets_provided},proposal) : undefined,
 
     async globalInit(request: InitRequest): Promise<GlobalInitResponse> {
       const executionId = new Uint8Array(16);
