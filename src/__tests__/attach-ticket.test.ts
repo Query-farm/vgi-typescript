@@ -351,7 +351,7 @@ describe("hosting vgi.attach_tickets.v1", () => {
   const ALL: ServerTransport[] = ["pipe", "unix", "tcp", "iroh", "stream", "http"];
   function hosted(transport: ServerTransport, configured: boolean, env: Record<string, string>, mintGrant = false) {
     const server = buildRpcServer(
-      new Protocol("vgi.v2", { protocolVersion: "2.0.0" }),
+      new Protocol("vgi.v3", { protocolVersion: "3.0.0" }),
       mintGrant ? { mintGrant: () => ({ token: "t", expiresAt: new Date(0) }) } : {},
       {
         transport,

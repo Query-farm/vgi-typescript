@@ -3,7 +3,7 @@
 #
 # Run vgi-rpc's hosted-protocols conformance group against the example fixture
 # worker on stdio, AF_UNIX and HTTP (with vgi_rpc.Identity.v2), the way every
-# VGI SDK does (MULTI_PROTOCOL_HOSTING.md §5/§7). The fixture hosts vgi.v2 and,
+# VGI SDK does (MULTI_PROTOCOL_HOSTING.md §5/§7). The fixture hosts vgi.v3 and,
 # through the `hostedProtocols` hook, conformance.Secondary.v1; over HTTP it
 # opts into Identity under the IDENTITY_CONFORMANCE_FIXTURE.md policy.
 #
@@ -14,7 +14,7 @@ set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 REPO="$(cd "$HERE/.." && pwd)"
 HOSTED="${VGI_RPC_TEST_HOSTED:-vgi-rpc-test-hosted}"
-EXPECT="vgi.v2,conformance.Secondary.v1"
+EXPECT="vgi.v3,conformance.Secondary.v1"
 WORKER="$REPO/bin/vgi-example-worker"
 HTTP_WORKER="$REPO/bin/vgi-example-http-worker"
 # Short and fixed-depth: AF_UNIX paths are capped near 108 bytes.

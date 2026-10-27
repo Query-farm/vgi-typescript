@@ -33,7 +33,7 @@ import {
 } from "../../functions/table-buffering.js";
 import { Arguments } from "../../arguments/arguments.js";
 
-/** The table_buffering lifecycle's `vgi.v2` handlers. */
+/** The table_buffering lifecycle's `vgi.v3` handlers. */
 export function tableBufferingHandlers(
   registry: FunctionRegistry,
   signingKey?: Uint8Array,

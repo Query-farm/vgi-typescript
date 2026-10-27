@@ -35,7 +35,7 @@ import { Arguments } from "../../arguments/arguments.js";
 import { validateConstConstraints } from "../../arguments/argument-spec.js";
 import { unwrapRequest, wrapResult } from "./shared.js";
 
-/** The aggregate lifecycle's `vgi.v2` handlers. */
+/** The aggregate lifecycle's `vgi.v3` handlers. */
 export function aggregateHandlers(registry: FunctionRegistry): Partial<VgiService> {
   // `schemaPath` scopes resolution to the schema the caller named. Every
   // aggregate RPC carries it (protocol 1.2.0), so an aggregate name declared in

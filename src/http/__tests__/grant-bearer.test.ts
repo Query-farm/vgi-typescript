@@ -7,7 +7,7 @@
 //   1. A caller who authenticated recently mints a grant through
 //      vgi_rpc.Identity.v2's issue_grant -- sealed by the framework, because
 //      the worker configured grant keys and no mintGrant hook.
-//   2. Automation presents it as `Authorization: Bearer <grant>` to a vgi.v2
+//   2. Automation presents it as `Authorization: Bearer <grant>` to a vgi.v3
 //      method (catalog_attach, then a table scan).
 //   3. That call runs as the grant's owner: the attach envelope, sealed under
 //      the caller's identity, opens at /init, and the function reads the owner
@@ -116,7 +116,7 @@ async function scanAs(authorization: string | undefined): Promise<string[]> {
   }
 }
 
-describe("a sealed grant authenticates a vgi.v2 call as its owner", () => {
+describe("a sealed grant authenticates a vgi.v3 call as its owner", () => {
   test("issue_grant, then Bearer <grant> on catalog_attach and a scan", async () => {
     const grant = await mintGrant();
     expect(grant.startsWith("vgig1.")).toBe(true);

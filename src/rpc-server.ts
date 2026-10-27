@@ -9,7 +9,7 @@
 //
 // What a server hosts, in reflection order:
 //
-//   1. The worker's own protocol, `vgi.v2`.
+//   1. The worker's own protocol, `vgi.v3`.
 //   2. The worker's `hostedProtocols()`, in the order returned -- on EVERY
 //      transport.
 //   3. `vgi_rpc.Reflection.v1` -- on every transport.
@@ -19,9 +19,9 @@
 //      configured explicitly (never a generated one) *and* the worker can
 //      issue grants. See `attach-ticket.ts`.
 //
-// Extra protocols cannot change `vgi.v2` behaviour: vgi-rpc routes every
+// Extra protocols cannot change `vgi.v3` behaviour: vgi-rpc routes every
 // request on its `vgi_rpc.protocol` key with no fallback to the primary, so a
-// client that only ever names `vgi.v2` (the DuckDB extension) dispatches
+// client that only ever names `vgi.v3` (the DuckDB extension) dispatches
 // exactly as it would against a single-protocol server.
 
 import {
@@ -55,7 +55,7 @@ const RESERVED_PREFIX = "vgi_rpc.";
 export const INTROSPECT_PRINCIPALS_ENV = "VGI_INTROSPECT_PRINCIPALS";
 
 /**
- * What a worker hosts beyond `vgi.v2`, and whether it opts into identity.
+ * What a worker hosts beyond `vgi.v3`, and whether it opts into identity.
  *
  * Accepted by `new Worker({...})`, `serveVgiWorker`, `createVgiWorkerFetch`
  * and `createVgiFetch` (Cloudflare Workers) alike, so one worker definition
@@ -63,20 +63,20 @@ export const INTROSPECT_PRINCIPALS_ENV = "VGI_INTROSPECT_PRINCIPALS";
  */
 export interface HostingOptions {
   /**
-   * Additional vgi-rpc protocols to host beside `vgi.v2`, on the **same**
+   * Additional vgi-rpc protocols to host beside `vgi.v3`, on the **same**
    * listener, whatever the transport.
    *
    * A vgi-rpc `Protocol` carries its handlers, so each entry is a whole
    * `(protocol, implementation)` pair. Called **once**, when the server is
    * built; it may consult configuration or the environment, but the answer is
    * fixed for the life of the process, so reflection output and protocol
-   * hashes stay stable. Hosted after `vgi.v2`, in the order returned.
+   * hashes stay stable. Hosted after `vgi.v3`, in the order returned.
    *
    * The protocol is the unit of optionality: there is no way to host a subset
    * of a protocol's methods. A capability that is optional is its own
    * protocol, returned here or not.
    *
-   * Each needs a distinct wire name, which may not be `vgi.v2` and may not
+   * Each needs a distinct wire name, which may not be `vgi.v3` and may not
    * use the reserved `vgi_rpc.` prefix: reflection is hosted automatically and
    * `vgi_rpc.Identity.v2` is enabled through {@link resolveToken} /
    * {@link mintGrant}. Violations are a startup error naming this hook.
@@ -164,14 +164,14 @@ export interface BuildRpcServerOptions {
 }
 
 /**
- * Build the vgi-rpc server for a worker's `vgi.v2` protocol on `transport`.
+ * Build the vgi-rpc server for a worker's `vgi.v3` protocol on `transport`.
  *
  * Calls `hosting.hostedProtocols()` exactly once and hosts the result beside
  * `primary`; see the module comment for the full hosted set.
  *
  * @throws TypeError `hostedProtocols()` returned something other than an
  *   iterable of vgi-rpc `Protocol`s.
- * @throws Error A hosted protocol's name is invalid, reserved, `vgi.v2`'s, or
+ * @throws Error A hosted protocol's name is invalid, reserved, `vgi.v3`'s, or
  *   repeated; the transport is unknown; or the worker supplies `resolveToken`
  *   on HTTP with no introspector allowlist.
  */

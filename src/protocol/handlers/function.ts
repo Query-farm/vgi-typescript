@@ -191,7 +191,7 @@ async function resolveSplitPayloads(
   }
 }
 
-/** The per-function lifecycle's `vgi.v2` handlers. */
+/** The per-function lifecycle's `vgi.v3` handlers. */
 export function functionHandlers(config: FunctionHandlerConfig): Partial<VgiService> {
   const { registry, signingKey, catalogInterface } = config;
 

@@ -83,9 +83,9 @@ const worker = new Worker({
   // Same instance the catalogs above indexed into, so schema-qualified and
   // catalog-qualified resolution both work at dispatch.
   registry,
-  // The cross-SDK fixture protocol, hosted beside vgi.v2 on every transport
+  // The cross-SDK fixture protocol, hosted beside vgi.v3 on every transport
   // through the public hook -- what vgi-rpc's hosted-protocols conformance
-  // group checks (`vgi-rpc-test-hosted --expect vgi.v2,conformance.Secondary.v1`).
+  // group checks (`vgi-rpc-test-hosted --expect vgi.v3,conformance.Secondary.v1`).
   hostedProtocols: () => [buildSecondaryProtocol()],
 });
 

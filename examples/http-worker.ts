@@ -122,7 +122,7 @@ const server = serveVgiWorker({
   // cache/identity_isolation.test is the test that needs real principals. Same
   // fixture the Python, Go and Rust example workers ship.
   authenticate: fixtureAuthenticate,
-  // The cross-SDK fixture protocol, hosted beside vgi.v2 through the public hook.
+  // The cross-SDK fixture protocol, hosted beside vgi.v3 through the public hook.
   hostedProtocols: () => [buildSecondaryProtocol()],
   // vgi_rpc.Identity.v2 under the pinned IDENTITY_CONFORMANCE_FIXTURE.md
   // policy -- both hooks, the one-principal allowlist, the 900 s auth age --

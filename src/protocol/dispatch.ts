@@ -39,7 +39,7 @@ export interface ProtocolConfig {
  * The name carries the major version, so an incompatible major is a
  * *different* protocol and therefore a 404 — an answer every proxy, WAF and
  * load balancer understands without an Arrow parser, and one that lets
- * `vgi.v2` and a future `vgi.v3` be served side by side while clients migrate.
+ * `vgi.v2` and `vgi.v3` be served side by side while clients migrate.
  * That matters for this consumer specifically: the DuckDB extension ships to
  * users and cannot be flag-dayed.
  *
@@ -61,22 +61,22 @@ export interface ProtocolConfig {
 export { VGI_PROTOCOL_NAME };
 
 /**
- * The `vgi.v2` protocol hash `vgi_rpc.Reflection.v1` must report for this
- * worker: the reference's (vgi-python 0.43.0, 72 methods). Every SDK hosts
- * every `vgi.v2` method with the reference's schemas, so the hash is one value
+ * The `vgi.v3` protocol hash `vgi_rpc.Reflection.v1` must report for this
+ * worker: the combined reference's 85 methods. Every SDK hosts
+ * every `vgi.v3` method with the reference's schemas, so the hash is one value
  * across the ports; a method this SDK does not implement is still registered
  * with the generated UNIMPLEMENTED default (src/generated/vgi-service.ts). The
  * hash covers method names, types and the params/result/header schemas only
  * (WIRE_PROTOCOL.md §14).
  *
- * It changes only with vgi.v2's protocol version (currently 2.2.0). Asserted
- * by src/protocol/__tests__/vgi-v2-hash.test.ts; if that test fails, the
+ * It changes only with vgi.v3's protocol version (currently 3.0.0). Asserted
+ * by src/protocol/__tests__/vgi-v3-hash.test.ts; if that test fails, the
  * surface drifted from the reference -- fix the schemas, do not bump this.
  */
-export const VGI_V2_PROTOCOL_HASH = "41f61f37c7ce42f63f3ca47f8861508f3f356d2422a5b8a0bab48ff92c0857a8";
+export const VGI_V3_PROTOCOL_HASH = "50e9404173bee3262e96b8939eb5c425463336abca2a17916812d68b6e0f6cad";
 
 /**
- * This worker's `vgi.v2` implementation: the generated UNIMPLEMENTED default
+ * This worker's `vgi.v3` implementation: the generated UNIMPLEMENTED default
  * for every method, overridden by the handler groups for what this SDK serves.
  */
 export function buildVgiService(config: ProtocolConfig): VgiService {
@@ -93,7 +93,7 @@ export function buildVgiService(config: ProtocolConfig): VgiService {
   };
 }
 
-/** The `vgi.v2` protocol, registered from the generated table with {@link buildVgiService}. */
+/** The `vgi.v3` protocol, registered from the generated table with {@link buildVgiService}. */
 export function buildVgiProtocol(config: ProtocolConfig): Protocol {
   return createVgiProtocol(buildVgiService(config));
 }

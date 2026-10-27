@@ -6,7 +6,7 @@ import { Protocol, type TokenIdentity } from "@query-farm/vgi-rpc";
 import { buildSecondaryProtocol } from "@query-farm/vgi-rpc/conformance";
 import { buildRpcServer, grantKeysFromArgv, type HostingOptions, type ServerTransport } from "../rpc-server.js";
 
-const primary = () => new Protocol("vgi.v2", { protocolVersion: "2.0.0" });
+const primary = () => new Protocol("vgi.v3", { protocolVersion: "3.0.0" });
 const resolveToken = (_token: string): TokenIdentity | null => ({ principal: "p" });
 const ALL: ServerTransport[] = ["pipe", "unix", "tcp", "iroh", "stream", "http"];
 
@@ -15,11 +15,11 @@ function hosted(hosting: HostingOptions, transport: ServerTransport, env: Record
 }
 
 describe("buildRpcServer", () => {
-  test("hosted protocols ride every transport, after vgi.v2, in order", () => {
+  test("hosted protocols ride every transport, after vgi.v3, in order", () => {
     const extra = new Protocol("acme.Extra.v1");
     for (const transport of ALL) {
       expect(hosted({ hostedProtocols: () => [buildSecondaryProtocol(), extra] }, transport)).toEqual([
-        "vgi.v2",
+        "vgi.v3",
         "conformance.Secondary.v1",
         "acme.Extra.v1",
         "vgi_rpc.Reflection.v1",
@@ -64,7 +64,7 @@ describe("buildRpcServer", () => {
     expect(() => hosted({ hostedProtocols: () => [new Protocol("vgi_rpc.Sneaky.v1")] }, "pipe")).toThrow(
       /hostedProtocols\(\) entry 0 .*reserved/,
     );
-    expect(() => hosted({ hostedProtocols: () => [new Protocol("vgi.v2")] }, "pipe")).toThrow(
+    expect(() => hosted({ hostedProtocols: () => [new Protocol("vgi.v3")] }, "pipe")).toThrow(
       /hostedProtocols\(\).*worker's own protocol/,
     );
     expect(() =>

@@ -1,5 +1,5 @@
 // Copyright 2025, 2026 Query Farm LLC - https://query.farm
-// Catalog handler orchestrator: every catalog_* `vgi.v2` handler.
+// Catalog handler orchestrator: every catalog_* `vgi.v3` handler.
 
 import type { CatalogInterface } from "../../../catalog/interface.js";
 import type { VgiService } from "../../../generated/vgi-service.js";
@@ -10,7 +10,7 @@ import { catalogViewHandlers } from "./view.js";
 import { catalogMacroHandlers } from "./macro.js";
 import { catalogIndexHandlers } from "./index_methods.js";
 
-/** The catalog_* `vgi.v2` handlers, over *catalog* (or `NoCatalogError` without one). */
+/** The catalog_* `vgi.v3` handlers, over *catalog* (or `NoCatalogError` without one). */
 export function catalogHandlers(
   catalog: CatalogInterface | undefined,
   signingKey?: Uint8Array,

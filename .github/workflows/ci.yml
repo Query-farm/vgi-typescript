@@ -74,7 +74,7 @@ jobs:
 
   hosted-protocols:
     # vgi-rpc's hosted-protocols group (MULTI_PROTOCOL_HOSTING.md §7) against
-    # the example fixture worker: the worker lists vgi.v2 then
+    # the example fixture worker: the worker lists vgi.v3 then
     # conformance.Secondary.v1 on stdio, AF_UNIX and HTTP, the secondary passes
     # the shared error-model groups, and over HTTP vgi_rpc.Identity.v2 passes
     # the identity fixture groups. The reference is unpinned main, by design: a

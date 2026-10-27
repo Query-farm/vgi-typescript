@@ -282,7 +282,7 @@ export class Worker {
   }
 
   /**
-   * Build the vgi-rpc server for one transport: `vgi.v2`, the worker's
+   * Build the vgi-rpc server for one transport: `vgi.v3`, the worker's
    * `hostedProtocols()` and reflection everywhere; identity on HTTP only. The
    * one construction path every transport uses (see `rpc-server.ts`).
    */

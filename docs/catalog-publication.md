@@ -1,10 +1,10 @@
 # Catalog collections and external publication
 
-SDK 0.45.0 requires a client using VGI wire major/minor `2.2`, including the
-DuckDB extension and browser/WASM clients. Wire `2.1` peers are incompatible;
-upgrade both ends together. The protocol routing name remains `vgi.v2`.
+The prepared SDK requires a client using VGI wire major/minor `3.0`, including
+DuckDB extension and browser/WASM clients. Published `vgi.v2` peers are
+incompatible; upgrade clients and workers together to `vgi.v3`.
 
-Wire `vgi.v2` revision `2.2.0` carries six nullable Arrow streams in
+Wire `vgi.v3` revision `3.0.0` carries six nullable Arrow streams in
 `catalog_contents`: schemas, tables, views, functions, macros and indexes. Each
 stream spans all schemas and may contain multiple record batches. The client
 reads every row and batch; function and macro subtype fields remain intact.

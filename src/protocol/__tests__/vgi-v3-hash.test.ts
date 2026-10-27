@@ -1,9 +1,9 @@
 // Copyright 2025, 2026 Query Farm LLC - https://query.farm
 // SPDX-License-Identifier: LicenseRef-QueryFarm-Source-Available-1.0
 
-// vgi.v2 is one protocol with one surface in every SDK ("the protocol is the
+// vgi.v3 is one protocol with one surface in every SDK ("the protocol is the
 // unit of optionality"), so vgi_rpc.Reflection.v1 must report the reference's
-// vgi.v2 hash here too. A method added, dropped, renamed, or a field whose
+// vgi.v3 hash here too. A method added, dropped, renamed, or a field whose
 // name, order, type or nullability drifts from the reference changes the hash
 // and fails this test. Driven end to end over a listening HTTP server through
 // vgi-rpc's own reflection client, so it measures what a caller sees.
@@ -17,10 +17,10 @@ import { httpConnect, httpIntrospect, RpcError } from "@query-farm/vgi-rpc";
 import { isBinary, isBool, isList } from "../../arrow/index.js";
 import { FunctionRegistry } from "../../functions/registry.js";
 import { createVgiFetch } from "../../http/fetch.js";
-import { VGI_PROTOCOL_NAME, VGI_V2_PROTOCOL_HASH } from "../dispatch.js";
+import { VGI_PROTOCOL_NAME, VGI_V3_PROTOCOL_HASH } from "../dispatch.js";
 import { UNIMPLEMENTED_METHODS, unimplementedMessage } from "../handlers/unimplemented.js";
 
-/** The combined canonical Python reference hosts exactly this many vgi.v2 methods. */
+/** The combined canonical Python reference hosts exactly this many vgi.v3 methods. */
 const REFERENCE_METHOD_COUNT = 85;
 
 let server: { port: number; stop(force?: boolean): void };
@@ -31,8 +31,8 @@ beforeAll(() => {
     protocol: { registry: new FunctionRegistry() },
     signingKey: new Uint8Array(32).fill(3),
     prefix: "",
-    serverId: "vgi-v2-hash-test",
-    landingInfo: { name: "hash", doc: "vgi.v2 surface test.", version: "0" },
+    serverId: "vgi-v3-hash-test",
+    landingInfo: { name: "hash", doc: "vgi.v3 surface test.", version: "0" },
   });
   server = (globalThis as any).Bun.serve({ port: 0, fetch });
   baseUrl = `http://localhost:${server.port}`;
@@ -40,12 +40,18 @@ beforeAll(() => {
 
 afterAll(() => server?.stop(true));
 
-describe("vgi.v2 surface", () => {
-  test("reflection reports the reference vgi.v2 hash and method count", async () => {
+describe("vgi.v3 surface", () => {
+  test("reflection reports the reference vgi.v3 hash and method count", async () => {
     const desc = await httpIntrospect(baseUrl, { protocol: VGI_PROTOCOL_NAME });
-    expect(desc.protocolName).toBe(VGI_PROTOCOL_NAME);
+    expect(desc.protocolName).toBe("vgi.v3");
+    expect(desc.protocolVersion).toBe("3.0.0");
     expect(desc.methods.length).toBe(REFERENCE_METHOD_COUNT);
-    expect(desc.protocolHash).toBe(VGI_V2_PROTOCOL_HASH);
+    expect(desc.protocolHash).toBe(VGI_V3_PROTOCOL_HASH);
+  });
+
+  test("the published v2 route is refused instead of falling back to v3", async () => {
+    const response = await fetch(`${baseUrl}/vgi.v2/catalog_catalogs`, { method: "POST" });
+    expect(response.status).toBe(404);
   });
 
   test("every unimplemented method refuses with UNIMPLEMENTED", async () => {

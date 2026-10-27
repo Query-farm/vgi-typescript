@@ -29,6 +29,8 @@ test("published catalogs upload/read back once, recover after restart, and isola
   const manager = new CatalogSnapshotManager(f.policy);
   const [a,b] = await Promise.all([manager.warm(identity, f.build), manager.warm(identity, f.build)]);
   expect(a).toEqual(b);
+  expect(a.protocolName).toBe("vgi.v3");
+  expect(a.protocolVersion).toBe("3.0.0");
   expect(f.counters()).toEqual({ builds: 1, uploads: 1, gets: 1 });
   await manager.warm(identity, f.build);
   expect(f.counters()).toEqual({ builds: 1, uploads: 1, gets: 1 });
@@ -40,6 +42,14 @@ test("published catalogs upload/read back once, recover after restart, and isola
   await manager.invalidate(a.key);
   await manager.warm(identity, f.build);
   expect(f.counters()).toEqual({ builds: 3, uploads: 3, gets: 4 });
+});
+
+test("publication import refuses manifests from the published v2 protocol", async () => {
+  const f = fixture();
+  const manager = new CatalogSnapshotManager(f.policy);
+  const original = await manager.warm(identity, f.build);
+  await expect(manager.import({ ...original, protocolName: "vgi.v2", protocolVersion: "2.2.0" }, identity)).rejects.toThrow();
+  expect(f.counters()).toEqual({ builds: 1, uploads: 1, gets: 1 });
 });
 
 test("publication caps apply before upload and damaged recovery rebuilds", async () => {

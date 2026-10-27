@@ -552,7 +552,7 @@ explicitly. Without it there is no landing page and no `/vgi-client.js`; see
 ### Hosting additional protocols
 
 A worker can serve other [vgi-rpc](https://www.npmjs.com/package/@query-farm/vgi-rpc)
-protocols beside `vgi.v2`, on the same listener, through the `hostedProtocols` hook:
+protocols beside `vgi.v3`, on the same listener, through the `hostedProtocols` hook:
 
 ```ts
 import { Protocol, str } from "@query-farm/vgi-rpc";
@@ -571,12 +571,12 @@ new Worker({ functions, hostedProtocols: () => [reports] }).run();
 - The hook is called **once**, when the server is built; it may read configuration,
   but its answer is fixed for the life of the process.
 - Its protocols are hosted on **every** transport (stdio, AF_UNIX, TCP, the Iroh raw
-  upstream, `serveStream`, HTTP), after `vgi.v2`, in the order returned. Every
+  upstream, `serveStream`, HTTP), after `vgi.v3`, in the order returned. Every
   transport builds its server through one function, `buildRpcServer`.
-- Each needs a distinct name, which may not be `vgi.v2` or start with the reserved
+- Each needs a distinct name, which may not be `vgi.v3` or start with the reserved
   `vgi_rpc.`. Violations are a startup error naming `hostedProtocols()`.
 - Requests route on their `vgi_rpc.protocol` key, so hosting more protocols never
-  changes how DuckDB's `vgi.v2` calls are dispatched.
+  changes how DuckDB's `vgi.v3` calls are dispatched.
 - The protocol is the unit of optionality: an optional capability is its own protocol.
 
 ### Token introspection and grants (`vgi_rpc.Identity.v2`)
