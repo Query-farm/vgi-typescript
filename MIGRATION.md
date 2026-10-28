@@ -1,5 +1,25 @@
 # Migration guide
 
+## 0.47.0 — vgi.v3
+
+This release adopts `vgi.v3` / `3.0.0`. Upgrade the VGI extension and worker SDKs
+together; it cannot serve requests from a `vgi.v2` extension. Keep 0.46.x for
+existing v2 installations. DuckDB 1.5 and 2.0 adapters can use the same v3 wire
+contract; each adapter still determines which engine features it supports.
+
+The combined contract adds raw column paths, canonical column-expression
+payloads, nullable default schemas, macro overload families, column metadata,
+typed catalog options and constraints, prepared-query parameter metadata,
+scalar-projection negotiation, and scan repeatability. Capabilities remain
+provider-specific: adopting the records does not advertise every operation or
+enable automatic whole-query pushdown.
+
+Use the exported generated records and schema codecs when implementing a custom
+provider. Column expressions carry encoded SQL context rather than an untyped
+string, macros describe overload families, and absence of a default schema is
+preserved. Unsupported optional operations should retain their structured
+decline behavior. The minimum RPC peer is `@query-farm/vgi-rpc` 0.29.2.
+
 ## 0.26.0 — the landing surface moved here from `@query-farm/vgi-rpc`
 
 `GET {prefix}/` and `GET {prefix}/vgi-client.js` are now served by this package
