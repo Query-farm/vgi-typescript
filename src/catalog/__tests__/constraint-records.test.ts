@@ -136,3 +136,13 @@ test("Arrow nullability must agree with NOT_NULL/PRIMARY_KEY records", async () 
   expect(await tables(nested)).toThrow(/column s\.x is non-nullable/);
   expect(await tables(nested, [notNull("s", "x")])).not.toThrow();
 });
+
+test("only ENFORCED + ALL_ROWS records are served", async () => {
+  const cat = new ReadOnlyCatalogInterface({ name: "c", schemas: [{ name: "main", tables: [{
+    name: "t", columns: schema([field("a", utf8(), true)]),
+    constraints: [constraintRecord({ schemaPath: ["main"], table: "t", id: "t.a.unique", kind: "UNIQUE",
+      columns: [["a"]], enforcement: "METADATA_ONLY", validation: "UNVALIDATED" })],
+  }] }] }, new FunctionRegistry());
+  const { attach_opaque_data } = await cat.attach("c");
+  expect(() => cat.schemaContentsTables(attach_opaque_data, ["main"])).toThrow(/accepts only ENFORCED \+ ALL_ROWS/);
+});

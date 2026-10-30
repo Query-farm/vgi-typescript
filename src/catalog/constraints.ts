@@ -165,9 +165,10 @@ function ordinaryStructChildren(field: VgiField): readonly VgiField[] | null {
 }
 
 /**
- * Require Arrow nullability to agree with the table's NOT_NULL and PRIMARY_KEY
- * records, as the DuckDB extension does at ATTACH: a field (descending through
- * ordinary STRUCTs) is non-nullable exactly when a record names its path.
+ * Check a table's records the way the DuckDB extension does at ATTACH: every
+ * record is ENFORCED + ALL_ROWS, and Arrow nullability agrees with the
+ * NOT_NULL/PRIMARY_KEY records (a field, descending through ordinary STRUCTs,
+ * is non-nullable exactly when a record names its path).
  */
 export function validateConstraintNullability(
   table: string,
@@ -177,6 +178,12 @@ export function validateConstraintNullability(
   const required = new Set<string>();
   for (const bytes of constraints) {
     const record = readConstraintRecord(bytes);
+    // DuckDB reads only facts that hold for every row; anything else fails ATTACH.
+    if (record.enforcement !== "ENFORCED" || record.validation !== "ALL_ROWS")
+      throw new Error(
+        `Table '${table}': constraint '${record.id}' is ${record.enforcement}/${record.validation}; ` +
+          "DuckDB accepts only ENFORCED + ALL_ROWS records"
+      );
     if (record.kind === "NOT_NULL" || record.kind === "PRIMARY_KEY")
       for (const path of record.columns) required.add(JSON.stringify(path));
   }
