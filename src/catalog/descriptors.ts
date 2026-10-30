@@ -25,18 +25,35 @@ export interface ForeignKeyDef {
 export type DefaultValue = string | number | boolean | null;
 
 export interface TableDescriptor {
-  /** Canonical ConstraintInfo IPC records with provider-owned stable identities. */
+  /**
+   * Canonical ConstraintInfo IPC records with provider-owned stable identities
+   * (build them with `constraintRecord`). They also set the served Arrow
+   * nullability: a column is served non-nullable exactly when a NOT_NULL or
+   * PRIMARY_KEY record names it, so a non-nullable field nobody names is
+   * served nullable.
+   */
   constraints?: Uint8Array[];
+  /** Opaque token that changes whenever `constraints` change. */
   definitionRevision?: Uint8Array | null;
   name: string;
   columns?: VgiSchema;
   function?: VgiFunction;
   arguments?: Arguments;
+  /** @deprecated Not sent under vgi.v3 (serving throws). Use `constraints: [constraintRecord({ kind: "NOT_NULL", ... })]`. */
   notNull?: string[];
+  /** @deprecated Not sent under vgi.v3 (serving throws). Use `constraints: [constraintRecord({ kind: "UNIQUE", ... })]`. */
   unique?: string[][];
+  /** @deprecated Not sent under vgi.v3 (serving throws). Use `constraints: [constraintRecord({ kind: "CHECK", ... })]`. */
   check?: string[];
+  /** @deprecated Not sent under vgi.v3 (serving throws). Use `constraints: [constraintRecord({ kind: "PRIMARY_KEY", ... })]`. */
   primaryKey?: string[][];
+  /** @deprecated Not sent under vgi.v3 (serving throws). Use `constraints: [constraintRecord({ kind: "FOREIGN_KEY", ... })]`. */
   foreignKey?: ForeignKeyDef[];
+  /**
+   * Column defaults as literals. Served as canonical `vgi.column.default.v1`
+   * for boolean, signed-integer, float, decimal128 and utf8 columns, and as
+   * the legacy `default` SQL key for any other type.
+   */
   defaults?: Record<string, DefaultValue>;
   /** Per-column comment strings, applied as field metadata `comment`. */
   columnComments?: Record<string, string>;

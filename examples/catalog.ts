@@ -258,7 +258,8 @@ export class InMemoryCatalog extends CatalogInterface {
     constraintDefinitions?: Uint8Array[],
     transactionOpaqueData?: TransactionOpaqueData
   ): void {
-    if (constraintDefinitions?.length) throw new Error("canonical constraint enforcement is not supported");
+    // This store holds no rows and enforces nothing, so it advertises no constraint profile.
+    if (constraintDefinitions?.length) throw new Error("this in-memory catalog does not enforce constraints: CREATE TABLE with NOT NULL, PRIMARY KEY, UNIQUE, CHECK or FOREIGN KEY is unsupported");
     validateColumnExpressionsIpc(columns, schemaPath, false);
     requireUnconstrainedColumns(columns);
     const att = this._getAttachment(attachOpaqueData);

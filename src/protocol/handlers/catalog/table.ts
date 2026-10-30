@@ -7,12 +7,15 @@ import { MethodNotImplementedError } from "@query-farm/vgi-rpc";
 
 import type { VgiService } from "../../../generated/vgi-service.js";
 import {
+  CatalogTableConstraintsApplyResultSchema,
   CatalogTableGetResultSchema,
   ScanBranchesResultSchema,
   ScanFunctionResultSchema,
 } from "../../../generated/vgi-protocol-schemas.js";
 import { toUint8Array } from "../../../util/bytes.js";
-import { requireUnconstrainedColumns } from "../../../catalog/unconstrained-columns.js";
+import { requireCreateColumns } from "../../../catalog/unconstrained-columns.js";
+import { CONSTRAINT_CREATE, CONSTRAINT_ENFORCE, CONSTRAINT_MUTATE, readConstraintRecord } from "../../../catalog/constraints.js";
+import { decodeCatalogObjectRef } from "../../../generated/vgi-protocol-types.js";
 import {
   wrapResult,
 } from "../shared.js";
@@ -52,26 +55,72 @@ export function catalogTableHandlers(getCatalog: GetCatalog, signingKey?: Uint8A
   // catalog_table_create
   const catalogTableCreate = catalogHandler(signingKey, async (params) => {
     if (params.constraint_definitions == null) throw new Error("constraint_definitions is required");
-    if (Array.from(params.constraint_definitions as Iterable<unknown>).length > 0) {
-      throw new MethodNotImplementedError("catalog_table_create: canonical constraint enforcement is not supported");
-    }
+    const definitions = Array.from(params.constraint_definitions as Iterable<unknown>, (d) => toUint8Array(d as Uint8Array));
     if (params.comment != null || params.tags != null || params.options != null || params.layout != null) {
       throw new MethodNotImplementedError("catalog_table_create: table metadata/options/layout profiles are not supported");
     }
+    const attach = toUint8Array(params.attach_opaque_data);
+    const cat = getCatalog();
+    if (definitions.length > 0) {
+      // DuckDB sends definitions only under a negotiated create profile; refuse
+      // here too when the catalog states it does not implement one.
+      const caps = await cat.catalogCapabilities(attach);
+      if (caps != null && !(caps.ddl.includes(CONSTRAINT_CREATE) && caps.write.includes(CONSTRAINT_ENFORCE))) {
+        throw new MethodNotImplementedError(
+          "catalog_table_create: this catalog does not enforce constraints (NOT NULL, PRIMARY KEY, UNIQUE, CHECK, " +
+            "FOREIGN KEY); it advertises neither vgi.constraint.create.v1 nor vgi.constraint.enforce.v1",
+        );
+      }
+    }
     validateColumnMetadataIpc(toUint8Array(params.columns));
     validateColumnExpressionsIpc(toUint8Array(params.columns), params.schema_path);
-    requireUnconstrainedColumns(toUint8Array(params.columns));
-    const cat = getCatalog();
+    requireCreateColumns(toUint8Array(params.columns), definitions);
     await cat.tableCreate(
-      toUint8Array(params.attach_opaque_data),
+      attach,
       params.schema_path,
       params.name,
       toUint8Array(params.columns),
       params.on_conflict,
-      [],
+      definitions,
       params.transaction_opaque_data ? toUint8Array(params.transaction_opaque_data) : undefined
     );
     return {};
+  });
+
+  // catalog_table_constraints_apply (ALTER TABLE ... SET/DROP NOT NULL and
+  // every other canonical constraint change).
+  const catalogTableConstraintsApply = catalogHandler(signingKey, async (params) => {
+    const attach = toUint8Array(params.attach_opaque_data);
+    const cat = getCatalog();
+    const caps = await cat.catalogCapabilities(attach);
+    if (caps != null && !caps.ddl.includes(CONSTRAINT_MUTATE)) {
+      throw new MethodNotImplementedError("catalog_table_constraints_apply: this catalog does not advertise vgi.constraint.mutate.v1");
+    }
+    const table = toUint8Array(params.table);
+    const expected = toUint8Array(params.expected_revision);
+    const changes = Array.from(params.changes as Iterable<unknown>, (c) => toUint8Array(c as Uint8Array));
+    if (expected.length === 0 || changes.length === 0) throw new Error("catalog_table_constraints_apply: empty revision or change list");
+    const snapshot = await cat.tableConstraintsApply({
+      attach_opaque_data: attach,
+      table,
+      expected_revision: expected,
+      changes,
+      transaction_opaque_data: params.transaction_opaque_data ? toUint8Array(params.transaction_opaque_data) : null,
+    });
+    const want = decodeCatalogObjectRef(table);
+    const got = decodeCatalogObjectRef(toUint8Array(snapshot.table));
+    if (got.name !== want.name || JSON.stringify([...got.schema_path]) !== JSON.stringify([...want.schema_path]))
+      throw new Error("catalog_table_constraints_apply: the catalog returned a snapshot of a different table");
+    const revision = toUint8Array(snapshot.definition_revision);
+    if (revision.length === 0 || (revision.length === expected.length && revision.every((b, i) => b === expected[i])))
+      throw new Error(`catalog_table_constraints_apply: table '${want.name}' must return a new, nonempty definition_revision`);
+    for (const record of snapshot.constraints) {
+      const view = readConstraintRecord(toUint8Array(record));
+      if (view.table !== want.name || JSON.stringify(view.schemaPath) !== JSON.stringify([...want.schema_path]))
+        throw new Error(`catalog_table_constraints_apply: constraint '${view.id}' belongs to another table`);
+    }
+    return wrapResult({ table, definition_revision: revision, constraints: snapshot.constraints.map((c) => toUint8Array(c)) },
+      CatalogTableConstraintsApplyResultSchema);
   });
 
   // catalog_table_drop
@@ -295,9 +344,7 @@ export function catalogTableHandlers(getCatalog: GetCatalog, signingKey?: Uint8A
     return {};
   });
   return {
-    catalogTableConstraintsApply: async () => {
-      throw new MethodNotImplementedError("catalog_table_constraints_apply");
-    },
+    catalogTableConstraintsApply,
     catalogTableGet,
     catalogTableCreate,
     catalogTableDrop,

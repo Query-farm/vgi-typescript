@@ -328,7 +328,7 @@ describe("a DDL-capable catalog behind a composite (the contents_reval fixture)"
       schema([field("record", struct([field("a", utf8(), false)]), true)])]) {
       await expect(h.call("catalog_table_create", { request: encodeASD(TableCreateRequestSchema, {
         ...request, on_conflict: "REPLACE", columns: serializeSchema(malformed),
-      }) })).rejects.toThrow("nonnullable");
+      }) })).rejects.toThrow("non-nullable");
     }
     const after = await h.contents(attach);
     expect(after.response.catalog_version).toBe(before.response.catalog_version);

@@ -128,9 +128,17 @@ test("canonical generated CREATE, ADD and discovery preserve expressions through
     ).rejects.toThrow();
     expect(stored.has(name)).toBe(false);
     stored.set("bad_discovery", columns);
-    await expect(
-      client.tableGet(new Uint8Array([1]), ["main"], "bad_discovery"),
-    ).rejects.toThrow();
+    if (name === "legacy_generated_only") {
+      // Served tables translate the unambiguous legacy key to canonical form.
+      const served = await client.tableGet(new Uint8Array([1]), ["main"], "bad_discovery");
+      const field = deserializeSchema(served!.columns).fields.find((f) => f.metadata.has("vgi.column.generated.v1"));
+      expect(field?.metadata.get("vgi.column.generation.v1")).toBe("virtual");
+      expect(field?.metadata.has("generated_expression")).toBe(false);
+    } else {
+      await expect(
+        client.tableGet(new Uint8Array([1]), ["main"], "bad_discovery"),
+      ).rejects.toThrow();
+    }
     stored.delete("bad_discovery");
   }
   expect(stored.size).toBe(3);

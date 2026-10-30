@@ -2,6 +2,7 @@
 import { validateColumnExpressionsIpc } from "./column-expressions.js";
 import type { VgiSchema } from "../arrow/index.js";
 import { encodeTableInfo, type TableInfo } from "../generated/vgi-client.js";
+import { servedTableInfo } from "./constraints.js";
 
 function scalarText(value: string): void {
   for (let i = 0; i < value.length; i++) {
@@ -145,7 +146,24 @@ export function validateColumnMetadataIpc(bytes: Uint8Array): void {
 export function validateTableInfoColumns(info: TableInfo): void {
   if (info.columns.length) { validateColumnMetadataIpc(info.columns); validateColumnExpressionsIpc(info.columns, info.schema_path); }
 }
+/**
+ * The TableInfo a worker sends: raw column metadata checked on the original
+ * bytes, then the served schema (see `servedTableInfo`: constraint records
+ * checked as DuckDB checks them, nullability derived from them, legacy
+ * generated metadata translated), whose column expressions are checked last.
+ */
+export function servedValidatedTableInfo(info: TableInfo): TableInfo {
+  if (info.columns.length) validateColumnMetadataIpc(info.columns);
+  const served = servedTableInfo(info);
+  if (served.columns.length) {
+    try {
+      validateColumnExpressionsIpc(served.columns, served.schema_path);
+    } catch (error) {
+      throw new Error(`Table '${served.name}': ${(error as Error).message}`);
+    }
+  }
+  return served;
+}
 export function encodeValidatedTableInfo(info: TableInfo): Uint8Array {
-  validateTableInfoColumns(info);
-  return encodeTableInfo(info);
+  return encodeTableInfo(servedValidatedTableInfo(info));
 }

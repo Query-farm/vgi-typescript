@@ -65,11 +65,9 @@ export {
   serializeColumnStatistics,
   BindResultSchema,
   ScanFunctionResultSchema,
-  constraintRecord,
-  readConstraintRecord,
-  CONSTRAINT_RECORDS_READ,
-  ROW_SCALAR_EXPRESSION,
 } from "./index.core.js";
+// vgi.v3 records: constraints, capabilities, column expressions, indexes, macro overloads.
+export * from "./catalog/public-codecs.js";
 
 export type {
   CacheControl,

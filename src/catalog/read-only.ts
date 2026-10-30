@@ -37,7 +37,10 @@ import { conformColumns } from "../codec/conform.js";
 import { VgiError } from "../errors.js";
 import { encodeFunctionInfoOnce, freezeCatalogItem } from "./item-encoding.js";
 import { macroOverloads } from "./macro-overloads.js";
-import { CONSTRAINT_RECORDS_READ, ROW_SCALAR_EXPRESSION, selectReadProfiles, validateConstraintNullability } from "./constraints.js";
+import { CONSTRAINT_RECORDS_READ, ROW_SCALAR_EXPRESSION, catalogCapabilities, selectReadProfiles, servedTableSchema, validateForeignKeyTargets } from "./constraints.js";
+import { duckdbPrimitive } from "./column-types.js";
+import { defaultExpressionMetadata } from "./column-expressions.js";
+import type { CatalogCapabilities } from "../generated/vgi-protocol-types.js";
 import { encodeCatalogCapabilities } from "../generated/vgi-protocol-types.js";
 
 /**
@@ -270,6 +273,12 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
     return hasConstraints ? [CONSTRAINT_RECORDS_READ, ROW_SCALAR_EXPRESSION] : [];
   }
 
+  /** The descriptor's read profiles (records are served, never mutated here). */
+  override catalogCapabilities(_attachOpaqueData: AttachOpaqueData): CatalogCapabilities | null {
+    const read = this.catalogReadProfiles();
+    return read.length ? catalogCapabilities({ read }) : null;
+  }
+
   detach(attachOpaqueData: AttachOpaqueData): void {
     // Remove attachment
     for (const [name, id] of this._attachments) {
@@ -350,9 +359,20 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
     const schema = this._descriptor.schemas.find((s) => schemaPathsEqual(schemaDescriptorPath(s), path));
     if (!schema || !schema.tables) return [];
 
-    return await Promise.all(schema.tables.map(async (t) => {
+    const infos = await Promise.all(schema.tables.map(async (t) => {
+      // Refuse the pre-v3 constraint fields before anything else, so the author
+      // sees the replacement rather than an error about a derived schema.
+      if (t.notNull?.length || t.unique?.length || t.primaryKey?.length || t.check?.length || t.foreignKey?.length) {
+        throw new Error(
+          `Table '${t.name}': notNull/unique/primaryKey/check/foreignKey are not sent under vgi.v3; ` +
+            "declare canonical records with constraintRecord() in `constraints` instead"
+        );
+      }
       // Resolve the column schema
       let colSchema: VgiSchema;
+      // True when a function-backed table's dummy bind failed: the table is
+      // listed with no columns, and per-column decorations cannot apply.
+      let bindFailed = false;
       if (t.columns) {
         colSchema = t.columns;
       } else if (t.function) {
@@ -374,40 +394,46 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
           colSchema = response.output_schema;
         } catch {
           colSchema = schema_([]);
+          bindFailed = true;
         }
       } else {
         colSchema = schema_([]);
       }
 
-      // Apply defaults as Arrow field metadata
-      if (t.defaults) {
-        colSchema = applyDefaults(colSchema, t.defaults);
-      }
-      // Apply generated-column expressions as Arrow field metadata
-      // (canonical SqlExpression IPC). DuckDB registers these columns as GENERATED
-      // and evaluates the SQL expression client-side — the scan function
-      // should not return values for them.
-      if (t.generatedColumns) {
-        colSchema = applyGeneratedColumns(colSchema, t.generatedColumns, path);
-      }
-      // Apply per-column comments as Arrow field metadata (matches Python's
-      // `comment` metadata key on columns).
-      if (t.columnComments) {
-        colSchema = applyColumnComments(colSchema, t.columnComments);
+      if (!bindFailed) {
+        // Apply defaults as Arrow field metadata
+        if (t.defaults) {
+          colSchema = applyDefaults(colSchema, t.defaults, path);
+        }
+        // Apply generated-column expressions as Arrow field metadata
+        // (canonical SqlExpression IPC). DuckDB registers these columns as GENERATED
+        // and evaluates the SQL expression client-side — the scan function
+        // should not return values for them.
+        if (t.generatedColumns) {
+          colSchema = applyGeneratedColumns(colSchema, t.generatedColumns, path, t.name);
+        }
+        // Apply per-column comments as Arrow field metadata (matches Python's
+        // `comment` metadata key on columns).
+        if (t.columnComments) {
+          colSchema = applyColumnComments(colSchema, t.columnComments, t.name);
+        }
       }
 
       validateColumnMetadata(colSchema);
-      // The extension rejects the table at ATTACH when these disagree.
-      validateConstraintNullability(t.name, colSchema.fields, t.constraints ?? []);
-      validateColumnExpressions(colSchema, path);
-      const columns = serializeSchema(colSchema);
-
-      if (t.notNull?.length || t.unique?.length || t.primaryKey?.length || t.check?.length || t.foreignKey?.length) {
-        throw new Error(
-          `Table '${t.name}': notNull/unique/primaryKey/check/foreignKey are not sent under vgi.v3; ` +
-            "declare canonical records with constraintRecord() in `constraints` instead"
-        );
+      // Constraint records about columns a failed bind could not produce are
+      // unservable (DuckDB would reject the table); list the table bare.
+      const constraints = bindFailed ? [] : (t.constraints ?? []);
+      // The served schema: legacy generated metadata translated, records
+      // checked as DuckDB checks them at ATTACH, nullability exactly the
+      // records' (a non-nullable field no NOT_NULL/PRIMARY_KEY names is served
+      // nullable; a named one non-nullable).
+      colSchema = servedTableSchema(t.name, path, colSchema, constraints);
+      try {
+        validateColumnExpressions(colSchema, path);
+      } catch (error) {
+        throw new Error(`Table '${t.name}': ${(error as Error).message}`);
       }
+      const columns = serializeSchema(colSchema);
 
       // Validate exact raw paths against the full table schema.
       const requiredFilters = t.requiredFilters ?? [];
@@ -439,7 +465,7 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
         name: t.name,
         schema_path: normalizeSchemaPath(path),
         columns,
-        constraints: t.constraints ?? [],
+        constraints: [...constraints],
         definition_revision: t.definitionRevision ?? null,
         write_result_modes: {},
         supports_column_statistics: t.statistics != null && Object.keys(t.statistics).length > 0,
@@ -463,6 +489,10 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
         required_filters: requiredFilters,
       };
     }));
+    // DuckDB resolves a foreign key against its target when the referencing
+    // table loads; every target is in this schema, so check them all here.
+    validateForeignKeyTargets(infos.map((info) => ({ schemaPath: info.schema_path, name: info.name, constraints: info.constraints })));
+    return infos;
   }
 
   override tableColumnStatisticsGet(
@@ -1005,14 +1035,25 @@ function defaultToSql(value: DefaultValue): string {
   return `'${escaped}'`;
 }
 
-function applyDefaults(schema: VgiSchema, defaults: Record<string, DefaultValue>): VgiSchema {
+// Column types DuckDB reads a canonical `vgi.column.default.v1` for.
+const CANONICAL_DEFAULT_TYPES = new Set(["BOOLEAN", "TINYINT", "SMALLINT", "INTEGER", "BIGINT", "FLOAT", "DOUBLE", "DECIMAL", "VARCHAR"]);
+
+function applyDefaults(schema: VgiSchema, defaults: Record<string, DefaultValue>, owner: string[]): VgiSchema {
   let result = schema;
   for (const [colName, value] of Object.entries(defaults)) {
     const idx = result.fields.findIndex((f) => f.name === colName);
     if (idx < 0) continue;
     const f = result.fields[idx];
     const existingMeta = f.metadata ? new Map(f.metadata) : new Map<string, string>();
-    existingMeta.set("default", defaultToSql(value));
+    const sql = defaultToSql(value);
+    // Canonical where DuckDB reads it (and the literal is finite); the legacy
+    // "default" key otherwise, which DuckDB still parses as raw SQL.
+    const type = duckdbPrimitive(f);
+    if (type && CANONICAL_DEFAULT_TYPES.has(type) && (typeof value !== "number" || Number.isFinite(value))) {
+      existingMeta.set("vgi.column.default.v1", defaultExpressionMetadata(sql, owner));
+    } else {
+      existingMeta.set("default", sql);
+    }
     const newField = field(f.name, f.type, f.nullable, existingMeta);
     const fields = [...result.fields];
     fields[idx] = newField;
@@ -1021,15 +1062,20 @@ function applyDefaults(schema: VgiSchema, defaults: Record<string, DefaultValue>
   return result;
 }
 
-function applyGeneratedColumns(schema: VgiSchema, generated: Record<string, string>, owner: string[]): VgiSchema {
+function applyGeneratedColumns(schema: VgiSchema, generated: Record<string, string>, owner: string[], table: string): VgiSchema {
   let result = schema;
   for (const [colName, expression] of Object.entries(generated)) {
     const idx = result.fields.findIndex((f) => f.name === colName);
-    if (idx < 0) throw new Error(`generated expression references unknown column ${colName}`);
+    if (idx < 0) throw new Error(`Table '${table}': generatedColumns names unknown column ${colName}`);
     const f = result.fields[idx];
     const existingMeta = f.metadata ? new Map(f.metadata) : new Map<string, string>();
-    if (existingMeta.has(GENERATED_EXPRESSION_KEY) || existingMeta.has("generated_expression")) throw new Error("generated convenience conflicts with existing expression metadata");
-    existingMeta.set(GENERATED_EXPRESSION_KEY, generatedExpressionMetadata(expression, owner));
+    if (existingMeta.has(GENERATED_EXPRESSION_KEY) || existingMeta.has("generated_expression"))
+      throw new Error(`Table '${table}': generatedColumns for ${colName} conflicts with existing expression metadata`);
+    try {
+      existingMeta.set(GENERATED_EXPRESSION_KEY, generatedExpressionMetadata(expression, owner));
+    } catch (error) {
+      throw new Error(`Table '${table}': column ${colName}: ${(error as Error).message}`);
+    }
     existingMeta.set(GENERATION_KEY, "virtual");
     const newField = field(f.name, f.type, f.nullable, existingMeta);
     const fields = [...result.fields];
@@ -1039,11 +1085,11 @@ function applyGeneratedColumns(schema: VgiSchema, generated: Record<string, stri
   return result;
 }
 
-function applyColumnComments(schema: VgiSchema, comments: Record<string, string>): VgiSchema {
+function applyColumnComments(schema: VgiSchema, comments: Record<string, string>, table: string): VgiSchema {
   let result = schema;
   for (const [colName, comment] of Object.entries(comments)) {
     const idx = result.fields.findIndex((f) => f.name === colName);
-    if (idx < 0) throw new Error(`column comment references unknown field ${colName}`);
+    if (idx < 0) throw new Error(`Table '${table}': columnComments names unknown column ${colName}`);
     const f = result.fields[idx];
     const existingMeta = f.metadata ? new Map(f.metadata) : new Map<string, string>();
     existingMeta.set("comment", comment);

@@ -102,7 +102,9 @@ export const worker = new Worker({
             arguments: new Arguments([0]),
             // Constraints are the worker's own attestation: DuckDB trusts only
             // ENFORCED + ALL_ROWS records, so declare one only when every row
-            // the scan can return satisfies it.
+            // the scan can return satisfies it. The records also decide the
+            // served Arrow nullability: `name` is served NOT NULL, every column
+            // no record names is served nullable.
             constraints: [
               constraintRecord({
                 schemaPath: ["data"], table: "cities", id: "cities.name.not_null",

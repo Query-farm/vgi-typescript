@@ -75,6 +75,10 @@ export {
   type TransactionOpaqueData,
 } from "./catalog/interface.js";
 
+// vgi.v3 records: decode constraint records (readConstraintRecord), negotiate
+// catalog capabilities, and build/decode the other canonical records.
+export * from "./catalog/public-codecs.js";
+
 // Errors
 export {
   VgiError,

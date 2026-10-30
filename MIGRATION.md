@@ -1,5 +1,55 @@
 # Migration guide
 
+## Unreleased — vgi.v3 constraint and column-expression fixes
+
+- **Served nullability follows the constraint records.** A table is served with
+  each Arrow field (descending into ordinary STRUCTs, never the `is_row_id`
+  column) non-nullable exactly when a NOT_NULL or PRIMARY_KEY record names it.
+  A non-nullable field no record names is now served nullable instead of
+  failing; a record naming a nullable field serves it non-nullable. This applies
+  to every serve path: descriptor tables, function-backed tables, `table_get`,
+  `schema_contents_tables` and `catalog_contents`, for any `CatalogInterface`.
+  `validateConstraintNullability` is deprecated (use `validateTableConstraints`).
+- **Records are checked as DuckDB checks them at ATTACH**, with the table,
+  constraint id and path in the error: owner table/schema, one-component schema
+  paths, duplicate ids and (case-insensitive) declared names, ENFORCED + ALL_ROWS
+  only, one PRIMARY KEY, resolvable paths (nested only for NOT_NULL), the native
+  CHECK grammar (one numeric comparison over signed-integer/float columns and
+  numeric literals), and foreign keys (same schema, MATCH SIMPLE, NO ACTION or
+  RESTRICT, a referenced PRIMARY_KEY/UNIQUE record that exists).
+  `constraintRecord()` refuses what it can check up front, including non-ENFORCED
+  attestations and cross-schema foreign keys.
+- **Constraint mutation.** DuckDB sends `ALTER TABLE ... SET/DROP NOT NULL` as
+  `catalog_table_constraints_apply`. Implement `CatalogInterface.tableConstraintsApply`
+  (and advertise `vgi.constraint.mutate.v1` from `catalogCapabilities()`). The
+  default routes NOT NULL changes to the now-deprecated `tableNotNullSet` /
+  `tableNotNullDrop`; such a catalog must serve the NOT_NULL records and rotate
+  `definition_revision` itself.
+- **Negotiation for custom catalogs.** `CatalogInterface.catalogCapabilities()`
+  is advertised (and selected against the client's offer, with prerequisites)
+  whenever `attach()` leaves `catalog_capabilities` unset. Use
+  `constraintCapabilities({ create, mutate, enforce })` to build it.
+- **CREATE TABLE with constraints** now reaches `tableCreate` as canonical
+  `ConstraintDefinition` records when the catalog advertises
+  `vgi.constraint.create.v1` + `vgi.constraint.enforce.v1`; the catalog must
+  enforce each one. The example in-memory catalogs store no rows and still
+  refuse constrained CREATE TABLE.
+- **Generated columns** are checked against DuckDB's rules (VIRTUAL, nullable,
+  boolean/signed-integer/utf8, the bounded scalar grammar). The legacy
+  `generated_expression` key is translated to the canonical pair when served.
+- **Defaults** from `TableDescriptor.defaults` are served as canonical
+  `vgi.column.default.v1` for boolean, signed-integer, float, decimal128 and utf8
+  columns (legacy `default` otherwise).
+- **Exports.** The package root, `./client` and `./worker-cf` export the record
+  codecs: `encode`/`decodeCatalogCapabilities`, `catalogCapabilities`,
+  `selectCatalogCapabilities`, `defaultClientCapabilities`,
+  `encode`/`decodeSqlExpression` and `sqlExpression(sql, schemaPath)`,
+  `generatedExpressionMetadata`, `defaultExpressionMetadata`,
+  `canonicalIndex(...)`, `constraintRecord` / `readConstraintRecord`, the
+  constraint change/snapshot/definition codecs, and the `MacroOverload` codec
+  and type. `VgiClient.catalogAttach` sends `defaultClientCapabilities()` when no
+  offer is given (pass `null` to send none).
+
 ## 0.47.0 — vgi.v3
 
 This release adopts `vgi.v3` / `3.0.0`. Upgrade the VGI extension and worker SDKs

@@ -10,9 +10,15 @@ import {
   encodeSqlExpression,
 } from "../generated/vgi-protocol-types.js";
 import type { SqlExpression } from "../generated/vgi-client.js";
+import { validateColumnExpressionSql } from "./sql-grammar.js";
+import { duckdbPrimitive } from "./column-types.js";
 
 export const GENERATED_EXPRESSION_KEY = "vgi.column.generated.v1";
 export const GENERATION_KEY = "vgi.column.generation.v1";
+/** Canonical DEFAULT: base64 of one `SqlExpression` IPC record. */
+export const DEFAULT_EXPRESSION_KEY = "vgi.column.default.v1";
+const GENERATED_TYPES = new Set(["BOOLEAN", "TINYINT", "SMALLINT", "INTEGER", "BIGINT", "VARCHAR"]);
+const DEFAULT_TYPES = new Set(["BOOLEAN", "TINYINT", "SMALLINT", "INTEGER", "BIGINT", "FLOAT", "DOUBLE", "DECIMAL", "VARCHAR"]);
 const PROFILE = "vgi.expression.duckdb.scalar.v1";
 const MAX_BYTES = 8 * 1024 * 1024;
 const base64 = (bytes: Uint8Array): string =>
@@ -143,7 +149,8 @@ function shape(schema: VgiSchema): string {
   ];
   return JSON.stringify(schema.fields.map(field));
 }
-export function validateEncoded(encoded: string, owner: string[]): void {
+/** Validate one canonical base64 `SqlExpression` and return its SQL. */
+export function validateEncoded(encoded: string, owner: string[]): string {
   if (!encoded.length || encoded.length > 4 * Math.ceil(MAX_BYTES / 3))
     throw new Error("invalid generated expression size");
   const bytes = Uint8Array.from(atob(encoded), (c) => c.charCodeAt(0));
@@ -155,12 +162,42 @@ export function validateEncoded(encoded: string, owner: string[]): void {
     throw new Error("invalid SqlExpression record schema");
   const utf8 = new TextDecoder("utf-8", { fatal: true });
   textBuffers.forEach((buffer) => utf8.decode(buffer));
-  expression(decodeSqlExpression(bytes), owner);
+  const value = decodeSqlExpression(bytes);
+  expression(value, owner);
+  return value.sql;
 }
+/**
+ * Encode `sql` as canonical `vgi.column.generated.v1` metadata (base64 of a
+ * `SqlExpression` owned by schema `owner`). Pair it with
+ * `vgi.column.generation.v1 = "virtual"` on a nullable field.
+ */
 export function generatedExpressionMetadata(
   sql: string,
   owner: string[],
 ): string {
+  try {
+    validateColumnExpressionSql(sql, { usingColumns: true, generated: true });
+  } catch (error) {
+    throw new Error(`generated expression ${JSON.stringify(sql)}: ${(error as Error).message}`);
+  }
+  return base64(encodeSqlExpression(sqlExpression(sql, owner)));
+}
+/**
+ * Encode `sql` as canonical `vgi.column.default.v1` metadata. DuckDB reads it
+ * for boolean, signed-integer, float, decimal128 and utf8 columns; the SQL is a
+ * constant expression (no column references).
+ */
+export function defaultExpressionMetadata(sql: string, owner: string[]): string {
+  validateColumnExpressionSql(sql, { usingColumns: false, generated: false });
+  return base64(encodeSqlExpression(sqlExpression(sql, owner)));
+}
+/**
+ * A DuckDB scalar `SqlExpression` owned by `schemaPath`, in the default
+ * evaluation context (UTC, binary collation, ASC NULLS LAST) — the only one the
+ * extension's native adapter accepts. Encode with `encodeSqlExpression`.
+ */
+export function sqlExpression(sql: string, schemaPath: readonly string[]): SqlExpression {
+  const owner = [...schemaPath];
   const value: SqlExpression = {
     sql,
     profile: PROFILE,
@@ -174,7 +211,7 @@ export function generatedExpressionMetadata(
     },
   };
   expression(value, owner);
-  return base64(encodeSqlExpression(value));
+  return value;
 }
 /** Validate canonical VIRTUAL metadata without evaluating or rewriting SQL. */
 export function validateColumnExpressions(
@@ -186,7 +223,12 @@ export function validateColumnExpressions(
     for (const f of t?.children ?? t?.fields ?? []) field(f);
     if (t?.dictionary) type(t.dictionary);
   };
-  const field = (f: any): void => {
+  const topLevel = new Map<string, any[]>();
+  for (const f of schema.fields) {
+    const key = String(f.name).toLowerCase();
+    topLevel.set(key, [...(topLevel.get(key) ?? []), f]);
+  }
+  const field = (f: any, top = false): void => {
     const metadata: Map<string, string> = f.metadata ?? new Map();
     for (const key of metadata.keys()) {
       if (
@@ -196,10 +238,25 @@ export function validateColumnExpressions(
       )
         throw new Error("unknown generated metadata version");
     }
+    const where = `column ${f.name}`;
     if (metadata.has("generated_expression"))
       throw new Error(
-        "legacy generated expression requires explicit canonical translation",
+        `${where}: legacy generated_expression metadata is not read under vgi.v3; ` +
+          "use generatedExpressionMetadata() (served tables are translated automatically)",
       );
+    if (metadata.has(DEFAULT_EXPRESSION_KEY)) {
+      if (metadata.has("default") || metadata.has(GENERATED_EXPRESSION_KEY) || metadata.has(GENERATION_KEY))
+        throw new Error(`${where}: canonical default conflicts with other column expression metadata`);
+      const type = duckdbPrimitive(f);
+      if (!type || !DEFAULT_TYPES.has(type))
+        throw new Error(`${where}: DuckDB reads canonical defaults only for boolean, signed integer, float, decimal128 and utf8 columns`);
+      const sql = validateEncoded(metadata.get(DEFAULT_EXPRESSION_KEY)!, owner);
+      try {
+        validateColumnExpressionSql(sql, { usingColumns: false, generated: false });
+      } catch (error) {
+        throw new Error(`${where}: default ${JSON.stringify(sql)}: ${(error as Error).message}`);
+      }
+    }
     if (metadata.has(GENERATED_EXPRESSION_KEY) !== metadata.has(GENERATION_KEY))
       throw new Error("generated expression and category must occur together");
     if (metadata.has(GENERATED_EXPRESSION_KEY)) {
@@ -207,13 +264,34 @@ export function validateColumnExpressions(
         throw new Error("only VIRTUAL generated columns are supported");
       if (metadata.has("default") || metadata.has("vgi.column.default.v1"))
         throw new Error("generated column cannot have a default");
-      validateEncoded(metadata.get(GENERATED_EXPRESSION_KEY)!, owner);
+      const sql = validateEncoded(metadata.get(GENERATED_EXPRESSION_KEY)!, owner);
       if (!allowGenerated)
         throw new Error("generated columns unsupported by this catalog");
+      if (!f.nullable)
+        throw new Error(`${where}: DuckDB requires generated columns to be nullable`);
+      const type = duckdbPrimitive(f);
+      if (!type || !GENERATED_TYPES.has(type))
+        throw new Error(`${where}: DuckDB generated columns must be boolean, signed integer or utf8`);
+      let references: string[];
+      try {
+        references = validateColumnExpressionSql(sql, { usingColumns: true, generated: true });
+      } catch (error) {
+        throw new Error(`${where}: generated expression ${JSON.stringify(sql)}: ${(error as Error).message}`);
+      }
+      if (top) {
+        for (const name of references) {
+          const matches = topLevel.get(name.toLowerCase()) ?? [];
+          if (matches.length !== 1)
+            throw new Error(`${where}: generated expression references a missing or ambiguous column ${name}`);
+          const operand = duckdbPrimitive(matches[0]);
+          if (!operand || !GENERATED_TYPES.has(operand))
+            throw new Error(`${where}: generated expression operand ${name} must be boolean, signed integer or utf8`);
+        }
+      }
     }
     type(f.type);
   };
-  schema.fields.forEach(field);
+  schema.fields.forEach((f) => field(f, true));
 }
 export function validateColumnExpressionsIpc(
   bytes: Uint8Array,

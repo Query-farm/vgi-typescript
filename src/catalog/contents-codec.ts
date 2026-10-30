@@ -1,6 +1,6 @@
 // Copyright 2025, 2026 Query Farm LLC - https://query.farm
 // Catalog-wide collection streams, independent of delivery and attachment state.
-import { validateTableInfoColumns } from "./column-metadata.js";
+import { servedValidatedTableInfo, validateTableInfoColumns } from "./column-metadata.js";
 import { encodeASDCollection, decodeASDCollection } from "../codec/asd.js";
 import {
   SchemaInfoSchema, TableInfoSchema, ViewInfoSchema, FunctionInfoSchema, MacroInfoSchema, IndexInfoSchema,
@@ -15,10 +15,10 @@ export const CATALOG_STREAM_KINDS = ["schemas", "tables", "views", "functions", 
 export type CatalogStreams = Pick<CatalogContentsResponse, typeof CATALOG_STREAM_KINDS[number]>;
 
 export function encodeCatalogStreams(inventory: readonly SchemaContentsInfo[]): CatalogStreams {
-  for (const schema of inventory) for (const table of schema.tables) validateTableInfoColumns(table);
+  const tables = inventory.flatMap((s) => s.tables.map(servedValidatedTableInfo));
   const streams = {
     schemas: encodeASDCollection(SchemaInfoSchema, inventory.map((s) => s.schema)),
-    tables: encodeASDCollection(TableInfoSchema, inventory.flatMap((s) => s.tables)),
+    tables: encodeASDCollection(TableInfoSchema, tables),
     views: encodeASDCollection(ViewInfoSchema, inventory.flatMap((s) => s.views)),
     functions: encodeASDCollection(FunctionInfoSchema, inventory.flatMap((s) => [...s.scalar_functions, ...s.aggregate_functions, ...s.table_functions])),
     macros: encodeASDCollection(MacroInfoSchema, inventory.flatMap((s) => [...s.scalar_macros, ...s.table_macros])),

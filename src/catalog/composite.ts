@@ -224,6 +224,16 @@ export class CompositeCatalogInterface extends CatalogInterface {
   override async tableNotNullDrop(...args: Parameters<CatalogInterface["tableNotNullDrop"]>): Promise<void> {
     await (this._route(args[0]).tableNotNullDrop as (...a: typeof args) => unknown)(...args);
   }
+  override async tableConstraintsApply(
+    request: Parameters<CatalogInterface["tableConstraintsApply"]>[0],
+  ): ReturnType<CatalogInterface["tableConstraintsApply"]> {
+    return await this._route(request.attach_opaque_data).tableConstraintsApply(request);
+  }
+  override async catalogCapabilities(
+    attachOpaqueData: AttachOpaqueData,
+  ): Promise<Awaited<ReturnType<CatalogInterface["catalogCapabilities"]>>> {
+    return await this._route(attachOpaqueData).catalogCapabilities(attachOpaqueData);
+  }
   override async viewCreate(...args: Parameters<CatalogInterface["viewCreate"]>): Promise<void> {
     await (this._route(args[0]).viewCreate as (...a: typeof args) => unknown)(...args);
   }

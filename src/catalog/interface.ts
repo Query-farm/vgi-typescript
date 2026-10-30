@@ -3,8 +3,11 @@ import type { CatalogSnapshotPolicy } from "./publication.js";
 // CatalogInterface abstract class with ~35 methods.
 // Matching Python's vgi/catalog/catalog_interface.py
 
-import { CatalogReadOnlyError } from "../errors.js";
+import { CatalogNotFoundError, CatalogReadOnlyError, VgiError } from "../errors.js";
 import { schemaPathsEqual } from "../schema-path.js";
+import type { CatalogCapabilities, ConstraintSnapshot, ConstraintsApplyRequest } from "../generated/vgi-protocol-types.js";
+import { decodeCatalogObjectRef, decodeConstraintChange, decodeConstraintDefinition } from "../generated/vgi-protocol-types.js";
+import { constraintCapabilities, readConstraintRecord } from "./constraints.js";
 
 export type AttachOpaqueData = Uint8Array;
 export type TransactionOpaqueData = Uint8Array;
@@ -716,6 +719,16 @@ export abstract class CatalogInterface {
   ): Awaitable<TableInfo | null> {
     return null;
   }
+  /**
+   * CREATE TABLE. `constraintDefinitions` carries one canonical
+   * `ConstraintDefinition` record per declared constraint (decode with
+   * `decodeConstraintDefinition`); `columns` marks exactly the NOT NULL and
+   * PRIMARY KEY columns non-nullable. DuckDB sends definitions only when the
+   * attach negotiated `vgi.constraint.create.v1` (advertise it from
+   * `catalogCapabilities()`), and the catalog must then enforce every one on
+   * every write and serve each back as an ENFORCED + ALL_ROWS `ConstraintInfo`
+   * record (see `constraintRecord`). Refuse any it cannot enforce.
+   */
   tableCreate(
     attachOpaqueData: AttachOpaqueData,
     schemaPath: string[],
@@ -726,6 +739,86 @@ export abstract class CatalogInterface {
     transactionOpaqueData?: TransactionOpaqueData
   ): Awaitable<void> {
     throw new CatalogReadOnlyError("table_create");
+  }
+  /**
+   * The profiles this catalog implements for an attachment (advertised as
+   * `CatalogAttachResult.catalog_capabilities` when `attach()` leaves it
+   * unset; the worker selects against the client's offer). Override to serve
+   * canonical constraint records from a custom catalog, e.g.
+   * `return constraintCapabilities({ enforce: true })`. The default advertises
+   * nothing, unless the catalog implements `tableConstraintsApply` or the
+   * deprecated not-null hooks, in which case it advertises records read,
+   * mutation and enforcement. Return null for "unknown" (no SDK-side gating).
+   */
+  catalogCapabilities(_attachOpaqueData: AttachOpaqueData): Awaitable<CatalogCapabilities | null> {
+    const proto = CatalogInterface.prototype;
+    if (this.tableConstraintsApply !== proto.tableConstraintsApply || this._implementsLegacyNotNull())
+      return constraintCapabilities({ mutate: true, enforce: true });
+    return null;
+  }
+  /** Whether a subclass overrides either deprecated not-null hook. */
+  private _implementsLegacyNotNull(): boolean {
+    const proto = CatalogInterface.prototype;
+    return this.tableNotNullSet !== proto.tableNotNullSet || this.tableNotNullDrop !== proto.tableNotNullDrop;
+  }
+  /**
+   * Apply canonical constraint changes atomically (`catalog_table_constraints_apply`;
+   * DuckDB sends ALTER TABLE ... SET/DROP NOT NULL this way). Attach and
+   * transaction values arrive unwrapped. Reject the request when the table's
+   * current `definition_revision` differs from `request.expected_revision`;
+   * on success return the table's new records under a NEW definition revision.
+   * Requires `vgi.constraint.mutate.v1` (see `catalogCapabilities`).
+   *
+   * The default routes NOT NULL changes to the deprecated `tableNotNullSet` /
+   * `tableNotNullDrop` hooks when a catalog implements them (re-reading the
+   * table with `tableGet` for the snapshot, so that catalog must serve the
+   * NOT_NULL records and rotate `definition_revision` itself); otherwise it is
+   * unimplemented.
+   */
+  async tableConstraintsApply(request: ConstraintsApplyRequest): Promise<ConstraintSnapshot> {
+    if (!this._implementsLegacyNotNull()) throw new VgiError("catalog_table_constraints_apply is not implemented by this catalog", "UNIMPLEMENTED");
+    const target = decodeCatalogObjectRef(request.table);
+    const attach = request.attach_opaque_data;
+    const tx = request.transaction_opaque_data ?? undefined;
+    const schemaPath = [...target.schema_path];
+    const read = async () => {
+      const info = await this.tableGet(attach, schemaPath, target.name, undefined, undefined, tx);
+      if (!info) throw new CatalogNotFoundError("Table", target.name);
+      return info;
+    };
+    const before = await read();
+    if (!sameBytes(before.definition_revision ?? null, request.expected_revision))
+      throw new VgiError(`Table '${target.name}': definition_revision changed; retry the statement`, "FAILED_PRECONDITION");
+    const records = (before.constraints ?? []).map(readConstraintRecord);
+    for (const bytes of request.changes) {
+      const change = decodeConstraintChange(bytes);
+      if (change.operation === "ADD" && change.definition != null) {
+        const def = decodeConstraintDefinition(change.definition);
+        if (def.kind === "NOT_NULL" && def.column_paths.length === 1 && def.column_paths[0].length === 1) {
+          await this.tableNotNullSet(attach, schemaPath, target.name, [...def.column_paths[0]], false, tx);
+          continue;
+        }
+      } else if (change.operation === "DROP" && change.ref != null) {
+        const id = decodeCatalogObjectRef(change.ref).name;
+        const record = records.find((r) => r.id === id);
+        if (record?.kind === "NOT_NULL" && record.columns[0]?.length === 1) {
+          await this.tableNotNullDrop(attach, schemaPath, target.name, record.columns[0], false, tx);
+          continue;
+        }
+      }
+      throw new VgiError(
+        "catalog_table_constraints_apply: only ADD/DROP of a top-level NOT_NULL routes to tableNotNullSet/tableNotNullDrop; implement tableConstraintsApply",
+        "UNIMPLEMENTED",
+      );
+    }
+    const after = await read();
+    if (after.definition_revision == null || sameBytes(after.definition_revision, before.definition_revision ?? null))
+      throw new VgiError(
+        `Table '${target.name}': the NOT NULL change was applied but tableGet still serves the old definition_revision; ` +
+          "a catalog using tableNotNullSet/tableNotNullDrop must rotate it (or implement tableConstraintsApply)",
+        "INTERNAL",
+      );
+    return { table: request.table, definition_revision: after.definition_revision, constraints: after.constraints ?? [] };
   }
   tableDrop(
     attachOpaqueData: AttachOpaqueData,
@@ -882,6 +975,7 @@ export abstract class CatalogInterface {
   ): Awaitable<void> {
     throw new CatalogReadOnlyError("catalog_table_column_type_change");
   }
+  /** @deprecated DuckDB sends SET NOT NULL through `tableConstraintsApply`; the default routes it here. */
   tableNotNullSet(
     attachOpaqueData: AttachOpaqueData,
     schemaPath: string[],
@@ -892,6 +986,7 @@ export abstract class CatalogInterface {
   ): Awaitable<void> {
     throw new CatalogReadOnlyError("catalog_table_not_null_set");
   }
+  /** @deprecated DuckDB sends DROP NOT NULL through `tableConstraintsApply`; the default routes it here. */
   tableNotNullDrop(
     attachOpaqueData: AttachOpaqueData,
     schemaPath: string[],
@@ -1113,4 +1208,11 @@ export abstract class CatalogInterface {
     attachOpaqueData: AttachOpaqueData,
     transactionOpaqueData: TransactionOpaqueData
   ): Awaitable<void> {}
+}
+
+function sameBytes(a: Uint8Array | null, b: Uint8Array | null): boolean {
+  if (a == null || b == null) return a == b;
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+  return true;
 }

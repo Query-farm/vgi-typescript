@@ -49,7 +49,11 @@ export interface CatalogAttachOptions {
   optionsBytes?: Uint8Array;
   dataVersionSpec?: string | null;
   implementationVersion?: string | null;
-  /** Engine capabilities serialized into the protocol's named inner record. */
+  /**
+   * Engine capabilities serialized into the protocol's named inner record.
+   * Omitted: `defaultClientCapabilities()` (reads canonical constraint records
+   * and their CHECK expressions). `null`: send no offer.
+   */
   clientCapabilities?: import("../generated/vgi-client.js").ClientCapabilities | null;
 }
 

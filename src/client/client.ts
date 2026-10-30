@@ -59,6 +59,7 @@ import { serializeAttachOptions } from "../catalog/attach-options.js";
 import { VgiClientError, wrapRpcWithErrorEnrichment } from "./errors.js";
 import { normalizeSchemaPath } from "../schema-path.js";
 import { encodeASD } from "../codec/asd.js";
+import { defaultClientCapabilities } from "../catalog/constraints.js";
 import { ClientCapabilitiesSchema, MacroCreateRequestSchema, TableCreateRequestSchema } from "../generated/vgi-protocol-schemas.js";
 import { decodeCatalogStreams } from "../catalog/contents-codec.js";
 import { decodeCatalogContentsResponse } from "../generated/vgi-protocol-types.js";
@@ -727,9 +728,11 @@ export class VgiClient {
         options: [wireOptions],
         data_version_spec: [opts?.dataVersionSpec ?? null],
         implementation_version: [opts?.implementationVersion ?? null],
-        client_capabilities: [opts?.clientCapabilities
-          ? encodeASD(ClientCapabilitiesSchema, opts.clientCapabilities)
-          : null],
+        // Absent → the default offer (constraint records + CHECK expressions,
+        // which readConstraintRecord decodes); explicit null → no offer.
+        client_capabilities: [opts?.clientCapabilities === null
+          ? null
+          : encodeASD(ClientCapabilitiesSchema, opts?.clientCapabilities ?? defaultClientCapabilities("vgi-typescript-client"))],
       },
       schema,
     );
