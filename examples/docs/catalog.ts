@@ -20,6 +20,7 @@
 import {
   Worker,
   Arguments,
+  constraintRecord,
   defineTableFunction,
   batchFromColumns,
   toSchema,
@@ -99,7 +100,16 @@ export const worker = new Worker({
             // writes `SELECT * FROM cat.data.cities` with no arguments at all.
             function: citiesScan,
             arguments: new Arguments([0]),
-            notNull: ["name"],
+            // Constraints are the worker's own attestation: DuckDB trusts only
+            // ENFORCED + ALL_ROWS records, so declare one only when every row
+            // the scan can return satisfies it.
+            constraints: [
+              constraintRecord({
+                schemaPath: ["data"], table: "cities", id: "cities.name.not_null",
+                kind: "NOT_NULL", columns: [["name"]],
+                enforcement: "ENFORCED", validation: "ALL_ROWS",
+              }),
+            ],
             columnComments: { population: "Most recent estimate" },
           },
         ],

@@ -65,6 +65,10 @@ export {
   serializeColumnStatistics,
   BindResultSchema,
   ScanFunctionResultSchema,
+  constraintRecord,
+  readConstraintRecord,
+  CONSTRAINT_RECORDS_READ,
+  ROW_SCALAR_EXPRESSION,
 } from "./index.core.js";
 
 export type {
@@ -86,6 +90,8 @@ export type {
   RowTransformConfig,
   RowTransformProcessParams,
   TableInOutBindParams,
+  ConstraintRecordSpec,
+  ConstraintRecordView,
 } from "./index.core.js";
 
 export type { ProtocolConfig } from "./protocol/dispatch.js";

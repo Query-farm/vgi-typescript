@@ -13,7 +13,8 @@ import {
   encodeViewInfo,
   encodeCatalogInfo,
 } from "../../../generated/vgi-client.js";
-import { buildCatalogAttachResult } from "../../../generated/vgi-protocol-types.js";
+import { buildCatalogAttachResult, decodeCatalogCapabilities, encodeCatalogCapabilities } from "../../../generated/vgi-protocol-types.js";
+import { selectReadProfiles } from "../../../catalog/constraints.js";
 import { serveCatalogContents } from "./contents.js";
 import { encodeFunctionInfoOnce } from "../../../catalog/item-encoding.js";
 import { encodeCopyFromFormatInfo } from "../../../catalog/interface.js";
@@ -94,13 +95,28 @@ export function catalogAdminHandlers(getCatalog: GetCatalog, signingKey?: Uint8A
       innerParams.implementation_version = restored.implementationVersion;
       optionsDict = restored.options;
     }
+    const clientCapabilities =
+      innerParams.client_capabilities == null ? null : toUint8Array(innerParams.client_capabilities);
     const result = await cat.attach(
       innerParams.name,
       optionsDict,
       innerParams.data_version_spec ?? null,
       innerParams.implementation_version ?? null,
-      innerParams.client_capabilities == null ? null : toUint8Array(innerParams.client_capabilities),
+      clientCapabilities,
     );
+    // Select the client-offered read profiles here, from the request itself
+    // (as vgi-python's worker does), so a catalog whose attach() override
+    // drops the clientCapabilities argument still negotiates what it serves.
+    if (result.catalog_capabilities != null) {
+      const available = decodeCatalogCapabilities(toUint8Array(result.catalog_capabilities));
+      const chosen = result.selected_capabilities == null
+        ? { read: [], ddl: [], write: [], transaction: [] }
+        : decodeCatalogCapabilities(toUint8Array(result.selected_capabilities));
+      result.selected_capabilities = encodeCatalogCapabilities({
+        ...chosen,
+        read: selectReadProfiles(available.read, clientCapabilities),
+      });
+    }
     // Seal the attach value into an AEAD envelope bound to the caller's
     // identity before it leaves the worker (HTTP transport; pass-through
     // when there is no signing key).

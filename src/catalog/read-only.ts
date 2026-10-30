@@ -37,6 +37,8 @@ import { conformColumns } from "../codec/conform.js";
 import { VgiError } from "../errors.js";
 import { encodeFunctionInfoOnce, freezeCatalogItem } from "./item-encoding.js";
 import { macroOverloads } from "./macro-overloads.js";
+import { CONSTRAINT_RECORDS_READ, ROW_SCALAR_EXPRESSION, selectReadProfiles, validateConstraintNullability } from "./constraints.js";
+import { encodeCatalogCapabilities } from "../generated/vgi-protocol-types.js";
 
 /**
  * The fixed attach id ReadOnlyCatalogInterface writes into its items (same
@@ -212,6 +214,10 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
       encodeAttachCatalogInfo(c)
     );
 
+    // Constraint records are readable only under a negotiated profile.
+    const available = this.catalogReadProfiles();
+    const read = selectReadProfiles(available, clientCapabilities);
+
     // Auto-derive supportsTimeTravel from table descriptors
     const hasTimeTravel = this._descriptor.schemas.some(
       (s) => s.tables?.some((t) => t.supportsTimeTravel) ?? false
@@ -243,7 +249,25 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
       // Static, version-frozen catalog: the whole thing can be served in one
       // catalog_contents call (as vgi-python's ReadOnlyCatalogInterface does).
       supports_catalog_contents: this.supportsCatalogContents,
+      catalog_capabilities: available.length
+        ? encodeCatalogCapabilities({ read: [...available].sort(), ddl: [], write: [], transaction: [] })
+        : null,
+      selected_capabilities: available.length
+        ? encodeCatalogCapabilities({ read, ddl: [], write: [], transaction: [] })
+        : null,
     });
+  }
+
+  /**
+   * Read profiles this catalog implements. Defaults to constraint records
+   * (with scalar CHECK expressions) when any descriptor table carries
+   * `constraints`; override when tables are served outside the descriptor.
+   */
+  catalogReadProfiles(): string[] {
+    const hasConstraints = this._descriptor.schemas.some(
+      (s) => s.tables?.some((t) => (t.constraints?.length ?? 0) > 0) ?? false
+    );
+    return hasConstraints ? [CONSTRAINT_RECORDS_READ, ROW_SCALAR_EXPRESSION] : [];
   }
 
   detach(attachOpaqueData: AttachOpaqueData): void {
@@ -373,11 +397,16 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
       }
 
       validateColumnMetadata(colSchema);
+      // The extension rejects the table at ATTACH when these disagree.
+      validateConstraintNullability(t.name, colSchema.fields, t.constraints ?? []);
       validateColumnExpressions(colSchema, path);
       const columns = serializeSchema(colSchema);
 
       if (t.notNull?.length || t.unique?.length || t.primaryKey?.length || t.check?.length || t.foreignKey?.length) {
-        throw new Error("legacy constraint metadata requires explicit canonical records");
+        throw new Error(
+          `Table '${t.name}': notNull/unique/primaryKey/check/foreignKey are not sent under vgi.v3; ` +
+            "declare canonical records with constraintRecord() in `constraints` instead"
+        );
       }
 
       // Validate exact raw paths against the full table schema.
