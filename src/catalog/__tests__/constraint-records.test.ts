@@ -277,11 +277,14 @@ test("generated columns: legacy metadata translated, DuckDB's type and grammar r
 });
 
 test("defaults are canonical where DuckDB reads them and legacy otherwise", async () => {
-  const served = await serve(schema([field("n", int64(), true), field("ts", timestampMicros(), true)]), undefined,
-    { defaults: { n: 5, ts: "2020-01-01" } });
+  const served = await serve(schema([field("s", utf8(), true), field("n", int64(), true),
+    field("ts", timestampMicros(), true), field("price", float64(), true)]), undefined,
+    { defaults: { s: "x", n: 5, ts: "2020-01-01", price: 9.99 } });
   expect(served.fields[0].metadata.has(DEFAULT_EXPRESSION_KEY)).toBe(true);
   expect(served.fields[0].metadata.has("default")).toBe(false);
-  expect(served.fields[1].metadata.get("default")).toBe("'2020-01-01'");
+  expect(served.fields[1].metadata.get("default")).toBe("5");
+  expect(served.fields[2].metadata.get("default")).toBe("'2020-01-01'");
+  expect(served.fields[3].metadata.get("default")).toBe("9.99");
 });
 
 test("servedTableSchema is a no-op for a schema that already agrees", () => {

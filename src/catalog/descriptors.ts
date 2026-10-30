@@ -51,8 +51,9 @@ export interface TableDescriptor {
   foreignKey?: ForeignKeyDef[];
   /**
    * Column defaults as literals. Served as canonical `vgi.column.default.v1`
-   * for boolean, signed-integer, float, decimal128 and utf8 columns, and as
-   * the legacy `default` SQL key for any other type.
+   * when a string literal meets a utf8 column or a boolean a boolean column,
+   * and as the legacy `default` SQL key otherwise (numeric defaults included:
+   * their canonical form would show in duckdb_columns() as a folded cast).
    */
   defaults?: Record<string, DefaultValue>;
   /** Per-column comment strings, applied as field metadata `comment`. */

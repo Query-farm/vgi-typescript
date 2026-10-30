@@ -38,8 +38,10 @@
   boolean/signed-integer/utf8, the bounded scalar grammar). The legacy
   `generated_expression` key is translated to the canonical pair when served.
 - **Defaults** from `TableDescriptor.defaults` are served as canonical
-  `vgi.column.default.v1` for boolean, signed-integer, float, decimal128 and utf8
-  columns (legacy `default` otherwise).
+  `vgi.column.default.v1` for a string literal on a utf8 column or a boolean on
+  a boolean column; numeric defaults keep the legacy `default` key, because
+  DuckDB displays a canonical numeric default as a folded cast
+  (`CAST(0 AS BIGINT)`) in `duckdb_columns()`.
 - **Exports.** The package root, `./client` and `./worker-cf` export the record
   codecs: `encode`/`decodeCatalogCapabilities`, `catalogCapabilities`,
   `selectCatalogCapabilities`, `defaultClientCapabilities`,

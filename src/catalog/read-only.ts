@@ -1035,8 +1035,19 @@ function defaultToSql(value: DefaultValue): string {
   return `'${escaped}'`;
 }
 
-// Column types DuckDB reads a canonical `vgi.column.default.v1` for.
-const CANONICAL_DEFAULT_TYPES = new Set(["BOOLEAN", "TINYINT", "SMALLINT", "INTEGER", "BIGINT", "FLOAT", "DOUBLE", "DECIMAL", "VARCHAR"]);
+/**
+ * Whether a literal default is served as canonical `vgi.column.default.v1`.
+ * DuckDB folds a canonical default to a typed constant, so it is used only
+ * where that constant renders exactly as the literal: a string for a utf8
+ * column, a boolean for a boolean column. Numeric defaults fold to a cast
+ * (`CAST(0 AS BIGINT)`, `CAST(9.99 AS DOUBLE)`) in duckdb_columns(), so they
+ * keep the legacy `default` key, which DuckDB shows verbatim.
+ */
+function canonicalDefault(type: string | null, value: DefaultValue): boolean {
+  if (type === "BOOLEAN") return typeof value === "boolean";
+  if (type === "VARCHAR") return typeof value === "string";
+  return false;
+}
 
 function applyDefaults(schema: VgiSchema, defaults: Record<string, DefaultValue>, owner: string[]): VgiSchema {
   let result = schema;
@@ -1046,10 +1057,9 @@ function applyDefaults(schema: VgiSchema, defaults: Record<string, DefaultValue>
     const f = result.fields[idx];
     const existingMeta = f.metadata ? new Map(f.metadata) : new Map<string, string>();
     const sql = defaultToSql(value);
-    // Canonical where DuckDB reads it (and the literal is finite); the legacy
-    // "default" key otherwise, which DuckDB still parses as raw SQL.
-    const type = duckdbPrimitive(f);
-    if (type && CANONICAL_DEFAULT_TYPES.has(type) && (typeof value !== "number" || Number.isFinite(value))) {
+    // Canonical where it is exact (see canonicalDefault); the legacy "default"
+    // key otherwise, which DuckDB still parses as raw SQL.
+    if (canonicalDefault(duckdbPrimitive(f), value)) {
       existingMeta.set("vgi.column.default.v1", defaultExpressionMetadata(sql, owner));
     } else {
       existingMeta.set("default", sql);
