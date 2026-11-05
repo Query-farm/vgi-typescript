@@ -115,6 +115,38 @@ export type {
   GlobalInitResponse,
   TableCardinality,
 } from "./protocol/types.js";
+export type {
+  ScanSplit,
+  PlanResult,
+  TableFunctionPlanRequest,
+} from "./protocol/serializers/splits.js";
+export {
+  type FieldPath,
+  type FieldPathInit,
+  buildFieldPath,
+  encodeFieldPath,
+  decodeFieldPath,
+  type TransformSpec,
+  type TransformSpecInit,
+  buildTransformSpec,
+  encodeTransformSpec,
+  decodeTransformSpec,
+  type KeyGrouping,
+  type KeyGroupingInit,
+  buildKeyGrouping,
+  encodeKeyGrouping,
+  decodeKeyGrouping,
+  type RangeKey,
+  type RangeKeyInit,
+  buildRangeKey,
+  encodeRangeKey,
+  decodeRangeKey,
+  type RangePartitioning,
+  type RangePartitioningInit,
+  buildRangePartitioning,
+  encodeRangePartitioning,
+  decodeRangePartitioning,
+} from "./generated/vgi-protocol-types.js";
 
 // Arguments
 export { Arguments } from "./arguments/arguments.js";

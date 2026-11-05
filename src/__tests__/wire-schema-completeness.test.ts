@@ -58,7 +58,12 @@ import {
   buildScanBranchesResult,
   singleBranchResult,
 } from "../catalog/interface.js";
-import { scanSplitRow, SCAN_SPLIT_SCHEMA } from "../protocol/serializers/splits.js";
+import {
+  planResponseRow,
+  scanSplitRow,
+  PLAN_RESPONSE_SCHEMA,
+  SCAN_SPLIT_SCHEMA,
+} from "../protocol/serializers/splits.js";
 import { serializeBindRequest } from "../protocol/serializers/bind.js";
 import { serializeInitRequest, serializeGlobalInitResponse, GLOBAL_INIT_RESPONSE_SCHEMA } from "../protocol/serializers/init.js";
 import { Arguments } from "../arguments/arguments.js";
@@ -168,6 +173,11 @@ const ARGUMENTS_BYTES = serializeBatch(
 
 import * as queryRecords from "../generated/vgi-protocol-types.js";
 const CASES: WireRecordCase[] = [
+  {origin: "FieldPath", schema: generated.FieldPathSchema, build: () => queryRecords.encodeFieldPath(sampleRow(generated.FieldPathSchema) as any)},
+  {origin: "TransformSpec", schema: generated.TransformSpecSchema, build: () => queryRecords.encodeTransformSpec(sampleRow(generated.TransformSpecSchema) as any)},
+  {origin: "KeyGrouping", schema: generated.KeyGroupingSchema, build: () => queryRecords.encodeKeyGrouping(sampleRow(generated.KeyGroupingSchema) as any)},
+  {origin: "RangeKey", schema: generated.RangeKeySchema, build: () => queryRecords.encodeRangeKey(sampleRow(generated.RangeKeySchema) as any)},
+  {origin: "RangePartitioning", schema: generated.RangePartitioningSchema, build: () => queryRecords.encodeRangePartitioning(sampleRow(generated.RangePartitioningSchema) as any)},
   {origin: "IndexKey", schema: generated.IndexKeySchema, build: () => queryRecords.encodeIndexKey(sampleRow(generated.IndexKeySchema) as any)},
   {origin: "IndexDefinition", schema: generated.IndexDefinitionSchema, build: () => queryRecords.encodeIndexDefinition(sampleRow(generated.IndexDefinitionSchema) as any)},
   {origin: "MacroParameter", schema: generated.MacroParameterSchema, build: () => queryRecords.encodeMacroParameter(sampleRow(generated.MacroParameterSchema) as any)},
@@ -337,16 +347,50 @@ const CASES: WireRecordCase[] = [
             estimatedRows: 10,
             rowsExact: true,
             estimatedBytes: 1024,
-            partitionBounds: new Uint8Array([0x02]),
-            columnStatistics: new Uint8Array([0x03]),
+            keyValue: new Uint8Array([0x02]),
+            rangeIndex: 2,
+            columnBounds: new Uint8Array([0x03]),
+            partitionBounds: new Uint8Array([0x04]),
+            columnStatistics: new Uint8Array([0x05]),
             locationIds: [1, 2],
-            startPosition: new Uint8Array([0x04]),
-            endPosition: new Uint8Array([0x05]),
+            startPosition: new Uint8Array([0x06]),
+            endPosition: new Uint8Array([0x07]),
           },
-          new Uint8Array([0x06]),
+          new Uint8Array([0x08]),
         ),
         SCAN_SPLIT_SCHEMA,
       ),
+  },
+  {
+    origin: "TableFunctionPlanResult",
+    schema: generated.TableFunctionPlanResultSchema,
+    build: () =>
+      batchFromRowDict(
+        planResponseRow(
+          {
+            splits: [],
+            nextCursors: [new Uint8Array([0x01])],
+            maxWorkers: 3,
+            estimatedTotalSplits: 4,
+            estimatedTotalRows: 5,
+            estimatedTotalBytes: 6,
+            catalogVersion: 7,
+            scope: "catalog",
+            locations: ["worker-a", "worker-b"],
+            keyGrouping: new Uint8Array([0x02]),
+            rangePartitioning: new Uint8Array([0x03]),
+            partitioning: [new Uint8Array([0x04])],
+            sortOrder: [new Uint8Array([0x05])],
+            cacheMaxAgeSeconds: 8,
+            startPosition: new Uint8Array([0x06]),
+            endPosition: new Uint8Array([0x07]),
+          },
+          [new Uint8Array([0x08])],
+        ),
+        PLAN_RESPONSE_SCHEMA,
+      ),
+    // The framework, rather than the worker's plan hook, owns this identifier.
+    allowNull: ["execution_id"],
   },
 
   // ---- Request records ------------------------------------------------- //

@@ -62,9 +62,19 @@ contract; each adapter still determines which engine features it supports.
 The combined contract adds raw column paths, canonical column-expression
 payloads, nullable default schemas, macro overload families, column metadata,
 typed catalog options and constraints, prepared-query parameter metadata,
-scalar-projection negotiation, and scan repeatability. Capabilities remain
+scalar-projection negotiation, scan repeatability, and exact scan-distribution
+metadata. Capabilities remain
 provider-specific: adopting the records does not advertise every operation or
 enable automatic whole-query pushdown.
+
+Split-capable table functions may now return `keyValue`, `rangeIndex`, and
+`columnBounds` on each `ScanSplit`, together with `keyGrouping`,
+`rangePartitioning`, and `locations` on `PlanResult`. The package exports the
+typed `FieldPath`, `TransformSpec`, `KeyGrouping`, `RangeKey`, and
+`RangePartitioning` codecs used to construct the serialized plan-level values.
+See `examples/splits.ts` (`split_partitioned`) for a complete identity-key and
+range-partitioned producer. These are exact distribution claims: do not derive
+them from approximate bounds or Hive directory names alone.
 
 Use the exported generated records and schema codecs when implementing a custom
 provider. Column expressions carry encoded SQL context rather than an untyped

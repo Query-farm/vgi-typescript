@@ -17,6 +17,11 @@ import {
   defineTableFunction,
   batchFromColumns,
   cacheControlMetadata,
+  encodeFieldPath,
+  encodeKeyGrouping,
+  encodeRangeKey,
+  encodeRangePartitioning,
+  encodeTransformSpec,
   serializeBatch,
   type TableBindParams,
   type TableProcessParams,
@@ -670,6 +675,30 @@ const PARTITION_SCHEMA = new Schema([
   PARTITION_FIELDS[0],
   new Field("sales", new Int64(), true),
 ]);
+const PARTITION_IDENTITY = encodeTransformSpec({
+  id: "vgi.identity/1",
+  inputs: [encodeFieldPath({ components: ["country"] })],
+  parameters: null,
+});
+const PARTITION_KEY_GROUPING = encodeKeyGrouping({ keys: [PARTITION_IDENTITY] });
+const PARTITION_RANGE_KEY = encodeRangeKey({
+  transform: PARTITION_IDENTITY,
+  direction: "ASC",
+  null_order: "NULLS_LAST",
+});
+const PARTITION_RANGE_PARTITIONING = encodeRangePartitioning({
+  keys: [PARTITION_RANGE_KEY],
+  split_points: serializeBatch(batchFromColumns(
+    { country: ["DE", "JP", "US"] },
+    new Schema(PARTITION_FIELDS),
+  )),
+});
+const PARTITION_RANGE_INDEX = new Map([
+  ["BR", 0],
+  ["DE", 1],
+  ["JP", 2],
+  ["US", 3],
+]);
 
 function b64(bytes: Uint8Array): string {
   let s = "";
@@ -726,10 +755,21 @@ export const splitPartitioned = defineTableFunction<PartArgs, PartState>({
   // The payload names the partition by INDEX, so a redemption reads the same
   // partition however many times it runs and in whichever process.
   plan: (): PlanResult => ({
-    splits: PARTITION_COUNTRIES.map((_, i) => ({
+    splits: PARTITION_COUNTRIES.map((country, i) => ({
       payload: encode({ lo: i, hi: i }),
+      keyValue: serializeBatch(batchFromColumns(
+        { country: [country] },
+        new Schema(PARTITION_FIELDS),
+      )),
+      rangeIndex: PARTITION_RANGE_INDEX.get(country),
+      columnBounds: serializeBatch(batchFromColumns(
+        { country: [country, country] },
+        new Schema(PARTITION_FIELDS),
+      )),
     })),
     estimatedTotalSplits: PARTITION_COUNTRIES.length,
+    keyGrouping: PARTITION_KEY_GROUPING,
+    rangePartitioning: PARTITION_RANGE_PARTITIONING,
   }),
   onSplit: () => undefined,
   initialState: (params: TableProcessParams<PartArgs>): PartState => {

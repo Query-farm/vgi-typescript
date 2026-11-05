@@ -10,6 +10,7 @@ import {
   TableFunctionPlanResultSchema,
 } from "../../generated/vgi-protocol-schemas.js";
 import type { BindRequest } from "../types.js";
+import { OrderByDirection, OrderByNullOrder } from "../types.js";
 import { deserializeBatch, batchToScalarDict } from "../../util/arrow/index.js";
 import { toUint8Array } from "./shared.js";
 import { deserializeBindRequest } from "./bind.js";
@@ -35,7 +36,16 @@ export interface ScanSplit {
    * claiming client needs no cost model at all.
    */
   estimatedBytes?: number | bigint | null;
-  /** 2-row (min, max) batch in the existing `vgi_partition_values` encoding. */
+  /** One-row exact transformed-key tuple aligned with `PlanResult.keyGrouping`. */
+  keyValue?: Uint8Array | null;
+  /** Zero-based range owned by this split under `PlanResult.rangePartitioning`. */
+  rangeIndex?: number | bigint | null;
+  /** Two-row (min, max) pruning batch; never an exact distribution claim. */
+  columnBounds?: Uint8Array | null;
+  /**
+   * Two-row (min, max) batch in the legacy `vgi_partition_values` encoding.
+   * @deprecated Protocol 3 producers should use `columnBounds`.
+   */
   partitionBounds?: Uint8Array | null;
   columnStatistics?: Uint8Array | null;
   locationIds?: number[] | null;
@@ -76,7 +86,21 @@ export interface PlanResult {
    * cacheable and is not redeemable after commit or rollback.
    */
   scope?: "catalog" | "transaction";
+  /** Hoisted host list indexed by each split's `locationIds`. */
+  locations?: string[] | null;
+  /** Serialized `KeyGrouping` shared by every page of this plan. */
+  keyGrouping?: Uint8Array | null;
+  /** Serialized `RangePartitioning` shared by every page of this plan. */
+  rangePartitioning?: Uint8Array | null;
+  /** @deprecated Protocol 3 producers should use `keyGrouping` or `rangePartitioning`. */
+  partitioning?: Uint8Array[] | null;
+  /** Serialized `SortField` records describing order within each split. */
+  sortOrder?: Uint8Array[] | null;
   cacheMaxAgeSeconds?: number | null;
+  /** Actual exclusive lower data position selected by the worker. */
+  startPosition?: Uint8Array | null;
+  /** Data frontier resolved by the worker for this plan. */
+  endPosition?: Uint8Array | null;
 }
 
 /** The request a client sends to divide a scan. */
@@ -85,6 +109,8 @@ export interface TableFunctionPlanRequest {
   bind_opaque_data: Uint8Array | null;
   projection_ids: number[] | null;
   pushdown_filters: Uint8Array | null;
+  join_keys: Uint8Array[] | null;
+  row_limit: bigint | null;
   /** The primary sizing lever: every engine is byte-driven. */
   target_split_bytes: bigint | null;
   /**
@@ -92,12 +118,26 @@ export interface TableFunctionPlanRequest {
    * per thread, which a byte target alone would not give it.
    */
   min_splits: bigint | null;
+  /** Maximum number of splits to enumerate on this response page. */
+  max_splits_per_response: bigint | null;
   /**
    * A place in the ENUMERATION of splits — NOT a place in the data. A cursor
    * lives for one plan call; a position is checkpointed and must survive
    * restarts, upgrades and key rotation.
    */
   cursor: Uint8Array | null;
+  /** Narrower filters supplied on a continuation request. */
+  refined_filters: Uint8Array | null;
+  /** False while the client may still send further filter refinement. */
+  filters_complete: boolean;
+  start_position: Uint8Array | null;
+  end_position: Uint8Array | null;
+  order_by_column_name: string | null;
+  order_by_direction: OrderByDirection | null;
+  order_by_null_order: OrderByNullOrder | null;
+  order_by_limit: bigint | null;
+  tablesample_percentage: number | null;
+  tablesample_seed: bigint | null;
 }
 
 /**
@@ -136,15 +176,43 @@ export function deserializePlanRequest(params: Record<string, any>): TableFuncti
 
   const asBigInt = (v: unknown): bigint | null =>
     v == null ? null : typeof v === "bigint" ? v : BigInt(Number(v));
+  const asBytes = (v: unknown): Uint8Array | null => v == null ? null : toUint8Array(v);
+  const asBytesList = (v: unknown): Uint8Array[] | null => {
+    if (v == null) return null;
+    const values = Array.isArray(v)
+      ? v
+      : v && typeof (v as any)[Symbol.iterator] === "function"
+        ? [...(v as Iterable<unknown>)]
+        : [];
+    return values.filter((entry) => entry != null).map(toUint8Array);
+  };
+  const enumValue = <T extends string>(v: unknown, values: readonly T[]): T | null => {
+    if (v == null) return null;
+    const text = String(v) as T;
+    return values.includes(text) ? text : null;
+  };
 
   return {
     bind_call: bindCall,
-    bind_opaque_data: params.bind_opaque_data ? toUint8Array(params.bind_opaque_data) : null,
+    bind_opaque_data: asBytes(params.bind_opaque_data),
     projection_ids: projectionIds,
-    pushdown_filters: params.pushdown_filters ? toUint8Array(params.pushdown_filters) : null,
+    pushdown_filters: asBytes(params.pushdown_filters),
+    join_keys: asBytesList(params.join_keys),
+    row_limit: asBigInt(params.row_limit),
     target_split_bytes: asBigInt(params.target_split_bytes),
     min_splits: asBigInt(params.min_splits),
-    cursor: params.cursor ? toUint8Array(params.cursor) : null,
+    max_splits_per_response: asBigInt(params.max_splits_per_response),
+    cursor: asBytes(params.cursor),
+    refined_filters: asBytes(params.refined_filters),
+    filters_complete: params.filters_complete == null ? true : Boolean(params.filters_complete),
+    start_position: asBytes(params.start_position),
+    end_position: asBytes(params.end_position),
+    order_by_column_name: params.order_by_column_name == null ? null : String(params.order_by_column_name),
+    order_by_direction: enumValue(params.order_by_direction, Object.values(OrderByDirection)),
+    order_by_null_order: enumValue(params.order_by_null_order, Object.values(OrderByNullOrder)),
+    order_by_limit: asBigInt(params.order_by_limit),
+    tablesample_percentage: params.tablesample_percentage == null ? null : Number(params.tablesample_percentage),
+    tablesample_seed: asBigInt(params.tablesample_seed),
   };
 }
 
@@ -188,6 +256,9 @@ export function scanSplitRow(split: ScanSplit, token: Uint8Array): Record<string
     estimated_rows: asBigInt(split.estimatedRows),
     rows_exact: split.rowsExact === true,
     estimated_bytes: asBigInt(split.estimatedBytes),
+    key_value: split.keyValue ?? null,
+    range_index: asBigInt(split.rangeIndex),
+    column_bounds: split.columnBounds ?? null,
     partition_bounds: split.partitionBounds ?? null,
     column_statistics: split.columnStatistics ?? null,
     location_ids: split.locationIds ?? null,
@@ -211,11 +282,13 @@ export function planResponseRow(result: PlanResult, splitBlobs: Uint8Array[]): R
     estimated_total_bytes: asBigInt(result.estimatedTotalBytes),
     catalog_version: asBigInt(result.catalogVersion),
     scope: result.scope ?? "catalog",
-    locations: null,
-    partitioning: [],
-    sort_order: [],
+    locations: result.locations ?? null,
+    key_grouping: result.keyGrouping ?? null,
+    range_partitioning: result.rangePartitioning ?? null,
+    partitioning: result.partitioning ?? null,
+    sort_order: result.sortOrder ?? null,
     cache_max_age_seconds: asBigInt(result.cacheMaxAgeSeconds),
-    start_position: new Uint8Array(0),
-    end_position: new Uint8Array(0),
+    start_position: result.startPosition ?? null,
+    end_position: result.endPosition ?? null,
   };
 }
