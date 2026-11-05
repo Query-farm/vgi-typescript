@@ -14,6 +14,11 @@ import {
   decodeOptionChanges, encodeOptionChanges,
   decodeOptionState, encodeOptionState,
   decodeRequiredFilterPaths, encodeRequiredFilterPaths,
+  decodeFieldPath, encodeFieldPath,
+  decodeTransformSpec, encodeTransformSpec,
+  decodeKeyGrouping, encodeKeyGrouping,
+  decodeRangeKey, encodeRangeKey,
+  decodeRangePartitioning, encodeRangePartitioning,
 } from "../vgi-protocol-types.js";
 
 import { decodeViewInfo, encodeViewInfo, decodeTableInfo, encodeTableInfo } from "../vgi-client.js";
@@ -157,6 +162,40 @@ const corpus = JSON.parse(readFileSync(new URL("../../../conformance/catalog-con
 const fixture = (name: string): Uint8Array => new Uint8Array(Buffer.from(corpus.records[name], "base64"));
 
 describe("Python catalog contract corpus", () => {
+  test("Protocol 3.1 partition distribution decodes the Python golden plan", () => {
+    for (const [name, decode, encode] of [
+      ["partition_field_path", decodeFieldPath, encodeFieldPath],
+      ["partition_identity_transform", decodeTransformSpec, encodeTransformSpec],
+      ["partition_parameterized_transform", decodeTransformSpec, encodeTransformSpec],
+      ["partition_key_grouping", decodeKeyGrouping, encodeKeyGrouping],
+      ["partition_range_key", decodeRangeKey, encodeRangeKey],
+      ["partition_range_partitioning", decodeRangePartitioning, encodeRangePartitioning],
+    ] as const) {
+      const decoded = decode(fixture(name) as never);
+      expect(decode(encode(decoded as never) as never)).toEqual(decoded);
+    }
+
+    const path = decodeFieldPath(fixture("partition_field_path"));
+    expect(path.components).toEqual(["customer", "region"]);
+    const grouping = decodeKeyGrouping(fixture("partition_key_grouping"));
+    expect(grouping.keys).toHaveLength(2);
+    const ranges = decodeRangePartitioning(fixture("partition_range_partitioning"));
+    expect(ranges.keys).toHaveLength(2);
+
+    const split = decodeASD<Record<string, any>>(schemas.ScanSplitSchema,
+      fixture("partition_scan_split"));
+    expect(split.range_index).toBe(2);
+    expect(split.location_ids).toEqual([0, 1]);
+    expect(split.key_value).not.toBeNull();
+    const plan = decodeASD<Record<string, any>>(schemas.TableFunctionPlanResultSchema,
+      fixture("partition_plan_response"));
+    expect(plan.max_workers).toBe(3);
+    expect(plan.locations).toEqual(["worker-a", "worker-b"]);
+    expect(plan.key_grouping).toEqual(fixture("partition_key_grouping"));
+    expect(plan.range_partitioning).toEqual(fixture("partition_range_partitioning"));
+    expect(plan.splits).toEqual([fixture("partition_scan_split")]);
+  });
+
   test("option changes preserve opaque Arrow metadata and distinguish absence", () => {
     for (const name of ["changes", "reset_only"]) {
       const first = decodeOptionChanges(fixture(name));

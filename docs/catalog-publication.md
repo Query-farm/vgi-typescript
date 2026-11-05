@@ -4,7 +4,7 @@ The prepared SDK requires a client using VGI wire major/minor `3.0`, including
 DuckDB extension and browser/WASM clients. Published `vgi.v2` peers are
 incompatible; upgrade clients and workers together to `vgi.v3`.
 
-Wire `vgi.v3` revision `3.0.0` carries six nullable Arrow streams in
+Wire `vgi.v3` revision `3.1.0` carries six nullable Arrow streams in
 `catalog_contents`: schemas, tables, views, functions, macros and indexes. Each
 stream spans all schemas and may contain multiple record batches. The client
 reads every row and batch; function and macro subtype fields remain intact.

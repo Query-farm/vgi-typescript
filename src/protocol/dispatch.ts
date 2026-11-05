@@ -69,7 +69,7 @@ export { VGI_PROTOCOL_NAME };
  * hash covers method names, types and the params/result/header schemas only
  * (WIRE_PROTOCOL.md §14).
  *
- * It changes only with vgi.v3's protocol version (currently 3.0.0). Asserted
+ * It changes only with vgi.v3's protocol version (currently 3.1.0). Asserted
  * by src/protocol/__tests__/vgi-v3-hash.test.ts; if that test fails, the
  * surface drifted from the reference -- fix the schemas, do not bump this.
  */

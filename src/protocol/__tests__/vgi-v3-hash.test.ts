@@ -44,7 +44,7 @@ describe("vgi.v3 surface", () => {
   test("reflection reports the reference vgi.v3 hash and method count", async () => {
     const desc = await httpIntrospect(baseUrl, { protocol: VGI_PROTOCOL_NAME });
     expect(desc.protocolName).toBe("vgi.v3");
-    expect(desc.protocolVersion).toBe("3.0.0");
+    expect(desc.protocolVersion).toBe("3.1.0");
     expect(desc.methods.length).toBe(REFERENCE_METHOD_COUNT);
     expect(desc.protocolHash).toBe(VGI_V3_PROTOCOL_HASH);
   });

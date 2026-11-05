@@ -40,7 +40,7 @@ npm install @query-farm/vgi
 
 Requires **Node.js ≥ 22.15** or **Bun**.
 
-Version 0.47.0 uses **`vgi.v3` / `3.0.0`** and requires a matching VGI
+This branch uses **`vgi.v3` / `3.1.0`** and requires a matching VGI
 extension. Existing `vgi.v2` extensions need SDK 0.46.x; upgrade the engine-side
 extension and workers together. This release prepares the shared protocol for
 DuckDB 2.0; it does not require upgrading DuckDB itself. See

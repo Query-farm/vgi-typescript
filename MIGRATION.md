@@ -54,7 +54,7 @@
 
 ## 0.47.0 — vgi.v3
 
-This release adopts `vgi.v3` / `3.0.0`. Upgrade the VGI extension and worker SDKs
+This release adopts `vgi.v3` / `3.1.0`. Upgrade the VGI extension and worker SDKs
 together; it cannot serve requests from a `vgi.v2` extension. Keep 0.46.x for
 existing v2 installations. DuckDB 1.5 and 2.0 adapters can use the same v3 wire
 contract; each adapter still determines which engine features it supports.
