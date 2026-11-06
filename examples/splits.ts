@@ -719,6 +719,7 @@ function partitionValuesMetadata(country: string): Map<string, string> {
 
 interface PartArgs {
   rows_per_country: number;
+  key_mode: string;
 }
 interface PartState {
   // Serialized for the same reason as SplitState above: userState may hold only
@@ -747,30 +748,53 @@ interface PartState {
 export const splitPartitioned = defineTableFunction<PartArgs, PartState>({
   name: "split_partitioned",
   description: "One split per partition, with partition values on each batch",
-  args: { rows_per_country: new Int64() },
-  argDefaults: { rows_per_country: 5 },
+  args: { rows_per_country: new Int64(), key_mode: new Utf8() },
+  argDefaults: { rows_per_country: 5, key_mode: "valid" },
   supportsSplits: true,
   partitionKind: "SINGLE_VALUE_PARTITIONS",
   onBind: () => ({ outputSchema: PARTITION_SCHEMA }),
   // The payload names the partition by INDEX, so a redemption reads the same
   // partition however many times it runs and in whichever process.
-  plan: (): PlanResult => ({
-    splits: PARTITION_COUNTRIES.map((country, i) => ({
-      payload: encode({ lo: i, hi: i }),
-      keyValue: serializeBatch(batchFromColumns(
-        { country: [country] },
-        new Schema(PARTITION_FIELDS),
-      )),
-      rangeIndex: PARTITION_RANGE_INDEX.get(country),
-      columnBounds: serializeBatch(batchFromColumns(
-        { country: [country, country] },
-        new Schema(PARTITION_FIELDS),
-      )),
-    })),
-    estimatedTotalSplits: PARTITION_COUNTRIES.length,
-    keyGrouping: PARTITION_KEY_GROUPING,
-    rangePartitioning: PARTITION_RANGE_PARTITIONING,
-  }),
+  plan: (params: TableBindParams<PartArgs>): PlanResult => {
+    const keyValue = (country: string): Uint8Array | undefined => {
+      switch (params.args.key_mode) {
+        case "missing":
+          return undefined;
+        case "two_rows":
+          return serializeBatch(batchFromColumns(
+            { country: [country, country] },
+            new Schema(PARTITION_FIELDS),
+          ));
+        case "wrong_type":
+          return serializeBatch(batchFromColumns(
+            { country: [1n] },
+            new Schema([new Field("country", new Int64(), true)]),
+          ));
+        case "valid":
+          return serializeBatch(batchFromColumns(
+            { country: [country] },
+            new Schema(PARTITION_FIELDS),
+          ));
+        default:
+          throw new Error(`unknown split_partitioned key_mode: ${params.args.key_mode}`);
+      }
+    };
+
+    return {
+      splits: PARTITION_COUNTRIES.map((country, i) => ({
+        payload: encode({ lo: i, hi: i }),
+        keyValue: keyValue(country),
+        rangeIndex: PARTITION_RANGE_INDEX.get(country),
+        columnBounds: serializeBatch(batchFromColumns(
+          { country: [country, country] },
+          new Schema(PARTITION_FIELDS),
+        )),
+      })),
+      estimatedTotalSplits: PARTITION_COUNTRIES.length,
+      keyGrouping: PARTITION_KEY_GROUPING,
+      rangePartitioning: PARTITION_RANGE_PARTITIONING,
+    };
+  },
   onSplit: () => undefined,
   initialState: (params: TableProcessParams<PartArgs>): PartState => {
     if (params.splitPayloads === undefined) {
