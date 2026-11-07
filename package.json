@@ -75,9 +75,11 @@
     "!src/**/*.test.ts",
     "!src/**/*.spec.ts"
   ],
-  "//imports": "`browser` maps to arrow-js DELIBERATELY, not flechette. Measured on the client surface (VgiClient + Arguments + batch helpers), a minified browser bundle is 84 KB gzip via arrow-js vs 116 KB via flechette \u2014 arrow-js tree-shakes to the subset the client touches, while flechette links as a unit. Flechette still wins for `worker-cf`, which exercises far more of the Arrow API and cannot take a peer dep. Keep `browser` AFTER `workerd`/`worker`: conditions match in key order, so a workerd build (which sets both) must hit flechette first.",
+  "//imports": "`browser` maps to arrow-js DELIBERATELY, not flechette. Measured on the client surface (VgiClient + Arguments + batch helpers), a minified browser bundle is 84 KB gzip via arrow-js vs 116 KB via flechette \u2014 arrow-js tree-shakes to the subset the client touches, while flechette links as a unit. Flechette still wins for `worker-cf`, which exercises far more of the Arrow API and cannot take a peer dep. Keep `browser` AFTER `workerd`/`worker`: conditions match in key order, so a workerd build (which sets both) must hit flechette first. `vgi-source` comes first and is set only by the SDK's own tsconfig (customConditions) so in-repo type-checking resolves to source; `types` comes next so consumers' tsc resolves the shipped declaration file instead of SDK source (which would otherwise be type-checked under the consumer's compiler flags, e.g. noUncheckedIndexedAccess; skipLibCheck does not cover .ts files). Runtimes and bundlers match neither condition.",
   "imports": {
     "#arrow-impl": {
+      "vgi-source": "./src/arrow/impl-arrowjs/index.ts",
+      "types": "./dist/arrow/impl-arrowjs/index.d.ts",
       "flechette": "./src/arrow/impl-flechette/index.ts",
       "workerd": "./src/arrow/impl-flechette/index.ts",
       "worker": "./src/arrow/impl-flechette/index.ts",

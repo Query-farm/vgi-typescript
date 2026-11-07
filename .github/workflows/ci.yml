@@ -73,6 +73,12 @@ jobs:
       - name: Arrow facade parity (arrow-js + flechette)
         run: make test-facade-parity
 
+      # Packs the tarball and type-checks a consumer project against it with
+      # strict flags (noUncheckedIndexedAccess, exactOptionalPropertyTypes).
+      # Fails if any shipped .d.ts drags SDK source into the consumer program.
+      - name: Consumer type-check (packed tarball, strict flags)
+        run: scripts/check-consumer-types.sh
+
   hosted-protocols:
     # vgi-rpc's hosted-protocols group (MULTI_PROTOCOL_HOSTING.md §7) against
     # the example fixture worker: the worker lists vgi.v3 then
