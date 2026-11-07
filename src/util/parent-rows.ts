@@ -14,13 +14,13 @@ export function encodeParentRows(parentRows: ArrayLike<number>): string {
   const raw = new Uint8Array(parentRows.length * 4);
   const dv = new DataView(raw.buffer);
   for (let i = 0; i < parentRows.length; i++) {
-    dv.setInt32(i * 4, parentRows[i], true);
+    dv.setInt32(i * 4, parentRows[i]!, true);
   }
   if (typeof (globalThis as any).Buffer !== "undefined") {
     return (globalThis as any).Buffer.from(raw).toString("base64");
   }
   let bin = "";
-  for (let i = 0; i < raw.length; i++) bin += String.fromCharCode(raw[i]);
+  for (let i = 0; i < raw.length; i++) bin += String.fromCharCode(raw[i]!);
   return (globalThis as any).btoa(bin);
 }
 

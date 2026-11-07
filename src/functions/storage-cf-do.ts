@@ -273,7 +273,7 @@ function newAttemptId(): string {
   const b = new Uint8Array(16);
   crypto.getRandomValues(b);
   let s = "";
-  for (let i = 0; i < 16; i++) s += b[i].toString(16).padStart(2, "0");
+  for (let i = 0; i < 16; i++) s += b[i]!.toString(16).padStart(2, "0");
   return s;
 }
 
@@ -286,7 +286,7 @@ function int64FromKey(b: Uint8Array): number {
 
 function bytesToB64(buf: Uint8Array): string {
   let binary = "";
-  for (let i = 0; i < buf.length; i++) binary += String.fromCharCode(buf[i]);
+  for (let i = 0; i < buf.length; i++) binary += String.fromCharCode(buf[i]!);
   return btoa(binary);
 }
 

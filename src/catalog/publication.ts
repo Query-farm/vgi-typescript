@@ -21,7 +21,7 @@ export interface SnapshotIdentity {
 export interface SnapshotRequest {
   catalog: CatalogInterface;
   attachOpaqueData: AttachOpaqueData;
-  callContext?: CallContext;
+  callContext?: CallContext | undefined;
   catalogVersion: number;
 }
 export interface CatalogPublicationManifest {
@@ -39,9 +39,9 @@ export interface CatalogPublicationManifest {
   rawSize: number;
   storedSize: number;
   url: string;
-  objectId?: string;
-  expiresAt?: number;
-  retainUntil?: number;
+  objectId?: string | undefined;
+  expiresAt?: number | undefined;
+  retainUntil?: number | undefined;
   stable: boolean;
   validated: true;
 }
@@ -199,13 +199,14 @@ export class CatalogSnapshotManager {
         validateCatalogPublicationEnvelope(bytes);
       },
     });
-    if (resolved.numRows !== 1 || resolved.schema.fields.length !== 1 || resolved.schema.fields[0].name !== "result"
-      || typeSignature(resolved.schema.fields[0].type) !== typeSignature(binary()) || resolved.schema.fields[0].nullable) throw new Error("invalid published RPC envelope");
+    const resultField = resolved.schema.fields.length === 1 ? resolved.schema.fields[0] : undefined;
+    if (resolved.numRows !== 1 || !resultField || resultField.name !== "result"
+      || typeSignature(resultField.type) !== typeSignature(binary()) || resultField.nullable) throw new Error("invalid published RPC envelope");
     const bytes = resolved.getChild("result")?.get(0);
     if (!(bytes instanceof Uint8Array)) throw new Error("published catalog has no result bytes");
     const decoded = decodeASDCollection<CatalogContentsResponse>(CatalogContentsResultSchema, bytes);
-    if (decoded.length !== 1) throw new Error("published catalog must contain exactly one response row");
-    const response = decoded[0];
+    const response = decoded.length === 1 ? decoded[0] : undefined;
+    if (!response) throw new Error("published catalog must contain exactly one response row");
     if (response.not_modified || Number(response.catalog_version) !== identity.catalogVersion || response.etag !== m.etag) throw new Error("published catalog version or ETag mismatch");
     decodeCatalogStreams(response);
     if (expected) for (const kind of CATALOG_STREAM_KINDS) {

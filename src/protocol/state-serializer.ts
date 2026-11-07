@@ -274,7 +274,7 @@ export const arrowStateSerializer: StateSerializer = {
     if (bytes.byteLength < 10 || bytes[0] !== STATE_FORMAT_VERSION) {
       throw new Error("exchange state has an unknown format (minted by another build of this worker?)");
     }
-    const flags = bytes[1];
+    const flags = bytes[1]!; // in range: byteLength >= 10 was checked above
     const maxWorkers = view.getFloat64(2, true);
     let offset = 10;
     // Each field is copied out, not viewed: Arrow readers want a buffer of

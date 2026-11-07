@@ -62,7 +62,7 @@ export function batchFromColumns(
   const a = schema as Schema;
   const numRows =
     a.fields.length > 0
-      ? columns[a.fields[0].name]?.length ?? 0
+      ? columns[a.fields[0]!.name]?.length ?? 0
       : 0;
 
   const children = a.fields.map((f: Field) => {

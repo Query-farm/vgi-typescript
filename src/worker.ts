@@ -9,6 +9,7 @@ import {
   serveStream as serveStreamRpc,
   type VgiRpcServer,
 } from "@query-farm/vgi-rpc";
+import { omitUndefined } from "./util/defined.js";
 import { buildRpcServer, type HostingOptions, type ServerTransport } from "./rpc-server.js";
 import { FunctionRegistry } from "./functions/registry.js";
 import type { VgiFunction } from "./functions/types.js";
@@ -73,31 +74,31 @@ function parseTcpSpec(spec: string, out: LauncherArgs): void {
 function parseLauncherArgs(argv: readonly string[]): LauncherArgs {
   const out: LauncherArgs = { irohTrustedProxyAddresses: [], irohAuthenticate: true };
   for (let i = 0; i < argv.length; i++) {
-    const a = argv[i];
+    const a = argv[i]!;
     if (a === "--unix" && i + 1 < argv.length) {
-      out.unixPath = argv[++i];
+      out.unixPath = argv[++i]!;
     } else if (a.startsWith("--unix=")) {
       out.unixPath = a.slice("--unix=".length);
     } else if (a === "--tcp" && i + 1 < argv.length) {
-      parseTcpSpec(argv[++i], out);
+      parseTcpSpec(argv[++i]!, out);
     } else if (a.startsWith("--tcp=")) {
       parseTcpSpec(a.slice("--tcp=".length), out);
     } else if (a === "--idle-timeout" && i + 1 < argv.length) {
-      out.idleTimeout = Number(argv[++i]);
+      out.idleTimeout = Number(argv[++i]!);
     } else if (a.startsWith("--idle-timeout=")) {
       out.idleTimeout = Number(a.slice("--idle-timeout=".length));
     } else if (a === "--iroh-raw-upstream" && i + 1 < argv.length) {
-      parseTcpSpec(argv[++i], out);
+      parseTcpSpec(argv[++i]!, out);
       out.irohRawUpstream = true;
     } else if (a.startsWith("--iroh-raw-upstream=")) {
       parseTcpSpec(a.slice("--iroh-raw-upstream=".length), out);
       out.irohRawUpstream = true;
     } else if (a === "--iroh-issuer" && i + 1 < argv.length) {
-      out.irohIssuer = argv[++i];
+      out.irohIssuer = argv[++i]!;
     } else if (a.startsWith("--iroh-issuer=")) {
       out.irohIssuer = a.slice("--iroh-issuer=".length);
     } else if (a === "--iroh-trusted-proxy" && i + 1 < argv.length) {
-      out.irohTrustedProxyAddresses.push(...argv[++i].split(",").filter(Boolean));
+      out.irohTrustedProxyAddresses.push(...argv[++i]!.split(",").filter(Boolean));
     } else if (a.startsWith("--iroh-trusted-proxy=")) {
       out.irohTrustedProxyAddresses.push(...a.slice("--iroh-trusted-proxy=".length).split(",").filter(Boolean));
     } else if (a === "--iroh-observe") {
@@ -127,8 +128,8 @@ export interface WorkerConfig extends HostingOptions {
 export class Worker {
   private _registry: FunctionRegistry;
   private _hosting: HostingOptions;
-  private _catalogInterface?: CatalogInterface;
-  private _catalogName?: string;
+  private _catalogInterface: CatalogInterface | undefined;
+  private _catalogName: string | undefined;
 
   constructor(config: WorkerConfig) {
     // Reuse the caller's registry when given: a catalogInterface built
@@ -217,10 +218,10 @@ export class Worker {
         debug(() =>
           `[worker] AF_UNIX mode: ${launcher.unixPath} idle=${idleTimeout ?? 300}s${envOverride !== undefined && envOverride !== "" ? " (env override)" : ""}`,
         );
-        serveUnix(this.buildServer(protocol, "unix"), {
+        serveUnix(this.buildServer(protocol, "unix"), omitUndefined({
           unixPath: launcher.unixPath,
           idleTimeout,
-        }).then((handle) => handle.done).then(() => {
+        })).then((handle) => handle.done).then(() => {
           debug(() => `[worker] serveUnix done (idle shutdown)`);
         }).catch((err: any) => {
           process.stderr.write(`Worker error: ${err.message}\n${err.stack}\n`);
@@ -242,7 +243,7 @@ export class Worker {
         debug(() =>
           `[worker] TCP mode: ${launcher.tcpHost}:${launcher.tcpPort} idle=${idleTimeout ?? 300}s${envOverride !== undefined && envOverride !== "" ? " (env override)" : ""}`,
         );
-        serveTcp(this.buildServer(protocol, launcher.irohRawUpstream ? "iroh" : "tcp"), {
+        serveTcp(this.buildServer(protocol, launcher.irohRawUpstream ? "iroh" : "tcp"), omitUndefined({
           host: launcher.tcpHost,
           port: launcher.tcpPort,
           idleTimeout,
@@ -258,7 +259,7 @@ export class Worker {
                   : observePeerIdentity,
               }
             : {}),
-        }).then((handle) => handle.done).then(() => {
+        })).then((handle) => handle.done).then(() => {
           debug(() => `[worker] serveTcp done (idle shutdown)`);
         }).catch((err: any) => {
           process.stderr.write(`Worker error: ${err.message}\n${err.stack}\n`);
@@ -317,6 +318,6 @@ export class Worker {
     readable: ReadableStream<Uint8Array> | NodeJS.ReadableStream,
     writable?: number | import("node:net").Socket | import("@query-farm/vgi-rpc").ByteSink,
   ): Promise<void> {
-    await serveStreamRpc(this.buildServer(this.buildProtocol(), "stream"), { readable, writable });
+    await serveStreamRpc(this.buildServer(this.buildProtocol(), "stream"), omitUndefined({ readable, writable }));
   }
 }

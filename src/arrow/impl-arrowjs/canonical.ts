@@ -97,7 +97,7 @@ function buildInt32Data(values: unknown[], type: DataType): any {
   for (let i = 0; i < length; i++) {
     const v = values[i];
     if (v === null || v === undefined) { nullCount++; continue; }
-    nullBitmap[i >> 3] |= 1 << (i & 7);
+    nullBitmap[i >> 3]! |= 1 << (i & 7);
     buf[i] = typeof v === "bigint" ? Number(v) : (v as number);
   }
   return makeData({
@@ -115,7 +115,7 @@ function buildBigIntData(values: unknown[], type: DataType): any {
   for (let i = 0; i < length; i++) {
     const v = values[i];
     if (v === null || v === undefined) { nullCount++; continue; }
-    nullBitmap[i >> 3] |= 1 << (i & 7);
+    nullBitmap[i >> 3]! |= 1 << (i & 7);
     bigBuf[i] = typeof v === "bigint" ? v : BigInt(v as number);
   }
   const data = new Int32Array(bigBuf.buffer);
@@ -135,7 +135,7 @@ function buildDecimalData(values: unknown[], type: DataType): any {
   for (let i = 0; i < length; i++) {
     const val = values[i];
     if (val === null || val === undefined) { nullCount++; continue; }
-    nullBitmap[i >> 3] |= 1 << (i & 7);
+    nullBitmap[i >> 3]! |= 1 << (i & 7);
     let bytes: Uint8Array;
     if (val instanceof Uint8Array) {
       bytes = val;
@@ -172,7 +172,7 @@ function bigIntToDecimalBytes(value: bigint, byteWidth: number): Uint8Array {
 }
 
 function buildListData(values: unknown[], listType: List): any {
-  const childField = listType.children[0];
+  const childField = listType.children[0]!;
   const numRows = values.length;
   const offsets = new Int32Array(numRows + 1);
   const allItems: unknown[] = [];
@@ -184,7 +184,7 @@ function buildListData(values: unknown[], listType: List): any {
     if (row == null) {
       nullCount++;
     } else {
-      nullBitmap[i >> 3] |= 1 << (i & 7);
+      nullBitmap[i >> 3]! |= 1 << (i & 7);
       const items = Array.isArray(row) ? row
         : (typeof (row as any)[Symbol.iterator] === "function") ? Array.from(row as Iterable<unknown>)
         : null;
@@ -211,7 +211,7 @@ function buildListData(values: unknown[], listType: List): any {
  * decimal threw.
  */
 function buildFixedSizeListData(values: unknown[], type: FixedSizeList): any {
-  const childField = type.children[0];
+  const childField = type.children[0]!;
   const listSize = type.listSize;
   const numRows = values.length;
   const allItems: unknown[] = [];
@@ -225,7 +225,7 @@ function buildFixedSizeListData(values: unknown[], type: FixedSizeList): any {
       for (let j = 0; j < listSize; j++) allItems.push(null);
       continue;
     }
-    nullBitmap[i >> 3] |= 1 << (i & 7);
+    nullBitmap[i >> 3]! |= 1 << (i & 7);
     const items = Array.isArray(row) ? row : Array.from(row as Iterable<unknown>);
     if (items.length !== listSize) {
       throw new TypeError(
@@ -246,7 +246,7 @@ function buildFixedSizeListData(values: unknown[], type: FixedSizeList): any {
 
 function buildMapData(values: unknown[], mapType: Map_): any {
   const numRows = values.length;
-  const entriesField = mapType.children[0];
+  const entriesField = mapType.children[0]!;
   const keyField = (entriesField.type as any).children[0] as Field;
   const valueField = (entriesField.type as any).children[1] as Field;
   const offsets = new Int32Array(numRows + 1);
@@ -260,7 +260,7 @@ function buildMapData(values: unknown[], mapType: Map_): any {
     if (row == null) {
       nullCount++;
     } else {
-      nullBitmap[i >> 3] |= 1 << (i & 7);
+      nullBitmap[i >> 3]! |= 1 << (i & 7);
       // Canonical map is Array<[k, v]>, but tolerate Map / iterable / object.
       const pairs: Array<[unknown, unknown]> = Array.isArray(row) ? row as any
         : row instanceof Map ? Array.from(row.entries())
@@ -298,16 +298,16 @@ function buildStructData(values: unknown[], structType: Struct): any {
     const row = values[i] as any;
     if (row == null) {
       nullCount++;
-      for (let c = 0; c < childFields.length; c++) childArrays[c].push(null);
+      for (let c = 0; c < childFields.length; c++) childArrays[c]!.push(null);
     } else {
-      nullBitmap[i >> 3] |= 1 << (i & 7);
+      nullBitmap[i >> 3]! |= 1 << (i & 7);
       for (let c = 0; c < childFields.length; c++) {
-        const name = childFields[c].name;
-        childArrays[c].push(row[name] ?? row[c] ?? null);
+        const name = childFields[c]!.name;
+        childArrays[c]!.push(row[name] ?? row[c] ?? null);
       }
     }
   }
-  const children = childFields.map((cf, idx) => buildColumnData(childArrays[idx], cf.type));
+  const children = childFields.map((cf, idx) => buildColumnData(childArrays[idx]!, cf.type));
   return makeData({
     type: structType, length: numRows, nullCount,
     nullBitmap: nullCount > 0 ? nullBitmap : undefined, children,
@@ -318,21 +318,21 @@ function emptyDataForType(type: DataType): any {
   if (DataType.isList(type)) {
     return makeData({
       type, length: 0, nullCount: 0,
-      child: emptyDataForType((type as List).children[0].type),
+      child: emptyDataForType((type as List).children[0]!.type),
       valueOffsets: new Int32Array([0]),
     });
   }
   if (DataType.isMap(type)) {
     return makeData({
       type, length: 0, nullCount: 0,
-      child: emptyDataForType((type as Map_).children[0].type),
+      child: emptyDataForType((type as Map_).children[0]!.type),
       valueOffsets: new Int32Array([0]),
     });
   }
   if (DataType.isFixedSizeList(type)) {
     return makeData({
       type, length: 0, nullCount: 0,
-      child: emptyDataForType((type as FixedSizeList).children[0].type),
+      child: emptyDataForType((type as FixedSizeList).children[0]!.type),
     });
   }
   if (DataType.isStruct(type)) {
@@ -451,7 +451,7 @@ function decimalToBigInt(type: DataType, data: any, index: number): bigint {
   const start = index * wordsPerElem;
   const u8 = new Uint8Array(byteWidth);
   for (let w = 0; w < wordsPerElem; w++) {
-    const word = u32[start + w] >>> 0;
+    const word = u32[start + w]! >>> 0;
     u8[w * 4] = word & 0xff;
     u8[w * 4 + 1] = (word >>> 8) & 0xff;
     u8[w * 4 + 2] = (word >>> 16) & 0xff;
@@ -463,8 +463,8 @@ function decimalToBigInt(type: DataType, data: any, index: number): bigint {
 /** Little-endian two's-complement bytes -> signed bigint. */
 function decimalBytesToBigInt(u8: Uint8Array): bigint {
   let bi = 0n;
-  for (let i = u8.length - 1; i >= 0; i--) bi = (bi << 8n) | BigInt(u8[i]);
-  if (u8[u8.length - 1] & 0x80) bi -= 1n << BigInt(u8.length * 8);
+  for (let i = u8.length - 1; i >= 0; i--) bi = (bi << 8n) | BigInt(u8[i]!);
+  if (u8[u8.length - 1]! & 0x80) bi -= 1n << BigInt(u8.length * 8);
   return bi;
 }
 
@@ -472,7 +472,7 @@ function readStruct(type: DataType, col: any, index: number): Record<string, unk
   const children = (type as any).children as Field[];
   const out: Record<string, unknown> = {};
   for (let c = 0; c < children.length; c++) {
-    const cf = children[c];
+    const cf = children[c]!;
     const childVec = typeof col.getChildAt === "function"
       ? col.getChildAt(c)
       : (col.children?.[c]);
@@ -487,7 +487,7 @@ function readUnion(type: DataType, col: any, data: any, index: number): TaggedUn
   // Per-row type code -> child index. DuckDB emits SPARSE unions, where every
   // child is full-length and aligned with the parent row.
   const typeIds: ArrayLike<number> | undefined = data?.typeIds;
-  const tcode = typeIds ? typeIds[index] : children.length > 0 ? 0 : -1;
+  const tcode = typeIds ? typeIds[index]! : children.length > 0 ? 0 : -1;
   const map = (type as any).typeIdToChildIndex as Record<number, number> | undefined;
   const childIdx = map && map[tcode] !== undefined ? map[tcode] : tcode;
   const childField = children[childIdx];
@@ -495,7 +495,7 @@ function readUnion(type: DataType, col: any, data: any, index: number): TaggedUn
   // Dense unions carry an offsets buffer remapping the parent row into the
   // child; sparse unions read the child at the same row.
   const offsets: ArrayLike<number> | undefined = data?.valueOffsets;
-  const childRow = offsets ? offsets[index] : index;
+  const childRow = offsets ? offsets[index]! : index;
   const childVec = typeof col.getChildAt === "function"
     ? col.getChildAt(childIdx)
     : col.children?.[childIdx];

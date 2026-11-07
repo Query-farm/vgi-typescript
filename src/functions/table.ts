@@ -75,7 +75,7 @@ function makeProjectingCollector(inner: OutputCollector, targetSchema: VgiSchema
   function alreadyMatches(batch: VgiBatch): boolean {
     if (batch.schema.fields.length !== targetSchema.fields.length) return false;
     for (let i = 0; i < targetSchema.fields.length; i++) {
-      if (batch.schema.fields[i].name !== targetSchema.fields[i].name) return false;
+      if (batch.schema.fields[i]!.name !== targetSchema.fields[i]!.name) return false;
     }
     return true;
   }
@@ -140,7 +140,7 @@ export interface TableProcessParams<TArgs = Record<string, any>> {
   outputSchema: VgiSchema;
   settings: Record<string, any>;
   secrets: Record<string, Record<string, any>>;
-  pushdownFilters?: PushdownFilters;
+  pushdownFilters?: PushdownFilters | undefined;
   /**
    * The verified payloads of the splits this init claimed, in the order given,
    * or undefined when this is not a split scan.
@@ -149,8 +149,8 @@ export interface TableProcessParams<TArgs = Record<string, any>> {
    * the client did not plan (a split-only function should fail loudly rather
    * than answer the same query differently), empty means a claim of no work.
    */
-  splitPayloads?: Uint8Array[];
-  storage?: BoundStorage;
+  splitPayloads?: Uint8Array[] | undefined;
+  storage?: BoundStorage | undefined;
   /**
    * AT (TIMESTAMP|VERSION) clause for this scan, or `undefined` when the scan
    * has no AT clause. Carried on the per-scan bind embedded in the init request
@@ -158,8 +158,8 @@ export interface TableProcessParams<TArgs = Record<string, any>> {
    * read time travel at init alongside their pushdown filters. Mirrors
    * vgi-python's `ProcessParams.at_unit` / `.at_value`. See `BindRequest.at_unit`.
    */
-  atUnit?: string;
-  atValue?: string;
+  atUnit?: string | undefined;
+  atValue?: string | undefined;
   /**
    * Conditional-revalidation validator (the client's stored ETag). Set when the
    * client holds a stale-but-revalidatable cached result and asks the worker to
@@ -168,10 +168,10 @@ export interface TableProcessParams<TArgs = Record<string, any>> {
    * `cacheControlMetadata({ notModified: true })` instead of re-streaming.
    * Undefined on a normal call.
    */
-  ifNoneMatch?: string;
+  ifNoneMatch?: string | undefined;
   /** Conditional-revalidation validator (the client's stored Last-Modified).
    *  Companion to {@link ifNoneMatch}. Undefined on a normal call. */
-  ifModifiedSince?: string;
+  ifModifiedSince?: string | undefined;
 }
 
 /**
@@ -449,6 +449,8 @@ export function defineTableFunction<
     return args as TArgs;
   }
 
+  // Optional hooks are spread in only when configured, so an unconfigured
+  // hook is absent rather than present-and-undefined.
   return {
     kind: "table",
     meta,
@@ -474,7 +476,7 @@ export function defineTableFunction<
       };
     },
 
-    projection: config.projection ? (proposal) => config.projection!({args: extractArgs(proposal.bindCall), bindCall:proposal.bindCall, settings:batchToScalarDict(proposal.bindCall.settings),secrets:batchToSecretDict(proposal.bindCall.secrets),resolvedSecretsProvided:proposal.bindCall.resolved_secrets_provided},proposal) : undefined,
+    ...(config.projection ? { projection: (proposal) => config.projection!({args: extractArgs(proposal.bindCall), bindCall:proposal.bindCall, settings:batchToScalarDict(proposal.bindCall.settings),secrets:batchToSecretDict(proposal.bindCall.secrets),resolvedSecretsProvided:proposal.bindCall.resolved_secrets_provided},proposal) } : {}),
 
     async globalInit(request: InitRequest): Promise<GlobalInitResponse> {
       const executionId = new Uint8Array(16);
@@ -660,8 +662,8 @@ export function defineTableFunction<
       };
     },
 
-    cardinality: config.cardinality
-      ? (request: TableFunctionCardinalityRequest) => {
+    ...(config.cardinality ? {
+      cardinality: (request: TableFunctionCardinalityRequest) => {
           const args = extractArgs(request.bind_call);
           const settings = batchToScalarDict(request.bind_call.settings);
           const secrets = batchToSecretDict(request.bind_call.secrets);
@@ -672,8 +674,8 @@ export function defineTableFunction<
             secrets,
             resolvedSecretsProvided: request.bind_call.resolved_secrets_provided ?? false,
           });
-        }
-      : undefined,
+        },
+    } : {}),
 
     // Wired through with decoded arguments, exactly as cardinality and
     // statistics are.
@@ -683,8 +685,8 @@ export function defineTableFunction<
     // `supportsSplits` and a `plan`, advertise split capability on the wire, and
     // silently serve the framework default of one empty-payload split. Nothing
     // failed — the scan just quietly stopped being divided.
-    plan: config.plan
-      ? (request: TableFunctionPlanRequest) => {
+    ...(config.plan ? {
+      plan: (request: TableFunctionPlanRequest) => {
           const args = extractArgs(request.bind_call);
           const settings = batchToScalarDict(request.bind_call.settings);
           const secrets = batchToSecretDict(request.bind_call.secrets);
@@ -698,11 +700,11 @@ export function defineTableFunction<
             },
             request,
           );
-        }
-      : undefined,
+        },
+    } : {}),
 
-    statistics: config.statistics
-      ? (request: TableFunctionCardinalityRequest) => {
+    ...(config.statistics ? {
+      statistics: (request: TableFunctionCardinalityRequest) => {
           const args = extractArgs(request.bind_call);
           const settings = batchToScalarDict(request.bind_call.settings);
           const secrets = batchToSecretDict(request.bind_call.secrets);
@@ -713,11 +715,11 @@ export function defineTableFunction<
             secrets,
             resolvedSecretsProvided: request.bind_call.resolved_secrets_provided ?? false,
           });
-        }
-      : undefined,
+        },
+    } : {}),
 
-    dynamicToString: config.dynamicToString
-      ? (request) => {
+    ...(config.dynamicToString ? {
+      dynamicToString: (request) => {
           const args = extractArgs(request.bindCall);
           const settings = batchToScalarDict(request.bindCall.settings);
           const secrets = batchToSecretDict(request.bindCall.secrets);
@@ -733,7 +735,7 @@ export function defineTableFunction<
             request.globalExecutionId,
             storage,
           );
-        }
-      : undefined,
+        },
+    } : {}),
   };
 }

@@ -61,8 +61,8 @@ function children(type: VgiDataType): VgiField[] {
 }
 
 function mapValueType(type: VgiDataType): VgiDataType {
-  const entries = children(type)[0].type;
-  return children(entries)[1].type;
+  const entries = children(type)[0]!.type;
+  return children(entries)[1]!.type;
 }
 
 function mapPairs(raw: any): Array<[unknown, unknown]> {
@@ -114,7 +114,7 @@ function conformValue(type: VgiDataType, value: any, nullable: boolean, name: st
   if (!hasContainer(type)) return value;
 
   if (isList(type)) {
-    const itemType = children(type)[0].type;
+    const itemType = children(type)[0]!.type;
     const itemsNullable = OPTIONAL_ITEM_FIELDS.has(name);
     const items = Array.isArray(value) ? value : Array.from(value as Iterable<unknown>);
     let changed = !Array.isArray(value);

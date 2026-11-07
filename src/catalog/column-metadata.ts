@@ -18,7 +18,7 @@ function scalarText(value: string): void {
 function tags(value: string): void {
   let i = 0;
   const ws = () => {
-    while (i < value.length && /[ \t\r\n]/.test(value[i])) i++;
+    while (i < value.length && /[ \t\r\n]/.test(value[i]!)) i++;
   };
   const str = (): string => {
     ws();

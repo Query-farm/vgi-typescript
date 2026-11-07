@@ -20,13 +20,14 @@ const TYPE_SCHEMA = 1;
 const TYPE_RECORD_BATCH = 3;
 
 function readU32LE(b: Uint8Array, p: number): number {
-  return ((b[p] | (b[p + 1] << 8) | (b[p + 2] << 16) | (b[p + 3] << 24)) >>> 0);
+  // Out-of-range bytes read as `undefined`, which the bitwise ops coerce to 0.
+  return ((b[p]! | (b[p + 1]! << 8) | (b[p + 2]! << 16) | (b[p + 3]! << 24)) >>> 0);
 }
 function readI32LE(b: Uint8Array, p: number): number {
   return readU32LE(b, p) | 0;
 }
 function readI16LE(b: Uint8Array, p: number): number {
-  const v = b[p] | (b[p + 1] << 8);
+  const v = b[p]! | (b[p + 1]! << 8);
   return v < 0x8000 ? v : v - 0x10000;
 }
 function readI64LE(b: Uint8Array, p: number): bigint {
@@ -61,7 +62,7 @@ function readTable(buf: Uint8Array, tablePos: number): FbTable {
 /** Position of a field in the table buffer, or null if absent (offset 0). */
 function fieldAt(t: FbTable, fieldIndex: number): number | null {
   if (fieldIndex >= t.fields.length) return null;
-  const off = t.fields[fieldIndex];
+  const off = t.fields[fieldIndex]!;
   return off === 0 ? null : t.pos + off;
 }
 
@@ -97,7 +98,7 @@ function readMessageEnvelope(head: Uint8Array): ParsedMessage {
   //   3: bodyLength (int64)         vtable offset 10
   //   4: custom_metadata ([KeyVal]) vtable offset 12
   const headerTypePos = fieldAt(msg, 1);
-  const headerType = headerTypePos === null ? 0 : head[headerTypePos];
+  const headerType = headerTypePos === null ? 0 : head[headerTypePos]!;
 
   const bodyLengthPos = fieldAt(msg, 3);
   const bodyLengthBig = bodyLengthPos === null ? 0n : readI64LE(head, bodyLengthPos);

@@ -71,8 +71,8 @@ export function writeCanonicalBatch(
     const ftype = toFlechetteType(f.type);
     const values = columns[f.name];
     const col: Column<any> = values
-      ? f_columnFromArray(prepareForFlechette(f.type, values), ftype, { ...COLUMN_OPTS, maxBatchRows })
-      : f_columnFromArray(new Array(numRows).fill(null), ftype, { ...COLUMN_OPTS, maxBatchRows });
+      ? f_columnFromArray(prepareForFlechette(f.type, values), ftype, { ...COLUMN_OPTS, ...(maxBatchRows !== undefined ? { maxBatchRows } : {}) })
+      : f_columnFromArray(new Array(numRows).fill(null), ftype, { ...COLUMN_OPTS, ...(maxBatchRows !== undefined ? { maxBatchRows } : {}) });
     childCols.push(col);
     const nullable = (f as any).nullable ?? true;
     const metadata = (f as any).metadata ?? null;
@@ -118,9 +118,9 @@ export function prepareForFlechette(type: VgiDataType, values: unknown[]): unkno
       if (v == null) return null;
       const w = v as ArrayLike<number>;
       if (typeof (w as any).length !== "number" || w.length < 4) return v;
-      const lo = BigInt(w[2] >>> 0);
-      const hi = BigInt(w[3] | 0);
-      return [w[0] | 0, w[1] | 0, BigInt.asIntN(64, (hi << 32n) | lo)];
+      const lo = BigInt(w[2]! >>> 0);
+      const hi = BigInt(w[3]! | 0);
+      return [w[0]! | 0, w[1]! | 0, BigInt.asIntN(64, (hi << 32n) | lo)];
     });
   }
   if (tid === 17) {
@@ -222,7 +222,7 @@ function isNullAt(data: any, index: number): boolean {
   if ((data?.nullCount ?? 0) === 0) return false;
   const validity: Uint8Array | undefined = data?.validity;
   if (!validity || validity.length === 0) return false;
-  return ((validity[index >> 3] >> (index & 7)) & 1) === 0;
+  return ((validity[index >> 3]! >> (index & 7)) & 1) === 0;
 }
 
 /** Read a struct column-based so nested union children keep their tags. */
@@ -242,7 +242,8 @@ function readStructColumn(
   const children = (type as any).children as Array<{ name: string; type: VgiDataType }>;
   const out: Record<string, unknown> = {};
   for (let c = 0; c < children.length; c++) {
-    out[children[c].name] = readCanonicalValue(children[c].type, data.children[c], index);
+    const child = children[c]!;
+    out[child.name] = readCanonicalValue(child.type, data.children[c], index);
   }
   return out;
 }
@@ -259,7 +260,7 @@ function readUnionColumn(
   // Per-row type code -> child index. DuckDB emits SPARSE unions: each child is
   // full-length and aligned with the parent row.
   const typeIds: ArrayLike<number> | undefined = data?.typeIds;
-  const tcode = typeIds ? typeIds[index] : children.length > 0 ? 0 : -1;
+  const tcode = typeIds ? typeIds[index]! : children.length > 0 ? 0 : -1;
   const map = (type as any).typeMap as Record<number, number> | undefined;
   const childIdx = map && map[tcode] !== undefined ? map[tcode] : tcode;
   const childField = children[childIdx];
@@ -267,7 +268,7 @@ function readUnionColumn(
   // Dense unions remap the row via offsets; sparse unions share the row index.
   const offsets: ArrayLike<number> | undefined = data?.offsets;
   const isDense = (type as any).mode === 1;
-  const childRow = isDense && offsets ? offsets[index] : index;
+  const childRow = isDense && offsets ? offsets[index]! : index;
   const value = readCanonicalValue(childField.type, data.children[childIdx], childRow);
   return { tag: childField.name, value };
 }

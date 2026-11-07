@@ -81,7 +81,7 @@ export async function openAttach(
 /** Hex of a byte array (lowercase). */
 function toHex(b: Uint8Array): string {
   let s = "";
-  for (let i = 0; i < b.length; i++) s += b[i].toString(16).padStart(2, "0");
+  for (let i = 0; i < b.length; i++) s += b[i]!.toString(16).padStart(2, "0");
   return s;
 }
 

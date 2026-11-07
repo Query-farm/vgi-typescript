@@ -45,7 +45,8 @@ function resolveColumn(batch: VgiBatch, columnName: string): { type: VgiDataType
       throw new FilterV2Error(`filter column ${columnName} is unavailable in emitted batch`);
     }
     const column = batch.getChildAt(index);
-    resolved = column ? { type: batch.schema.fields[index].type, column } : null;
+    const field = batch.schema.fields[index];
+    resolved = column && field ? { type: field.type, column } : null;
     byName.set(columnName, resolved);
   }
   return resolved;
@@ -510,7 +511,7 @@ export class PushdownFilters {
         if (predicate.mode === "advisory") continue;
         throw error;
       }
-      for (let row = 0; row < batch.numRows; row++) mask[row] &= values[row] === true ? 1 : 0;
+      for (let row = 0; row < batch.numRows; row++) mask[row]! &= values[row] === true ? 1 : 0;
     }
     return mask;
   }

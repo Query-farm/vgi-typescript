@@ -33,7 +33,7 @@ export function deserializeSchema(bytes: Uint8Array): Schema {
   const reader = RecordBatchReader.from(bytes);
   const batches = [...reader];
   if (batches.length > 0) {
-    return batches[0].schema;
+    return batches[0]!.schema;
   }
   if (reader.schema) return reader.schema;
   throw new Error("Cannot deserialize schema from empty IPC stream");
@@ -64,7 +64,7 @@ export function deserializeBatch(bytes: Uint8Array): RecordBatch {
     const sch = reader.schema ?? new Schema([]);
     return emptyBatch(sch);
   }
-  return batches[0];
+  return batches[0]!;
 }
 
 /** Decode every data batch of a collection stream (including dictionary replacements). */

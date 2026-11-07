@@ -450,10 +450,11 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
             const part = path[i];
             if (typeof part !== "string" || !part || part.includes("\0")) throw new Error("invalid requiredFilters component");
             const matches = fields.filter((f) => f.name === part);
-            if (matches.length !== 1) throw new Error(`unknown or ambiguous requiredFilters component: ${part}`);
+            const match = matches.length === 1 ? matches[0] : undefined;
+            if (!match) throw new Error(`unknown or ambiguous requiredFilters component: ${part}`);
             if (i + 1 < path.length) {
-              if (!isStruct(matches[0].type)) throw new Error(`non-struct requiredFilters parent: ${part}`);
-              fields = (matches[0].type as VgiDataType & { children: readonly VgiField[] }).children;
+              if (!isStruct(match.type)) throw new Error(`non-struct requiredFilters parent: ${part}`);
+              fields = (match.type as VgiDataType & { children: readonly VgiField[] }).children;
             }
           }
         }
@@ -610,13 +611,13 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
           }
           let argumentIndex = 0;
           for (const defaultField of defaults.schema.fields) {
-            while (argumentIndex < argSchema.fields.length && argSchema.fields[argumentIndex].name !== defaultField.name) {
+            while (argumentIndex < argSchema.fields.length && argSchema.fields[argumentIndex]!.name !== defaultField.name) {
               argumentIndex++;
             }
             if (argumentIndex === argSchema.fields.length) {
               throw new Error(`parameterDefaultValues field '${defaultField.name}' is not in argument signature order`);
             }
-            const argumentField = argSchema.fields[argumentIndex];
+            const argumentField = argSchema.fields[argumentIndex]!;
             if (typeSignature(argumentField.type) !== typeSignature(defaultField.type)) {
               throw new Error(
                 `parameterDefaultValues field '${defaultField.name}' has type ${typeSignature(defaultField.type)}, ` +
@@ -1054,7 +1055,7 @@ function applyDefaults(schema: VgiSchema, defaults: Record<string, DefaultValue>
   for (const [colName, value] of Object.entries(defaults)) {
     const idx = result.fields.findIndex((f) => f.name === colName);
     if (idx < 0) continue;
-    const f = result.fields[idx];
+    const f = result.fields[idx]!;
     const existingMeta = f.metadata ? new Map(f.metadata) : new Map<string, string>();
     const sql = defaultToSql(value);
     // Canonical where it is exact (see canonicalDefault); the legacy "default"
@@ -1077,7 +1078,7 @@ function applyGeneratedColumns(schema: VgiSchema, generated: Record<string, stri
   for (const [colName, expression] of Object.entries(generated)) {
     const idx = result.fields.findIndex((f) => f.name === colName);
     if (idx < 0) throw new Error(`Table '${table}': generatedColumns names unknown column ${colName}`);
-    const f = result.fields[idx];
+    const f = result.fields[idx]!;
     const existingMeta = f.metadata ? new Map(f.metadata) : new Map<string, string>();
     if (existingMeta.has(GENERATED_EXPRESSION_KEY) || existingMeta.has("generated_expression"))
       throw new Error(`Table '${table}': generatedColumns for ${colName} conflicts with existing expression metadata`);
@@ -1100,7 +1101,7 @@ function applyColumnComments(schema: VgiSchema, comments: Record<string, string>
   for (const [colName, comment] of Object.entries(comments)) {
     const idx = result.fields.findIndex((f) => f.name === colName);
     if (idx < 0) throw new Error(`Table '${table}': columnComments names unknown column ${colName}`);
-    const f = result.fields[idx];
+    const f = result.fields[idx]!;
     const existingMeta = f.metadata ? new Map(f.metadata) : new Map<string, string>();
     existingMeta.set("comment", comment);
     const newField = field(f.name, f.type, f.nullable, existingMeta);

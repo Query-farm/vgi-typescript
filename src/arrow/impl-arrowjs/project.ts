@@ -41,7 +41,7 @@ export function projectSchema(
   if (!projectionIds) return a;
   const validIds = validateProjectionIds("projectSchema", projectionIds, a.fields.length);
   if (validIds.length === 0) return a;
-  return new Schema(validIds.map((i) => a.fields[i]), a.metadata);
+  return new Schema(validIds.map((i) => a.fields[i]!), a.metadata);
 }
 
 /**
@@ -58,7 +58,7 @@ export function projectBatch(
   const projectedSchema = projectSchema(projectionIds, a.schema);
   const children = validIds.map((i) => {
     const col = a.getChildAt(i);
-    return col!.data[0];
+    return col!.data[0]!;
   });
 
   const structType = new Struct(projectedSchema.fields);

@@ -52,7 +52,7 @@ export class CompositeCatalogInterface extends CatalogInterface {
 
   private _route(attachOpaqueData: AttachOpaqueData): CatalogInterface {
     const idx = attachOpaqueData[ROUTE_BYTE];
-    const route = this._backends[idx];
+    const route = idx === undefined ? undefined : this._backends[idx];
     if (!route) {
       // Routing is a check too (vgi-opaque-data-sealing.md rule 4): an
       // unroutable value gets the uniform refusal, never a description of
@@ -99,7 +99,7 @@ export class CompositeCatalogInterface extends CatalogInterface {
     clientCapabilities?: Uint8Array | null,
   ): Promise<CatalogAttachResult> {
     for (let i = 0; i < this._backends.length; i++) {
-      const b = this._backends[i];
+      const b = this._backends[i]!;
       if (b.catalogs().includes(name)) {
         const result = await b.attach(name, options, dataVersionSpec, implementationVersion, clientCapabilities);
         // Stamp the route-byte so other workers in the pool can decode the

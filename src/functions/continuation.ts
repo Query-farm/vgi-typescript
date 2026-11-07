@@ -56,7 +56,7 @@ export function moreOutputMetadata(more: boolean, extra?: Map<string, string>): 
 function replyMetadata(out: OutputCollector): Map<string, string> | null {
   const idx = out.dataBatchIdx;
   if (idx == null) return null;
-  const emitted = out.batches[idx];
+  const emitted = out.batches[idx]!;
   const md = new Map<string, string>((emitted.batch as any).metadata ?? []);
   for (const [k, v] of emitted.metadata ?? []) md.set(k, v);
   return md;

@@ -109,16 +109,16 @@ export interface TableBufferingConfig<
   TState = any,
 > {
   name: string;
-  description?: string;
-  args?: Record<string, VgiDataType>;
-  namedArgs?: Record<string, VgiDataType>;
-  argDefaults?: Record<string, any>;
+  description?: string | undefined;
+  args?: Record<string, VgiDataType> | undefined;
+  namedArgs?: Record<string, VgiDataType> | undefined;
+  argDefaults?: Record<string, any> | undefined;
   /** Authoritative typed defaults: one row, defaulted parameters only. */
-  parameterDefaultValues?: VgiBatch | null;
+  parameterDefaultValues?: VgiBatch | null | undefined;
   /** Argument descriptions keyed by argument name. */
-  argDocs?: Record<string, string>;
+  argDocs?: Record<string, string> | undefined;
   /** Discovery constraints, also enforced for scalar arguments at bind. */
-  argConstraints?: Record<string, ArgumentConstraints>;
+  argConstraints?: Record<string, ArgumentConstraints> | undefined;
   /** Bind: default passes through input schema. May be async. Return non-empty
    *  `lookupSecret*` lists on the first pass to request DuckDB secrets; the
    *  connector then re-binds with `resolvedSecretsProvided` and the resolved
@@ -164,22 +164,22 @@ export interface TableBufferingConfig<
     params: TableBufferingBindParams<TArgs>,
   ) => TableCardinality | Promise<TableCardinality>;
   // Metadata
-  projectionPushdown?: boolean;
-  filterPushdown?: boolean;
-  autoApplyFilters?: boolean;
+  projectionPushdown?: boolean | undefined;
+  filterPushdown?: boolean | undefined;
+  autoApplyFilters?: boolean | undefined;
   /** Force ParallelSink=false in the C++ operator (single-thread ingest). */
-  sinkOrderDependent?: boolean;
+  sinkOrderDependent?: boolean | undefined;
   /** Force serial Source drain in finalize_queue order. */
-  sourceOrderDependent?: boolean;
+  sourceOrderDependent?: boolean | undefined;
   /** Thread DuckDB's per-chunk batch_index into every process() call. */
-  requiresInputBatchIndex?: boolean;
-  stability?: FunctionStability;
-  examples?: FunctionExample[];
-  categories?: string[];
-  tags?: Record<string, string>;
-  maxWorkers?: number;
-  requiredSettings?: string[];
-  requiredSecrets?: string[];
+  requiresInputBatchIndex?: boolean | undefined;
+  stability?: FunctionStability | undefined;
+  examples?: FunctionExample[] | undefined;
+  categories?: string[] | undefined;
+  tags?: Record<string, string> | undefined;
+  maxWorkers?: number | undefined;
+  requiredSettings?: string[] | undefined;
+  requiredSecrets?: string[] | undefined;
 }
 
 /**
@@ -479,7 +479,7 @@ function makeProjectingCollector(
   function alreadyMatches(batch: VgiBatch): boolean {
     if (batch.schema.fields.length !== targetSchema.fields.length) return false;
     for (let i = 0; i < targetSchema.fields.length; i++) {
-      if (batch.schema.fields[i].name !== targetSchema.fields[i].name) return false;
+      if (batch.schema.fields[i]!.name !== targetSchema.fields[i]!.name) return false;
     }
     return true;
   }
@@ -589,6 +589,10 @@ function concatLenPrefixed(parts: Uint8Array[]): Uint8Array {
   return out;
 }
 
+// Always returns exactly `count` parts (a short buffer throws a RangeError from
+// the DataView), which the overloads encode as a tuple.
+function splitLenPrefixed(buf: Uint8Array, count: 2): [Uint8Array, Uint8Array];
+function splitLenPrefixed(buf: Uint8Array, count: 3): [Uint8Array, Uint8Array, Uint8Array];
 function splitLenPrefixed(buf: Uint8Array, count: number): Uint8Array[] {
   const dv = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
   const parts: Uint8Array[] = [];

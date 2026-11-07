@@ -203,8 +203,8 @@ export function aggregateHandlers(registry: FunctionRegistry): Partial<VgiServic
     }
     const touchedTargets = new Set<bigint>();
     for (let i = 0; i < batch.numRows; i++) {
-      const src = srcIds[i];
-      const tgt = tgtIds[i];
+      const src = srcIds[i]!;
+      const tgt = tgtIds[i]!;
       const srcHas = exec.states.has(src);
       const tgtHas = exec.states.has(tgt);
       if (!srcHas && !tgtHas) continue;
@@ -307,6 +307,7 @@ function extractArgMap(
     }
   }
   for (let i = 0; i < constNames.length; i++) {
+    const name = constNames[i]!;
     let v: any;
     try {
       v = args.get(i);
@@ -325,18 +326,18 @@ function extractArgMap(
       // args.get throws when the arg isn't set — fall back to the declared
       // default so aggregates called without an explicit const value still
       // see it in update/finalize.
-      const def = cfg.argDefaults?.[constNames[i]];
-      if (def !== undefined) out[constNames[i]] = def;
+      const def = cfg.argDefaults?.[name];
+      if (def !== undefined) out[name] = def;
       continue;
     }
     // Enforce declared constraints on the supplied value. This sits OUTSIDE the
     // try above so a constraint violation propagates as a bind error rather than
     // being swallowed and silently replaced by the default.
-    const constraints = cfg.argConstraints?.[constNames[i]];
+    const constraints = cfg.argConstraints?.[name];
     if (constraints !== undefined) {
-      validateConstConstraints(constNames[i], constraints, v);
+      validateConstConstraints(name, constraints, v);
     }
-    out[constNames[i]] = v;
+    out[name] = v;
   }
   // Non-const args aren't in the wire Arguments, but users may still want
   // defaults surfaced for `params.args` — apply them here.

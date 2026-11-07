@@ -290,13 +290,13 @@ export class VgiClient {
     bindRequest: BindRequest,
     bindResponse: BindResponse,
     opts?: {
-      projectionIds?: number[] | null;
-      pushdownFilters?: VgiBatch | null;
-      phase?: TableInOutPhase | null;
-      executionId?: Uint8Array | null;
-      orderBy?: OrderByPushdown | null;
-      tablesample?: TablesamplePushdown | null;
-      joinKeys?: VgiBatch[] | null;
+      projectionIds?: number[] | null | undefined;
+      pushdownFilters?: VgiBatch | null | undefined;
+      phase?: TableInOutPhase | null | undefined;
+      executionId?: Uint8Array | null | undefined;
+      orderBy?: OrderByPushdown | null | undefined;
+      tablesample?: TablesamplePushdown | null | undefined;
+      joinKeys?: VgiBatch[] | null | undefined;
     },
   ): Promise<{ session: StreamSession; initResponse: GlobalInitResponse }> {
     const ob = opts?.orderBy ?? null;
@@ -1093,7 +1093,7 @@ export class VgiClient {
     if (!result) return null;
     const inner = unwrapResult(result);
     const items = deserializeInfoList(inner.items, decodeSchemaInfo);
-    return items.length > 0 ? items[0] : null;
+    return items[0] ?? null;
   }
 
   /** Create a new schema. */
@@ -1219,7 +1219,7 @@ export class VgiClient {
     if (!result) return null;
     const inner = unwrapResult(result);
     const items = deserializeInfoList(inner.items, decodeTableInfo);
-    return items.length > 0 ? items[0] : null;
+    return items[0] ?? null;
   }
 
   /** Create a new table. */
@@ -1539,7 +1539,7 @@ export class VgiClient {
     if (!result) return null;
     const inner = unwrapResult(result);
     const items = deserializeInfoList(inner.items, decodeViewInfo);
-    return items.length > 0 ? items[0] : null;
+    return items[0] ?? null;
   }
 
   /** Create a new view. */
@@ -1660,7 +1660,7 @@ export class VgiClient {
     if (!result) return null;
     const inner = unwrapResult(result);
     const items = deserializeInfoList(inner.items, decodeMacroInfo);
-    return items.length > 0 ? items[0] : null;
+    return items[0] ?? null;
   }
 
   /** List macros in a schema, filtered by type. */

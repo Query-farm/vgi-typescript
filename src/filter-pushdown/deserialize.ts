@@ -71,7 +71,7 @@ export class FilterV2Error extends Error {
 export interface DeserializeFilterOptions extends FilterCapabilities {
   /** The authoritative, unprojected bind output schema. */
   outputSchema: VgiSchema;
-  joinKeyBatches?: VgiBatch[];
+  joinKeyBatches?: VgiBatch[] | undefined;
 }
 
 function utf8Length(value: string): number {
@@ -180,7 +180,7 @@ class StrictJsonParser {
     const start = this.offset++;
     let escaped = false;
     while (this.offset < this.text.length) {
-      const ch = this.text[this.offset++];
+      const ch = this.text[this.offset++]!;
       if (!escaped && ch === '"') {
         try {
           return JSON.parse(this.text.slice(start, this.offset));
@@ -303,9 +303,10 @@ class FilterParser {
     const names = batch.schema.fields.map((field) => field.name);
     if (new Set(names).size !== names.length) throw new FilterV2Error("filter payload names must be unique");
     for (let i = 1; i < names.length; i++) {
-      if (!PAYLOAD_NAME.test(names[i])) throw new FilterV2Error(`noncanonical payload name ${names[i]}`);
-      if (names[i].startsWith("type_") && this.valueAt(i) !== null) {
-        throw new FilterV2Error(`${names[i]} must contain NULL`);
+      const name = names[i]!;
+      if (!PAYLOAD_NAME.test(name)) throw new FilterV2Error(`noncanonical payload name ${name}`);
+      if (name.startsWith("type_") && this.valueAt(i) !== null) {
+        throw new FilterV2Error(`${name} must contain NULL`);
       }
     }
     this.context = parseContext(batch.schema);
@@ -319,8 +320,9 @@ class FilterParser {
 
   private valueAt(index: number): unknown {
     const column = this.batch.getChildAt(index);
-    if (!column) throw new FilterV2Error(`missing payload column ${index}`);
-    return readCanonicalValue(this.batch.schema.fields[index].type, column, 0);
+    const field = this.batch.schema.fields[index];
+    if (!column || !field) throw new FilterV2Error(`missing payload column ${index}`);
+    return readCanonicalValue(field.type, column, 0);
   }
 
   private validateContextCapability(): void {
@@ -363,7 +365,7 @@ class FilterParser {
     const entries = this.header("delta", "updates");
     const live = new Map(prior.predicates.map((predicate) => [predicate.id, predicate]));
     const revisions = new Map(prior.revisions);
-    const parsed: Array<{ id: string; revision: number; predicate?: FilterPredicate }> = [];
+    const parsed: Array<{ id: string; revision: number; predicate?: FilterPredicate | undefined }> = [];
     const seen = new Set<string>();
     for (let index = 0; index < entries.length; index++) {
       const where = `updates[${index}]`;
@@ -436,8 +438,9 @@ class FilterParser {
     const ref = expectUint(rawRef, `${prefix}_ref`);
     const name = `${prefix}_${ref}`;
     const indexes = this.batch.schema.fields.flatMap((field, index) => field.name === name ? [index] : []);
-    if (indexes.length !== 1) throw new FilterV2Error(`missing or duplicate payload ${name}`);
-    return { ref, field: this.batch.schema.fields[indexes[0]], value: this.valueAt(indexes[0]) };
+    const index = indexes.length === 1 ? indexes[0] : undefined;
+    if (index === undefined) throw new FilterV2Error(`missing or duplicate payload ${name}`);
+    return { ref, field: this.batch.schema.fields[index]!, value: this.valueAt(index) };
   }
 
   private identity(raw: unknown, where: string): FunctionIdentity {

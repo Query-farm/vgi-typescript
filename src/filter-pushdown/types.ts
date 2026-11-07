@@ -32,12 +32,12 @@ export interface FunctionIdentity {
 
 export interface EvaluationContext {
   profile: string;
-  timeZone?: string;
-  calendar?: string;
-  defaultCollation?: string;
-  ieeeFloatingPointOps?: boolean;
-  integerDivision?: boolean;
-  providerFingerprint?: string;
+  timeZone?: string | undefined;
+  calendar?: string | undefined;
+  defaultCollation?: string | undefined;
+  ieeeFloatingPointOps?: boolean | undefined;
+  integerDivision?: boolean | undefined;
+  providerFingerprint?: string | undefined;
 }
 
 export type FilterExpression =
@@ -56,7 +56,7 @@ export type FilterExpression =
       node: "call";
       function: StandardFilterFunction | FunctionIdentity;
       arguments: FilterExpression[];
-      options?: Record<string, unknown>;
+      options?: Record<string, unknown> | undefined;
     }
   | {
       node: "runtime_filter";
@@ -89,9 +89,9 @@ export interface FilterPredicate {
 }
 
 export interface FilterCapabilities {
-  extensionFunctions?: ReadonlyArray<FunctionIdentity>;
-  runtimeAlgorithms?: ReadonlyArray<FunctionIdentity>;
-  evaluationContexts?: ReadonlyArray<{ profile: string; providerFingerprint?: string | null }>;
+  extensionFunctions?: ReadonlyArray<FunctionIdentity> | undefined;
+  runtimeAlgorithms?: ReadonlyArray<FunctionIdentity> | undefined;
+  evaluationContexts?: ReadonlyArray<{ profile: string; providerFingerprint?: string | null }> | undefined;
 }
 
 // Source aliases ease the protocol-2.0 transition for applications that imported

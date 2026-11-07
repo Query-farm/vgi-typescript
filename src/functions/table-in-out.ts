@@ -74,7 +74,7 @@ export interface TableInOutProcessParams<TArgs = Record<string, any>> {
   outputSchema: VgiSchema;
   settings: Record<string, any>;
   secrets: Record<string, Record<string, any>>;
-  pushdownFilters?: PushdownFilters;
+  pushdownFilters?: PushdownFilters | undefined;
   /** Shared storage for cross-phase and cross-worker data (SQLite-backed). */
   storage: BoundStorage;
   /**
@@ -88,7 +88,7 @@ export interface TableInOutProcessParams<TArgs = Record<string, any>> {
    * `null`/`undefined` for a client that sent none. Mirrors vgi-python's
    * `ProcessParams.substream_id`.
    */
-  substreamId?: Uint8Array | null;
+  substreamId?: Uint8Array | null | undefined;
   /**
    * Conditional-revalidation validator (exchange-mode result cache): the
    * client holds a stale cached result for THIS input unit and asks the
@@ -97,10 +97,10 @@ export interface TableInOutProcessParams<TArgs = Record<string, any>> {
    * of recomputing. Rides the input batch's custom metadata (attached by the
    * C++ WriteInputBatch). Undefined on a normal call.
    */
-  ifNoneMatch?: string;
+  ifNoneMatch?: string | undefined;
   /** RFC 3339 Last-Modified validator for conditional revalidation.
    *  Companion to {@link ifNoneMatch}. Undefined on a normal call. */
-  ifModifiedSince?: string;
+  ifModifiedSince?: string | undefined;
 }
 
 // ============================================================================
@@ -466,7 +466,7 @@ export function defineTableInOutFunction<
               out.finish();
               return;
             }
-            const [logId, bytes] = rows[0];
+            const [logId, bytes] = rows[0]!;
             out.emit(deserializeBatch(bytes) as unknown as VgiBatch);
             pState.state.cursor = logId;
           },
@@ -579,7 +579,7 @@ export function defineTableInOutFunction<
  * see a stale validator.
  */
 function applyRevalidationValidators(
-  params: { ifNoneMatch?: string; ifModifiedSince?: string },
+  params: { ifNoneMatch?: string | undefined; ifModifiedSince?: string | undefined },
   input: VgiBatch,
 ): void {
   const md: Map<string, string> | undefined = (input as any)?.metadata;
@@ -594,7 +594,7 @@ function applyRevalidationValidators(
  * once per stream). See `filter-pushdown/history.ts`.
  */
 function applyDynamicFilterUpdate(
-  eState: { processParams: { pushdownFilters?: PushdownFilters }; filterHistory: FilterDeltaHistory },
+  eState: { processParams: { pushdownFilters?: PushdownFilters | undefined }; filterHistory: FilterDeltaHistory },
   input: VgiBatch,
 ): void {
   const encoded = ((input as any)?.metadata as Map<string, string> | undefined)?.get("vgi_pushdown_filters");
@@ -660,7 +660,7 @@ function makeSchemaReconcilingCollector(
     const batchFields = batch.schema.fields;
     if (
       batchFields.length === targetSchema.fields.length &&
-      targetSchema.fields.every((f, i) => batchFields[i].name === f.name)
+      targetSchema.fields.every((f, i) => batchFields[i]!.name === f.name)
     ) {
       return batch;
     }

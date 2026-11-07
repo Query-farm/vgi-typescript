@@ -427,13 +427,13 @@ export function defineScalarFunction<
             // so complex types (Decimal, BigInt-backed Timestamp/Duration,
             // List, Map, Struct) are built via our buildColumnData. The `repr`
             // selects raw<->canonical (branded) vs rich<->canonical conversion.
-            const fieldName = outputSchema.fields[0].name;
+            const fieldName = outputSchema.fields[0]!.name;
             outputBatch = batchFromColumns({ [fieldName]: result }, outputSchema, repr);
           } else {
             // User returned an Arrow Vector / typed-array-shaped column. Iterate
             // it into a JS array and re-route through batchFromColumns. Adds an
             // O(n) copy but matches both backends' contract.
-            const fieldName = outputSchema.fields[0].name;
+            const fieldName = outputSchema.fields[0]!.name;
             outputBatch = batchFromColumns({ [fieldName]: [...(result as Iterable<any>)] }, outputSchema, repr);
           }
 

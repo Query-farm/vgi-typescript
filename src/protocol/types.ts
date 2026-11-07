@@ -109,13 +109,13 @@ export type BindRepeatability = "UNKNOWN" | "STABLE_WITHIN_QUERY";
 
 export interface BindResponse {
   /** Omitted provider values serialize as UNKNOWN. Wire values are required. */
-  repeatability?: BindRepeatability;
-  projection_expression_profiles?: string[];
+  repeatability?: BindRepeatability | undefined;
+  projection_expression_profiles?: string[] | undefined;
   output_schema: VgiSchema;
   opaque_data: Uint8Array | null;
-  lookup_secret_types?: string[];
-  lookup_scopes?: string[];
-  lookup_names?: string[];
+  lookup_secret_types?: string[] | undefined;
+  lookup_scopes?: string[] | undefined;
+  lookup_names?: string[] | undefined;
 }
 
 export interface InitRequest {

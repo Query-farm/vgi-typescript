@@ -196,7 +196,7 @@ export function validateProjectionAcceptance(
   const expected = schema(
     [
       ...p.bindResult.output_schema.fields,
-      ...r.acceptedIndices.map((i) => p.resultSchema.fields[i]),
+      ...r.acceptedIndices.map((i) => p.resultSchema.fields[i]!),
     ],
     p.bindResult.output_schema.metadata,
   );

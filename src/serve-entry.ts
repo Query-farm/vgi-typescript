@@ -61,14 +61,14 @@ export interface IrohHttpBridgeOptions {
   /** Worker-local namespace for EndpointId principals. */
   issuer: string;
   /** Exact bridge IP addresses. No CIDRs or hostnames. */
-  trustedProxyAddresses?: readonly string[];
+  trustedProxyAddresses?: readonly string[] | undefined;
   /** Authenticate the EndpointId (default) or expose evidence only. */
-  authenticate?: boolean;
+  authenticate?: boolean | undefined;
   /**
    * Host-specific physical peer and raw-header adapter. Required because a
    * Fetch Request alone does not preserve duplicate header fields.
    */
-  peerResolutionContext?: (request: Request) => PeerResolutionOptions | Promise<PeerResolutionOptions>;
+  peerResolutionContext?: ((request: Request) => PeerResolutionOptions | Promise<PeerResolutionOptions>) | undefined;
 }
 
 export interface ServeVgiWorkerOptions extends HostingOptions {
@@ -84,34 +84,34 @@ export interface ServeVgiWorkerOptions extends HostingOptions {
   catalogInterface: CatalogInterface;
 
   /** Public source-repository URL, linked from the landing page. */
-  repositoryUrl?: string;
+  repositoryUrl?: string | undefined;
   /** Overrides `$PORT` (default 8787). Pass 0 to bind an ephemeral port. */
-  port?: number;
+  port?: number | undefined;
   /** Bind address. Iroh bridge mode defaults to loopback; otherwise Bun's default. */
-  hostname?: string;
+  hostname?: string | undefined;
   /** Overrides `$VGI_SIGNING_KEY`. 32 bytes. */
-  signingKey?: Uint8Array;
+  signingKey?: Uint8Array | undefined;
   /** Overrides `$VGI_TOKEN_TTL` (default 3600 seconds). */
-  tokenTtl?: number;
+  tokenTtl?: number | undefined;
   /** Overrides `$CORS_ORIGINS` (default "*"). Pass `null` to disable CORS. */
-  corsOrigins?: string | null;
+  corsOrigins?: string | null | undefined;
   /** Server ID for state-token attribution (default: `name`). */
-  serverId?: string;
+  serverId?: string | undefined;
   /** Mount point for the VGI endpoints (default "", the origin root). */
-  prefix?: string;
+  prefix?: string | undefined;
   /** Suppress the startup banner on stdout. */
-  quiet?: boolean;
+  quiet?: boolean | undefined;
   /** Environment source (default `process.env`). */
-  env?: ServeEnv;
+  env?: ServeEnv | undefined;
   /** Command-line arguments to read `--grant-key KEY` (repeatable, first mints)
    *  from. Default `process.argv.slice(2)`. A key here takes precedence over
    *  `VGI_RPC_GRANT_KEYS`; an explicit {@link grantKeys} over both. */
-  argv?: readonly string[];
+  argv?: readonly string[] | undefined;
   /** Authenticates each request, returning the caller's `AuthContext`.
    *  Omit for an anonymous worker (the default). */
-  authenticate?: AuthenticateFn;
+  authenticate?: AuthenticateFn | undefined;
   /** Preserve authenticated Iroh identity forwarded by an adjacent HTTP bridge. */
-  irohBridge?: IrohHttpBridgeOptions;
+  irohBridge?: IrohHttpBridgeOptions | undefined;
 }
 
 /** The slice of `Bun.serve`'s return value this module uses. */
@@ -125,7 +125,7 @@ export interface VgiHttpServer {
 interface BunLike {
   serve(options: {
     port: number;
-    hostname?: string;
+    hostname?: string | undefined;
     fetch: (req: Request) => Promise<Response>;
   }): VgiHttpServer;
 }
@@ -302,7 +302,7 @@ export function serveVgiWorker(opts: ServeVgiWorkerOptions): VgiHttpServer {
           const immediatePeer = server.requestIP?.(request)?.address;
           const forwarded = request.headers.get(IROH_FORWARDED_ENDPOINT_HEADER);
           return {
-            immediatePeer,
+            ...(immediatePeer !== undefined ? { immediatePeer } : {}),
             headers: forwarded === null
               ? {}
               : { [IROH_FORWARDED_ENDPOINT_HEADER]: [forwarded] },

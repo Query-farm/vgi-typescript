@@ -55,7 +55,7 @@ import {
 
 export interface FunctionHandlerConfig {
   registry: FunctionRegistry;
-  signingKey?: Uint8Array;
+  signingKey?: Uint8Array | undefined;
   /**
    * Used to map a bind's `attach_opaque_data` to its catalog, so resolution can
    * be scoped when two catalogs declare the same schema and function name.
@@ -74,7 +74,7 @@ export interface FunctionHandlerConfig {
      * livelock returning no rows, blaming the data for moving when it has not.
      */
     version?(attach: Uint8Array, txn?: Uint8Array): number | Promise<number>;
-  };
+  } | undefined;
 }
 
 /**

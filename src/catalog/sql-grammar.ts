@@ -45,7 +45,7 @@ function tokenize(sql: string): Token[] {
   const out: Token[] = [];
   let i = 0;
   while (i < sql.length) {
-    const c = sql[i];
+    const c = sql[i]!;
     if (/\s/.test(c)) { i++; continue; }
     if (sql.startsWith("--", i)) {
       while (i < sql.length && sql[i] !== "\n") i++;
@@ -126,8 +126,8 @@ class Parser {
   private pos = 0;
   constructor(private readonly tokens: Token[]) {}
 
-  private peek(offset = 0): Token { return this.tokens[Math.min(this.pos + offset, this.tokens.length - 1)]; }
-  private next(): Token { return this.tokens[this.pos++]; }
+  private peek(offset = 0): Token { return this.tokens[Math.min(this.pos + offset, this.tokens.length - 1)]!; }
+  private next(): Token { return this.tokens[this.pos++]!; }
   private isOp(v: string, offset = 0): boolean {
     const t = this.peek(offset);
     return t.t === "op" && t.v === v;
@@ -375,7 +375,7 @@ class Parser {
       this.expectOp(")");
       if (this.isWord("filter") || this.isWord("over")) fail("aggregate and window functions are unsupported");
       if (names.length === 1 && !t.quoted && word === "coalesce") return { kind: "operator", op: "COALESCE", children };
-      return { kind: "function", name: names[names.length - 1], qualified: names.length > 1, children };
+      return { kind: "function", name: names[names.length - 1]!, qualified: names.length > 1, children };
     }
     if (this.peek().t === "str") fail("typed literals are unsupported");
     return { kind: "column", names };
@@ -417,7 +417,7 @@ export function validateColumnExpressionSql(
         return;
       case "column":
         if (!usingColumns || node.names.length !== 1) fail("column references are unsupported in this scope");
-        columns.push(node.names[0]);
+        columns.push(node.names[0]!);
         return;
       case "cast":
         if (node.qualified) fail("qualified scalar cast types are unsupported");
@@ -471,6 +471,6 @@ export function validateNumericCheckSql(sql: string, resolveColumn: (name: strin
     if (operand.kind !== "column") fail("native CHECK read supports only numeric column/constant comparisons");
     const column = operand as Extract<ScalarNode, { kind: "column" }>;
     if (column.names.length !== 1) fail("CHECK requires unqualified column references");
-    resolveColumn(column.names[0]);
+    resolveColumn(column.names[0]!);
   }
 }

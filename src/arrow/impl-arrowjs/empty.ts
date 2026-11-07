@@ -21,7 +21,7 @@ function emptyData(field: Field): any {
   const type = field.type;
 
   if (DataType.isList(type)) {
-    const childField = (type as List).children[0];
+    const childField = (type as List).children[0]!;
     return makeData({
       type,
       length: 0,
@@ -32,7 +32,7 @@ function emptyData(field: Field): any {
   }
 
   if (DataType.isMap(type)) {
-    const entriesField = (type as Map_).children[0];
+    const entriesField = (type as Map_).children[0]!;
     return makeData({
       type,
       length: 0,

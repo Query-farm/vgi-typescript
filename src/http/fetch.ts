@@ -10,6 +10,7 @@
 // `buildVgiProtocol` as `signingKey`, from one source. Passing different keys to
 // those two seams produces a worker that mints tokens it cannot recover.
 
+import { omitUndefined } from "../util/defined.js";
 import {
   AuthContext,
   createHttpHandler,
@@ -41,14 +42,14 @@ export interface VgiFetchOptions extends HostingOptions {
    *  configured key hosts `vgi.attach_tickets.v1` (with the ability to issue
    *  grants): tickets sealed under a generated key would die on restart.
    *  Defaults to `true`, since this factory requires the key to be passed. */
-  signingKeyConfigured?: boolean;
+  signingKeyConfigured?: boolean | undefined;
   /** State-token TTL in seconds (default 3600). */
-  tokenTtl?: number;
+  tokenTtl?: number | undefined;
   /** URL path prefix for VGI requests (default "/vgi"). Pass "" to mount at
    *  the root, which is what a dedicated single-worker HTTP server wants. */
-  prefix?: string;
+  prefix?: string | undefined;
   /** Server ID for state-token attribution (default "vgi-cf"). */
-  serverId?: string;
+  serverId?: string | undefined;
   /** CORS allowed origins, added to all responses so the preflight `OPTIONS`
    *  that browser clients send before `__describe__` succeeds.
    *
@@ -60,9 +61,9 @@ export interface VgiFetchOptions extends HostingOptions {
    *  always defaulted this way; this matches it so both entries agree.
    *
    *  Pass `null` to disable CORS. */
-  corsOrigins?: string | null;
+  corsOrigins?: string | null | undefined;
   /** Public source-repository URL, surfaced on the landing page. */
-  repositoryUrl?: string;
+  repositoryUrl?: string | undefined;
   /** Worker identity for the standardized VGI landing surface: `GET /` serves
    *  the shared landing.html plus a JSON status document carrying this
    *  identity, and `GET /vgi-client.js` serves the browser client build the
@@ -85,13 +86,13 @@ export interface VgiFetchOptions extends HostingOptions {
    *  Supplying it is what makes a worker able to serve more than one principal,
    *  and the identity it returns is the one the worker seals `attach_opaque_data`
    *  and split tokens under. */
-  authenticate?: AuthenticateFn;
+  authenticate?: AuthenticateFn | undefined;
   /** Off-wire transport identities, including a trusted Iroh HTTP bridge. */
-  peerIdentityProviders?: readonly PeerIdentityProvider[];
+  peerIdentityProviders?: readonly PeerIdentityProvider[] | undefined;
   /** Policy composing peer evidence with application authentication. */
-  peerAuthenticationPolicy?: PeerAuthenticationPolicy;
+  peerAuthenticationPolicy?: PeerAuthenticationPolicy | undefined;
   /** Host adapter supplying the physical peer and multiplicity-preserving headers. */
-  peerResolutionContext?: (request: Request) => PeerResolutionOptions | Promise<PeerResolutionOptions>;
+  peerResolutionContext?: ((request: Request) => PeerResolutionOptions | Promise<PeerResolutionOptions>) | undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -226,7 +227,11 @@ export function createVgiFetch(opts: VgiFetchOptions): (req: Request) => Promise
   const reservedCheck = checkReservedAttachOptions(opts.protocol.catalogInterface);
   reservedCheck.catch((e) => console.error(`VGI worker refused to serve: ${(e as Error).message}`));
 
-  const handler = createHttpHandler(server, {
+  // vgi-rpc's own types disagree under exactOptionalPropertyTypes:
+  // `VgiRpcServer.identity` is `IdentityImpl | undefined` while `ProtocolHost`
+  // declares `identity?: {...}` without `| undefined`. Both mean "may be
+  // absent"; the cast only bridges the declarations.
+  const handler = createHttpHandler(server as Parameters<typeof createHttpHandler>[0], omitUndefined({
     prefix,
     serverId,
     tokenKey: opts.signingKey,
@@ -249,7 +254,7 @@ export function createVgiFetch(opts: VgiFetchOptions): (req: Request) => Promise
     // no reason — a VGI worker always has the real thing.
     extraRoutes: createLandingRoutes(opts.landingInfo),
     enableLandingPage: false,
-  });
+  }));
   return async (req: Request) => {
     await reservedCheck;
     const storage = await ensureRequestAuthStorage();

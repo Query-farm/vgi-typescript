@@ -21,15 +21,15 @@ import { catalogHandlers } from "./handlers/catalog/index.js";
 
 export interface ProtocolConfig {
   registry: FunctionRegistry;
-  catalogInterface?: CatalogInterface;
-  catalogName?: string;
+  catalogInterface?: CatalogInterface | undefined;
+  catalogName?: string | undefined;
   /**
    * AEAD signing key for sealing catalog opaque-data envelopes. Pass the same
    * 32-byte key used for HTTP state tokens. When omitted (subprocess / unix
    * transports) attach_opaque_data / transaction_opaque_data pass through
    * unsealed — OS process ownership already enforces identity there.
    */
-  signingKey?: Uint8Array;
+  signingKey?: Uint8Array | undefined;
 }
 
 /**

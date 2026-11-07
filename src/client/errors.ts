@@ -22,7 +22,7 @@ export class VgiClientError extends Error {
 
   constructor(
     message: string,
-    options?: { remoteTraceback?: string; errorType?: string; cause?: unknown },
+    options?: { remoteTraceback?: string | undefined; errorType?: string | undefined; cause?: unknown },
   ) {
     super(message, options?.cause != null ? { cause: options.cause } : undefined);
     this.name = "VgiClientError";

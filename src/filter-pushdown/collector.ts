@@ -117,7 +117,7 @@ export class FilteringOutputCollector {
       const mask = this.filters.evaluate(batch as any);
       const parents = decodeParentRows(encoded);
       const kept: number[] = [];
-      for (let i = 0; i < parents.length; i++) if (mask[i]) kept.push(parents[i]);
+      for (let i = 0; i < parents.length; i++) if (mask[i]) kept.push(parents[i]!);
       const md = new Map(metadata);
       if (kept.length > 0) md.set(PARENT_ROW_METADATA_KEY, encodeParentRows(kept));
       else md.delete(PARENT_ROW_METADATA_KEY);

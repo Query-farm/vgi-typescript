@@ -340,8 +340,8 @@ function bigIntUnitCodec(label: string): Codec {
 function decimalViewToBigInt(view: ArrayBufferView): bigint {
   const u8 = new Uint8Array(view.buffer, view.byteOffset, view.byteLength);
   let bi = 0n;
-  for (let i = u8.length - 1; i >= 0; i--) bi = (bi << 8n) | BigInt(u8[i]);
-  if (u8.length > 0 && (u8[u8.length - 1] & 0x80)) bi -= 1n << BigInt(u8.length * 8);
+  for (let i = u8.length - 1; i >= 0; i--) bi = (bi << 8n) | BigInt(u8[i]!);
+  if (u8.length > 0 && (u8[u8.length - 1]! & 0x80)) bi -= 1n << BigInt(u8.length * 8);
   return bi;
 }
 

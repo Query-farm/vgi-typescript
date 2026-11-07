@@ -95,7 +95,7 @@ function concat(...parts: Uint8Array[]): Uint8Array {
 function equalBytes(a: Uint8Array, b: Uint8Array): boolean {
   if (a.length !== b.length) return false;
   let diff = 0;
-  for (let i = 0; i < a.length; i++) diff |= a[i] ^ b[i];
+  for (let i = 0; i < a.length; i++) diff |= a[i]! ^ b[i]!;
   return diff === 0;
 }
 
@@ -163,8 +163,8 @@ export async function buildSplitToken(opts: {
   payload: Uint8Array;
   fingerprint: Uint8Array;
   anchor: Uint8Array;
-  signingKey?: Uint8Array;
-  auth?: AuthContext;
+  signingKey?: Uint8Array | undefined;
+  auth?: AuthContext | undefined;
 }): Promise<Uint8Array> {
   const { payload, fingerprint, anchor, signingKey, auth } = opts;
   if (fingerprint.length !== FINGERPRINT_LEN) {
@@ -200,10 +200,10 @@ export async function buildSplitToken(opts: {
 export async function openSplitToken(
   token: Uint8Array,
   opts: {
-    signingKey?: Uint8Array;
-    auth?: AuthContext;
-    expectedFingerprint?: Uint8Array;
-    currentAnchor?: Uint8Array;
+    signingKey?: Uint8Array | undefined;
+    auth?: AuthContext | undefined;
+    expectedFingerprint?: Uint8Array | undefined;
+    currentAnchor?: Uint8Array | undefined;
   } = {},
 ): Promise<Uint8Array> {
   const { signingKey, auth, expectedFingerprint, currentAnchor } = opts;
@@ -214,8 +214,9 @@ export async function openSplitToken(
       `split token too short: ${token.length} bytes, need at least ${HEADER_LEN}`,
     );
   }
-  const version = token[0];
-  const flags = token[1];
+  // Both in range: the length check above guarantees HEADER_LEN bytes.
+  const version = token[0]!;
+  const flags = token[1]!;
   const view = new DataView(token.buffer, token.byteOffset, token.byteLength);
   const anchorLen = view.getUint16(2, true);
 

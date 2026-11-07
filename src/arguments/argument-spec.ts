@@ -25,11 +25,11 @@ export interface ArgumentSpec {
   name: string;
   position: number | string;
   arrowType: VgiDataType;
-  isTableInput?: boolean;
-  isAnyType?: boolean;
-  isVarargs?: boolean;
-  isConst?: boolean;
-  doc?: string;
+  isTableInput?: boolean | undefined;
+  isAnyType?: boolean | undefined;
+  isVarargs?: boolean | undefined;
+  isConst?: boolean | undefined;
+  doc?: string | undefined;
   /**
    * Discovery-facing constraint metadata, pre-encoded to their surfaced UTF-8
    * forms (presence-only — `undefined` means the constraint is absent and the
@@ -37,10 +37,10 @@ export interface ArgumentSpec {
    * `ArgumentSpec.default_json` / `choices_json` / `range_notation` / `pattern`
    * so `argumentSpecsToSchema`/`schemaToArgumentSpecs` round-trip symmetrically.
    */
-  defaultJson?: string;
-  choicesJson?: string;
-  rangeNotation?: string;
-  pattern?: string;
+  defaultJson?: string | undefined;
+  choicesJson?: string | undefined;
+  rangeNotation?: string | undefined;
+  pattern?: string | undefined;
 }
 
 /**

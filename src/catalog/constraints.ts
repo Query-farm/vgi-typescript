@@ -416,10 +416,10 @@ export function validateTableConstraints(
       fail((error as Error).message);
     }
     const resolveTop = (path: string[]): number => {
-      const matches = fieldsByExactName(fields, path[0]);
+      const matches = fieldsByExactName(fields, path[0]!);
       if (matches.length !== 1 || matches[0] === rowId)
         fail(`column path ${path.join(".")} names a missing, ambiguous or row-id column`);
-      return matches[0];
+      return matches[0]!;
     };
     switch (record.kind) {
       case "CHECK": {
@@ -429,14 +429,14 @@ export function validateTableConstraints(
       }
       case "NOT_NULL": {
         if (record.columns.length !== 1) fail("NOT_NULL requires exactly one column path");
-        const path = record.columns[0];
-        let field = fields[resolveTop(path)];
+        const path = record.columns[0]!;
+        let field = fields[resolveTop(path)]!;
         for (let depth = 1; depth < path.length; depth++) {
           const children = ordinaryStructChildren(field);
           if (!children) fail(`column path ${path.join(".")} must traverse ordinary STRUCT fields`);
-          const matches = fieldsByExactName(children!, path[depth]);
+          const matches = fieldsByExactName(children!, path[depth]!);
           if (matches.length !== 1) fail(`column path ${path.join(".")} names a missing or ambiguous nested field`);
-          field = children![matches[0]];
+          field = children![matches[0]!]!;
         }
         if (path.length === 1 && isGeneratedField(field))
           fail(`column ${path[0]} is a generated column, which DuckDB requires to be nullable`);
@@ -447,7 +447,7 @@ export function validateTableConstraints(
       case "UNIQUE": {
         for (const path of record.columns) {
           const index = resolveTop(path);
-          if (record.kind === "PRIMARY_KEY" && isGeneratedField(fields[index]))
+          if (record.kind === "PRIMARY_KEY" && isGeneratedField(fields[index]!))
             fail(`PRIMARY KEY column ${path[0]} is a generated column, which DuckDB requires to be nullable`);
         }
         if (record.kind === "PRIMARY_KEY") {
@@ -505,7 +505,7 @@ function validateCheckRecord(
       const matches = fields.map((f, i) => (f.name.toLowerCase() === lower ? i : -1)).filter((i) => i >= 0);
       if (matches.length > 1) throw new Error(`ambiguous CHECK column reference ${name}`);
       if (matches.length === 0 || matches[0] === rowId) throw new Error(`CHECK references a missing or row-id column ${name}`);
-      const column = fields[matches[0]];
+      const column = fields[matches[0]!]!;
       if (column.metadata.has("ARROW:extension:name")) throw new Error(`CHECK operand ${name} has an extension type`);
       if (isGeneratedField(column)) throw new Error(`CHECK operand ${name} is a generated column`);
       const type = duckdbPrimitive(column);
@@ -585,7 +585,7 @@ export function validateConstraintNullability(
   fields: readonly VgiField[],
   constraints: readonly Uint8Array[],
 ): void {
-  const schemaPath = constraints.length ? readConstraintRecord(constraints[0]).schemaPath : ["main"];
+  const schemaPath = constraints.length ? readConstraintRecord(constraints[0]!).schemaPath : ["main"];
   validateTableConstraints(table, schemaPath, fields, constraints);
 }
 

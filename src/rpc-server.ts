@@ -34,6 +34,7 @@ import {
 } from "@query-farm/vgi-rpc";
 import { buildAttachTicketsProtocol, resolveTicketMaxTtl } from "./attach-ticket.js";
 import type { CatalogInterface } from "./catalog/interface.js";
+import { omitUndefined } from "./util/defined.js";
 
 /** The transport a server is being built for. Only `"http"` changes what is
  *  hosted (identity); the rest are recorded so the decision lives here rather
@@ -81,7 +82,7 @@ export interface HostingOptions {
    * `vgi_rpc.Identity.v2` is enabled through {@link resolveToken} /
    * {@link mintGrant}. Violations are a startup error naming this hook.
    */
-  hostedProtocols?: () => Iterable<Protocol>;
+  hostedProtocols?: (() => Iterable<Protocol>) | undefined;
 
   /**
    * Resolve an opaque bearer credential to the identity it authenticates as.
@@ -102,7 +103,7 @@ export interface HostingOptions {
    * Requires {@link introspectPrincipals} (or `VGI_INTROSPECT_PRINCIPALS`);
    * there is no permissive default, and a worker without one refuses to start.
    */
-  resolveToken?: TokenResolver;
+  resolveToken?: TokenResolver | undefined;
 
   /**
    * Mint a standing delegation credential for the *calling* user. Supplying
@@ -111,18 +112,18 @@ export interface HostingOptions {
    * {@link resolveToken}). Needs no allowlist: it is not an oracle about
    * anybody else.
    */
-  mintGrant?: GrantMinter;
+  mintGrant?: GrantMinter | undefined;
 
   /**
    * Principals permitted to call `introspect_token`. When omitted,
    * `VGI_INTROSPECT_PRINCIPALS` (comma-separated) is read. Only consulted when
    * {@link resolveToken} is supplied.
    */
-  introspectPrincipals?: Iterable<string>;
+  introspectPrincipals?: Iterable<string> | undefined;
 
   /** Maximum age of the caller's authentication for `issue_grant`, in
    *  seconds. vgi-rpc's default when omitted. */
-  maxAuthAge?: number;
+  maxAuthAge?: number | undefined;
 
   /**
    * Sealed-grant keys (vgi-rpc `GrantKeys`), turning on the framework's own
@@ -136,7 +137,7 @@ export interface HostingOptions {
    * malformed key refuses to start. `null` turns grants off regardless of the
    * environment.
    */
-  grantKeys?: GrantKeys | null;
+  grantKeys?: GrantKeys | null | undefined;
 }
 
 /** Server-level options passed through to `VgiRpcServer`. */
@@ -194,14 +195,14 @@ export function buildRpcServer(
     const tickets = buildAttachTickets(hosting, grantKeys, options.attachTickets, env);
     if (tickets) protocols.push(tickets);
   }
-  return new VgiRpcServer(primary, {
+  return new VgiRpcServer(primary, omitUndefined({
     serverId: options.serverId,
     protocols,
     identity,
     // Resolved here, per transport, rather than by vgi-rpc's own environment
     // default: identity (and so grants) is hosted on HTTP only.
     grantKeys: null,
-  });
+  }));
 }
 
 /** Call `hostedProtocols()` once and check its shape and names.
@@ -271,7 +272,7 @@ function buildIdentity(
 ): IdentityImpl | undefined {
   const { resolveToken, mintGrant } = hosting;
   if (!resolveToken && !mintGrant && !grantKeys) return undefined;
-  return new IdentityImpl({
+  return new IdentityImpl(omitUndefined({
     resolveToken,
     // Absent with grant keys configured, vgi-rpc mints sealed grants itself.
     mintGrant,
@@ -280,7 +281,7 @@ function buildIdentity(
     // nothing is not an oracle and needs no allowlist.
     introspectPrincipals: resolveToken ? resolveIntrospectPrincipals(hosting.introspectPrincipals, env) : undefined,
     maxAuthAge: hosting.maxAuthAge,
-  });
+  }));
 }
 
 /** Build `vgi.attach_tickets.v1`, or `undefined` when it must not be hosted.
@@ -358,10 +359,10 @@ export function grantKeysFromArgv(
 ): GrantKeys | undefined {
   const keys: string[] = [];
   for (let i = 0; i < argv.length; i++) {
-    const a = argv[i];
+    const a = argv[i]!;
     if (a === "--grant-key") {
       if (i + 1 >= argv.length) throw new Error("--grant-key requires a value");
-      keys.push(argv[++i]);
+      keys.push(argv[++i]!);
     } else if (a.startsWith("--grant-key=")) {
       keys.push(a.slice("--grant-key=".length));
     }

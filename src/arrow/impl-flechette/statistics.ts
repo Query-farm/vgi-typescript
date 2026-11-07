@@ -120,7 +120,7 @@ function buildUnionColumn(
   // children get null from the SparseUnionBuilder).
   const prepared = values.map((v, i) => {
     if (v == null) return null;
-    const type = typeOrder[rowTypeCodes[i]];
+    const type = typeOrder[rowTypeCodes[i]!]!;
     const codec = codecFor(type);
     return prepareForFlechette(type, [codec.richToCanonical(v)])[0];
   });
@@ -128,7 +128,7 @@ function buildUnionColumn(
     UnionMode.Sparse,
     children as any,
     typeIds,
-    (_value: any, index: number) => rowTypeCodes[index],
+    (_value: any, index: number) => rowTypeCodes[index]!,
   );
   return f_columnFromArray(prepared, unionType as any, COLUMN_OPTS);
 }

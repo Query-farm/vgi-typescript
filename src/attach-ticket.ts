@@ -255,7 +255,7 @@ function decodePayload(payload: Uint8Array): AttachTicketClaims {
 
 function b64url(data: Uint8Array): string {
   let bin = "";
-  for (let i = 0; i < data.length; i++) bin += String.fromCharCode(data[i]);
+  for (let i = 0; i < data.length; i++) bin += String.fromCharCode(data[i]!);
   return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
@@ -422,7 +422,7 @@ export async function redeemAttachTicket(
       others.map((k) => [`options.${k}`, `not allowed alongside ${ATTACH_TICKET_OPTION}`] as const),
     );
   }
-  const token = options[ticketKeys[0]];
+  const token = options[ticketKeys[0]!];
   if (typeof token !== "string") throw new AttachTicketInvalidError(`${ATTACH_TICKET_OPTION} must be a string`);
   if (!signingKey) throw new AttachTicketInvalidError("this worker does not redeem attach tickets");
   const claims = await openAttachTicket(signingKey, token, callerPrincipal(auth), now);

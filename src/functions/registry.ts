@@ -73,11 +73,11 @@ function scoreTypes(
   let varArgsSpec: ArgumentSpec | null = null;
 
   for (let i = 0; i < specs.length; i++) {
-    const spec = specs[i];
+    const spec = specs[i]!;
     if (spec.isVarargs) varArgsSpec = spec;
     if (i >= actualTypes.length) break;
     if (spec.isAnyType || isNull(spec.arrowType)) continue;
-    const actual = actualTypes[i];
+    const actual = actualTypes[i]!;
     if (actual === null) continue;
     if (typesIdentical(actual, spec.arrowType)) {
       score += EXACT_MATCH_SCORE;
@@ -91,7 +91,7 @@ function scoreTypes(
   // Score varargs tail beyond declared specs
   if (varArgsSpec && !varArgsSpec.isAnyType && !isNull(varArgsSpec.arrowType)) {
     for (let i = specs.length; i < actualTypes.length; i++) {
-      const actual = actualTypes[i];
+      const actual = actualTypes[i]!;
       if (actual === null) continue;
       if (typesIdentical(actual, varArgsSpec.arrowType)) {
         score += EXACT_MATCH_SCORE;
@@ -141,13 +141,13 @@ function filterByArgumentTypes(
         for (const spec of colSpecs) {
           if (spec.isVarargs) varArgsColSpec = spec;
           const pos = spec.position as number;
-          colTypes.push(pos < inputSchema.fields.length ? inputSchema.fields[pos].type : null);
+          colTypes.push(pos < inputSchema.fields.length ? inputSchema.fields[pos]!.type : null);
         }
         // Append varargs tail from inputSchema
         if (varArgsColSpec) {
           const start = (varArgsColSpec.position as number) + 1;
           for (let i = start; i < inputSchema.fields.length; i++) {
-            colTypes.push(inputSchema.fields[i].type);
+            colTypes.push(inputSchema.fields[i]!.type);
           }
         }
         const r2 = scoreTypes(colSpecs, colTypes);
@@ -175,11 +175,11 @@ function filterByArgumentTypes(
           for (const spec of posSpecs) {
             if (spec.isVarargs) varArgsSpec = spec;
             const pos = spec.position as number;
-            posTypes.push(pos < inputSchema.fields.length ? inputSchema.fields[pos].type : null);
+            posTypes.push(pos < inputSchema.fields.length ? inputSchema.fields[pos]!.type : null);
           }
           if (varArgsSpec) {
             for (let i = (varArgsSpec.position as number) + 1; i < inputSchema.fields.length; i++) {
-              posTypes.push(inputSchema.fields[i].type);
+              posTypes.push(inputSchema.fields[i]!.type);
             }
           }
         }
@@ -317,16 +317,16 @@ export class FunctionRegistry {
   ): VgiFunction {
     // Fast path: single candidate
     if (candidates.length === 1) {
-      return candidates[0];
+      return candidates[0]!;
     }
 
     // No context: return first (backward compat)
     if (!context?.arguments) {
-      return candidates[0];
+      return candidates[0]!;
     }
 
     const args = context.arguments;
-    const isScalar = context.isScalar ?? (candidates[0].kind === "scalar");
+    const isScalar = context.isScalar ?? (candidates[0]!.kind === "scalar");
 
     // Stage 1: Count-based filtering
     let matches: VgiFunction[];
@@ -391,7 +391,7 @@ export class FunctionRegistry {
     }
 
     if (matches.length === 1) {
-      return matches[0];
+      return matches[0]!;
     }
 
     // Stage 2: Type-based filtering
@@ -403,14 +403,14 @@ export class FunctionRegistry {
     );
 
     if (typeFiltered.length === 1) {
-      return typeFiltered[0];
+      return typeFiltered[0]!;
     }
     if (typeFiltered.length > 1) {
-      return typeFiltered[0]; // Best score wins
+      return typeFiltered[0]!; // Best score wins
     }
 
     // Fallback: return first candidate
-    return candidates[0];
+    return candidates[0]!;
   }
 
   has(name: string): boolean {

@@ -93,7 +93,7 @@ const stats = { parses: 0, hits: 0 };
 function hashBytes(bytes: Uint8Array): number {
   let h = 0x811c9dc5 ^ bytes.byteLength;
   for (let i = 0; i < bytes.byteLength; i++) {
-    h ^= bytes[i];
+    h ^= bytes[i]!;
     h = Math.imul(h, 0x01000193);
   }
   return h >>> 0;

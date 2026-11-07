@@ -22,11 +22,11 @@ export function* iterRows(
   for (let i = 0; i < a.numRows; i++) {
     const row: Record<string, any> = {};
     for (let fi = 0; fi < a.schema.fields.length; fi++) {
-      const field = a.schema.fields[fi];
+      const field = a.schema.fields[fi]!;
       const col = a.getChild(field.name);
       if (!col) { row[field.name] = null; continue; }
       const canonical = readCanonicalValue(field.type as unknown as VgiDataType, col, i);
-      const codec = codecs[fi];
+      const codec = codecs[fi]!;
       row[field.name] = repr === "raw"
         ? codec.canonicalToRaw(canonical)
         : codec.canonicalToRich(canonical);

@@ -111,7 +111,7 @@ function sortMapsForType(type: VgiDataType, value: any): any {
   if (value == null || !typeHasMap(type)) return value;
   if (isMap(type)) {
     const entries = (type as any).children[0].type as VgiDataType;
-    const valueType = ((entries as any).children as VgiField[])[1].type;
+    const valueType = ((entries as any).children as VgiField[])[1]!.type;
     return mapPairs(value)
       .map(([k, v]): [unknown, unknown] => [k, sortMapsForType(valueType, v)])
       .sort((x, y) => compareKeys(x[0], y[0]));
@@ -186,7 +186,7 @@ function normalizeValue(raw: any, type: VgiDataType): any {
     // and struct children: a map<utf8, int64> yields numbers (bigint beyond
     // the safe range), not strings, and a null value stays null.
     const entries = (type as any).children[0].type as VgiDataType;
-    const valueType = ((entries as any).children as VgiField[])[1].type;
+    const valueType = ((entries as any).children as VgiField[])[1]!.type;
     const out: Record<string, any> = {};
     const put = (k: unknown, v: unknown): void => {
       Object.defineProperty(out, String(k), {
@@ -267,7 +267,7 @@ export function decodeASDCollection<T>(schema: VgiSchema, bytes: Uint8Array | nu
   const batches = deserializeBatches(bytes);
   const validateSchema = (actualSchema: VgiSchema) => {
     if (actualSchema.fields.length !== schema.fields.length || schema.fields.some((field, i) => {
-      const actual = actualSchema.fields[i];
+      const actual = actualSchema.fields[i]!;
       return actual.name !== field.name || actual.nullable !== field.nullable || typeSignature(actual.type) !== typeSignature(field.type);
     })) throw new Error("catalog collection has an incompatible metadata schema");
   };

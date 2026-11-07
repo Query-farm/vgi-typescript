@@ -53,7 +53,8 @@ export function batchFromColumns(
 ): VgiBatch {
   let numRows = 0;
   for (const f of schema.fields) {
-    if (columns[f.name]) { numRows = columns[f.name].length; break; }
+    const col = columns[f.name];
+    if (col) { numRows = col.length; break; }
   }
   const canonicalColumns: Record<string, unknown[]> = {};
   for (const f of schema.fields) {

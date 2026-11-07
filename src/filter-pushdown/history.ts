@@ -98,8 +98,9 @@ export function decodeFilterDelta(bytes: Uint8Array): VgiBatch {
  */
 function deltaRevisionKeys(batch: VgiBatch): string[] {
   const column = batch.getChildAt(0);
-  if (!column) throw new FilterV2Error("delta document has no filter_spec column");
-  const raw = readCanonicalValue(batch.schema.fields[0].type, column, 0);
+  const field = batch.schema.fields[0];
+  if (!column || !field) throw new FilterV2Error("delta document has no filter_spec column");
+  const raw = readCanonicalValue(field.type, column, 0);
   const document = JSON.parse(String(raw)) as { updates?: Array<{ id: string; revision: number }> };
   return (document.updates ?? []).map((update) => revisionKey(update.id, update.revision));
 }

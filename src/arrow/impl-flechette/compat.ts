@@ -64,10 +64,10 @@ function columnIsValid(this: any, index: number): boolean {
   let hi = data.length;
   while (lo < hi) {
     const mid = (lo + hi) >>> 1;
-    if (offsets[mid + 1] <= index) lo = mid + 1;
+    if (offsets[mid + 1]! <= index) lo = mid + 1;
     else hi = mid;
   }
-  return batchIsValid(data[lo], index - offsets[lo]);
+  return batchIsValid(data[lo], index - offsets[lo]!);
 }
 
 /**
@@ -160,7 +160,7 @@ function intervalMonthDayNanoValue(this: any, index: number): Int32Array {
   for (let w = 0; w < 4; w++) {
     const p = base + (w << 2);
     out[w] =
-      bytes[p] | (bytes[p + 1] << 8) | (bytes[p + 2] << 16) | (bytes[p + 3] << 24);
+      bytes[p]! | (bytes[p + 1]! << 8) | (bytes[p + 2]! << 16) | (bytes[p + 3]! << 24);
   }
   return out;
 }

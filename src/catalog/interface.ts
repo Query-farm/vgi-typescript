@@ -338,15 +338,15 @@ export function singleBranchResult(
 function encodeScanBranch(cols: {
   function_name: string;
   arguments: Uint8Array;
-  branch_filter?: string | null;
-  writable?: boolean;
-  source_catalog?: string | null;
-  source_schema_path?: string[] | null;
-  source_table?: string | null;
-  format_name?: string | null;
-  format_locations?: string[] | null;
-  format_options?: Uint8Array | null;
-  schema_path?: string[] | null;
+  branch_filter?: string | null | undefined;
+  writable?: boolean | undefined;
+  source_catalog?: string | null | undefined;
+  source_schema_path?: string[] | null | undefined;
+  source_table?: string | null | undefined;
+  format_name?: string | null | undefined;
+  format_locations?: string[] | null | undefined;
+  format_options?: Uint8Array | null | undefined;
+  schema_path?: string[] | null | undefined;
 }): Uint8Array {
   return serializeBatch(
     batchFromColumns(
@@ -613,7 +613,7 @@ export abstract class CatalogInterface {
    */
   catalogNameForAttach(_attachOpaqueData: Uint8Array): string | null {
     const names = this.catalogs();
-    return names.length === 1 ? names[0] : null;
+    return names.length === 1 ? names[0]! : null;
   }
 
   // Required overrides
@@ -794,8 +794,8 @@ export abstract class CatalogInterface {
       const change = decodeConstraintChange(bytes);
       if (change.operation === "ADD" && change.definition != null) {
         const def = decodeConstraintDefinition(change.definition);
-        if (def.kind === "NOT_NULL" && def.column_paths.length === 1 && def.column_paths[0].length === 1) {
-          await this.tableNotNullSet(attach, schemaPath, target.name, [...def.column_paths[0]], false, tx);
+        if (def.kind === "NOT_NULL" && def.column_paths.length === 1 && def.column_paths[0]!.length === 1) {
+          await this.tableNotNullSet(attach, schemaPath, target.name, [...def.column_paths[0]!], false, tx);
           continue;
         }
       } else if (change.operation === "DROP" && change.ref != null) {
