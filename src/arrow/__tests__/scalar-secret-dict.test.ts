@@ -101,8 +101,12 @@ describe(`scalar/secret dict reads (backend=${backend.name})`, () => {
     expect(dict.s3).toEqual({ key_id: "AKIA", secret: "shh", region: "us-east-1" });
   });
 
-  test("batchToSecretDict uses secret_type metadata for scoped secrets", () => {
-    const secretStruct = struct([field("token", utf8(), true)]);
+  test("batchToSecretDict keys by column (secret) name and ignores field metadata", () => {
+    // The extension names each column by the secret's unique DuckDB name. A
+    // column called secret_0 is just a secret named secret_0: no re-keying by
+    // metadata and no extra "type:scope" alias entries (which made
+    // secretsOfType return the same secret twice).
+    const secretStruct = struct([field("type", utf8(), true), field("token", utf8(), true)]);
     const sch = schema([
       field(
         "secret_0",
@@ -113,13 +117,18 @@ describe(`scalar/secret dict reads (backend=${backend.name})`, () => {
           ["scope", "https://example.com"],
         ]),
       ),
+      field("__default_http", secretStruct, true),
     ]);
     const batch = roundTrip(
-      batchFromColumns({ secret_0: [{ token: "abc" }] }, sch),
+      batchFromColumns(
+        { secret_0: [{ type: "http", token: "abc" }], __default_http: [{ type: "http", token: "def" }] },
+        sch,
+      ),
     );
 
     const dict = batchToSecretDict(batch);
-    expect(dict.http).toEqual({ token: "abc" });
-    expect(dict["http:https://example.com"]).toEqual({ token: "abc" });
+    expect(Object.keys(dict).sort()).toEqual(["__default_http", "secret_0"]);
+    expect(dict.secret_0).toEqual({ type: "http", token: "abc" });
+    expect(dict.__default_http).toEqual({ type: "http", token: "def" });
   });
 });

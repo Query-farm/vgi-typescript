@@ -19,6 +19,7 @@
 // arrive as the function's normal named arguments. Mirrors vgi-python's
 // `vgi.copy_from_function.CopyFromFunction`.
 
+import { normalizeRequiredSecrets, type RequiredSecret } from "../secrets/requirements.js";
 import { type VgiSchema, type VgiDataType } from "../arrow/index.js";
 import type { OutputCollector } from "@query-farm/vgi-rpc";
 import { DEFAULT_MAX_WORKERS } from "../types.js";
@@ -88,7 +89,7 @@ export interface CopyFromFunctionConfig<TArgs = Record<string, unknown>> {
   tags?: Record<string, string>;
   examples?: FunctionExample[];
   requiredSettings?: string[];
-  requiredSecrets?: string[];
+  requiredSecrets?: RequiredSecret[];
   /**
    * Optional secret-bind hook: forward CREATE SECRET credentials for
    * secret-backed cloud sources (S3/GCS/HTTP/…). Called during bind (only on the
@@ -140,7 +141,7 @@ export function defineCopyFromFunction<TArgs = Record<string, unknown>>(
     tags: config.tags,
     examples: config.examples,
     requiredSettings: config.requiredSettings,
-    requiredSecrets: config.requiredSecrets,
+    requiredSecrets: normalizeRequiredSecrets(config.requiredSecrets, config.name),
     copyFromFormat: config.format,
     copyFromDirection: config.direction ?? "from",
     copyFromComment: config.comment ?? null,

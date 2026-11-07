@@ -13,6 +13,7 @@
 //   aggregate_finalize  → emit one result row per group_id
 //   aggregate_destructor → free states (best-effort; see Python worker.py)
 
+import { normalizeRequiredSecrets, type RequiredSecret } from "../secrets/requirements.js";
 import { type VgiSchema, schema, type VgiField, field, type VgiBatch, type VgiDataType, nullType, isNull } from "../arrow/index.js";
 import type { Arguments } from "../arguments/arguments.js";
 import {
@@ -165,7 +166,7 @@ export interface AggregateFunctionConfig<TArgs = Record<string, any>, TState = a
    * empty ResolvedSecrets. Mirrors vgi-python's `Secret()` annotation on an
    * aggregate `on_bind`.
    */
-  requiredSecrets?: string[];
+  requiredSecrets?: RequiredSecret[];
 }
 
 // Per-execution state registry. Value = (gid → state) + bind context.
@@ -376,7 +377,7 @@ export function defineAggregate<TArgs = Record<string, any>, TState = any>(
     tags: config.tags,
     parameterDefaultValues: config.parameterDefaultValues,
     nullHandling: config.nullHandling as any,
-    requiredSecrets: config.requiredSecrets,
+    requiredSecrets: normalizeRequiredSecrets(config.requiredSecrets, config.name),
   };
 
   // The normal VgiFunction methods (bind/globalInit/createStreamHandlers) are

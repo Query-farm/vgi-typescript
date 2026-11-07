@@ -3,6 +3,7 @@
 // Scalar functions receive columnar input and produce a single output column
 // with 1:1 row mapping.
 
+import { normalizeRequiredSecrets, type RequiredSecret } from "../secrets/requirements.js";
 import {
   type VgiSchema,
   type VgiField,
@@ -203,7 +204,7 @@ export interface ScalarFunctionConfig<
   parameterDefaultValues?: VgiBatch | null;
   maxWorkers?: number;
   requiredSettings?: string[];
-  requiredSecrets?: string[];
+  requiredSecrets?: RequiredSecret[];
   /**
    * Result-cache opt-in: when set, this CacheControl's `vgi.cache.*` metadata
    * rides every output batch's custom metadata (per-batch — NOT the schema,
@@ -331,7 +332,7 @@ export function defineScalarFunction<
     parameterDefaultValues: config.parameterDefaultValues,
     maxWorkers: config.maxWorkers,
     requiredSettings: config.requiredSettings,
-    requiredSecrets: config.requiredSecrets,
+    requiredSecrets: normalizeRequiredSecrets(config.requiredSecrets, config.name),
   };
 
   // Default output schema for catalog registration.

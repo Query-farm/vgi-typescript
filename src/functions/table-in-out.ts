@@ -3,6 +3,7 @@
 // Two-phase: INPUT phase receives and transforms batches,
 // FINALIZE phase emits final results.
 
+import { normalizeRequiredSecrets, type RequiredSecret } from "../secrets/requirements.js";
 import { type VgiSchema, schema, type VgiField, type VgiDataType, type VgiBatch, nullType, isNull, withBatchMetadata, serializeBatch, deserializeBatch } from "../arrow/index.js";
 import type { OutputCollector } from "@query-farm/vgi-rpc";
 import { DEFAULT_MAX_WORKERS, TableInOutPhase } from "../types.js";
@@ -179,7 +180,7 @@ export interface TableInOutConfig<
   tags?: Record<string, string>;
   maxWorkers?: number;
   requiredSettings?: string[];
-  requiredSecrets?: string[];
+  requiredSecrets?: RequiredSecret[];
 }
 
 export function defineTableInOutFunction<
@@ -250,7 +251,7 @@ export function defineTableInOutFunction<
     parameterDefaultValues: config.parameterDefaultValues,
     maxWorkers: config.maxWorkers,
     requiredSettings: config.requiredSettings,
-    requiredSecrets: config.requiredSecrets,
+    requiredSecrets: normalizeRequiredSecrets(config.requiredSecrets, config.name),
     hasFinalize: !!config.finalize,
   };
 
@@ -861,7 +862,7 @@ export interface RowTransformConfig<TArgs = Record<string, any>, TState = null> 
   tags?: Record<string, string>;
   maxWorkers?: number;
   requiredSettings?: string[];
-  requiredSecrets?: string[];
+  requiredSecrets?: RequiredSecret[];
 }
 
 /**
@@ -954,7 +955,7 @@ export function defineRowTransformFunction<
     parameterDefaultValues: config.parameterDefaultValues,
     maxWorkers: config.maxWorkers,
     requiredSettings: config.requiredSettings,
-    requiredSecrets: config.requiredSecrets,
+    requiredSecrets: normalizeRequiredSecrets(config.requiredSecrets, config.name),
     // Map-shaped, per-row: a blended function never has a finalize.
     hasFinalize: false,
     inputFromArgs: true,

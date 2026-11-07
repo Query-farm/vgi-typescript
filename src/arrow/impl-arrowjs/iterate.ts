@@ -93,9 +93,13 @@ export function decodeDictValue(value: any, index = 0): any {
 }
 
 /**
- * Extract single-row batch to a secret dict (column per secret, each value is a struct).
- * Handles both named secrets (column name = secret type) and scoped secrets
- * (column name = "secret_N" with secret_type in field metadata).
+ * Extract a single-row resolved-secrets batch to a dict: one entry per column,
+ * keyed by the column name — the secret's unique DuckDB NAME, not its type (an
+ * unnamed secret arrives as `__default_<type>`). Each value is the secret's
+ * struct as a plain object, including its serialized `type`, `name` and `scope`
+ * fields. Select from it with the helpers in `secrets/helpers.ts`
+ * (`secretOfType`, `secretByName`, `secretForScopeOfType`, ...), never by
+ * indexing it with a type. A null struct (secret not found) is skipped.
  */
 export function batchToSecretDict(
   batch: RecordBatch | VgiBatch | null
@@ -106,43 +110,16 @@ export function batchToSecretDict(
   const result: Record<string, Record<string, any>> = {};
   for (const field of a.schema.fields) {
     const col = a.getChild(field.name);
-    if (col) {
-      // Read in RICH form via the canonical reader + codec — a secret column is
-      // a struct scalar, which surfaces as a plain { field: value } object
-      // (same path as iterRows), so no Arrow-scalar toJSON() shimming is needed.
-      const type = field.type as unknown as VgiDataType;
-      const val = codecFor(type).canonicalToRich(readCanonicalValue(type, col, 0));
-
-      // Determine the key: for scoped secrets (secret_N), use secret_type from metadata
-      let key = field.name;
-      let scope: string | undefined;
-      if (field.name.startsWith("secret_")) {
-        const secretType = field.metadata?.get?.("secret_type");
-        if (secretType) {
-          key = secretType;
-          scope = field.metadata?.get?.("scope") ?? undefined;
-        }
-      }
-
-      if (val && typeof val === "object" && !ArrayBuffer.isView(val)) {
-        // Struct scalar -> already a plain object from the canonical reader.
-        const dict: Record<string, any> = { ...(val as Record<string, any>) };
-        if (key in result) {
-          throw new Error(
-            `batchToSecretDict: duplicate secret_type '${key}' (scope=${scope ?? "none"}). ` +
-            `Use scoped secrets with distinct scopes to avoid collisions.`
-          );
-        }
-        result[key] = dict;
-        // Store scope-qualified key for disambiguation
-        if (scope) {
-          result[`${key}:${scope}`] = dict;
-        }
-      } else if (val === null || val === undefined) {
-        // Skip null struct values (secret not found)
-      } else {
-        result[key] = {};
-      }
+    if (!col) continue;
+    // Read in RICH form via the canonical reader + codec — a secret column is
+    // a struct scalar, which surfaces as a plain { field: value } object
+    // (same path as iterRows), so no Arrow-scalar toJSON() shimming is needed.
+    const type = field.type as unknown as VgiDataType;
+    const val = codecFor(type).canonicalToRich(readCanonicalValue(type, col, 0));
+    if (val && typeof val === "object" && !ArrayBuffer.isView(val)) {
+      result[field.name] = { ...(val as Record<string, any>) };
+    } else if (val !== null && val !== undefined) {
+      result[field.name] = {};
     }
   }
   return result;

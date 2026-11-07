@@ -1,6 +1,7 @@
 // Copyright 2025, 2026 Query Farm LLC - https://query.farm
 // Function config interfaces and VgiFunction base type.
 
+import type { RequiredSecret } from "../secrets/requirements.js";
 import type { VgiSchema, VgiBatch, VgiDataType } from "../arrow/index.js";
 import type { OutputCollector } from "@query-farm/vgi-rpc";
 import type {
@@ -94,7 +95,7 @@ export interface FunctionMeta {
   preservesOrder?: OrderPreservation | undefined;
   maxWorkers?: number | undefined;
   requiredSettings?: string[] | undefined;
-  requiredSecrets?: string[] | undefined;
+  requiredSecrets?: RequiredSecret[] | undefined;
   orderDependent?: OrderDependence | undefined;
   distinctDependent?: DistinctDependence | undefined;
   /**

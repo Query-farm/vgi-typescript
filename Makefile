@@ -222,6 +222,7 @@ COVERAGE_GATE := --min-executed $(TS_MIN_EXECUTED) \
 
 test:
 	@cd $(VGI_DIR) && \
+	export VGI_SECRET_LOOKUP_FIXTURES=1; \
 	export VGI_TEST_WORKER="launch:$(WORKER)"; \
 	export VGI_VERSIONED_WORKER="launch:$(VERSIONED_WORKER)"; \
 	export VGI_VERSIONED_TABLES_WORKER="launch:$(VERSIONED_TABLES_WORKER)"; \
@@ -246,6 +247,7 @@ test:
 # workers are pooled by the AF_UNIX socket, so vgi_worker_pool() has no rows).
 test-subprocess:
 	@cd $(VGI_DIR) && \
+	export VGI_SECRET_LOOKUP_FIXTURES=1; \
 	export VGI_TEST_WORKER="$(WORKER)"; \
 	export VGI_VERSIONED_WORKER="$(VERSIONED_WORKER)"; \
 	export VGI_VERSIONED_TABLES_WORKER="$(VERSIONED_TABLES_WORKER)"; \
@@ -293,6 +295,7 @@ test-http:
 	read -t 60 vport_line <&4 || { echo "ERROR: versioned HTTP worker timeout"; exit 1; }; \
 	read -t 60 aport_line <&5 || { echo "ERROR: attach-options HTTP worker timeout"; exit 1; }; \
 	read -t 60 tport_line <&6 || { echo "ERROR: versioned-tables HTTP worker timeout"; exit 1; }; \
+	export VGI_SECRET_LOOKUP_FIXTURES=1; \
 	export VGI_TEST_WORKER="http://localhost:$${port_line#PORT:}"; \
 	export VGI_DATABASE_PACKAGE_WORKER="$${VGI_DATABASE_PACKAGE_WORKER:-VGI_BUN_CONDITIONS= $(WORKER)}"; \
 	export VGI_VERSIONED_HTTP_WORKER="http://localhost:$${vport_line#PORT:}"; \
@@ -331,6 +334,7 @@ test/%:
 		echo "ERROR: test file not found: $$test_file"; \
 		exit 1; \
 	fi; \
+	export VGI_SECRET_LOOKUP_FIXTURES=1; \
 	export VGI_TEST_WORKER="launch:$(WORKER)"; \
 	export VGI_VERSIONED_WORKER="launch:$(VERSIONED_WORKER)"; \
 	export VGI_VERSIONED_TABLES_WORKER="launch:$(VERSIONED_TABLES_WORKER)"; \
@@ -348,6 +352,7 @@ test-subprocess/%:
 		echo "ERROR: test file not found: $$test_file"; \
 		exit 1; \
 	fi; \
+	export VGI_SECRET_LOOKUP_FIXTURES=1; \
 	export VGI_TEST_WORKER="$(WORKER)"; \
 	export VGI_VERSIONED_WORKER="$(VERSIONED_WORKER)"; \
 	export VGI_VERSIONED_TABLES_WORKER="$(VERSIONED_TABLES_WORKER)"; \
@@ -381,6 +386,7 @@ test-http/%:
 	read -t 60 vport_line <&4 || { echo "ERROR: versioned HTTP worker timeout"; exit 1; }; \
 	read -t 60 aport_line <&5 || { echo "ERROR: attach-options HTTP worker timeout"; exit 1; }; \
 	read -t 60 tport_line <&6 || { echo "ERROR: versioned-tables HTTP worker timeout"; exit 1; }; \
+	export VGI_SECRET_LOOKUP_FIXTURES=1; \
 	export VGI_TEST_WORKER="http://localhost:$${port_line#PORT:}"; \
 	export VGI_DATABASE_PACKAGE_WORKER="$${VGI_DATABASE_PACKAGE_WORKER:-VGI_BUN_CONDITIONS= $(WORKER)}"; \
 	export VGI_VERSIONED_HTTP_WORKER="http://localhost:$${vport_line#PORT:}"; \

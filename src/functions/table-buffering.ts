@@ -16,6 +16,7 @@
 // The Source phase may route a finalize_state_id to a worker process that
 // did NOT run the corresponding process() calls.
 
+import { normalizeRequiredSecrets, type RequiredSecret } from "../secrets/requirements.js";
 import {
   type VgiSchema,
   schema,
@@ -179,7 +180,7 @@ export interface TableBufferingConfig<
   tags?: Record<string, string> | undefined;
   maxWorkers?: number | undefined;
   requiredSettings?: string[] | undefined;
-  requiredSecrets?: string[] | undefined;
+  requiredSecrets?: RequiredSecret[] | undefined;
 }
 
 /**
@@ -257,7 +258,7 @@ export function defineTableBufferingFunction<
     parameterDefaultValues: config.parameterDefaultValues,
     maxWorkers: config.maxWorkers,
     requiredSettings: config.requiredSettings,
-    requiredSecrets: config.requiredSecrets,
+    requiredSecrets: normalizeRequiredSecrets(config.requiredSecrets, config.name),
     // The Source phase always runs (it's how output is produced), so a
     // table_buffering function always advertises has_finalize.
     hasFinalize: true,

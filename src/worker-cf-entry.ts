@@ -65,6 +65,15 @@ export {
   serializeColumnStatistics,
   BindResultSchema,
   ScanFunctionResultSchema,
+  // Resolved-secret selection (the batch is keyed by secret NAME, not type).
+  secretType,
+  secretsOfType,
+  secretOfType,
+  requireSecretOfType,
+  secretByName,
+  secretForScope,
+  secretForScopeOfType,
+  normalizeRequiredSecrets,
 } from "./index.core.js";
 // vgi.v3 records: constraints, capabilities, column expressions, indexes, macro overloads.
 export * from "./catalog/public-codecs.js";
@@ -90,6 +99,11 @@ export type {
   TableInOutBindParams,
   ConstraintRecordSpec,
   ConstraintRecordView,
+  SecretFields,
+  SecretsDict,
+  RequiredSecret,
+  SecretRequirement,
+  SecretRequirementSpec,
 } from "./index.core.js";
 
 export type { ProtocolConfig } from "./protocol/dispatch.js";

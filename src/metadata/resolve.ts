@@ -1,6 +1,7 @@
 // Copyright 2025, 2026 Query Farm LLC - https://query.farm
 // Extract metadata from VgiFunction configs.
 
+import { normalizeRequiredSecrets } from "../secrets/requirements.js";
 import {
   FunctionStability,
   NullHandling,
@@ -132,7 +133,7 @@ export function resolveMetadata(func: VgiFunction): ResolvedMetadata {
     nullHandling: meta.nullHandling ?? NullHandling.DEFAULT,
     argumentMonotonicity,
     requiredSettings: meta.requiredSettings ?? [],
-    requiredSecrets: meta.requiredSecrets ?? [],
+    requiredSecrets: normalizeRequiredSecrets(meta.requiredSecrets, meta.name),
     projectionPushdown: meta.projectionPushdown ?? false,
     filterPushdown: meta.filterPushdown ?? false,
     samplingPushdown: meta.samplingPushdown ?? false,

@@ -639,9 +639,12 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
           f.defaultOutputSchema ?? schema_([])
         );
 
-        const requiredSecrets = (meta.requiredSecrets ?? []).map(
-          (secretType: string) => ({ secret_type: secretType, scope: null, secret_name: null })
-        );
+        // Every validated requirement reaches the wire: type, scope and name.
+        const requiredSecrets = meta.requiredSecrets.map((s) => ({
+          secret_type: s.secretType,
+          scope: s.scope,
+          secret_name: s.secretName,
+        }));
 
         // Function-level tags surfaced into duckdb_functions().tags. The wire
         // map is string→string, so the metadata linter (vgi-lint-check) and any

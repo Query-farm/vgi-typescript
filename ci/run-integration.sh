@@ -201,6 +201,21 @@ RUN_CWD="$STAGE"
 # parallel-init tests observe the worker's real max_workers (mirrors the Makefile).
 export VGI_SYNC_INIT_GLOBAL=1
 
+# The example worker implements the secret-lookup conformance fixtures
+# (vgi docs/secret_lookup_fixtures.md, examples/secret_lookup.ts), so opt in to
+# secret/secret_lookup_*.test on every lane.
+export VGI_SECRET_LOOKUP_FIXTURES=1
+
+# Engine-feature gates (vgi 285ba5b, docs/upstream-duckdb-build.md). Every runner
+# this lane uses is Haybarn, which has both features, so default them to 1 the
+# way vgi's Makefile does on Haybarn. Unset them only for an upstream DuckDB
+# v2.0.0 runner. Each must be 1 or unset: any other value satisfies neither side
+# of the split and both sides skip.
+export VGI_ENGINE_CORRELATED_NAMED_ARGS="${VGI_ENGINE_CORRELATED_NAMED_ARGS-1}"
+export VGI_ENGINE_DELETE_RETURNING_VIRTUAL_COLUMNS="${VGI_ENGINE_DELETE_RETURNING_VIRTUAL_COLUMNS-1}"
+[ -n "$VGI_ENGINE_CORRELATED_NAMED_ARGS" ] || unset VGI_ENGINE_CORRELATED_NAMED_ARGS
+[ -n "$VGI_ENGINE_DELETE_RETURNING_VIRTUAL_COLUMNS" ] || unset VGI_ENGINE_DELETE_RETURNING_VIRTUAL_COLUMNS
+
 # Background workers (http servers) are tracked in a file and SIGTERMed on exit.
 # A file (not a shell array) keeps the teardown robust regardless of how
 # boot_http_worker is invoked.
@@ -285,6 +300,9 @@ EXPECTED_SKIP_REASONS=(
   'require spatial'                          # spatial is not published for every haybarn build
   'require-env VGI_MALFORMED_BATCH_WORKER'       # hostile malformed-Arrow fixture (vgi test/support only)
   'require-env VGI_ROWID_CONSTRAINT_WORKER'      # hostile rowid-constraint fixture (vgi test/support only)
+  # Engine gating (vgi 285ba5b): on Haybarn the "feature absent" canaries skip.
+  'require-env-not VGI_ENGINE_CORRELATED_NAMED_ARGS'
+  'require-env-not VGI_ENGINE_DELETE_RETURNING_VIRTUAL_COLUMNS'
 )
 # Transport-specific additions.
 case "$TRANSPORT" in

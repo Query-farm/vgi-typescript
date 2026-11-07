@@ -18,6 +18,7 @@ import {
 } from "../arrow/index.js";
 import type { ResolvedMetadata, ParameterInfo, FunctionExample } from "./types.js";
 import type { ArgumentMonotonicity } from "../types.js";
+import { normalizeRequiredSecrets, type SecretRequirement } from "../secrets/requirements.js";
 
 // ============================================================================
 // Schema definitions matching Python's _METADATA_SCHEMA exactly
@@ -54,6 +55,12 @@ const FILTER_CONTEXT_STRUCT = makeStruct([
   field("provider_fingerprint", utf8(), true),
 ]);
 
+const SECRET_REQUIREMENT_STRUCT = makeStruct([
+  field("secret_type", utf8(), false),
+  field("secret_name", utf8(), true),
+  field("scope", utf8(), true),
+]);
+
 const METADATA_SCHEMA = makeSchema([
   field("name", utf8(), false),
   field("class_name", utf8(), false),
@@ -67,7 +74,7 @@ const METADATA_SCHEMA = makeSchema([
   field("null_handling", utf8(), false),
   field("argument_monotonicity", list(field("item", utf8(), true)), true),
   field("required_settings", list(field("item", utf8(), true)), false),
-  field("required_secrets", list(field("item", utf8(), true)), false),
+  field("required_secrets", list(field("item", SECRET_REQUIREMENT_STRUCT, true)), false),
   field("projection_pushdown", bool(), false),
   field("filter_pushdown", bool(), false),
   field("filter_semantic_profiles", list(field("item", utf8(), true)), false),
@@ -116,7 +123,11 @@ function metadataToRow(m: ResolvedMetadata): Record<string, any> {
     null_handling: m.nullHandling,
     argument_monotonicity: m.argumentMonotonicity,
     required_settings: m.requiredSettings,
-    required_secrets: m.requiredSecrets,
+    required_secrets: m.requiredSecrets.map((s) => ({
+      secret_type: s.secretType,
+      secret_name: s.secretName,
+      scope: s.scope,
+    })),
     projection_pushdown: m.projectionPushdown,
     filter_pushdown: m.filterPushdown,
     sampling_pushdown: m.samplingPushdown,
@@ -236,9 +247,18 @@ export function arrowToMetadatas(batch: VgiBatch): ResolvedMetadata[] {
       : [];
 
     const rawRequiredSecrets = get("required_secrets") as any ?? [];
-    const requiredSecrets: string[] = rawRequiredSecrets
-      ? [...rawRequiredSecrets].filter((s: any) => s != null)
-      : [];
+    // Struct entries ({secret_type, secret_name, scope}); a bare string (the
+    // pre-0.48.3 list<utf8> layout) is still read as a type-only requirement.
+    const requiredSecrets: SecretRequirement[] = normalizeRequiredSecrets(
+      rawRequiredSecrets
+        ? [...rawRequiredSecrets].filter((s: any) => s != null).map((s: any) =>
+            typeof s === "string"
+              ? s
+              : { secretType: s.secret_type, secretName: s.secret_name ?? null, scope: s.scope ?? null },
+          )
+        : [],
+      (get("name") as string) ?? "<function>",
+    );
 
     results.push({
       name: (get("name") as string) ?? "",

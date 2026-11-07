@@ -237,6 +237,33 @@ SELECT demo.multiply(6, 7);        -- 42
 SELECT * FROM demo.sequence(5);    -- 0,1,2,3,4
 ```
 
+### Secrets
+
+A function gets only the secrets it asks for. Declare them in `requiredSecrets`:
+a bare type string means "a secret of this type", and an object adds a scope or a name.
+
+```ts
+requiredSecrets: [
+  "brave",                                        // a brave secret (unscoped)
+  { secretType: "s3", scope: "s3://my-bucket/" },  // the s3 secret for this prefix
+  { secretType: "http", secretName: "corp_api" },  // one secret, by its DuckDB name
+],
+```
+
+An entry in any other shape throws when the function is defined, so a typo can't
+quietly declare nothing. Resolved secrets arrive on `params.secrets`, keyed by each
+secret's DuckDB **name**, not its type. An unnamed `CREATE SECRET (TYPE brave, ...)`
+arrives as `__default_brave`, so `params.secrets.brave` is usually `undefined`. Use the
+selectors instead:
+
+| Selector | Picks |
+|---|---|
+| `secretOfType(secrets, type)` | the unscoped secret of `type`, else the first one of `type` |
+| `requireSecretOfType(secrets, type)` | the same, but throws an error naming the type when there is none (call it in `onBind`) |
+| `secretsOfType(secrets, type)` | every secret of `type` |
+| `secretByName(secrets, name, type?)` | the secret named `name`, if its type matches |
+| `secretForScopeOfType(secrets, path, type)` | the secret of `type` whose scope is the longest prefix of `path`, else an unscoped one, else none |
+
 ## Function types
 
 Five factories, each mapping to a DuckDB function shape with its own lifecycle:

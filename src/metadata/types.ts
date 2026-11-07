@@ -1,6 +1,7 @@
 // Copyright 2025, 2026 Query Farm LLC - https://query.farm
 // Metadata types for function introspection and DuckDB registration.
 
+import type { SecretRequirement } from "../secrets/requirements.js";
 import {
   FunctionStability,
   NullHandling,
@@ -61,7 +62,8 @@ export interface ResolvedMetadata {
   nullHandling: NullHandling;
   argumentMonotonicity: ArgumentMonotonicity[] | null;
   requiredSettings: string[];
-  requiredSecrets: string[];
+  /** Validated static secret requirements (FunctionInfo `required_secrets`). */
+  requiredSecrets: SecretRequirement[];
   projectionPushdown: boolean;
   filterPushdown: boolean;
   samplingPushdown: boolean;

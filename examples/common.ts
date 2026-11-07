@@ -62,6 +62,7 @@ import { copyToFunctions } from "./copy_to.js";
 import { cacheTableFunctions } from "./cache.js";
 import { cachePartitionScopeTableFunctions } from "./cache_partition_scope.js";
 import { secretCacheFunctions, secretCacheNonceFunction } from "./secret_cache.js";
+import { secretLookupFunctions } from "./secret_lookup.js";
 import { sameNameMain, sameNameData } from "./same_name.js";
 import {
   sameNameExchangeMainFunctions,
@@ -169,6 +170,9 @@ export const allFunctions = [
   // Secret-dependent cacheable fixtures (producer, scalar, blended map): their
   // results are cached per secret FINGERPRINT. See ./secret_cache.ts.
   ...secretCacheFunctions,
+  // Secret-lookup conformance fixtures (vgi docs/secret_lookup_fixtures.md):
+  // by type / by name / by scope / required / multi-type. See ./secret_lookup.ts.
+  ...secretLookupFunctions,
   ...partitionTableFunctions,
   ...tableInOutFunctions,
   ...tableBufferingFunctions,

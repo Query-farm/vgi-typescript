@@ -66,7 +66,8 @@ export function decodeDictValue(value: any, _index = 0): any {
 }
 
 /**
- * Single-row batch → secret dict. Mirrors impl-arrowjs's same-named function.
+ * Single-row resolved-secrets batch → dict keyed by column name (the secret's
+ * unique DuckDB NAME, not its type). Mirrors impl-arrowjs's same-named function.
  */
 export function batchToSecretDict(
   batch: VgiBatch | null,
@@ -83,30 +84,10 @@ export function batchToSecretDict(
     // iterRows), identical to the arrow-js backend.
     const type = f.type as VgiDataType;
     const val = codecFor(type).canonicalToRich(readCanonicalValue(type, col, 0));
-
-    let key = f.name;
-    let scope: string | undefined;
-    if (f.name.startsWith("secret_")) {
-      const secretType = f.metadata?.get?.("secret_type");
-      if (secretType) {
-        key = secretType;
-        scope = f.metadata?.get?.("scope") ?? undefined;
-      }
-    }
-
     if (val && typeof val === "object" && !ArrayBuffer.isView(val)) {
-      const dict: Record<string, any> = { ...(val as Record<string, any>) };
-      if (key in result) {
-        throw new Error(
-          `batchToSecretDict: duplicate secret_type '${key}' (scope=${scope ?? "none"}).`,
-        );
-      }
-      result[key] = dict;
-      if (scope) result[`${key}:${scope}`] = dict;
-    } else if (val === null || val === undefined) {
-      // skip
-    } else {
-      result[key] = {};
+      result[f.name] = { ...(val as Record<string, any>) };
+    } else if (val !== null && val !== undefined) {
+      result[f.name] = {};
     }
   }
   return result;

@@ -2,6 +2,7 @@
 // Table function implementation.
 // Table functions produce output batches from arguments (no streaming input).
 
+import { normalizeRequiredSecrets, type RequiredSecret } from "../secrets/requirements.js";
 import {
   type VgiSchema,
   type VgiBatch,
@@ -331,7 +332,7 @@ export interface TableFunctionConfig<
   tags?: Record<string, string>;
   maxWorkers?: number;
   requiredSettings?: string[];
-  requiredSecrets?: string[];
+  requiredSecrets?: RequiredSecret[];
   /** Row-order preservation behavior; flows to DuckDB's
    *  TableFunction::order_preservation_type. */
   preservesOrder?: OrderPreservation;
@@ -413,7 +414,7 @@ export function defineTableFunction<
     parameterDefaultValues: config.parameterDefaultValues,
     maxWorkers: config.maxWorkers,
     requiredSettings: config.requiredSettings,
-    requiredSecrets: config.requiredSecrets,
+    requiredSecrets: normalizeRequiredSecrets(config.requiredSecrets, config.name),
     preservesOrder: config.preservesOrder,
     nullHandling: config.nullHandling,
     orderDependent: config.orderDependent,

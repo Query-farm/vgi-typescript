@@ -35,6 +35,7 @@
 // arguments. The source schema rides `BindRequest.input_schema`. Mirrors
 // vgi-python's `vgi.copy_to_function.CopyToFunction`.
 
+import type { RequiredSecret } from "../secrets/requirements.js";
 import { type VgiSchema, schema, type VgiBatch, type VgiDataType } from "../arrow/index.js";
 import type { BindRequest } from "../protocol/types.js";
 import type { FunctionMeta, FunctionExample } from "./types.js";
@@ -134,7 +135,7 @@ export interface CopyToFunctionConfig<TArgs = Record<string, unknown>> {
   tags?: Record<string, string>;
   examples?: FunctionExample[];
   requiredSettings?: string[];
-  requiredSecrets?: string[];
+  requiredSecrets?: RequiredSecret[];
   /**
    * Optional secret-bind hook: forward CREATE SECRET credentials for
    * secret-backed cloud writes (S3/GCS/HTTP/…). Called during bind (only on the

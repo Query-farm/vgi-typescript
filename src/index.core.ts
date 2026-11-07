@@ -262,9 +262,19 @@ export {
   type SecretsDict,
   secretType,
   secretsOfType,
+  secretOfType,
+  requireSecretOfType,
+  secretByName,
   secretForScope,
   secretForScopeOfType,
 } from "./secrets/helpers.js";
+
+export {
+  type RequiredSecret,
+  type SecretRequirement,
+  type SecretRequirementSpec,
+  normalizeRequiredSecrets,
+} from "./secrets/requirements.js";
 
 export {
   serializeSchema,
