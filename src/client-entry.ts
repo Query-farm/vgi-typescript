@@ -18,6 +18,8 @@ export { VgiClient, VgiClientError } from "./client/client.js";
 export type {
   VgiClientOptions,
   TableFunctionOptions,
+  TableFunctionRowsOptions,
+  Int64Mode,
   ScalarFunctionOptions,
   TableInOutFunctionOptions,
   OnCreateConflict,

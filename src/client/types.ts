@@ -98,6 +98,29 @@ export interface TableFunctionOptions {
   onBind?: BindResultCallback;
 }
 
+/**
+ * How {@link VgiClient.tableFunctionRows} surfaces int64/uint64 column
+ * values. Same vocabulary as `@query-farm/vgi-rpc`'s client `int64` option.
+ *
+ * - `"number-if-safe"`: values within `Number.MAX_SAFE_INTEGER` become
+ *   `number`, larger ones stay `bigint` (one column can hold both).
+ * - `"bigint"`: every value stays a `bigint` — one JS type per column.
+ */
+export type Int64Mode = "number-if-safe" | "bigint";
+
+/** Options for {@link VgiClient.tableFunctionRows}. */
+export interface TableFunctionRowsOptions extends TableFunctionOptions {
+  /**
+   * Surfacing of top-level int64/uint64 output columns (see {@link Int64Mode}).
+   * When omitted, rows are returned as the underlying `RpcClient` produced
+   * them — `"number-if-safe"` unless that client was created with
+   * `int64: "bigint"` (`@query-farm/vgi-rpc` >= 0.29.6). Setting it here
+   * overrides the client either way. The omitted-default may become
+   * `"bigint"` in a future minor release; pass it explicitly to pin it.
+   */
+  int64?: Int64Mode;
+}
+
 /** Options for calling a scalar function. */
 export interface ScalarFunctionOptions {
   /** Name of the function to call. */

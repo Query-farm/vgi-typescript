@@ -2,7 +2,7 @@
 // VgiClient — high-level client for calling VGI worker functions and catalog API.
 // Works with any RpcClient (subprocess or HTTP transport).
 
-import { type VgiSchema, schema as schema_, type VgiField, field, type VgiBatch, type VgiDataType, utf8, binary, list } from "../arrow/index.js";
+import { type VgiSchema, schema as schema_, type VgiField, field, type VgiBatch, type VgiDataType, utf8, binary, list, isInt } from "../arrow/index.js";
 // `import type`, not `import { type … }`: the latter keeps the statement and
 // emits `import {} from "@query-farm/vgi-rpc"`, a side-effect import of the
 // package root — which re-exports the whole framework, server included, into
@@ -66,9 +66,37 @@ import { decodeCatalogContentsResponse } from "../generated/vgi-protocol-types.j
 import { deserializeInfoList, deserializeTags, toAsyncIterator } from "./helpers.js";
 
 export { VgiClientError };
+
+/** Names of the top-level 64-bit integer (int64/uint64) fields of `s`. */
+function int64ColumnNames(s: VgiSchema | null | undefined): string[] {
+  if (!s) return [];
+  return s.fields
+    .filter((f) => isInt(f.type) && (f.type as { bitWidth?: number }).bitWidth === 64)
+    .map((f) => f.name);
+}
+
+const MIN_SAFE_BIGINT = BigInt(Number.MIN_SAFE_INTEGER);
+const MAX_SAFE_BIGINT = BigInt(Number.MAX_SAFE_INTEGER);
+
+/** Normalise the int64 columns of `rows` in place to `mode`. Lossless: the
+ *  RPC layer only ever narrows a bigint to number when it is a safe integer. */
+function applyInt64Mode(rows: Record<string, any>[], columns: string[], mode: Int64Mode): void {
+  for (const row of rows) {
+    for (const name of columns) {
+      const v = row[name];
+      if (mode === "bigint") {
+        if (typeof v === "number" && Number.isInteger(v)) row[name] = BigInt(v);
+      } else if (typeof v === "bigint" && v >= MIN_SAFE_BIGINT && v <= MAX_SAFE_BIGINT) {
+        row[name] = Number(v);
+      }
+    }
+  }
+}
 import type {
   VgiClientOptions,
   TableFunctionOptions,
+  TableFunctionRowsOptions,
+  Int64Mode,
   ScalarFunctionOptions,
   TableInOutFunctionOptions,
   OnCreateConflict,
@@ -617,9 +645,15 @@ export class VgiClient {
   // Row convenience for table function
   // ==========================================================================
 
-  /** Call a table function, yielding output as row objects. */
+  /**
+   * Call a table function, yielding output as row objects.
+   *
+   * int64/uint64 columns follow `opts.int64` (see {@link Int64Mode}); pass
+   * `int64: "bigint"` to get a `bigint` for every value instead of a
+   * magnitude-dependent mix of `number` and `bigint`.
+   */
   async *tableFunctionRows(
-    opts: TableFunctionOptions,
+    opts: TableFunctionRowsOptions,
   ): AsyncGenerator<Record<string, any>[]> {
     const args = opts.arguments ?? new Arguments();
     const { request: bindReq, response: bindResp } = await this._doBind(
@@ -640,9 +674,12 @@ export class VgiClient {
       tablesample: opts.tablesample,
       joinKeys: opts.joinKeys,
     });
+    const int64Columns = opts.int64 === undefined ? [] : int64ColumnNames(bindResp.output_schema);
     try {
       for await (const rows of session) {
-        if (rows.length > 0) yield rows;
+        if (rows.length === 0) continue;
+        if (int64Columns.length > 0) applyInt64Mode(rows, int64Columns, opts.int64!);
+        yield rows;
       }
     } finally {
       session.close();
