@@ -127,6 +127,22 @@ export type ScalarComputeResult<R extends VgiDataType, M extends Repr> =
   | Iterable<ScalarOutputValue<R, M>>
   | VgiBatch;
 
+/** Per-batch context handed to a scalar's `compute`. */
+export interface ScalarComputeInfo {
+  settings: Record<string, any>;
+  secrets: Record<string, Record<string, any>>;
+  auth: AuthContext;
+  /**
+   * The bind request this execution was initialized with: the catalog's
+   * `attach_opaque_data` (already unsealed, as every function body sees it),
+   * `transaction_opaque_data`, arguments, settings and secrets. Mirrors the
+   * `init_call.bind_call` vgi-python's `ScalarFunction.process` receives, so a
+   * scalar can read attach-time state (e.g. connection options a catalog
+   * packed into its attach data).
+   */
+  bindCall: BindRequest;
+}
+
 export interface ScalarFunctionConfig<
   P extends Record<string, VgiDataType> = Record<string, VgiDataType>,
   R extends VgiDataType = VgiDataType,
@@ -170,14 +186,12 @@ export interface ScalarFunctionConfig<
   compute: (
     batch: VgiBatch,
     consts: Record<string, any>,
-    info: {
-      settings: Record<string, any>;
-      secrets: Record<string, Record<string, any>>;
-      auth: AuthContext;
-    }
+    info: ScalarComputeInfo,
     // NoInfer pins R/M from `returns`/`repr` so the compute return type is
     // CHECKED against them rather than widening them to fit a wrong value.
-  ) => ScalarComputeResult<NoInfer<R>, NoInfer<M>>;
+    // May be async: a scalar that calls a service (an HTTP API, a database)
+    // returns a Promise and the framework awaits it before emitting.
+  ) => ScalarComputeResult<NoInfer<R>, NoInfer<M>> | Promise<ScalarComputeResult<NoInfer<R>, NoInfer<M>>>;
   // Metadata
   stability?: FunctionStability;
   nullHandling?: NullHandling;
@@ -415,8 +429,16 @@ export function defineScalarFunction<
         outputSchema,
         inputSchema: inputSchema ?? undefined,
         exchangeInit: () => ({}),
-        exchangeFn: (state: any, input: VgiBatch, out: OutputCollector) => {
-          const result = config.compute(input as any, constArgs, { settings, secrets, auth: out.auth });
+        exchangeFn: async (state: any, input: VgiBatch, out: OutputCollector) => {
+          let result: any = config.compute(input as any, constArgs, {
+            settings,
+            secrets,
+            auth: out.auth,
+            bindCall: request.bind_call,
+          });
+          // Await only a thenable, so a synchronous compute costs no extra
+          // microtask per batch.
+          if (result != null && typeof result.then === "function") result = await result;
 
           // Build output batch
           let outputBatch: VgiBatch;

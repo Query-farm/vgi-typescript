@@ -32,6 +32,7 @@ import type {
   FunctionMeta,
   StreamHandlers,
   FunctionExample,
+  RestoredUserState,
 } from "./types.js";
 import {
   constraintSpecFields,
@@ -598,14 +599,16 @@ export function defineTableFunction<
         );
       }
 
-      const state = config.initialState
-        ? config.initialState(processParams)
-        : (null as TState);
-
       return {
         outputSchema,
-        producerInit: (): TableHandlerState<TArgs, TState> => ({
-          state,
+        // initialState runs only for a fresh stream; a rebuilt HTTP turn
+        // adopts the state its cursor carried.
+        producerInit: (restored?: RestoredUserState): TableHandlerState<TArgs, TState> => ({
+          state: restored
+            ? (restored.state as TState)
+            : config.initialState
+              ? config.initialState(processParams)
+              : (null as TState),
           processParams,
           filterHistory: carriedFilterHistory,
         }),

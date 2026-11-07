@@ -213,12 +213,22 @@ export interface FunctionMeta {
   copyToComment?: string | null | undefined;
 }
 
+/** The user state a rebuilt HTTP turn restores, boxed so `null` state survives. */
+export interface RestoredUserState {
+  state: unknown;
+}
+
 export interface StreamHandlers {
-  // For producer streams (table functions, finalize phase)
-  producerInit?: (() => any) | undefined;
+  // For producer streams (table functions, finalize phase).
+  //
+  // `restored` is the user state an HTTP turn carried in its cursor. When it
+  // is given the handler must adopt it instead of computing a fresh one, so
+  // `initialState` runs once per stream, not once per turn (a rebuilt turn
+  // used to call it and then discard the result).
+  producerInit?: ((restored?: RestoredUserState) => any) | undefined;
   producerFn?: ((state: any, out: OutputCollector) => void | Promise<void>) | undefined;
   // For exchange streams (scalar, table-in-out input phase)
-  exchangeInit?: (() => any) | undefined;
+  exchangeInit?: ((restored?: RestoredUserState) => any) | undefined;
   exchangeFn?: (
     state: any,
     input: VgiBatch,

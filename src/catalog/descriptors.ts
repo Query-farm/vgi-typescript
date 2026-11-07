@@ -3,6 +3,7 @@
 
 import type { VgiSchema, VgiDataType } from "../arrow/index.js";
 import type { AttachCatalogInfo } from "./interface.js";
+import type { AttachOptionSpec } from "./attach-option.js";
 import type { VgiFunction } from "../functions/types.js";
 import type { Arguments } from "../arguments/arguments.js";
 import type { ColumnStatistics } from "../util/statistics.js";
@@ -178,6 +179,19 @@ export interface CatalogDescriptor {
   schemas: SchemaDescriptor[];
   settings?: SettingDescriptor[];
   secretTypes?: SecretTypeDescriptor[];
+  /**
+   * Options the catalog accepts at `ATTACH` time
+   * (`ATTACH 'x' (TYPE vgi, LOCATION '...', region 'eu', api_key '...')`).
+   * Advertised in the catalog's discovery record so the DuckDB extension
+   * validates and casts them (and redacts `secret` ones), and `required` ones
+   * are enforced at attach. Mirrors vgi-python's
+   * `ReadOnlyCatalogInterface.attach_option_specs`.
+   *
+   * The values reach `attach()` as its `options`; to hand them to functions,
+   * override `attach()` and carry them in `attach_opaque_data`
+   * (examples/attach-options-worker.ts), which every function call receives.
+   */
+  attachOptions?: AttachOptionSpec[];
   /**
    * Companion catalogs (lakehouse federation) the client should ATTACH when this
    * VGI catalog attaches. Surfaced via `catalog_attach.attach_catalogs`.

@@ -17,6 +17,7 @@ import type {
   FunctionMeta,
   StreamHandlers,
   FunctionExample,
+  RestoredUserState,
 } from "./types.js";
 import type { ArgumentConstraints, ArgumentSpec } from "../arguments/argument-spec.js";
 import {
@@ -211,11 +212,14 @@ export function defineTableInOutFunction<
   }
 
   // Table-in-out always has a table input (after positional args)
+  // The TABLE argument is documented like any other: `argDocs.data`
+  // (vgi-python: the TableInput field's own `Arg(doc=...)`).
   specs.push({
     name: "data",
     position: posIdx++,
     arrowType: nullType(),
     isTableInput: true,
+    ...(config.argDocs?.data !== undefined ? { doc: config.argDocs.data } : {}),
   });
 
   if (config.namedArgs) {
@@ -434,7 +438,11 @@ export function defineTableInOutFunction<
               for (const bytes of stored) {
                 finalizeStates.push(deserializeUserState(bytes) as TState);
               }
-              if (finalizeStates.length === 0) {
+              // A fresh state stands in for "no input arrived" -- but only a
+              // function with a finalize() can use it. Without one, calling
+              // initialState here just re-ran user code (validation, I/O) once
+              // more per query, on a stream that never processes input.
+              if (finalizeStates.length === 0 && config.finalize) {
                 finalizeStates.push(
                   config.initialState
                     ? config.initialState(processParams)
@@ -490,9 +498,9 @@ export function defineTableInOutFunction<
         );
       }
 
-      const state = config.initialState
-        ? config.initialState(processParams)
-        : (null as TState);
+      // initialState runs only for a fresh stream (see exchangeInit below).
+      const freshState = (): TState =>
+        config.initialState ? config.initialState(processParams) : (null as TState);
 
       const processFn =
         config.process ??
@@ -510,7 +518,13 @@ export function defineTableInOutFunction<
         outputSchema,
         inputSchema: request.bind_call.input_schema,
         continuesOutput: true,
-        exchangeInit: () => ({ state, processParams, filterHistory: carriedFilterHistory, morePending: false }),
+        // A rebuilt HTTP turn adopts the state its cursor carried.
+        exchangeInit: (restored?: RestoredUserState) => ({
+          state: restored ? (restored.state as TState) : freshState(),
+          processParams,
+          filterHistory: carriedFilterHistory,
+          morePending: false,
+        }),
         exchangeFn: async (
           eState: {
             state: TState;
@@ -1079,15 +1093,21 @@ export function defineRowTransformFunction<
         );
       }
 
-      const state = config.initialState
-        ? config.initialState(processParams)
-        : (null as TState);
+      // initialState runs only for a fresh stream (see exchangeInit below).
+      const freshState = (): TState =>
+        config.initialState ? config.initialState(processParams) : (null as TState);
 
       return {
         outputSchema,
         inputSchema: request.bind_call.input_schema,
         continuesOutput: true,
-        exchangeInit: () => ({ state, processParams, filterHistory: carriedFilterHistory, morePending: false }),
+        // A rebuilt HTTP turn adopts the state its cursor carried.
+        exchangeInit: (restored?: RestoredUserState) => ({
+          state: restored ? (restored.state as TState) : freshState(),
+          processParams,
+          filterHistory: carriedFilterHistory,
+          morePending: false,
+        }),
         exchangeFn: async (
           eState: {
             state: TState;

@@ -374,6 +374,14 @@ export function functionHandlers(config: FunctionHandlerConfig): Partial<VgiServ
         // cursor carries the packed request unchanged on every turn.
         const carried = parseCarriedInitRequest(state.initRequestPacked);
         const request = carried.request;
+        // The cursor carries the wire request, whose attach is still the sealed
+        // envelope. Strip it exactly as the init turn did, before any user code
+        // or split resolution sees it: every turn of a stream must hand the
+        // function the catalog's own bytes, not just the first. (Unopenable is
+        // a hard error here, as on the init turn: the cursor is caller-bound.)
+        // `carried.request.bind_call` is a per-call copy, so this does not
+        // disturb the memoised parse other turns share.
+        request.bind_call.attach_opaque_data = await stripAttach(request.bind_call.attach_opaque_data, undefined);
         // Re-derive the split payloads. The cursor carries the wire request,
         // which has `split_tokens` but not the opened `split_payloads` — that
         // field only ever existed in memory on the init turn. Without this a
@@ -396,7 +404,9 @@ export function functionHandlers(config: FunctionHandlerConfig): Partial<VgiServ
           catalogInterface,
           checkAnchor: false,
         });
-        const func = registry.get(state.functionName, await strippedContext(request.bind_call));
+        // Already stripped above, so resolve directly (strippedContext would try
+        // to open the plaintext again and fall back to an unscoped lookup).
+        const func = registry.get(state.functionName, overloadContext(request.bind_call, catalogInterface));
         const executionId = state.executionId;
         const opaqueData = state.opaqueData ?? null;
         const initResponse: GlobalInitResponse = {
@@ -409,10 +419,13 @@ export function functionHandlers(config: FunctionHandlerConfig): Partial<VgiServ
         // after the one that received a delta would scan under the init
         // snapshot again, because the extension sends each delta only once.
         handlers = func.createStreamHandlers(request, initResponse, state.filterHistory ?? null);
+        // Hand the carried user state to the init hook, so a handler that
+        // supports it skips initialState (which already ran on the init turn).
+        const restored = state.userState != null ? { state: state.userState } : undefined;
         if (handlers.producerInit) {
-          handlerState = handlers.producerInit();
+          handlerState = handlers.producerInit(restored);
         } else if (handlers.exchangeInit) {
-          handlerState = handlers.exchangeInit();
+          handlerState = handlers.exchangeInit(restored);
         }
         // Merge preserved user state (e.g. { remaining, currentIndex })
         if (state.userState != null && handlerState?.state !== undefined) {

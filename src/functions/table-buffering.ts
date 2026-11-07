@@ -220,11 +220,14 @@ export function defineTableBufferingFunction<
       });
     }
   }
+  // The TABLE argument is documented like any other: `argDocs.data`
+  // (vgi-python: the TableInput field's own `Arg(doc=...)`).
   specs.push({
     name: "data",
     position: posIdx++,
     arrowType: nullType(),
     isTableInput: true,
+    ...(config.argDocs?.data !== undefined ? { doc: config.argDocs.data } : {}),
   });
   if (config.namedArgs) {
     for (const [name, type] of Object.entries(config.namedArgs)) {

@@ -31,7 +31,7 @@ export {
 } from "./cache-control.js";
 
 // Function factories (primary API)
-export { defineScalarFunction, type ScalarFunctionConfig, type ScalarBindParameters, type ScalarParameterDef } from "./functions/scalar.js";
+export { defineScalarFunction, type ScalarFunctionConfig, type ScalarBindParameters, type ScalarComputeInfo, type ScalarParameterDef } from "./functions/scalar.js";
 export { defineTableFunction, type TableFunctionConfig, type TableBindParams, type TableProcessParams } from "./functions/table.js";
 export {
   defineAggregate,

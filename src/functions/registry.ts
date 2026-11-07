@@ -226,12 +226,15 @@ export class FunctionRegistry {
   // because two catalogs in one worker may declare the same schema AND name.
   private _byCatalog: Map<string, VgiFunction[]> = new Map();
 
+  /** Add `func` to the by-name index. Idempotent for the same function object. */
   register(func: VgiFunction): void {
     const name = func.meta.name;
-    if (!this._functions.has(name)) {
-      this._functions.set(name, []);
+    const bucket = this._functions.get(name);
+    if (!bucket) {
+      this._functions.set(name, [func]);
+    } else if (!bucket.includes(func)) {
+      bucket.push(func);
     }
-    this._functions.get(name)!.push(func);
   }
 
   /**

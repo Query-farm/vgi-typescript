@@ -128,7 +128,10 @@ const upperCase = defineScalarFunction({
   // position (column 0 = first arg); return one output value per row (null ok).
   // Full signature: compute(batch, consts, info) where
   //   consts → values of any `constParams` (literals folded at bind time)
-  //   info   → { settings, secrets, auth } — session settings, secrets, caller
+  //   info   → { settings, secrets, auth, bindCall } — session settings,
+  //            secrets, caller, and the bind request (its attach_opaque_data
+  //            carries the catalog's attach-time state, already unsealed)
+  // compute may be async: return a Promise to call a service per batch.
   compute: (batch) => {
     const values = batch.getChildAt(0)!;     // first positional argument
     return Array.from(values, (v) =>

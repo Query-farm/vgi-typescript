@@ -28,7 +28,7 @@ import type { FunctionRegistry } from "../functions/registry.js";
 import { argumentSpecsToSchema } from "../arguments/argument-spec.js";
 import { serializeSchema, serializeBatch, emptyBatch, batchFromColumns } from "../util/arrow/index.js";
 import { resolveMetadata } from "../metadata/resolve.js";
-import { type AttachOptionSpec, validateRequiredAttachOptions } from "./attach-option.js";
+import { type AttachOptionSpec, serializeAttachOptionSpecs, validateRequiredAttachOptions } from "./attach-option.js";
 import { FunctionStability, NullHandling, OrderPreservation, DEFAULT_MAX_WORKERS } from "../types.js";
 import { Arguments } from "../arguments/arguments.js";
 import { normalizeSchemaPath, schemaPathDisplay, schemaPathsEqual } from "../schema-path.js";
@@ -123,7 +123,14 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
       for (const tbl of sch.tables ?? []) {
         for (const key of ["function", "insertFunction", "updateFunction", "deleteFunction"] as const) {
           const fn = (tbl as any)[key];
-          if (fn) registry.registerInSchema(fn, schemaDescriptorPath(sch), descriptor.name);
+          if (!fn) continue;
+          registry.registerInSchema(fn, schemaDescriptorPath(sch), descriptor.name);
+          // A table's scan/write functions need not also be listed in the
+          // schema's `functions`. Index them by name too, so a bind that
+          // resolves by name (a scan whose ScanFunctionResult carries no
+          // schema path, because no schema lists the function) finds them.
+          // Mirrors vgi-python's Worker._build_registry auto-registration.
+          registry.register(fn);
         }
       }
     }
@@ -159,26 +166,24 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
   /**
    * Attach-time options this catalog declares, for the named catalog.
    *
-   * Empty by default — the declarative descriptor path carries no attach
-   * options. A subclass that advertises specs in `catalogsInfo()` should
-   * return the same specs here so `attach()` enforces the `required` ones it
-   * advertised. Takes the catalog name because one interface may serve
-   * several catalogs with different option sets.
+   * The descriptor's `attachOptions` (empty when it declares none). A
+   * subclass serving several catalogs with different option sets overrides
+   * this; `catalogsInfo()` advertises whatever it returns and `attach()`
+   * enforces the `required` ones, so the two never disagree.
    */
   attachOptionSpecs(_name: string): AttachOptionSpec[] {
-    return [];
+    return this._descriptor.attachOptions ?? [];
   }
 
-  // Advertise the catalog's discovery record. The declarative path carries no
-  // version metadata or attach option specs, but it does surface the optional
-  // `source_url` from the descriptor so it flows through `catalog_catalogs`
-  // (DuckDB's `duckdb_databases()`).
+  // Advertise the catalog's discovery record: its attach option specs and the
+  // optional `source_url`, which flows through `catalog_catalogs` (DuckDB's
+  // `duckdb_databases()`). The declarative path carries no version metadata.
   override catalogsInfo(): CatalogInfo[] {
     return [{
       name: this._descriptor.name,
       implementation_version: null,
       data_version_spec: null,
-      attach_option_specs: [],
+      attach_option_specs: serializeAttachOptionSpecs(this.attachOptionSpecs(this._descriptor.name)),
       releases: [],
       source_url: this._descriptor.sourceUrl ?? null,
     }];
