@@ -28,12 +28,25 @@ export function deserializeCardinalityRequest(
   };
 }
 
+/** Normalise one cardinality field to the wire's int64 (`bigint`) or null. */
+function cardinalityValue(
+  name: "estimate" | "max",
+  v: number | bigint | null | undefined,
+): bigint | null {
+  if (v === null || v === undefined) return null;
+  if (typeof v === "bigint") return v;
+  if (typeof v === "number" && Number.isInteger(v)) return BigInt(v);
+  throw new TypeError(
+    `TableCardinality.${name} must be an integer number, a bigint, or null (got ${typeof v}: ${String(v)})`,
+  );
+}
+
 export function serializeTableCardinality(
   card: TableCardinality
-): Record<string, any> {
+): { estimate: bigint | null; max: bigint | null } {
   return {
-    estimate: card.estimate,
-    max: card.max,
+    estimate: cardinalityValue("estimate", card.estimate),
+    max: cardinalityValue("max", card.max),
   };
 }
 

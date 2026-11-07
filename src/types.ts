@@ -89,9 +89,16 @@ export const VGI_CHOICES_KEY = "vgi_choices";
 export const VGI_RANGE_KEY = "vgi_range";
 export const VGI_PATTERN_KEY = "vgi_pattern";
 
+/**
+ * Row-count estimate/upper bound returned by a table function's `cardinality`
+ * hook. Both travel as int64 on the wire, so either a `number` (must be an
+ * integer) or a `bigint` is accepted — int64 arguments arrive as `bigint`, so
+ * `{ estimate: args.count, max: args.count }` works without a `Number(...)`
+ * conversion. `null` means unknown.
+ */
 export interface TableCardinality {
-  estimate: number | null;
-  max: number | null;
+  estimate: number | bigint | null;
+  max: number | bigint | null;
 }
 
 // Default max workers (matches Python DEFAULT_MAX_WORKERS = 99999)

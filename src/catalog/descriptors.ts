@@ -91,7 +91,7 @@ export interface TableDescriptor {
    * table_function_cardinality RPC. Only meaningful for function-backed
    * tables; static-column tables don't have a function to call.
    */
-  inlinedCardinality?: { estimate: bigint; max: bigint };
+  inlinedCardinality?: { estimate: number | bigint; max: number | bigint };
   comment?: string;
   tags?: Record<string, string>;
 }
