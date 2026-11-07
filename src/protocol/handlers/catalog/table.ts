@@ -162,6 +162,40 @@ export function catalogTableHandlers(getCatalog: GetCatalog, signingKey?: Uint8A
     return wrapResult(scanResult, ScanFunctionResultSchema);
   });
 
+  // catalog_table_{insert,update,delete}_function_get — the table in-out
+  // function backing each DML statement. A catalog whose tables inline these
+  // into TableInfo is only asked when the client skipped the inline value.
+  const optionalTx = (params: Record<string, any>): Uint8Array | undefined =>
+    params.transaction_opaque_data ? toUint8Array(params.transaction_opaque_data) : undefined;
+  const catalogTableInsertFunctionGet = catalogHandler(signingKey, async (params) => {
+    const result = await getCatalog().tableInsertFunctionGet(
+      toUint8Array(params.attach_opaque_data),
+      params.schema_path,
+      params.name,
+      optionalTx(params),
+      params.writable_branch_function_name ?? null,
+    );
+    return wrapResult(result, ScanFunctionResultSchema);
+  });
+  const catalogTableUpdateFunctionGet = catalogHandler(signingKey, async (params) => {
+    const result = await getCatalog().tableUpdateFunctionGet(
+      toUint8Array(params.attach_opaque_data),
+      params.schema_path,
+      params.name,
+      optionalTx(params),
+    );
+    return wrapResult(result, ScanFunctionResultSchema);
+  });
+  const catalogTableDeleteFunctionGet = catalogHandler(signingKey, async (params) => {
+    const result = await getCatalog().tableDeleteFunctionGet(
+      toUint8Array(params.attach_opaque_data),
+      params.schema_path,
+      params.name,
+      optionalTx(params),
+    );
+    return wrapResult(result, ScanFunctionResultSchema);
+  });
+
   // catalog_table_scan_branches_get — branches-aware variant of
   // scan_function_get. The branches-aware C++ extension calls this for every
   // table scan; single-source catalogs synthesise a one-branch result.
@@ -350,6 +384,9 @@ export function catalogTableHandlers(getCatalog: GetCatalog, signingKey?: Uint8A
     catalogTableDrop,
     catalogTableColumnStatisticsGet,
     catalogTableScanFunctionGet,
+    catalogTableInsertFunctionGet,
+    catalogTableUpdateFunctionGet,
+    catalogTableDeleteFunctionGet,
     catalogTableScanBranchesGet,
     catalogTableCommentSet,
     catalogTableRename,

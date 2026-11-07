@@ -75,6 +75,7 @@ VERSIONED_TABLES="$BIN_DIR/vgi-example-versioned-tables-worker"
 VERSIONED_TABLES_HTTP="$BIN_DIR/vgi-example-versioned-tables-http-worker"
 ATTACH_OPTIONS="$BIN_DIR/vgi-example-attach-options-worker"
 ATTACH_OPTIONS_HTTP="$BIN_DIR/vgi-example-attach-options-http-worker"
+SIMPLE_WRITABLE="$BIN_DIR/vgi-example-simple-writable-worker"
 
 # database_worker/package.sh needs a real stdio executable even when the main
 # integration lane attaches over HTTP. It uses the lane's Arrow backend.
@@ -271,7 +272,6 @@ boot_http_worker() {
 EXPECTED_SKIP_REASONS=(
   # No such fixture worker in the TypeScript port (the gate is the whole point —
   # these are cross-language fixtures other SDKs provide).
-  'require-env VGI_SIMPLE_WRITABLE_WORKER'   # generic write-path fixture, not ported
   'require-env VGI_BAD_PROTOCOL_WORKER'      # advertises an incompatible protocol_version
   'require-env VGI_BAD_ENUM_WORKER'          # advertises a malformed ENUM
   'require-env VGI_RULES_WORKER'             # vgi-rust multibatch repro worker
@@ -306,7 +306,18 @@ EXPECTED_SKIP_REASONS=(
 )
 # Transport-specific additions.
 case "$TRANSPORT" in
+  stdio|launch)
+    # haybarn-unittest is the Haybarn engine, which has
+    # TableCatalogEntry::GetDeleteReturningVirtualColumns (duckdb/duckdb#28089),
+    # so the simple_writable file for engines WITHOUT it gates itself off.
+    EXPECTED_SKIP_REASONS+=('require-env-not VGI_ENGINE_DELETE_RETURNING_VIRTUAL_COLUMNS')
+    ;;
+esac
+case "$TRANSPORT" in
   http)
+    # The writable-table fixture (examples/simple-writable-worker.ts) has no
+    # HTTP serve mode yet; it runs on the stdio and launch lanes.
+    EXPECTED_SKIP_REASONS+=('require-env VGI_SIMPLE_WRITABLE_WORKER')
     # An HTTP worker is one shared process: SIGKILL-ing it would take down every
     # concurrent test, so the crash / pool-recovery tests gate themselves off.
     EXPECTED_SKIP_REASONS+=('require-env VGI_TEST_DEDICATED_WORKER')
@@ -350,6 +361,9 @@ case "$TRANSPORT" in
     # gated ATTACH is asserted separately (upstream split those assertions out
     # of the shared attach_options_echo.test behind this env var).
     export VGI_ATTACH_OPTIONS_REQUIRED_WORKER="$VGI_ATTACH_OPTIONS_WORKER"
+    # Writable tables (INSERT/UPDATE/DELETE): test/sql/integration/simple_writable.
+    export VGI_SIMPLE_WRITABLE_WORKER="$SIMPLE_WRITABLE"
+    export VGI_ENGINE_DELETE_RETURNING_VIRTUAL_COLUMNS=1   # haybarn-unittest (see skips above)
     # A private worker per DuckDB process makes the SIGKILL-self crash tests safe.
     export VGI_TEST_DEDICATED_WORKER="$WORKER"
     # attach/versioned_tables_*_http and versioning_http attach an http:// worker
@@ -372,6 +386,8 @@ case "$TRANSPORT" in
     # gated ATTACH is asserted separately (upstream split those assertions out
     # of the shared attach_options_echo.test behind this env var).
     export VGI_ATTACH_OPTIONS_REQUIRED_WORKER="$VGI_ATTACH_OPTIONS_WORKER"
+    export VGI_SIMPLE_WRITABLE_WORKER="launch:${SIMPLE_WRITABLE}"
+    export VGI_ENGINE_DELETE_RETURNING_VIRTUAL_COLUMNS=1   # haybarn-unittest (see skips above)
     export VGI_REQUIRE_LAUNCHER_TRANSPORT=1
     export VGI_WORKER_IDLE_TIMEOUT="${VGI_WORKER_IDLE_TIMEOUT:-120}"
     boot_http_worker "$VERSIONED_TABLES_HTTP" || exit 1

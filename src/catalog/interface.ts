@@ -202,6 +202,19 @@ export interface ScanFunctionResult {
 }
 
 /**
+ * The `ScanFunctionResult` wire record as a catalog method returns it:
+ * `tableScanFunctionGet` (untyped, for history) and the write-function lookups
+ * `tableInsertFunctionGet` / `tableUpdateFunctionGet` / `tableDeleteFunctionGet`.
+ * `arguments` is the serialized inner arguments batch.
+ */
+export interface ScanFunctionResultRecord {
+  function_name: string;
+  arguments: Uint8Array;
+  required_extensions: string[];
+  schema_path: string[] | null;
+}
+
+/**
  * Encode a ScanFunctionResult wire record — the single-row batch shape
  * `{ function_name, arguments, required_extensions, schema_path }` that
  * `catalog_table_scan_function_get` returns and that a function-backed table
@@ -838,6 +851,44 @@ export abstract class CatalogInterface {
     transactionOpaqueData?: TransactionOpaqueData
   ): Awaitable<any> {
     throw new CatalogReadOnlyError("table_scan_function_get");
+  }
+  /**
+   * The table in-out function backing `INSERT INTO` this table. Default:
+   * the table is read-only. `writableBranchFunctionName` names the writable
+   * arm of a multi-branch table (null for a single-branch one).
+   */
+  tableInsertFunctionGet(
+    attachOpaqueData: AttachOpaqueData,
+    schemaPath: string[],
+    name: string,
+    transactionOpaqueData?: TransactionOpaqueData,
+    writableBranchFunctionName?: string | null,
+  ): Awaitable<ScanFunctionResultRecord> {
+    throw new CatalogReadOnlyError("table_insert_function_get");
+  }
+  /**
+   * The table in-out function backing `UPDATE` of this table. Its input is the
+   * changed columns plus the row-id column. Default: the table is read-only.
+   */
+  tableUpdateFunctionGet(
+    attachOpaqueData: AttachOpaqueData,
+    schemaPath: string[],
+    name: string,
+    transactionOpaqueData?: TransactionOpaqueData,
+  ): Awaitable<ScanFunctionResultRecord> {
+    throw new CatalogReadOnlyError("table_update_function_get");
+  }
+  /**
+   * The table in-out function backing `DELETE FROM` this table. Its input is
+   * the row-id column. Default: the table is read-only.
+   */
+  tableDeleteFunctionGet(
+    attachOpaqueData: AttachOpaqueData,
+    schemaPath: string[],
+    name: string,
+    transactionOpaqueData?: TransactionOpaqueData,
+  ): Awaitable<ScanFunctionResultRecord> {
+    throw new CatalogReadOnlyError("table_delete_function_get");
   }
   /**
    * Return the scan branches for a (possibly multi-source) table. Default

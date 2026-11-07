@@ -30,6 +30,29 @@ export {
   type CacheScope,
 } from "./cache-control.js";
 
+// Writable tables: result modes, row ids and the write_options decoder for
+// INSERT / UPDATE / DELETE functions (TableDescriptor.insertFunction etc.).
+export {
+  type WriteOperation,
+  type WriteResultMode,
+  type WriteOptions,
+  WRITE_OPERATIONS,
+  WRITE_RESULT_MODES,
+  ROW_ID_METADATA_KEY,
+  rowIdField,
+  userColumns,
+  validateWriteResultModes,
+  supportsWriteResultMode,
+  coerceWriteResultMode,
+  writeResultSchema,
+  writeCountBatch,
+  writeRowsBatch,
+  writeChangesBatch,
+  writeResultBatch,
+  writeOptions,
+} from "./write-results.js";
+export type { ScanFunctionResultRecord } from "./catalog/interface.js";
+
 // Function factories (primary API)
 export { defineScalarFunction, type ScalarFunctionConfig, type ScalarBindParameters, type ScalarComputeInfo, type ScalarParameterDef } from "./functions/scalar.js";
 export { defineTableFunction, type TableFunctionConfig, type TableBindParams, type TableProcessParams } from "./functions/table.js";

@@ -25,6 +25,15 @@ VERSIONED_TABLES_WORKER := $(CURDIR)/bin/vgi-example-versioned-tables-worker
 VERSIONED_TABLES_HTTP   := $(CURDIR)/bin/vgi-example-versioned-tables-http-worker
 ATTACH_OPTIONS_WORKER := $(CURDIR)/bin/vgi-example-attach-options-worker
 ATTACH_OPTIONS_HTTP   := $(CURDIR)/bin/vgi-example-attach-options-http-worker
+SIMPLE_WRITABLE_WORKER := $(CURDIR)/bin/vgi-example-simple-writable-worker
+
+# Engine feature flags the vgi SQL suite gates on (see vgi's Makefile and
+# docs/upstream-duckdb-build.md): 1 on a Haybarn build, unset on upstream DuckDB.
+# Only the one the writable-table tests need is derived here.
+ifneq ($(wildcard $(VGI_DIR)/duckdb/src/include/duckdb/haybarn.h),)
+VGI_ENGINE_DELETE_RETURNING_VIRTUAL_COLUMNS ?= 1
+export VGI_ENGINE_DELETE_RETURNING_VIRTUAL_COLUMNS
+endif
 
 TEST_DIR     := $(VGI_DIR)/test/sql
 
@@ -209,6 +218,7 @@ COVERAGE_GATE := --min-executed $(TS_MIN_EXECUTED) \
 	--allow-skip 'require-env VGI_VERSIONED_TABLES_HTTP_WORKER' \
 	--allow-skip 'require-env VGI_WORKER_SUPPORTS_DYNAMIC_CODE' \
 	--allow-skip 'require-env VGI_SIMPLE_WRITABLE_WORKER' \
+	--allow-skip 'require-env-not VGI_ENGINE_DELETE_RETURNING_VIRTUAL_COLUMNS' \
 	--allow-skip 'require-env VGI_SCHEMA_RECONCILE_DB' \
 	--allow-skip 'require-env VGI_RULES_WORKER' \
 	--allow-skip 'require-env VGI_ATTACH_OPTIONS_REQUIRED_WORKER' \
@@ -227,6 +237,7 @@ test:
 	export VGI_VERSIONED_WORKER="launch:$(VERSIONED_WORKER)"; \
 	export VGI_VERSIONED_TABLES_WORKER="launch:$(VERSIONED_TABLES_WORKER)"; \
 	export VGI_ATTACH_OPTIONS_WORKER="launch:$(ATTACH_OPTIONS_WORKER)"; \
+	export VGI_SIMPLE_WRITABLE_WORKER="launch:$(SIMPLE_WRITABLE_WORKER)"; \
 	export VGI_REQUIRE_LAUNCHER_TRANSPORT=1; \
 	export VGI_WORKER_IDLE_TIMEOUT=$(LAUNCHER_IDLE_TIMEOUT); \
 	export VGI_TEST_BRANCH_DIR="$(VGI_TEST_BRANCH_DIR)"; \
@@ -252,6 +263,7 @@ test-subprocess:
 	export VGI_VERSIONED_WORKER="$(VERSIONED_WORKER)"; \
 	export VGI_VERSIONED_TABLES_WORKER="$(VERSIONED_TABLES_WORKER)"; \
 	export VGI_ATTACH_OPTIONS_WORKER="$(ATTACH_OPTIONS_WORKER)"; \
+	export VGI_SIMPLE_WRITABLE_WORKER="$(SIMPLE_WRITABLE_WORKER)"; \
 	python3 scripts/run_tests.py -j $(JOBS) --test-config $(TEST_CONFIG) $(TEST_PATTERNS) > $(TEST_LOG) 2>&1; \
 	rc=$$?; \
 	tail -n 20 $(TEST_LOG); \
@@ -339,6 +351,7 @@ test/%:
 	export VGI_VERSIONED_WORKER="launch:$(VERSIONED_WORKER)"; \
 	export VGI_VERSIONED_TABLES_WORKER="launch:$(VERSIONED_TABLES_WORKER)"; \
 	export VGI_ATTACH_OPTIONS_WORKER="launch:$(ATTACH_OPTIONS_WORKER)"; \
+	export VGI_SIMPLE_WRITABLE_WORKER="launch:$(SIMPLE_WRITABLE_WORKER)"; \
 	export VGI_REQUIRE_LAUNCHER_TRANSPORT=1; \
 	export VGI_WORKER_IDLE_TIMEOUT=$(LAUNCHER_IDLE_TIMEOUT); \
 	cd $(VGI_DIR) && ./build/release/test/unittest --test-config $(TEST_CONFIG) -s "test/sql/$*.test"
@@ -357,6 +370,7 @@ test-subprocess/%:
 	export VGI_VERSIONED_WORKER="$(VERSIONED_WORKER)"; \
 	export VGI_VERSIONED_TABLES_WORKER="$(VERSIONED_TABLES_WORKER)"; \
 	export VGI_ATTACH_OPTIONS_WORKER="$(ATTACH_OPTIONS_WORKER)"; \
+	export VGI_SIMPLE_WRITABLE_WORKER="$(SIMPLE_WRITABLE_WORKER)"; \
 	cd $(VGI_DIR) && ./build/release/test/unittest --test-config $(TEST_CONFIG) -s "test/sql/$*.test"
 
 # test-http/% — single-test HTTP entry point. Spawns the HTTP worker

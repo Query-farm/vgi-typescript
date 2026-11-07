@@ -4,6 +4,7 @@
 import type { VgiSchema, VgiDataType } from "../arrow/index.js";
 import type { AttachCatalogInfo } from "./interface.js";
 import type { AttachOptionSpec } from "./attach-option.js";
+import type { WriteOperation, WriteResultMode } from "../write-results.js";
 import type { VgiFunction } from "../functions/types.js";
 import type { Arguments } from "../arguments/arguments.js";
 import type { ColumnStatistics } from "../util/statistics.js";
@@ -40,6 +41,35 @@ export interface TableDescriptor {
   columns?: VgiSchema;
   function?: VgiFunction;
   arguments?: Arguments;
+  /**
+   * Table in-out function backing `INSERT INTO <table>`. It receives the new
+   * rows (the table's user columns) and returns a `writeResultSchema` batch
+   * for the mode in its `write_options` (see `write-results.ts`). Omitted
+   * means the table does not accept INSERT.
+   */
+  insertFunction?: VgiFunction;
+  /**
+   * Table in-out function backing `UPDATE <table>`. It receives the changed
+   * columns plus the row-id column (`rowIdField()`, which the scan
+   * `function` must emit) for each updated row. Requires `function`, which
+   * must also support projection pushdown and be listed in the schema's
+   * `functions` (see `rowIdField`).
+   */
+  updateFunction?: VgiFunction;
+  /**
+   * Table in-out function backing `DELETE FROM <table>`. It receives the
+   * row-id column of each deleted row. Requires `function`, with the same
+   * projection-pushdown conditions as `updateFunction`.
+   */
+  deleteFunction?: VgiFunction;
+  /**
+   * The richest result mode each write function produces: `count` (plain
+   * DML), `rows` (`RETURNING`) or `changes` (old/new pairs). Ordered
+   * `count < rows < changes`; supporting one mode promises every lower one.
+   * An operation with a write function but no entry defaults to `count`.
+   * Mirrors vgi-python's `Table.write_result_modes`.
+   */
+  writeResultModes?: Partial<Record<WriteOperation, WriteResultMode>>;
   /** @deprecated Not sent under vgi.v3 (serving throws). Use `constraints: [constraintRecord({ kind: "NOT_NULL", ... })]`. */
   notNull?: string[];
   /** @deprecated Not sent under vgi.v3 (serving throws). Use `constraints: [constraintRecord({ kind: "UNIQUE", ... })]`. */

@@ -17,6 +17,7 @@ import {
   type MacroInfo,
   type IndexInfo,
   type CopyFromFormatInfo,
+  type ScanFunctionResultRecord,
   encodeAttachCatalogInfo,
   encodeScanFunctionResult,
   buildCatalogAttachResult,
@@ -34,11 +35,12 @@ import { Arguments } from "../arguments/arguments.js";
 import { normalizeSchemaPath, schemaPathDisplay, schemaPathsEqual } from "../schema-path.js";
 import { ForeignKeyInfoSchema } from "../generated/vgi-protocol-schemas.js";
 import { conformColumns } from "../codec/conform.js";
-import { VgiError } from "../errors.js";
+import { CatalogReadOnlyError, VgiError } from "../errors.js";
 import { encodeFunctionInfoOnce, freezeCatalogItem } from "./item-encoding.js";
 import { macroOverloads } from "./macro-overloads.js";
 import { CONSTRAINT_RECORDS_READ, ROW_SCALAR_EXPRESSION, catalogCapabilities, selectReadProfiles, servedTableSchema, validateForeignKeyTargets } from "./constraints.js";
 import { duckdbPrimitive } from "./column-types.js";
+import { WRITE_OPERATIONS, type WriteOperation, validateWriteResultModes } from "../write-results.js";
 import { defaultExpressionMetadata } from "./column-expressions.js";
 import type { CatalogCapabilities } from "../generated/vgi-protocol-types.js";
 import { encodeCatalogCapabilities } from "../generated/vgi-protocol-types.js";
@@ -114,6 +116,7 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
     this._descriptor = descriptor;
     this._registry = registry;
     if (options.perAttachItemIds) this.perAttachItemIds = true;
+    for (const sch of descriptor.schemas ?? []) for (const tbl of sch.tables ?? []) validateWritableTable(tbl);
     // Index every function this catalog declares by its owning schema, so a
     // schema-qualified bind resolves to the right implementation when one name
     // is declared in more than one schema. Table-backing functions are indexed
@@ -473,7 +476,7 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
         columns,
         constraints: [...constraints],
         definition_revision: t.definitionRevision ?? null,
-        write_result_modes: {},
+        write_result_modes: writeResultModesFor(t),
         supports_column_statistics: t.statistics != null && Object.keys(t.statistics).length > 0,
         // Inline scan_function only for purely function-backed tables.
         // When explicit `columns` are also declared, the table is on the
@@ -483,9 +486,13 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
         scan_function: t.function && !t.columns
           ? inlineScanFunction(t.function, t.arguments, this._schemaForFunction(t.function))
           : null,
-        insert_function: null,
-        update_function: null,
-        delete_function: null,
+        // Write functions are inlined like a purely function-backed scan:
+        // they take no catalog-supplied arguments (DuckDB passes the rows and
+        // `write_options`), so the extension can skip the per-statement
+        // catalog_table_{insert,update,delete}_function_get round trip.
+        insert_function: t.insertFunction ? inlineScanFunction(t.insertFunction, undefined, this._schemaForFunction(t.insertFunction)) : null,
+        update_function: t.updateFunction ? inlineScanFunction(t.updateFunction, undefined, this._schemaForFunction(t.updateFunction)) : null,
+        delete_function: t.deleteFunction ? inlineScanFunction(t.deleteFunction, undefined, this._schemaForFunction(t.deleteFunction)) : null,
         cardinality_estimate: t.inlinedCardinality
           ? Number(t.inlinedCardinality.estimate)
           : null,
@@ -913,6 +920,56 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
     throw new Error(`Table '${name}' is not function-backed`);
   }
 
+  /** The write function for `operation`, or a read-only / not-found error. */
+  private _writeFunctionGet(schemaPath: string[], name: string, operation: WriteOperation): ScanFunctionResultRecord {
+    const schema = this._descriptor.schemas.find((sch) => schemaPathsEqual(schemaDescriptorPath(sch), schemaPath));
+    const table = schema?.tables?.find((t) => t.name.toLowerCase() === name.toLowerCase());
+    if (!table) {
+      throw new VgiError(`Table '${name}' not found in schema ${schemaPathDisplay(schemaPath)}`, "NOT_FOUND");
+    }
+    const fn = writeFunctionOf(table, operation);
+    if (!fn) {
+      throw new CatalogReadOnlyError(
+        `Table ${schemaPathDisplay(schemaPath)}.${table.name} does not support ${operation.toUpperCase()}`,
+      );
+    }
+    return {
+      function_name: fn.meta.name,
+      arguments: serializeArgsBatch(new Arguments(), argumentSpecsToSchema(fn.argumentSpecs)),
+      required_extensions: [],
+      schema_path: this._schemaForFunction(fn),
+    };
+  }
+
+  override tableInsertFunctionGet(
+    _attachOpaqueData: AttachOpaqueData,
+    schemaPath: string[],
+    name: string,
+    _transactionOpaqueData?: TransactionOpaqueData,
+    // Descriptor tables are single-branch: the writable-arm hint does not apply.
+    _writableBranchFunctionName?: string | null,
+  ): ScanFunctionResultRecord {
+    return this._writeFunctionGet(schemaPath, name, "insert");
+  }
+
+  override tableUpdateFunctionGet(
+    _attachOpaqueData: AttachOpaqueData,
+    schemaPath: string[],
+    name: string,
+    _transactionOpaqueData?: TransactionOpaqueData,
+  ): ScanFunctionResultRecord {
+    return this._writeFunctionGet(schemaPath, name, "update");
+  }
+
+  override tableDeleteFunctionGet(
+    _attachOpaqueData: AttachOpaqueData,
+    schemaPath: string[],
+    name: string,
+    _transactionOpaqueData?: TransactionOpaqueData,
+  ): ScanFunctionResultRecord {
+    return this._writeFunctionGet(schemaPath, name, "delete");
+  }
+
   override async tableGet(
     attachOpaqueData: AttachOpaqueData,
     schemaPath: string[],
@@ -1287,4 +1344,36 @@ function sameSpelling(left: Iterable<unknown> | string, right: Iterable<unknown>
   const a = normalizeSchemaPath(left);
   const b = normalizeSchemaPath(right);
   return a.length === b.length && a.every((part, i) => part === b[i]);
+}
+
+// ---------------------------------------------------------------- writable tables
+
+function writeFunctionOf(table: TableDescriptor, operation: WriteOperation): VgiFunction | undefined {
+  return operation === "insert" ? table.insertFunction : operation === "update" ? table.updateFunction : table.deleteFunction;
+}
+
+/**
+ * Reject a writable-table declaration vgi-python's `Table.__post_init__` would:
+ * an unknown operation or mode, a mode for an operation with no function, or
+ * UPDATE/DELETE without a scan function to supply row ids.
+ */
+function validateWritableTable(table: TableDescriptor): void {
+  const modes = validateWriteResultModes((table.writeResultModes ?? {}) as Record<string, string>);
+  for (const operation of Object.keys(modes) as WriteOperation[]) {
+    if (!writeFunctionOf(table, operation)) {
+      throw new Error(`Table '${table.name}': writeResultModes declares '${operation}' without a corresponding ${operation}Function`);
+    }
+  }
+  if ((table.updateFunction || table.deleteFunction) && !table.function) {
+    throw new Error(`Table '${table.name}': updateFunction and deleteFunction require a scan function (set 'function') to provide row ids`);
+  }
+}
+
+/** TableInfo.write_result_modes: each configured operation's maximum mode (default `count`). */
+function writeResultModesFor(table: TableDescriptor): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const operation of WRITE_OPERATIONS) {
+    if (writeFunctionOf(table, operation)) out[operation] = table.writeResultModes?.[operation] ?? "count";
+  }
+  return out;
 }
