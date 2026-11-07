@@ -15,6 +15,16 @@ import { decodeScanFunctionResult } from "../catalog/interface.js";
 import { ReadOnlyCatalogInterface } from "../catalog/read-only.js";
 import type { TableDescriptor } from "../catalog/descriptors.js";
 import { CatalogReadOnlyError } from "../errors.js";
+import {
+  CONSTRAINT_ENFORCE,
+  CONSTRAINT_RECORDS_READ,
+  catalogCapabilities,
+  constraintRecord,
+  ROW_SCALAR_EXPRESSION,
+} from "../catalog/constraints.js";
+import { decodeCatalogCapabilities, encodeCatalogCapabilities } from "../generated/vgi-protocol-types.js";
+import { ClientCapabilitiesSchema } from "../generated/vgi-protocol-schemas.js";
+import { encodeASD } from "../codec/asd.js";
 import { FunctionRegistry } from "../functions/registry.js";
 import { defineTableFunction } from "../functions/table.js";
 import { defineTableInOutFunction } from "../functions/table-in-out.js";
@@ -152,5 +162,41 @@ describe("write results", () => {
     const bindCall = { arguments: new Arguments([], new Map([["write_options", serializeBatch(opts)]])) };
     expect(writeOptions(bindCall)).toEqual({ resultMode: "changes", onConflict: "throw", onConflictColumns: [] });
     expect(writeOptions({ arguments: new Arguments() }).resultMode).toBe("count");
+  });
+});
+
+describe("constraint enforcement profile", () => {
+  const pk = constraintRecord({
+    schemaPath: ["main"],
+    table: "items",
+    id: "pk",
+    kind: "PRIMARY_KEY",
+    columns: [["id"]],
+    enforcement: "ENFORCED",
+    validation: "ALL_ROWS",
+  });
+  const offer = encodeASD(ClientCapabilitiesSchema, {
+    engine: "test",
+    native_formats: [],
+    catalogs: [],
+    can_stream: true,
+    filter_encodings: [],
+    catalog: encodeCatalogCapabilities(
+      catalogCapabilities({ read: [CONSTRAINT_RECORDS_READ, ROW_SCALAR_EXPRESSION], write: [CONSTRAINT_ENFORCE] }),
+    ),
+    query_pushdown: null,
+  });
+  const selectedWrite = async (t: TableDescriptor) => {
+    const result = await catalogWith([t]).attach("w", {}, null, null, offer);
+    return result.selected_capabilities ? decodeCatalogCapabilities(result.selected_capabilities).write : null;
+  };
+
+  test("a constrained writable table negotiates vgi.constraint.enforce.v1", async () => {
+    expect(await selectedWrite(writable({ constraints: [pk] }))).toEqual([CONSTRAINT_ENFORCE]);
+  });
+
+  test("a constrained read-only table, or an unconstrained writable one, does not", async () => {
+    expect(await selectedWrite({ name: "items", columns: COLUMNS, function: scan, constraints: [pk] })).toEqual([]);
+    expect(await selectedWrite(writable())).toBeNull();
   });
 });

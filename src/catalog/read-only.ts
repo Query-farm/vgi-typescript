@@ -38,7 +38,7 @@ import { conformColumns } from "../codec/conform.js";
 import { CatalogReadOnlyError, VgiError } from "../errors.js";
 import { encodeFunctionInfoOnce, freezeCatalogItem } from "./item-encoding.js";
 import { macroOverloads } from "./macro-overloads.js";
-import { CONSTRAINT_RECORDS_READ, ROW_SCALAR_EXPRESSION, catalogCapabilities, selectReadProfiles, servedTableSchema, validateForeignKeyTargets } from "./constraints.js";
+import { CONSTRAINT_ENFORCE, CONSTRAINT_RECORDS_READ, ROW_SCALAR_EXPRESSION, catalogCapabilities, selectCatalogCapabilities, servedTableSchema, validateForeignKeyTargets } from "./constraints.js";
 import { duckdbPrimitive } from "./column-types.js";
 import { WRITE_OPERATIONS, type WriteOperation, validateWriteResultModes } from "../write-results.js";
 import { defaultExpressionMetadata } from "./column-expressions.js";
@@ -225,9 +225,11 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
       encodeAttachCatalogInfo(c)
     );
 
-    // Constraint records are readable only under a negotiated profile.
-    const available = this.catalogReadProfiles();
-    const read = selectReadProfiles(available, clientCapabilities);
+    // Constraint records are readable, and writes to constrained tables
+    // accepted, only under negotiated profiles.
+    const available = catalogCapabilities({ read: this.catalogReadProfiles(), write: this.catalogWriteProfiles() });
+    const advertised = available.read.length + available.write.length > 0;
+    const selected = selectCatalogCapabilities(available, clientCapabilities);
 
     // Auto-derive supportsTimeTravel from table descriptors
     const hasTimeTravel = this._descriptor.schemas.some(
@@ -260,12 +262,8 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
       // Static, version-frozen catalog: the whole thing can be served in one
       // catalog_contents call (as vgi-python's ReadOnlyCatalogInterface does).
       supports_catalog_contents: this.supportsCatalogContents,
-      catalog_capabilities: available.length
-        ? encodeCatalogCapabilities({ read: [...available].sort(), ddl: [], write: [], transaction: [] })
-        : null,
-      selected_capabilities: available.length
-        ? encodeCatalogCapabilities({ read, ddl: [], write: [], transaction: [] })
-        : null,
+      catalog_capabilities: advertised ? encodeCatalogCapabilities(available) : null,
+      selected_capabilities: advertised ? encodeCatalogCapabilities(selected) : null,
     });
   }
 
@@ -281,10 +279,28 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
     return hasConstraints ? [CONSTRAINT_RECORDS_READ, ROW_SCALAR_EXPRESSION] : [];
   }
 
-  /** The descriptor's read profiles (records are served, never mutated here). */
+  /**
+   * Write profiles this catalog implements. A table that carries constraint
+   * records AND has a write function makes the catalog advertise
+   * `vgi.constraint.enforce.v1`: DuckDB only writes to a constrained table
+   * when the provider promises to keep its ENFORCED constraints, so such a
+   * table's write functions must reject rows that would violate them (for
+   * instance by refusing to change key columns).
+   */
+  catalogWriteProfiles(): string[] {
+    const writableConstrained = this._descriptor.schemas.some(
+      (s) =>
+        s.tables?.some(
+          (t) => (t.constraints?.length ?? 0) > 0 && (t.insertFunction || t.updateFunction || t.deleteFunction),
+        ) ?? false,
+    );
+    return writableConstrained ? [CONSTRAINT_ENFORCE] : [];
+  }
+
+  /** The descriptor's profiles: records are served, never mutated here; writable constrained tables enforce. */
   override catalogCapabilities(_attachOpaqueData: AttachOpaqueData): CatalogCapabilities | null {
-    const read = this.catalogReadProfiles();
-    return read.length ? catalogCapabilities({ read }) : null;
+    const caps = catalogCapabilities({ read: this.catalogReadProfiles(), write: this.catalogWriteProfiles() });
+    return caps.read.length + caps.write.length ? caps : null;
   }
 
   detach(attachOpaqueData: AttachOpaqueData): void {
