@@ -682,15 +682,21 @@ const row_sum = defineRowTransformFunction<RowSumNamedArgs>({
   onBind: () => ({ outputSchema: ROW_SUM_SCHEMA }),
   process: (params, batch, out) => {
     const absolute = Boolean(params.args.absolute);
-    const sums: number[] = new Array(batch.numRows).fill(0);
+    // SQL addition: a NULL in any input column makes that row's sum NULL
+    // (vgi-python adds the columns with pc.add, which propagates nulls).
+    const sums: (number | null)[] = new Array(batch.numRows).fill(0);
     for (let c = 0; c < batch.schema.fields.length; c++) {
       const col = batch.getChildAt(c);
       if (!col) continue;
       for (let i = 0; i < batch.numRows; i++) {
+        if (sums[i] === null) continue;
         const v = col.get(i);
-        if (v === null || v === undefined) continue;
+        if (v === null || v === undefined) {
+          sums[i] = null;
+          continue;
+        }
         const n = Number(v);
-        sums[i] += absolute ? Math.abs(n) : n;
+        sums[i] = (sums[i] as number) + (absolute ? Math.abs(n) : n);
       }
     }
     out.emit(batchFromColumns({ row_sum: sums }, ROW_SUM_SCHEMA));
