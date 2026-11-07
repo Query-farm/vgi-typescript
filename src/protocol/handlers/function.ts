@@ -34,7 +34,7 @@ import {
 } from "../../generated/vgi-protocol-schemas.js";
 import { unwrapRequest, wrapResult, overloadContext } from "./shared.js";
 import { parseCarriedInitRequest } from "../carried-init-request.js";
-import { openAttach } from "./catalog/shared.js";
+import { openAttach, openTransaction } from "./catalog/shared.js";
 import { currentRequestAuth } from "../../request-auth.js";
 import { batchFromColumns, serializeBatch } from "../../util/arrow/index.js";
 import {
@@ -93,9 +93,18 @@ async function liveSplitAnchor(
 ): Promise<Uint8Array | undefined> {
   if (!catalogInterface?.version || bindCall.attach_opaque_data == null) return undefined;
   const raw = toUint8Array(bindCall.attach_opaque_data);
-  const txn = bindCall.transaction_opaque_data
-    ? toUint8Array(bindCall.transaction_opaque_data)
-    : undefined;
+  // The transaction id is likewise sealed at `plan` (HTTP) and already open at
+  // `init`; the catalog's version() takes plaintext, as its own RPC does, so
+  // open it when it opens under this attach and use it as-is otherwise. Both
+  // stages must ask the same question or mint and redemption disagree.
+  let txn = bindCall.transaction_opaque_data ? toUint8Array(bindCall.transaction_opaque_data) : undefined;
+  if (txn && txn.length > 0 && signingKey) {
+    try {
+      txn = await openTransaction(txn, raw, auth, signingKey);
+    } catch {
+      // already plaintext (init), keep it
+    }
+  }
 
   // The two call sites see the attach envelope at DIFFERENT processing stages —
   // `plan` receives it with the framework's 16-byte UUID prefix still attached,
@@ -212,19 +221,41 @@ export function functionHandlers(config: FunctionHandlerConfig): Partial<VgiServ
     return openAttach(env, ctx?.auth ?? currentRequestAuth(), signingKey);
   }
 
+  // Unseal a bind call's opaque values in place, as the catalog handlers do:
+  // the transaction first (its envelope binds the *sealed* attach), then the
+  // attach. Every function-side request goes through this, so function bodies
+  // see the same transaction plaintext that transactionCommit/Rollback get.
+  async function openOpaque(
+    bindCall: { attach_opaque_data?: Uint8Array | null; transaction_opaque_data?: Uint8Array | null },
+    ctx: any,
+  ): Promise<void> {
+    const sealedAttach = bindCall.attach_opaque_data != null ? toUint8Array(bindCall.attach_opaque_data) : new Uint8Array(0);
+    if (bindCall.transaction_opaque_data != null) {
+      bindCall.transaction_opaque_data = await openTransaction(
+        toUint8Array(bindCall.transaction_opaque_data),
+        sealedAttach,
+        ctx?.auth ?? currentRequestAuth(),
+        signingKey,
+      );
+    }
+    bindCall.attach_opaque_data = await stripAttach(bindCall.attach_opaque_data, ctx);
+  }
+
   // Build an overload context whose attach has been unsealed, so catalog
   // resolution sees the real route byte. The bind/init handlers strip their
   // request in place and can call overloadContext directly; every other site
   // still holds the sealed envelope (73 bytes on HTTP vs 16 plaintext), whose
   // leading byte would otherwise route to an arbitrary catalog.
   async function strippedContext(bindCall: any, ctx?: any) {
-    let attach: Uint8Array | null = null;
+    const copy = { ...bindCall };
     try {
-      attach = await stripAttach(bindCall.attach_opaque_data, ctx);
+      await openOpaque(copy, ctx);
     } catch {
-      attach = null; // Unopenable (wrong key / not sealed) — resolve unscoped.
+      // Unopenable (wrong key / not sealed) — resolve unscoped.
+      copy.attach_opaque_data = null;
+      copy.transaction_opaque_data = null;
     }
-    return overloadContext({ ...bindCall, attach_opaque_data: attach }, catalogInterface);
+    return overloadContext(copy, catalogInterface);
   }
 
   const emptySchema = schema([]);
@@ -243,7 +274,7 @@ export function functionHandlers(config: FunctionHandlerConfig): Partial<VgiServ
   const bind: VgiService["bind"] = async (params, ctx) => {
     const innerParams = unwrapRequest(params.request);
     const request = deserializeBindRequest(innerParams);
-    request.attach_opaque_data = await stripAttach(request.attach_opaque_data, ctx);
+    await openOpaque(request, ctx);
     const func = registry.get(request.function_name, overloadContext(request, catalogInterface));
     const response = await func.bind(request);
     validateProjectionOffer(response);
@@ -280,10 +311,7 @@ export function functionHandlers(config: FunctionHandlerConfig): Partial<VgiServ
       // attach_opaque_data not recognized` on its first scan, i.e. this worker
       // could not serve authenticated traffic at all.
       const auth = ctx?.auth ?? currentRequestAuth();
-      request.bind_call.attach_opaque_data = await stripAttach(
-        request.bind_call.attach_opaque_data,
-        ctx,
-      );
+      await openOpaque(request.bind_call, ctx);
 
       // Verify and strip the split envelopes BEFORE any user code runs, so an
       // unverified token can never be acted on.
@@ -381,7 +409,7 @@ export function functionHandlers(config: FunctionHandlerConfig): Partial<VgiServ
         // a hard error here, as on the init turn: the cursor is caller-bound.)
         // `carried.request.bind_call` is a per-call copy, so this does not
         // disturb the memoised parse other turns share.
-        request.bind_call.attach_opaque_data = await stripAttach(request.bind_call.attach_opaque_data, undefined);
+        await openOpaque(request.bind_call, undefined);
         // Re-derive the split payloads. The cursor carries the wire request,
         // which has `split_tokens` but not the opened `split_payloads` — that
         // field only ever existed in memory on the init turn. Without this a

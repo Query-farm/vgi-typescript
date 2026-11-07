@@ -129,6 +129,23 @@ export async function sealTransaction(
 }
 
 /**
+ * Open a transaction_opaque_data envelope (sealed on HTTP only, no UUID prefix).
+ * `attachEnvelope` is the request's *sealed* attach, which the transaction
+ * envelope's AAD binds. A pass-through without a signing key or for an empty
+ * value. Catalog hooks and function bodies must see the same plaintext, or a
+ * worker cannot tie a function call to its transaction's commit/rollback.
+ */
+export async function openTransaction(
+  envelope: Uint8Array,
+  attachEnvelope: Uint8Array,
+  auth: AuthContext | undefined,
+  signingKey: Uint8Array | undefined,
+): Promise<Uint8Array> {
+  if (!signingKey || envelope.length === 0) return envelope;
+  return openBytes(envelope, signingKey, transactionAad(auth, attachEnvelope), TRANSACTION_ENVELOPE_VERSION, "transaction_opaque_data");
+}
+
+/**
  * Unwrap the attach_opaque_data / transaction_opaque_data fields of a catalog
  * request in place, so handler bodies always see plaintext. The transaction
  * envelope is opened with the *sealed* attach value as part of its AAD, so it

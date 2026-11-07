@@ -50,17 +50,39 @@ class MarkerCatalog extends ReadOnlyCatalogInterface {
     clientCapabilities?: Uint8Array | null,
   ): Promise<CatalogAttachResult> {
     const base = await super.attach(name, options, dataVersionSpec, implementationVersion, clientCapabilities);
-    return { ...base, attach_opaque_data: MARKER };
+    return { ...base, attach_opaque_data: MARKER, supports_transactions: true };
+  }
+
+  override transactionBegin(): Uint8Array {
+    return TX_MARKER;
+  }
+
+  override transactionCommit(_attach: Uint8Array, tx: Uint8Array): void {
+    committed.push(decode(tx));
   }
 }
 
+const TX_MARKER = new TextEncoder().encode("tx-plaintext-0001");
+const committed: (string | null)[] = [];
+
 let initialStateCalls = 0;
+const bindTx: (string | null)[] = [];
 
 // Table in-out: one output row per input batch, naming the attach it saw.
 const attachEcho = defineTableInOutFunction<Record<string, never>, { seen: string | null; batches: number }>({
   name: "attach_echo",
   description: "Echo the attach bytes every turn sees",
-  onBind: () => ({ outputSchema: schema([field("turn", int64(), false), field("attach", utf8(), true), field("from_state", utf8(), true)]) }),
+  onBind: (params) => {
+    bindTx.push(decode(params.bindCall.transaction_opaque_data));
+    return {
+      outputSchema: schema([
+        field("turn", int64(), false),
+        field("attach", utf8(), true),
+        field("from_state", utf8(), true),
+        field("tx", utf8(), true),
+      ]),
+    };
+  },
   initialState: (params) => {
     initialStateCalls++;
     const seen = decode(params.initCall.bind_call.attach_opaque_data);
@@ -76,6 +98,7 @@ const attachEcho = defineTableInOutFunction<Record<string, never>, { seen: strin
           turn: [BigInt(state.batches)],
           attach: [decode(params.initCall.bind_call.attach_opaque_data)],
           from_state: [state.seen],
+          tx: [decode(params.initCall.bind_call.transaction_opaque_data)],
         },
         params.outputSchema,
       ),
@@ -204,5 +227,29 @@ describe("attach_opaque_data over HTTP turns", () => {
       `b@${decode(MARKER)}`,
       `c@${decode(MARKER)}`,
     ]);
+  });
+});
+
+describe("transaction_opaque_data over HTTP turns", () => {
+  test("functions see the same transaction plaintext as the commit hook, on every turn", async () => {
+    bindTx.length = 0;
+    committed.length = 0;
+    const sealed = await client.transactionBegin(attach);
+    // The client holds the sealed envelope, never the plaintext.
+    expect(decode(sealed)).not.toBe(decode(TX_MARKER));
+    const inputSchema = schema([field("x", int64(), false)]);
+    const rows: Record<string, unknown>[] = [];
+    for await (const page of client.tableInOutFunctionRows({
+      functionName: "attach_echo",
+      input: [1, 2, 3].map((x) => batchFromColumns({ x: [BigInt(x)] }, inputSchema)),
+      attachOpaqueData: attach,
+      transactionOpaqueData: sealed,
+    })) {
+      rows.push(...page);
+    }
+    await client.transactionCommit(attach, sealed);
+    expect(bindTx).toEqual([decode(TX_MARKER)]);
+    expect(rows.map((r) => r.tx)).toEqual(Array(3).fill(decode(TX_MARKER)));
+    expect(committed).toEqual([decode(TX_MARKER)]);
   });
 });
