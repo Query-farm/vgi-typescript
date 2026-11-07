@@ -94,7 +94,7 @@ export interface ScalarParameterDef {
   gt?: number;
   /** Exclusive upper bound, `<` (folded into `vgi_range`). */
   lt?: number;
-  /** Regex the value must match (surfaced as `vgi_pattern`). */
+  /** Regex the value must match (surfaced as `vgi_pattern`); an unanchored search — anchor with `^...$` for a full match. */
   pattern?: string;
   /** Default value (surfaced as `vgi_default`, JSON-encoded). */
   default?: unknown;

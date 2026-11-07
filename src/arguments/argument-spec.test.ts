@@ -298,6 +298,12 @@ describe("validateConstConstraints (bind-time enforcement)", () => {
     expect(() => validateConstConstraints("code", c, "abc")).toThrow(ArgumentValidationError);
   });
 
+  test("pattern is an unanchored search (JSON Schema semantics)", () => {
+    const c = { pattern: "\\d+" };
+    expect(() => validateConstConstraints("code", c, "ab12cd")).not.toThrow();
+    expect(() => validateConstConstraints("code", c, "abcd")).toThrow(ArgumentValidationError);
+  });
+
   test("null / undefined skips value constraints", () => {
     const c = { ge: 0, le: 10, choices: [1, 2], pattern: "^x$" };
     expect(() => validateConstConstraints("x", c, null)).not.toThrow();

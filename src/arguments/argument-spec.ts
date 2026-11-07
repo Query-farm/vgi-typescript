@@ -59,7 +59,11 @@ export interface ArgumentConstraints {
   gt?: number;
   /** Exclusive upper bound (`<`). */
   lt?: number;
-  /** Regex the value must match (surfaced as `vgi_pattern`, as-is). */
+  /**
+   * Regex the value must match (surfaced as `vgi_pattern`, as-is). Matching is
+   * an UNANCHORED search (JSON Schema / ECMA-262 semantics, same across SDKs):
+   * `"\\d"` accepts `"ab1"`. Anchor with `^...$` to require a full match.
+   */
   pattern?: string;
   /** Default value (JSON-encoded into `vgi_default`); optional args only. */
   default?: unknown;
@@ -260,7 +264,9 @@ export function assertArrowTypes(
  * Enforce a bind-time const value against its declared {@link ArgumentConstraints},
  * throwing {@link ArgumentValidationError} on violation. Mirrors the Python SDK's
  * `Arg._validate`: numeric range (`ge`/`le`/`gt`/`lt`), closed choice set, and
- * regex `pattern`. A `null`/`undefined` value skips its value constraints.
+ * regex `pattern` (an unanchored search — `RegExp.prototype.test`, matching the
+ * JSON Schema `pattern` keyword). A `null`/`undefined` value skips its value
+ * constraints.
  */
 export function validateConstConstraints(
   name: string,
