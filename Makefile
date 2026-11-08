@@ -205,6 +205,21 @@ EXTRA_HTTP_EXCLUDES ?=
 # TypeScript runs 294 today.
 VGI_TEST_BRANCH_DIR ?= $(shell python3 -c 'import tempfile;print(tempfile.gettempdir())')
 TS_MIN_EXECUTED ?= 290
+
+# Engine-gated native tests (VGI_DIR/CLAUDE.md, "Gate only the cases that need
+# the feature"). The native Makefile decides which engine features the built
+# DuckDB has (VGI_ENGINE_TEST_VARS: on Haybarn each is 1, on upstream unset) and
+# the skip reasons that gating produces (VGI_ENGINE_EXPECTED_SKIPS). Take both
+# from VGI_DIR instead of restating them, so a new engine gate needs no change
+# here. The skip list is read with `--eval` (GNU make >= 4); an older make falls
+# back to `require-env-not VAR` for each variable engine_test_env reports set,
+# which is exactly the Haybarn list.
+VGI_ENGINE_TEST_ENV := $(shell $(MAKE) -s --no-print-directory -C $(VGI_DIR) engine_test_env 2>/dev/null)
+VGI_ENGINE_EXPECTED_SKIPS := $(strip $(shell $(MAKE) -s --no-print-directory -C $(VGI_DIR) \
+	--eval 'vgi_ts_print_engine_skips: ; $$(info $$(VGI_ENGINE_EXPECTED_SKIPS))@:' vgi_ts_print_engine_skips 2>/dev/null))
+ifeq ($(VGI_ENGINE_EXPECTED_SKIPS),)
+VGI_ENGINE_EXPECTED_SKIPS := $(foreach kv,$(VGI_ENGINE_TEST_ENV),--allow-skip 'require-env-not $(firstword $(subst =, ,$(kv)))')
+endif
 COVERAGE_GATE := --min-executed $(TS_MIN_EXECUTED) \
 	--allow-skip 'require spatial' \
 	--allow-skip 'require-env VGI_DOCKER_IMAGE' \
@@ -220,7 +235,6 @@ COVERAGE_GATE := --min-executed $(TS_MIN_EXECUTED) \
 	--allow-skip 'require-env VGI_VERSIONED_TABLES_HTTP_WORKER' \
 	--allow-skip 'require-env VGI_WORKER_SUPPORTS_DYNAMIC_CODE' \
 	--allow-skip 'require-env VGI_SIMPLE_WRITABLE_WORKER' \
-	--allow-skip 'require-env-not VGI_ENGINE_DELETE_RETURNING_VIRTUAL_COLUMNS' \
 	--allow-skip 'require-env VGI_SCHEMA_RECONCILE_DB' \
 	--allow-skip 'require-env VGI_RULES_WORKER' \
 	--allow-skip 'require-env VGI_ATTACH_OPTIONS_REQUIRED_WORKER' \
@@ -230,7 +244,8 @@ COVERAGE_GATE := --min-executed $(TS_MIN_EXECUTED) \
 	--allow-skip 'require-env VGI_DATABASE_PYTHON_WORKER' \
 	--allow-skip 'require-env VGI_DATABASE_RUST_WORKER' \
 	--allow-skip 'require-env VGI_MALFORMED_BATCH_WORKER' \
-	--allow-skip 'require-env VGI_ROWID_CONSTRAINT_WORKER'
+	--allow-skip 'require-env VGI_ROWID_CONSTRAINT_WORKER' \
+	$(VGI_ENGINE_EXPECTED_SKIPS)
 
 test:
 	@cd $(VGI_DIR) && \
@@ -244,6 +259,7 @@ test:
 	export VGI_REQUIRE_LAUNCHER_TRANSPORT=1; \
 	export VGI_WORKER_IDLE_TIMEOUT=$(LAUNCHER_IDLE_TIMEOUT); \
 	export VGI_TEST_BRANCH_DIR="$(VGI_TEST_BRANCH_DIR)"; \
+	set -a; eval "$$($(MAKE) -s --no-print-directory engine_test_env 2>/dev/null)"; set +a; \
 	python3 scripts/run_tests.py -j $(JOBS) --test-config $(TEST_CONFIG) $(COVERAGE_GATE) $(LAUNCHER_TEST_PATTERNS) > $(TEST_LOG) 2>&1; \
 	rc=$$?; \
 	tail -n 20 $(TEST_LOG); \
@@ -464,3 +480,8 @@ test-client:
 	rc=$$?; \
 	cleanup; \
 	exit $$rc
+
+# Show the engine-gated skip reasons and variables taken from VGI_DIR.
+.PHONY: print-engine-skips
+print-engine-skips:
+	@$(info engine env: $(VGI_ENGINE_TEST_ENV))$(info engine skips: $(VGI_ENGINE_EXPECTED_SKIPS)):
