@@ -117,6 +117,17 @@ export interface TableDescriptor {
   requiredFilters?: string[][][];
   supportsTimeTravel?: boolean;
   /**
+   * Protocol 3.2 — when the client resolves this table's scan redirect.
+   * `"bind"` (default) keeps 3.1 behaviour. `"filtered"` makes the client call
+   * `catalog_table_scan_branches_get` once per scan, after collecting the
+   * query's predicates on the table, and pass them as `pushdown_filters` to
+   * the catalog's `tableScanBranchesPlan` (override it on a
+   * `ReadOnlyCatalogInterface` subclass); zero branches then means "no rows".
+   * Requires `columns` and no `function`: a `function` table inlines a fixed
+   * scan redirect.
+   */
+  scanPlanning?: "bind" | "filtered";
+  /**
    * Inline cardinality estimate/max surfaced through TableInfo. When set,
    * the C++ extension uses these directly and skips the per-bind
    * table_function_cardinality RPC. Only meaningful for function-backed

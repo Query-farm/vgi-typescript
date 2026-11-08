@@ -307,6 +307,8 @@ const CASES: WireRecordCase[] = [
           sourceSchemaPath: ["main"],
           sourceTable: "events",
           schemaPath: ["main"],
+          rowCount: 1000,
+          columnStatistics: new Uint8Array([4, 5, 6]),
         },
       ]).branches[0],
   },
@@ -334,6 +336,9 @@ const CASES: WireRecordCase[] = [
       "format_name",
       "format_locations",
       "format_options",
+      // Protocol 3.2 branch statistics: the legacy result carries none.
+      "row_count",
+      "column_statistics",
     ],
   },
   {

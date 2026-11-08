@@ -272,6 +272,17 @@ export {
 
 // Column statistics (for inlining on TableInfo.column_statistics).
 export { type ColumnStatistics, serializeColumnStatistics } from "./util/statistics.js";
+// Protocol 3.2 filtered scan planning (TableInfo.scan_planning, tableScanBranchesPlan).
+export {
+  ScanPlanningFilters,
+  filtersMayMatch,
+  validateScanPlanning,
+  SCAN_PLANNING_BIND,
+  SCAN_PLANNING_FILTERED,
+  SCAN_PLANNING_MODES,
+  type ScanPlanningMode,
+  type ScanCandidateStatistics,
+} from "./catalog/scan-planning.js";
 
 // Byte utilities
 export { toUint8Array } from "./util/bytes.js";

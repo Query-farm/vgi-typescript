@@ -193,6 +193,7 @@ export class InMemoryCatalog extends CatalogInterface {
       cardinality_estimate: 0,
       cardinality_max: 0,
       required_filters: [],
+      scan_planning: "bind",
     }));
   }
 
@@ -246,6 +247,7 @@ export class InMemoryCatalog extends CatalogInterface {
       cardinality_estimate: 0,
       cardinality_max: 0,
       required_filters: [],
+      scan_planning: "bind",
     };
   }
 

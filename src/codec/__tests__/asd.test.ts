@@ -120,6 +120,7 @@ describe("ASD codec", () => {
       write_result_modes: { insert: "changes", delete: "count" },
       supports_column_statistics: false,
       required_filters: [],
+      scan_planning: "bind",
     };
     const bytes = encodeASD(TableInfoSchema, v);
     const back = decodeASD<TableInfo>(TableInfoSchema, bytes);

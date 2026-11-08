@@ -54,6 +54,7 @@ test("canonical generated CREATE, ADD and discovery preserve expressions through
     column_statistics: null,
     bind_result: null,
     required_filters: [],
+    scan_planning: "bind",
     options: null,
     layout: null,
   });

@@ -70,6 +70,7 @@ class AsyncStubCatalog extends CatalogInterface {
       write_result_modes: {},
       supports_column_statistics: false,
       required_filters: [],
+      scan_planning: "bind",
     };
   }
   override async schemaContentsTables(attachOpaqueData: AttachOpaqueData, _path: string[]): Promise<TableInfo[]> {

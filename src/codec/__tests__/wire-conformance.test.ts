@@ -234,7 +234,7 @@ describe("maps and nested records", () => {
     const bytes = encodeTableInfo({
       comment: null, tags: {}, name: "t", schema_path: ["main"], columns: new Uint8Array(0),
       constraints: [], write_result_modes: {}, supports_column_statistics: false,
-      required_filters: [null, [null, [null, "column"]]],
+      required_filters: [null, [null, [null, "column"]]], scan_planning: "bind",
     } as any);
     expect(wireViolations(bytes, "TableInfo")).toEqual([]);
     const r = row(bytes);

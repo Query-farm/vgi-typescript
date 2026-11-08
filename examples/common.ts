@@ -5,19 +5,21 @@ import { decodeCatalogCapabilities, encodeCatalogCapabilities } from "../src/gen
 // Shared function and catalog registration for example workers.
 // Used by both the IPC worker (worker.ts) and HTTP worker (http-worker.ts).
 
-import { Schema, Field, Int32, Int64, Float64, Float32, Bool, Utf8, Struct } from "@query-farm/apache-arrow";
+import { Schema, Field, Int32, Int64, Float64, Float32, Bool, Utf8, Struct, DateDay, List } from "@query-farm/apache-arrow";
 import {
   type CatalogDescriptor, type MacroDescriptor, Arguments,
   serializeBatch, batchFromColumns,
   ReadOnlyCatalogInterface, TableInfo,
   type AttachOpaqueData, type TransactionOpaqueData,
   buildScanBranchesResult, encodeFormatOptions, type ScanBranchInput,
+  type ColumnStatistics, type ScanPlanningFilters,
   functionStorage,
 } from "../src/index.js";
 import { serializeSchema } from "../src/util/arrow/index.js";
 import { argumentSpecsToSchema } from "../src/arguments/argument-spec.js";
 import { scalarFunctions } from "./scalar.js";
 import * as os from "node:os";
+import * as fs from "node:fs";
 import { fixtureConstraint as constraint, versionedFixtureConstraints, FIXTURE_CONSTRAINT_REVISION } from "./canonical_constraints.js";
 import { fixtureIndex } from "./canonical_indexes.js";
 
@@ -45,6 +47,66 @@ const BRANCH_DIR = (process.env.VGI_TEST_BRANCH_DIR || os.tmpdir())
 function branchPath(name: string): string {
   return `${BRANCH_DIR}/${name}`;
 }
+
+// Protocol 3.2 filtered scan planning fixtures
+// (test/sql/integration/catalog/scan_planning_*.test). Five days of data, one
+// parquet file per day under ${BRANCH_DIR}/planned_days/. The tests create the
+// files for the first four days only: the 2026-10-05 file never exists, so any
+// scan that fails to prune that day errors with "No files found" — a passing
+// query proves the pruning happened. Mirrors vgi-python's _PLANNED_DAYS.
+const PLANNED_DAYS: readonly Date[] = [1, 2, 3, 4, 5].map((d) => new Date(Date.UTC(2026, 9, d)));
+const PLANNED_DIR = branchPath("planned_days");
+const isoDay = (day: Date): string => day.toISOString().slice(0, 10);
+const plannedDayFile = (day: Date): string => `${PLANNED_DIR}/${isoDay(day)}.parquet`;
+const plannedDayStats = (day: Date): ColumnStatistics[] => [{
+  columnName: "event_date", arrowType: new DateDay(), min: day, max: day,
+  hasNull: false, hasNotNull: true, distinctCount: null, containsUnicode: null, maxStringLength: null,
+}];
+const plannedDaysColumns = () => new Schema([new Field("event_date", new DateDay(), true), new Field("n", new Int64(), true)]);
+
+/** Branches for the protocol 3.2 planned_days* fixtures (see PLANNED_DAYS). */
+async function plannedDaysBranches(name: string, filters: ScanPlanningFilters | null) {
+  const strList = (values: string[]) => ({ value: values, type: new List(new Field("item", new Utf8(), true)) });
+  const str = (value: string) => ({ value, type: new Utf8() });
+  if (name === "planned_days") {
+    const days: Date[] = [];
+    for (const day of PLANNED_DAYS) if (filters == null || await filters.mayMatch(plannedDayStats(day))) days.push(day);
+    // Record what the worker saw so tests can assert the predicates arrived.
+    fs.mkdirSync(PLANNED_DIR, { recursive: true });
+    fs.writeFileSync(`${PLANNED_DIR}/last_plan.json`,
+      JSON.stringify({ received_filters: filters != null, days: days.map(isoDay) }));
+    if (days.length === 0) return buildScanBranchesResult([], ["parquet"]);
+    return buildScanBranchesResult(
+      [{ functionName: "read_parquet", positionalArguments: [strList(days.map(plannedDayFile))], rowCount: 10 * days.length }],
+      ["parquet"],
+    );
+  }
+  if (name === "planned_days_stats") {
+    return buildScanBranchesResult(
+      PLANNED_DAYS.map((day) => ({
+        functionName: "read_parquet",
+        positionalArguments: [str(plannedDayFile(day))],
+        rowCount: 10,
+        columnStatistics: plannedDayStats(day),
+      })),
+      ["parquet"],
+    );
+  }
+  if (name === "planned_days_bf") {
+    return buildScanBranchesResult(
+      PLANNED_DAYS.map((day) => ({
+        functionName: "read_parquet",
+        positionalArguments: [str(plannedDayFile(day))],
+        branchFilter: `event_date = DATE '${isoDay(day)}'`,
+      })),
+      ["parquet"],
+    );
+  }
+  throw new Error(`unknown planned_days fixture table: ${name}`);
+}
+
+const isPlannedDays = (schemaPath: string[], name: string): boolean =>
+  schemaPath.length === 1 && schemaPath[0]!.toLowerCase() === "data" && name.toLowerCase().startsWith("planned_days");
 
 import {
   tableFunctions, resolveVersion, getVersionedSchema,
@@ -602,6 +664,29 @@ export const catalog: CatalogDescriptor = {
         // These tables declare explicit `columns` only (no `function`), so
         // they appear as catalog tables but route through the
         // tableScanBranchesGet override below for their scan plans.
+        // Protocol 3.2 filtered scan planning: the worker prunes the day files
+        // with the query's predicates (ScanPlanningFilters.mayMatch).
+        {
+          name: "planned_days",
+          columns: plannedDaysColumns(),
+          scanPlanning: "filtered",
+          comment: "Protocol 3.2: worker-side pruning of per-day files — scan_planning_filtered.test",
+        },
+        // Protocol 3.2 branch statistics: one branch per day with event_date
+        // min/max; the worker ignores the predicates and the client prunes.
+        {
+          name: "planned_days_stats",
+          columns: plannedDaysColumns(),
+          scanPlanning: "filtered",
+          comment: "Protocol 3.2: client-side pruning by ScanBranch statistics — scan_planning_stats.test",
+        },
+        // Protocol 3.2 branch_filter contradiction on a bind-time table: one
+        // branch per day with branch_filter event_date = DATE '<day>'.
+        {
+          name: "planned_days_bf",
+          columns: plannedDaysColumns(),
+          comment: "Protocol 3.2: pruning by branch_filter contradiction — scan_planning_branch_filter.test",
+        },
         {
           name: "multi_branch_numbers",
           columns: new Schema([new Field("n", new Int64(), true)]),
@@ -1107,6 +1192,7 @@ export function createExampleCatalog(base: ReadOnlyCatalogInterface): ReadOnlyCa
         cardinality_estimate: 0,
         cardinality_max: 0,
         required_filters: [],
+        scan_planning: "bind",
       };
     }
     if (schemaPath.join(".").toLowerCase() === "data" && name.toLowerCase() === "versioned_constraints" && atUnit) {
@@ -1209,6 +1295,26 @@ export function createExampleCatalog(base: ReadOnlyCatalogInterface): ReadOnlyCa
   // the default-impl shim (one-branch wrap of tableScanFunctionGet) for every
   // other table. Mirrors vgi-python's ExampleCatalog.table_scan_branches_get.
   const origTableScanBranchesGet = base.tableScanBranchesGet.bind(base);
+
+  // Protocol 3.2: the planned_days* tables use the query's predicates; the
+  // rest delegate (the default returns tableScanBranchesGet).
+  const origTableScanBranchesPlan = base.tableScanBranchesPlan.bind(base);
+  base.tableScanBranchesPlan = (
+    attachOpaqueData: AttachOpaqueData,
+    schemaPath: string[],
+    name: string,
+    atUnit: string | undefined,
+    atValue: string | undefined,
+    transactionOpaqueData: TransactionOpaqueData | undefined,
+    pushdownFilters: ScanPlanningFilters | null,
+  ): any => {
+    if (isPlannedDays(schemaPath, name)) {
+      validateAtParams(atUnit, atValue);
+      return plannedDaysBranches(name.toLowerCase(), pushdownFilters);
+    }
+    return origTableScanBranchesPlan(attachOpaqueData, schemaPath, name, atUnit, atValue, transactionOpaqueData, pushdownFilters);
+  };
+
   base.tableScanBranchesGet = (
     attachOpaqueData: AttachOpaqueData,
     schemaPath: string[],
@@ -1218,6 +1324,7 @@ export function createExampleCatalog(base: ReadOnlyCatalogInterface): ReadOnlyCa
     transactionOpaqueData?: TransactionOpaqueData,
   ): any => {
     validateAtParams(atUnit, atValue);
+    if (isPlannedDays(schemaPath, name)) return plannedDaysBranches(name.toLowerCase(), null);
 
     const i64 = (value: number | bigint) => ({ value: BigInt(value), type: new Int64() });
     const str = (value: string) => ({ value, type: new Utf8() });

@@ -177,6 +177,8 @@ import { conformColumns } from "../codec/conform.js";
 import { schema as schema_, field as field_, type VgiDataType, type VgiField } from "../arrow/index.js";
 import { toUint8Array } from "../util/bytes.js";
 import { ScanBranchSchema, ScanFunctionResultSchema } from "../generated/vgi-protocol-schemas.js";
+import { serializeColumnStatistics, type ColumnStatistics } from "../util/statistics.js";
+import type { ScanPlanningFilters } from "./scan-planning.js";
 
 /**
  * Result from `tableScanFunctionGet` — tells the VGI DuckDB extension which
@@ -361,6 +363,8 @@ function encodeScanBranch(cols: {
   format_locations?: string[] | null | undefined;
   format_options?: Uint8Array | null | undefined;
   schema_path?: string[] | null | undefined;
+  row_count?: bigint | null | undefined;
+  column_statistics?: Uint8Array | null | undefined;
 }): Uint8Array {
   return serializeBatch(
     batchFromColumns(
@@ -376,6 +380,8 @@ function encodeScanBranch(cols: {
         format_locations: [cols.format_locations ?? null],
         format_options: [cols.format_options ?? null],
         schema_path: [cols.schema_path ?? null],
+        row_count: [cols.row_count ?? null],
+        column_statistics: [cols.column_statistics ?? null],
       }),
       ScanBranchSchema as any,
     ),
@@ -434,6 +440,44 @@ export interface ScanBranchInput {
    * names a catalog-table branch's *source table's* schema.
    */
   schemaPath?: string[] | null;
+  /**
+   * Protocol 3.2 — estimated rows this branch produces before any predicate.
+   * Cardinality estimation only; a client never trusts it as exact.
+   */
+  rowCount?: number | bigint | null;
+  /**
+   * Protocol 3.2 — conservative per-column statistics for every row this
+   * branch produces, keyed by the table's declared column names (columns may
+   * be omitted). A client drops the branch when a query predicate is provably
+   * false against them, so wrong statistics silently lose rows: leave a column
+   * out rather than guess. Either the statistics themselves or an
+   * already-serialized `serializeColumnStatistics` payload.
+   */
+  columnStatistics?: ColumnStatistics[] | Uint8Array | null;
+}
+
+/** Validate and encode a branch's protocol 3.2 statistics fields. */
+function branchStatistics(branch: ScanBranchInput): { row_count: bigint | null; column_statistics: Uint8Array | null } {
+  let rowCount: bigint | null = null;
+  if (branch.rowCount != null) {
+    if (typeof branch.rowCount === "number" && !Number.isSafeInteger(branch.rowCount)) {
+      throw new Error(`ScanBranch.rowCount must be an integer, got ${branch.rowCount}`);
+    }
+    rowCount = BigInt(branch.rowCount);
+    if (rowCount < 0n) throw new Error(`ScanBranch.rowCount must be >= 0, got ${rowCount}`);
+  }
+  let columnStatistics: Uint8Array | null = null;
+  const stats = branch.columnStatistics;
+  if (stats instanceof Uint8Array) {
+    columnStatistics = stats;
+  } else if (stats != null) {
+    const names = stats.map((s) => s.columnName);
+    if (new Set(names).size !== names.length) {
+      throw new Error("ScanBranch.columnStatistics names a column more than once");
+    }
+    columnStatistics = serializeColumnStatistics(stats);
+  }
+  return { row_count: rowCount, column_statistics: columnStatistics };
 }
 
 /**
@@ -491,8 +535,10 @@ function serializeBranchArguments(branch: ScanBranchInput): Uint8Array {
  * `ScanBranchesResult` construction in the test fixture's
  * `table_scan_branches_get`.
  *
- * An empty `branches` list is serialized verbatim — the C++ side loud-fails
- * on it (that asymmetry is exercised by multi_branch_empty_branches.test).
+ * An empty `branches` list is serialized verbatim. For a table declaring
+ * `scan_planning: "filtered"` (protocol 3.2) it means the scan produces no
+ * rows; for a `"bind"` table the client still rejects it (exercised by
+ * multi_branch_empty_branches.test).
  */
 export function buildScanBranchesResult(
   branches: ScanBranchInput[],
@@ -511,6 +557,7 @@ export function buildScanBranchesResult(
       format_locations: branch.formatLocations,
       format_options: branch.formatOptions,
       schema_path: branch.schemaPath,
+      ...branchStatistics(branch),
     }),
   );
   return {
@@ -911,6 +958,35 @@ export abstract class CatalogInterface {
     return isPromise(legacy)
       ? legacy.then((r) => singleBranchResult(r))
       : singleBranchResult(legacy);
+  }
+  /**
+   * Plan a table's scan branches with the query's predicates (protocol 3.2).
+   *
+   * The worker calls this for every `catalog_table_scan_branches_get`. The
+   * default ignores `pushdownFilters` and returns `tableScanBranchesGet`, so
+   * catalogs written for 3.1 keep working unchanged. Override it for tables
+   * declaring `scan_planning: "filtered"` to return fewer branches or files.
+   *
+   * Every predicate is advisory: the client re-applies all of them, so return
+   * any superset of the branches and files that could hold matching rows, and
+   * never drop one that could. `ScanPlanningFilters.mayMatch` prunes
+   * candidates by min/max statistics. A `"filtered"` table may return zero
+   * branches, meaning the scan produces no rows.
+   *
+   * `pushdownFilters` is null when none were collected (bind-time planning, or
+   * no usable predicate); otherwise its predicates are decoded lazily against
+   * the table's declared columns (`tableGet(...).columns`).
+   */
+  tableScanBranchesPlan(
+    attachOpaqueData: AttachOpaqueData,
+    schemaPath: string[],
+    name: string,
+    atUnit: string | undefined,
+    atValue: string | undefined,
+    transactionOpaqueData: TransactionOpaqueData | undefined,
+    pushdownFilters: ScanPlanningFilters | null,
+  ): Awaitable<any> {
+    return this.tableScanBranchesGet(attachOpaqueData, schemaPath, name, atUnit, atValue, transactionOpaqueData);
   }
   /**
    * Return serialized column statistics for a table, or null if none are

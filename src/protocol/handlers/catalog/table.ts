@@ -13,6 +13,8 @@ import {
   ScanFunctionResultSchema,
 } from "../../../generated/vgi-protocol-schemas.js";
 import { toUint8Array } from "../../../util/bytes.js";
+import { deserializeSchema } from "../../../arrow/index.js";
+import { ScanPlanningFilters } from "../../../catalog/scan-planning.js";
 import { requireCreateColumns } from "../../../catalog/unconstrained-columns.js";
 import { CONSTRAINT_CREATE, CONSTRAINT_ENFORCE, CONSTRAINT_MUTATE, readConstraintRecord } from "../../../catalog/constraints.js";
 import { decodeCatalogObjectRef } from "../../../generated/vgi-protocol-types.js";
@@ -201,16 +203,25 @@ export function catalogTableHandlers(getCatalog: GetCatalog, signingKey?: Uint8A
   // catalog_table_scan_branches_get — branches-aware variant of
   // scan_function_get. The branches-aware C++ extension calls this for every
   // table scan; single-source catalogs synthesise a one-branch result.
+  //
+  // Protocol 3.2: always dispatches to tableScanBranchesPlan with the
+  // `pushdown_filters` wrapped as a ScanPlanningFilters (decoded lazily against
+  // the table's declared columns); its default returns tableScanBranchesGet.
   const catalogTableScanBranchesGet = catalogHandler(keys, async (params) => {
     const cat = getCatalog();
-    const branchesResult = await cat.tableScanBranchesGet(
-      toUint8Array(params.attach_opaque_data),
-      params.schema_path,
-      params.name,
-      params.at_unit,
-      params.at_value,
-      params.transaction_opaque_data ? toUint8Array(params.transaction_opaque_data) : undefined
-    );
+    const attach = toUint8Array(params.attach_opaque_data);
+    const tx = params.transaction_opaque_data ? toUint8Array(params.transaction_opaque_data) : undefined;
+    const schemaPath = params.schema_path;
+    const name = params.name;
+    const atUnit = params.at_unit;
+    const atValue = params.at_value;
+    const filters = params.pushdown_filters != null
+      ? new ScanPlanningFilters(toUint8Array(params.pushdown_filters), async () => {
+          const info = await cat.tableGet(attach, schemaPath, name, atUnit, atValue, tx);
+          return info && info.columns.length ? deserializeSchema(toUint8Array(info.columns)) : null;
+        })
+      : null;
+    const branchesResult = await cat.tableScanBranchesPlan(attach, schemaPath, name, atUnit, atValue, tx, filters);
     return wrapResult(branchesResult, ScanBranchesResultSchema);
   });
 

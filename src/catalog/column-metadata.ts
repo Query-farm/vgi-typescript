@@ -3,6 +3,7 @@ import { validateColumnExpressionsIpc } from "./column-expressions.js";
 import type { VgiSchema } from "../arrow/index.js";
 import { encodeTableInfo, type TableInfo } from "../generated/vgi-client.js";
 import { servedTableInfo } from "./constraints.js";
+import { validateScanPlanning } from "./scan-planning.js";
 
 function scalarText(value: string): void {
   for (let i = 0; i < value.length; i++) {
@@ -144,6 +145,7 @@ export function validateColumnMetadataIpc(bytes: Uint8Array): void {
   vector(schema, 1, (f) => field(f, 0));
 }
 export function validateTableInfoColumns(info: TableInfo): void {
+  validateScanPlanning(info.name, info.scan_planning, info.scan_function != null);
   if (info.columns.length) { validateColumnMetadataIpc(info.columns); validateColumnExpressionsIpc(info.columns, info.schema_path); }
 }
 /**
@@ -153,6 +155,11 @@ export function validateTableInfoColumns(info: TableInfo): void {
  * generated metadata translated), whose column expressions are checked last.
  */
 export function servedValidatedTableInfo(info: TableInfo): TableInfo {
+  // Protocol 3.2: default an absent `scan_planning` (a catalog written for
+  // 3.1) to "bind", and refuse unknown values or a "filtered" table that
+  // inlines its scan.
+  const scanPlanning = validateScanPlanning(info.name, info.scan_planning, info.scan_function != null);
+  if (info.scan_planning !== scanPlanning) info = { ...info, scan_planning: scanPlanning };
   if (info.columns.length) validateColumnMetadataIpc(info.columns);
   const served = servedTableInfo(info);
   if (served.columns.length) {

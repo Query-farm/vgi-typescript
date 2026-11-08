@@ -54,6 +54,7 @@ test("CREATE, ADD and discovery preserve raw metadata through client and provide
     column_statistics: null,
     bind_result: null,
     required_filters: [],
+    scan_planning: "bind",
     options: null,
     layout: null,
   });

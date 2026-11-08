@@ -80,11 +80,11 @@ export { VGI_PROTOCOL_NAME };
  * hash covers method names, types and the params/result/header schemas only
  * (WIRE_PROTOCOL.md §14).
  *
- * It changes only with vgi.v3's protocol version (currently 3.1.0). Asserted
+ * It changes only with vgi.v3's protocol version (currently 3.2.0). Asserted
  * by src/protocol/__tests__/vgi-v3-hash.test.ts; if that test fails, the
  * surface drifted from the reference -- fix the schemas, do not bump this.
  */
-export const VGI_V3_PROTOCOL_HASH = "50e9404173bee3262e96b8939eb5c425463336abca2a17916812d68b6e0f6cad";
+export const VGI_V3_PROTOCOL_HASH = "171ac8263bf22ffdd5dd4ac2c3d3c4e1dc186a7ceba45d386f324af8c9c6fced";
 
 /**
  * This worker's `vgi.v3` implementation: the generated UNIMPLEMENTED default

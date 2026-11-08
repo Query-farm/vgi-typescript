@@ -1,5 +1,44 @@
 # Migration guide
 
+## Unreleased — vgi.v3 / 3.2.0 filtered scan planning
+
+Protocol 3.2.0 is a minor bump of `vgi.v3`; peers match exact major and minor,
+so upgrade the VGI extension and workers together. A worker needs no code
+changes unless it opts in. See the protocol spec,
+[`docs/protocol/scan-planning.md`](https://github.com/Query-farm/vgi-python/blob/main/docs/protocol/scan-planning.md).
+
+- **`scan_planning` on tables.** `TableDescriptor.scanPlanning` (and
+  `TableInfo.scan_planning`) is `"bind"` (default, 3.1 behaviour) or
+  `"filtered"`. A filtered table's client defers
+  `catalog_table_scan_branches_get` until it has collected the query's
+  predicates on that table. A filtered table declares `columns`, not a
+  `function`: it must not inline `scan_function` (rejected when served, along
+  with unknown values). A `TableInfo` without `scan_planning` is served as
+  `"bind"`.
+- **Planning hook.** `CatalogInterface.tableScanBranchesPlan(attach, schemaPath,
+  name, atUnit, atValue, tx, pushdownFilters)` is now what the worker calls for
+  every `catalog_table_scan_branches_get`. Its default ignores the filters and
+  returns `tableScanBranchesGet`, so existing overrides keep working.
+  `pushdownFilters` is a `ScanPlanningFilters` (or null when none were sent):
+  `raw` holds the filter v2 snapshot bytes, `decode()` resolves the table's
+  declared columns through `tableGet` and returns `PushdownFilters`, and
+  `mayMatch(statistics)` returns false only when the predicates provably exclude
+  every row a candidate (file, partition) with those min/max/null statistics
+  could hold. `filtersMayMatch(decoded, statistics)` is the synchronous form.
+  Every predicate is advisory; never drop a candidate that could match.
+- **Zero branches** from `buildScanBranchesResult([])` means "no rows" for a
+  filtered table (still an error for a `"bind"` table).
+- **Branch statistics.** `ScanBranchInput.rowCount` (cardinality estimate) and
+  `ScanBranchInput.columnStatistics` (`ColumnStatistics[]`, or a
+  `serializeColumnStatistics` payload) let the client prune a branch whose
+  statistics contradict the query. Statistics are conservative claims: omit a
+  column rather than guess.
+- **Exports.** The package root exports `ScanPlanningFilters`,
+  `filtersMayMatch`, `validateScanPlanning`, `SCAN_PLANNING_BIND`,
+  `SCAN_PLANNING_FILTERED`, `SCAN_PLANNING_MODES` and the `ScanPlanningMode` /
+  `ScanCandidateStatistics` types; `./worker-cf` adds `buildScanBranchesResult`,
+  `ScanPlanningFilters`, `filtersMayMatch` and the scan-planning constants.
+
 ## Unreleased — vgi.v3 constraint and column-expression fixes
 
 - **Served nullability follows the constraint records.** A table is served with

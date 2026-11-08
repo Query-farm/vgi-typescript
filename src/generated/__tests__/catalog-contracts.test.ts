@@ -25,7 +25,8 @@ import { decodeViewInfo, encodeViewInfo, decodeTableInfo, encodeTableInfo } from
 import { encodeASD, decodeASD } from "../../codec/asd.js";
 import { TableCreateRequestSchema } from "../vgi-protocol-schemas.js";
 import * as schemas from "../vgi-protocol-schemas.js";
-import { deserializeBatch, serializeBatch, typeSignature } from "../../arrow/index.js";
+import { deserializeBatch, deserializeSchema, serializeBatch, typeSignature } from "../../arrow/index.js";
+import { ScanPlanningFilters } from "../../catalog/scan-planning.js";
 
 test("typed indexes preserve raw paths, contextual keys and typed option state", () => {
   for (const [name, schema] of [
@@ -194,6 +195,49 @@ describe("Python catalog contract corpus", () => {
     expect(plan.key_grouping).toEqual(fixture("partition_key_grouping"));
     expect(plan.range_partitioning).toEqual(fixture("partition_range_partitioning"));
     expect(plan.splits).toEqual([fixture("partition_scan_split")]);
+  });
+
+  test("Protocol 3.2 filtered scan planning decodes the Python golden records", async () => {
+    // A branch carrying row_count + column_statistics.
+    const branch = decodeASD<Record<string, any>>(schemas.ScanBranchSchema, fixture("scan_planning_branch"));
+    expect(branch.function_name).toBe("read_parquet");
+    expect(Number(branch.row_count)).toBe(1000);
+    const stats = deserializeBatch(branch.column_statistics);
+    expect(stats.numRows).toBe(2);
+    expect([0, 1].map((i) => stats.getChild("column_name")!.get(i))).toEqual(["event_date", "n"]);
+    expect([0, 1].map((i) => stats.getChild("has_null")!.get(i))).toEqual([false, true]);
+    expect(decodeASD(schemas.ScanBranchSchema, encodeASD(schemas.ScanBranchSchema, branch))).toEqual(branch);
+
+    const result = decodeASD<Record<string, any>>(schemas.ScanBranchesResultSchema,
+      fixture("scan_planning_branches_result"));
+    expect(result.required_extensions).toEqual(["parquet"]);
+    expect(result.branches).toHaveLength(1);
+    expect(decodeASD<Record<string, any>>(schemas.ScanBranchSchema, result.branches[0])).toEqual(branch);
+
+    // Zero branches is legal (filtered table, "no rows") on decode and encode.
+    const empty = decodeASD<Record<string, any>>(schemas.ScanBranchesResultSchema,
+      fixture("scan_planning_empty_branches_result"));
+    expect(empty.branches).toEqual([]);
+    expect(empty.required_extensions).toEqual([]);
+    expect(decodeASD(schemas.ScanBranchesResultSchema, encodeASD(schemas.ScanBranchesResultSchema, empty))).toEqual(empty);
+
+    const table = decodeTableInfo(fixture("scan_planning_table_info"));
+    expect(table.scan_planning).toBe("filtered");
+    expect(table.scan_function ?? null).toBeNull();
+    expect(decodeTableInfo(encodeTableInfo(table))).toEqual(table);
+
+    // WHERE event_date >= DATE '2026-10-03' AND n < 100, over (event_date, n).
+    const columns = deserializeSchema(table.columns);
+    const filters = new ScanPlanningFilters(fixture("scan_planning_pushdown_filters"), () => columns);
+    const decoded = await filters.decode();
+    expect(decoded.predicates).toHaveLength(2);
+    expect(decoded.filteredColumns()).toEqual(["event_date", "n"]);
+    const day = (d: number) => new Date(Date.UTC(2026, 9, d));
+    const dayStats = (d: number) => [{ columnName: "event_date", min: day(d), max: day(d), hasNull: false }];
+    expect(await filters.mayMatch(dayStats(2))).toBe(false);
+    expect(await filters.mayMatch(dayStats(3))).toBe(true);
+    expect(await filters.mayMatch([{ columnName: "n", min: 100n, max: 200n }])).toBe(false);
+    expect(await filters.mayMatch([{ columnName: "n", min: 99n, max: 200n }])).toBe(true);
   });
 
   test("option changes preserve opaque Arrow metadata and distinguish absence", () => {

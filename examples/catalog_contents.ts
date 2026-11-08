@@ -257,6 +257,7 @@ abstract class PrivateMemoryCatalog extends CatalogInterface {
       write_result_modes: {},
       supports_column_statistics: false,
       required_filters: [],
+      scan_planning: "bind",
     });
     state.version++;
   }

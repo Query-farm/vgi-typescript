@@ -24,6 +24,7 @@ import {
 } from "./interface.js";
 import { schemaDescriptorPath, type CatalogDescriptor, type SchemaDescriptor, type TableDescriptor, type ViewDescriptor, type MacroDescriptor, type SettingDescriptor, type SecretTypeDescriptor, type ForeignKeyDef, type DefaultValue } from "./descriptors.js";
 import { serializeColumnStatistics } from "../util/statistics.js";
+import { SCAN_PLANNING_BIND, SCAN_PLANNING_FILTERED, validateScanPlanning } from "./scan-planning.js";
 import type { VgiFunction } from "../functions/types.js";
 import type { FunctionRegistry } from "../functions/registry.js";
 import { argumentSpecsToSchema } from "../arguments/argument-spec.js";
@@ -116,7 +117,7 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
     this._descriptor = descriptor;
     this._registry = registry;
     if (options.perAttachItemIds) this.perAttachItemIds = true;
-    for (const sch of descriptor.schemas ?? []) for (const tbl of sch.tables ?? []) validateWritableTable(tbl);
+    for (const sch of descriptor.schemas ?? []) for (const tbl of sch.tables ?? []) { validateWritableTable(tbl); validateTableScanPlanning(tbl); }
     // Index every function this catalog declares by its owning schema, so a
     // schema-qualified bind resolves to the right implementation when one name
     // is declared in more than one schema. Table-backing functions are indexed
@@ -516,6 +517,7 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
           ? Number(t.inlinedCardinality.max)
           : null,
         required_filters: requiredFilters,
+        scan_planning: t.scanPlanning ?? SCAN_PLANNING_BIND,
       };
     }));
     // DuckDB resolves a foreign key against its target when the referencing
@@ -1373,6 +1375,17 @@ function writeFunctionOf(table: TableDescriptor, operation: WriteOperation): Vgi
  * an unknown operation or mode, a mode for an operation with no function, or
  * UPDATE/DELETE without a scan function to supply row ids.
  */
+/** Protocol 3.2: a `"filtered"` table supplies its scan per query, so it declares `columns`, not `function`. */
+function validateTableScanPlanning(table: TableDescriptor): void {
+  validateScanPlanning(table.name, table.scanPlanning, false);
+  if (table.scanPlanning === SCAN_PLANNING_FILTERED && (table.function || !table.columns)) {
+    throw new Error(
+      `Table '${table.name}': scanPlanning 'filtered' requires columns and no function; the catalog's ` +
+        "tableScanBranchesPlan supplies the scan per query",
+    );
+  }
+}
+
 function validateWritableTable(table: TableDescriptor): void {
   const modes = validateWriteResultModes((table.writeResultModes ?? {}) as Record<string, string>);
   for (const operation of Object.keys(modes) as WriteOperation[]) {

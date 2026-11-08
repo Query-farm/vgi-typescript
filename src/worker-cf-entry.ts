@@ -63,6 +63,12 @@ export {
   serializeAttachOptionSpec,
   serializeAttachOptionSpecs,
   serializeColumnStatistics,
+  // Multi-branch scans and protocol 3.2 filtered scan planning.
+  buildScanBranchesResult,
+  ScanPlanningFilters,
+  filtersMayMatch,
+  SCAN_PLANNING_BIND,
+  SCAN_PLANNING_FILTERED,
   BindResultSchema,
   ScanFunctionResultSchema,
   // Resolved-secret selection (the batch is keyed by secret NAME, not type).
@@ -83,6 +89,9 @@ export type {
   CacheScope,
   AttachOptionSpec,
   ColumnStatistics,
+  ScanBranchInput,
+  ScanPlanningMode,
+  ScanCandidateStatistics,
   CatalogAttachResult,
   CatalogDescriptor,
   CatalogInfo,
