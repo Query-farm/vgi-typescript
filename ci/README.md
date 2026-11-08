@@ -97,8 +97,7 @@ Makefile's `test-http` / `test-subprocess` / `test` targets. CI runs four legs:
   subprocess-pool-semantics files. Measured: **256 executed / 288 staged, 11,147
   assertions, ~47 s**.
 - **`stdio`** — plain subprocess transport, one pooled bun worker per DuckDB
-  process. Also sets `VGI_TEST_DEDICATED_WORKER`, which un-skips the SIGKILL-self
-  crash / pool-recovery tests. Not run in CI: it pays a bun cold start per test
+  process. Not run in CI: it pays a bun cold start per test
   and thrashes the 2-core runners. Use it locally when debugging worker spawn.
 
 `VGI_BUN_CONDITIONS` selects the Arrow backend and is read by the `bin/` wrappers,
@@ -135,10 +134,9 @@ Everything else that skips must match `EXPECTED_SKIP_REASONS` in
 `VGI_RULES_WORKER`, `VGI_WORKER_SUPPORTS_DYNAMIC_CODE`), infrastructure CI
 deliberately does not stand up (`VGI_DOCKER_IMAGE`, `VGI_DOCKER_TCP_IMAGE`,
 `VGI_GITHUB_NETWORK_TESTS`, `VGI_TEST_COMPANION_TARGET`, `VGI_TEST_BRANCH_DIR`,
-`VGI_TEST_BEARER_TOKEN`, `VGI_HTTP_DISABLE_ZSTD`), and two transport facts
-(`VGI_TEST_DEDICATED_WORKER` — an HTTP worker is shared, so the SIGKILL-self tests
-would take down every concurrent test; `VGI_REQUIRE_LAUNCHER_TRANSPORT` — the
-launcher-only tests don't apply over http).
+`VGI_TEST_BEARER_TOKEN`, `VGI_HTTP_DISABLE_ZSTD`), and one transport fact
+(`VGI_REQUIRE_LAUNCHER_TRANSPORT` — the launcher-only tests don't apply over
+http).
 
 **Adding to that list is a decision, not a chore.** If a new reason appears, the
 default assumption is that something regressed.

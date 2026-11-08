@@ -330,18 +330,12 @@ case "$TRANSPORT" in
     # The writable-table fixture (examples/simple-writable-worker.ts) has no
     # HTTP serve mode yet; it runs on the stdio and launch lanes.
     EXPECTED_SKIP_REASONS+=('require-env VGI_SIMPLE_WRITABLE_WORKER')
-    # An HTTP worker is one shared process: SIGKILL-ing it would take down every
-    # concurrent test, so the crash / pool-recovery tests gate themselves off.
-    EXPECTED_SKIP_REASONS+=('require-env VGI_TEST_DEDICATED_WORKER')
     # The launcher lane's own tests (`launch:` LOCATION) don't apply over http.
     EXPECTED_SKIP_REASONS+=('require-env VGI_REQUIRE_LAUNCHER_TRANSPORT')
     ;;
   launch)
     # Bearer identity and the capability/codec probes ride HTTP headers only.
     EXPECTED_SKIP_REASONS+=('require-env VGI_HTTP_TRANSPORT')
-    # Same reason as http: a `launch:` worker is shared by every unittest process
-    # that hashes to the same tuple, so the SIGKILL-self tests stay gated off.
-    EXPECTED_SKIP_REASONS+=('require-env VGI_TEST_DEDICATED_WORKER')
     ;;
   stdio)
     EXPECTED_SKIP_REASONS+=('require-env VGI_HTTP_TRANSPORT')
@@ -355,10 +349,11 @@ esac
 # floor, not an equality: the upstream suite grows.
 # Measured against Query-farm/vgi @ b9f3895: the http lane executes 253 of 282
 # staged files. The floor leaves ~8 files of headroom for upstream churn and is
-# far above the 25 that executed before this harness landed.
+# far above the 25 that executed before this harness landed. stdio dropped by 2
+# when the two crash-recovery files moved to vgi test_deferred/crash_recovery/.
 case "$TRANSPORT" in
   http)   MIN_EXECUTED="${MIN_EXECUTED:-245}" ;;
-  stdio)  MIN_EXECUTED="${MIN_EXECUTED:-245}" ;;
+  stdio)  MIN_EXECUTED="${MIN_EXECUTED:-243}" ;;
   launch) MIN_EXECUTED="${MIN_EXECUTED:-240}" ;;
 esac
 
@@ -377,8 +372,6 @@ case "$TRANSPORT" in
     export VGI_SIMPLE_WRITABLE_WORKER="$SIMPLE_WRITABLE"
     export VGI_WRITABLE_TX_WORKER="$WRITABLE_TX"
     export VGI_ENGINE_DELETE_RETURNING_VIRTUAL_COLUMNS=1   # haybarn-unittest (see skips above)
-    # A private worker per DuckDB process makes the SIGKILL-self crash tests safe.
-    export VGI_TEST_DEDICATED_WORKER="$WORKER"
     # attach/versioned_tables_*_http and versioning_http attach an http:// worker
     # regardless of the main transport, so serve those two catalogs over http too.
     boot_http_worker "$VERSIONED_TABLES_HTTP" || exit 1
