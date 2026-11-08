@@ -56,6 +56,8 @@ import {
 export interface FunctionHandlerConfig {
   registry: FunctionRegistry;
   signingKey?: Uint8Array | undefined;
+  /** Explicit root key for secret ATTACH options (see attach-secret-options.ts). */
+  attachSecretKey?: Uint8Array | undefined;
   /**
    * Used to map a bind's `attach_opaque_data` to its catalog, so resolution can
    * be scoped when two catalogs declare the same schema and function name.
@@ -90,6 +92,7 @@ async function liveSplitAnchor(
   bindCall: { attach_opaque_data?: Uint8Array | null; transaction_opaque_data?: Uint8Array | null },
   auth: AuthContext | undefined,
   signingKey: Uint8Array | undefined,
+  attachSecretKey?: Uint8Array,
 ): Promise<Uint8Array | undefined> {
   if (!catalogInterface?.version || bindCall.attach_opaque_data == null) return undefined;
   const raw = toUint8Array(bindCall.attach_opaque_data);
@@ -123,7 +126,7 @@ async function liveSplitAnchor(
   // every non-HTTP transport).
   const forms: Array<() => Promise<Uint8Array>> = [
     async () => raw,
-    async () => openAttach(raw, auth, signingKey),
+    async () => openAttach(raw, auth, signingKey, attachSecretKey),
   ];
   for (const form of forms) {
     try {
@@ -168,6 +171,7 @@ async function resolveSplitPayloads(
   opts: {
     auth: any;
     signingKey: Uint8Array | undefined;
+    attachSecretKey?: Uint8Array | undefined;
     catalogInterface: any;
     checkAnchor: boolean;
   },
@@ -182,7 +186,7 @@ async function resolveSplitPayloads(
     new Uint8Array(0),
   );
   const currentAnchor = opts.checkAnchor
-    ? await liveSplitAnchor(opts.catalogInterface, request.bind_call as any, opts.auth, opts.signingKey)
+    ? await liveSplitAnchor(opts.catalogInterface, request.bind_call as any, opts.auth, opts.signingKey, opts.attachSecretKey)
     : undefined;
   request.split_payloads = [];
   for (const token of request.split_tokens) {
@@ -202,7 +206,7 @@ async function resolveSplitPayloads(
 
 /** The per-function lifecycle's `vgi.v3` handlers. */
 export function functionHandlers(config: FunctionHandlerConfig): Partial<VgiService> {
-  const { registry, signingKey, catalogInterface } = config;
+  const { registry, signingKey, catalogInterface, attachSecretKey } = config;
 
   // The framework mints every attach as uuid(16) || catalog_bytes (sealed on
   // HTTP, plaintext on subprocess). Function bodies — like catalog bodies —
@@ -218,7 +222,7 @@ export function functionHandlers(config: FunctionHandlerConfig): Partial<VgiServ
     if (attach == null) return null;
     const env = toUint8Array(attach);
     if (env.length === 0) return env;
-    return openAttach(env, ctx?.auth ?? currentRequestAuth(), signingKey);
+    return openAttach(env, ctx?.auth ?? currentRequestAuth(), signingKey, attachSecretKey);
   }
 
   // Unseal a bind call's opaque values in place, as the catalog handlers do:
@@ -318,6 +322,7 @@ export function functionHandlers(config: FunctionHandlerConfig): Partial<VgiServ
       await resolveSplitPayloads(request, innerParams, {
         auth,
         signingKey,
+        attachSecretKey,
         catalogInterface,
         checkAnchor: true,
       });
@@ -429,6 +434,7 @@ export function functionHandlers(config: FunctionHandlerConfig): Partial<VgiServ
           // authentication for every authenticated caller's own tokens.
           auth: currentRequestAuth(),
           signingKey,
+          attachSecretKey,
           catalogInterface,
           checkAnchor: false,
         });
@@ -568,7 +574,7 @@ export function functionHandlers(config: FunctionHandlerConfig): Partial<VgiServ
     const anchor =
       plan.catalogVersion != null
         ? splitAnchor(plan.catalogVersion)
-        : ((await liveSplitAnchor(catalogInterface, request.bind_call as any, ctx?.auth, signingKey)) ??
+        : ((await liveSplitAnchor(catalogInterface, request.bind_call as any, ctx?.auth, signingKey, attachSecretKey)) ??
           splitAnchor(0));
 
     const blobs: Uint8Array[] = [];

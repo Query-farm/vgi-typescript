@@ -97,6 +97,12 @@ export interface AttachOptionSpec {
    *                 api_key getenv('SALES_API_KEY'));
    * ```
    *
+   * Functions and transaction hooks read the value with `attachOptions()`
+   * (`CatalogInterface.attachOptions()` in hooks), like any other option: the
+   * framework carries it to them encrypted inside `attach_opaque_data` with a
+   * worker-held key, so it is never in plaintext in any opaque value. Never
+   * put a secret into your catalog's own attach bytes.
+   *
    * Combines with `required` (a credential the catalog cannot attach without,
    * which a client can then ask for before attaching). It is allowed together
    * with `default`, but a secret option normally has none: a default would be

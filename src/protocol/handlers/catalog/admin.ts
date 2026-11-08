@@ -33,6 +33,8 @@ import {
 import { toUint8Array } from "../../../util/bytes.js";
 import { redeemAttachTicket } from "../../../attach-ticket.js";
 import { currentRequestAuth } from "../../../request-auth.js";
+import { secretAttachOptionNames } from "../../../attach-secret-options.js";
+import { deserializeAttachOptionSpec } from "../../../catalog/attach-option.js";
 import { decodeDictValue } from "../../../util/arrow/index.js";
 import {
   unwrapRequest,
@@ -45,11 +47,13 @@ import {
   sealAttach,
   openAttach,
   sealTransaction,
+  type OpaqueKeys,
 } from "./shared.js";
 
-export function catalogAdminHandlers(getCatalog: GetCatalog, signingKey?: Uint8Array): Partial<VgiService> {
+export function catalogAdminHandlers(getCatalog: GetCatalog, signingKey?: Uint8Array, attachSecretKey?: Uint8Array): Partial<VgiService> {
+  const keys: OpaqueKeys = { signingKey, attachSecretKey };
   // catalog_catalogs
-  const catalogCatalogs = catalogHandler(signingKey, async () => {
+  const catalogCatalogs = catalogHandler(keys, async () => {
     const cat = getCatalog();
     // Each catalog advertised as an IPC-serialized CatalogInfo
     // {name, implementation_version?, data_version_spec?}. Versioned workers
@@ -121,10 +125,21 @@ export function catalogAdminHandlers(getCatalog: GetCatalog, signingKey?: Uint8A
     // Seal the attach value into an AEAD envelope bound to the caller's
     // identity before it leaves the worker (HTTP transport; pass-through
     // when there is no signing key).
+    // The framework packs the attach's options after the catalog's bytes —
+    // secret ones (declared `secret: true`) encrypted with a worker-held key —
+    // so every function call and transaction hook of this attach can read them
+    // with attachOptions(), on every transport, without a catalog ever putting
+    // a credential into its own attach bytes.
+    const optionsIpc = innerParams.options == null ? null : toUint8Array(innerParams.options);
+    const secretNames =
+      optionsIpc && optionsIpc.length > 0
+        ? await secretAttachOptionNames(cat as never, innerParams.name, deserializeAttachOptionSpec)
+        : new Set<string>();
     const sealedAttach = await sealAttach(
       toUint8Array(result.attach_opaque_data),
       (ctx as CallContext | undefined)?.auth,
       signingKey,
+      { optionsIpc, secretNames, attachSecretKey },
     );
     // The generated builder emits every column of the pinned
     // CatalogAttachResult schema, filling vgi-python's defaults for any a
@@ -142,28 +157,28 @@ export function catalogAdminHandlers(getCatalog: GetCatalog, signingKey?: Uint8A
   };
 
   // catalog_detach
-  const catalogDetach = catalogHandler(signingKey, async (params) => {
+  const catalogDetach = catalogHandler(keys, async (params) => {
     const cat = getCatalog();
     await cat.detach(toUint8Array(params.attach_opaque_data));
     return {};
   });
 
   // catalog_create
-  const catalogCreate = catalogHandler(signingKey, async (params) => {
+  const catalogCreate = catalogHandler(keys, async (params) => {
     const cat = getCatalog();
     await cat.create(params.name, params.on_conflict, params.options);
     return {};
   });
 
   // catalog_drop
-  const catalogDrop = catalogHandler(signingKey, async (params) => {
+  const catalogDrop = catalogHandler(keys, async (params) => {
     const cat = getCatalog();
     await cat.drop(params.name);
     return {};
   });
 
   // catalog_version
-  const catalogVersion = catalogHandler(signingKey, async (params) => {
+  const catalogVersion = catalogHandler(keys, async (params) => {
     const cat = getCatalog();
     const version = await cat.version(
       toUint8Array(params.attach_opaque_data),
@@ -179,7 +194,7 @@ export function catalogAdminHandlers(getCatalog: GetCatalog, signingKey?: Uint8A
     const auth = (ctx as CallContext | undefined)?.auth;
     const sealedAttach =
       params.attach_opaque_data != null ? toUint8Array(params.attach_opaque_data) : new Uint8Array(0);
-    const attachPlain = await openAttach(sealedAttach, auth, signingKey);
+    const attachPlain = await openAttach(sealedAttach, auth, signingKey, attachSecretKey);
     const cat = getCatalog();
     const txPlain = await cat.transactionBegin(attachPlain);
     // Seal the transaction value, binding it to the caller's identity and
@@ -190,7 +205,7 @@ export function catalogAdminHandlers(getCatalog: GetCatalog, signingKey?: Uint8A
   };
 
   // catalog_transaction_commit
-  const catalogTransactionCommit = catalogHandler(signingKey, async (params) => {
+  const catalogTransactionCommit = catalogHandler(keys, async (params) => {
     const cat = getCatalog();
     await cat.transactionCommit(
       toUint8Array(params.attach_opaque_data),
@@ -200,7 +215,7 @@ export function catalogAdminHandlers(getCatalog: GetCatalog, signingKey?: Uint8A
   });
 
   // catalog_transaction_rollback
-  const catalogTransactionRollback = catalogHandler(signingKey, async (params) => {
+  const catalogTransactionRollback = catalogHandler(keys, async (params) => {
     const cat = getCatalog();
     await cat.transactionRollback(
       toUint8Array(params.attach_opaque_data),
@@ -210,7 +225,7 @@ export function catalogAdminHandlers(getCatalog: GetCatalog, signingKey?: Uint8A
   });
 
   // catalog_schemas
-  const catalogSchemas = catalogHandler(signingKey, async (params) => {
+  const catalogSchemas = catalogHandler(keys, async (params) => {
     const cat = getCatalog();
     const schemas = await cat.schemas(
       toUint8Array(params.attach_opaque_data),
@@ -229,7 +244,7 @@ export function catalogAdminHandlers(getCatalog: GetCatalog, signingKey?: Uint8A
   // rules, the content-hash etag and the frozen-catalog cache.
   const catalogContents: VgiService["catalogContents"] = async (params, ctx) => {
     const sealedAttach = toUint8Array(params.attach_opaque_data).slice();
-    return catalogHandler(signingKey, async (opened, context) => {
+    return catalogHandler(keys, async (opened, context) => {
       const ifNoneMatch = opened.if_none_match == null ? null : String(opened.if_none_match);
       return serveCatalogContents(getCatalog(), toUint8Array(opened.attach_opaque_data), ifNoneMatch, context, sealedAttach);
     })(params, ctx);
@@ -237,7 +252,7 @@ export function catalogAdminHandlers(getCatalog: GetCatalog, signingKey?: Uint8A
 
   // catalog_copy_from_formats — catalog-level (not schema-scoped). Lists the
   // custom COPY ... FROM formats this catalog advertises; empty list when none.
-  const catalogCopyFromFormats = catalogHandler(signingKey, async (params) => {
+  const catalogCopyFromFormats = catalogHandler(keys, async (params) => {
     const cat = getCatalog();
     const formats = await cat.copyFromFormats(
       toUint8Array(params.attach_opaque_data),
@@ -249,7 +264,7 @@ export function catalogAdminHandlers(getCatalog: GetCatalog, signingKey?: Uint8A
   });
 
   // catalog_schema_get
-  const catalogSchemaGet = catalogHandler(signingKey, async (params) => {
+  const catalogSchemaGet = catalogHandler(keys, async (params) => {
     const cat = getCatalog();
     const info = await cat.schemaGet(
       toUint8Array(params.attach_opaque_data),
@@ -262,7 +277,7 @@ export function catalogAdminHandlers(getCatalog: GetCatalog, signingKey?: Uint8A
   });
 
   // catalog_schema_create
-  const catalogSchemaCreate = catalogHandler(signingKey, async (params) => {
+  const catalogSchemaCreate = catalogHandler(keys, async (params) => {
     if (params.options != null) throw new MethodNotImplementedError("catalog_schema_create requires negotiated vgi.schema.options.create.v1");
     const cat = getCatalog();
     await cat.schemaCreate(
@@ -277,7 +292,7 @@ export function catalogAdminHandlers(getCatalog: GetCatalog, signingKey?: Uint8A
   });
 
   // catalog_schema_drop
-  const catalogSchemaDrop = catalogHandler(signingKey, async (params) => {
+  const catalogSchemaDrop = catalogHandler(keys, async (params) => {
     const cat = getCatalog();
     await cat.schemaDrop(
       toUint8Array(params.attach_opaque_data),
@@ -290,7 +305,7 @@ export function catalogAdminHandlers(getCatalog: GetCatalog, signingKey?: Uint8A
   });
 
   // catalog_schema_contents_tables
-  const catalogSchemaContentsTables = catalogHandler(signingKey, async (params) => {
+  const catalogSchemaContentsTables = catalogHandler(keys, async (params) => {
     const cat = getCatalog();
     const tables = await cat.schemaContentsTables(
       toUint8Array(params.attach_opaque_data),
@@ -303,7 +318,7 @@ export function catalogAdminHandlers(getCatalog: GetCatalog, signingKey?: Uint8A
   });
 
   // catalog_schema_contents_views
-  const catalogSchemaContentsViews = catalogHandler(signingKey, async (params) => {
+  const catalogSchemaContentsViews = catalogHandler(keys, async (params) => {
     const cat = getCatalog();
     const views = await cat.schemaContentsViews(
       toUint8Array(params.attach_opaque_data),
@@ -316,7 +331,7 @@ export function catalogAdminHandlers(getCatalog: GetCatalog, signingKey?: Uint8A
   });
 
   // catalog_schema_contents_functions
-  const catalogSchemaContentsFunctions = catalogHandler(signingKey, async (params) => {
+  const catalogSchemaContentsFunctions = catalogHandler(keys, async (params) => {
     const cat = getCatalog();
     const funcs = await cat.schemaContentsFunctions(
       toUint8Array(params.attach_opaque_data),

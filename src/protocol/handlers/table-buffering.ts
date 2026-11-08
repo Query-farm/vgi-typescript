@@ -37,6 +37,7 @@ import { Arguments } from "../../arguments/arguments.js";
 export function tableBufferingHandlers(
   registry: FunctionRegistry,
   signingKey?: Uint8Array,
+  attachSecretKey?: Uint8Array,
 ): Partial<VgiService> {
   // `schemaPath` scopes resolution to the schema the caller named. The
   // buffering process/combine RPCs carry it (protocol 1.2.0), so a name
@@ -74,7 +75,7 @@ export function tableBufferingHandlers(
     const rawAttach = inner.attach_opaque_data ? toUint8Array(inner.attach_opaque_data) : null;
     const attach =
       rawAttach && rawAttach.length > 0
-        ? await openAttach(rawAttach, ctx?.auth, signingKey)
+        ? await openAttach(rawAttach, ctx?.auth, signingKey, attachSecretKey)
         : rawAttach;
     const transactionId = inner.transaction_id ? toUint8Array(inner.transaction_id) : null;
 

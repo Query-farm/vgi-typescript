@@ -19,11 +19,13 @@ import {
 import {
   type GetCatalog,
   catalogHandler,
+  type OpaqueKeys,
 } from "./shared.js";
 
-export function catalogMacroHandlers(getCatalog: GetCatalog, signingKey?: Uint8Array): Partial<VgiService> {
+export function catalogMacroHandlers(getCatalog: GetCatalog, signingKey?: Uint8Array, attachSecretKey?: Uint8Array): Partial<VgiService> {
+  const keys: OpaqueKeys = { signingKey, attachSecretKey };
   // catalog_macro_get
-  const catalogMacroGet = catalogHandler(signingKey, async (params) => {
+  const catalogMacroGet = catalogHandler(keys, async (params) => {
     const cat = getCatalog();
     const info = await cat.macroGet(
       toUint8Array(params.attach_opaque_data),
@@ -37,7 +39,7 @@ export function catalogMacroHandlers(getCatalog: GetCatalog, signingKey?: Uint8A
   });
 
   // catalog_macro_create
-  const catalogMacroCreate = catalogHandler(signingKey, async (params) => {
+  const catalogMacroCreate = catalogHandler(keys, async (params) => {
     const cat = getCatalog();
     // catalogHandler already flattened the wrapped request.
     const innerParams = decodeASD<MacroCreateRequest>(MacroCreateRequestSchema, encodeASD(MacroCreateRequestSchema, params));
@@ -55,7 +57,7 @@ export function catalogMacroHandlers(getCatalog: GetCatalog, signingKey?: Uint8A
   });
 
   // catalog_macro_drop
-  const catalogMacroDrop = catalogHandler(signingKey, async (params) => {
+  const catalogMacroDrop = catalogHandler(keys, async (params) => {
     const cat = getCatalog();
     await cat.macroDrop(
       toUint8Array(params.attach_opaque_data),
@@ -68,7 +70,7 @@ export function catalogMacroHandlers(getCatalog: GetCatalog, signingKey?: Uint8A
   });
 
   // catalog_schema_contents_macros
-  const catalogSchemaContentsMacros = catalogHandler(signingKey, async (params) => {
+  const catalogSchemaContentsMacros = catalogHandler(keys, async (params) => {
     const cat = getCatalog();
     const macros = await cat.schemaContentsMacros(
       toUint8Array(params.attach_opaque_data),

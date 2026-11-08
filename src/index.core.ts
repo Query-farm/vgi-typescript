@@ -239,6 +239,16 @@ export {
   RESERVED_ATTACH_OPTION,
   ReservedAttachOptionError,
 } from "./catalog/attach-option.js";
+// ATTACH options (secret ones included) as functions and transaction hooks see them.
+export {
+  attachOptions,
+  attachOption,
+  type AttachOptionValues,
+  AttachOptionsUnavailableError,
+  AttachSecretKeyUnavailableError,
+  ATTACH_SECRET_OPTIONS_INFO,
+} from "./attach-secret-options.js";
+export { hostLocalAttachSecretKeyPath, ATTACH_SECRET_KEY_FILE_ENV } from "./attach-secret-keyfile.js";
 export {
   ATTACH_TICKET_OPTION,
   ATTACH_TICKET_PREFIX,

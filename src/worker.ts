@@ -123,6 +123,15 @@ export interface WorkerConfig extends HostingOptions {
    * dispatches on. Omit to have the worker create its own.
    */
   registry?: FunctionRegistry;
+  /**
+   * Optional root key for secret ATTACH options (`AttachOptionSpec.secret`),
+   * which the framework encrypts inside `attach_opaque_data` for
+   * `attachOptions()`. Defaults to the host-local key file
+   * (`$VGI_ATTACH_SECRET_KEY_FILE`, else `vgi/attach-secret-options.key` under
+   * `$XDG_RUNTIME_DIR` or the per-user temp dir). Every worker process that may
+   * receive a given attach must use the same key.
+   */
+  attachSecretKey?: Uint8Array;
 }
 
 export class Worker {
@@ -130,8 +139,10 @@ export class Worker {
   private _hosting: HostingOptions;
   private _catalogInterface: CatalogInterface | undefined;
   private _catalogName: string | undefined;
+  private _attachSecretKey: Uint8Array | undefined;
 
   constructor(config: WorkerConfig) {
+    this._attachSecretKey = config.attachSecretKey;
     // Reuse the caller's registry when given: a catalogInterface built
     // elsewhere recorded its per-schema function ownership there, and that
     // index is what makes a schema-qualified bind resolve correctly.
@@ -297,6 +308,7 @@ export class Worker {
       registry: this._registry,
       catalogInterface: this._catalogInterface,
       catalogName: this._catalogName,
+      attachSecretKey: this._attachSecretKey,
     });
   }
 

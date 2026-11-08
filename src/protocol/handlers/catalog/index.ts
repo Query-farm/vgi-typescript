@@ -14,13 +14,14 @@ import { catalogIndexHandlers } from "./index_methods.js";
 export function catalogHandlers(
   catalog: CatalogInterface | undefined,
   signingKey?: Uint8Array,
+  attachSecretKey?: Uint8Array,
 ): Partial<VgiService> {
   const getCatalog = makeGetCatalog(catalog);
   return {
-    ...catalogAdminHandlers(getCatalog, signingKey),
-    ...catalogTableHandlers(getCatalog, signingKey),
-    ...catalogViewHandlers(getCatalog, signingKey),
-    ...catalogMacroHandlers(getCatalog, signingKey),
-    ...catalogIndexHandlers(getCatalog, signingKey),
+    ...catalogAdminHandlers(getCatalog, signingKey, attachSecretKey),
+    ...catalogTableHandlers(getCatalog, signingKey, attachSecretKey),
+    ...catalogViewHandlers(getCatalog, signingKey, attachSecretKey),
+    ...catalogMacroHandlers(getCatalog, signingKey, attachSecretKey),
+    ...catalogIndexHandlers(getCatalog, signingKey, attachSecretKey),
   };
 }

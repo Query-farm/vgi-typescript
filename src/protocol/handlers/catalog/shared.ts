@@ -17,6 +17,30 @@ import {
   ATTACH_UUID_LEN,
   TRANSACTION_ENVELOPE_VERSION,
 } from "../../../crypto.js";
+import { openFrameworkAttach, packAttachOptionsTrailer } from "../../../attach-secret-options.js";
+
+/**
+ * The keys a catalog handler group opens opaque values with: the HTTP signing
+ * key (absent on stdio / unix) and the optional explicit root key for secret
+ * ATTACH options (`attachSecretKey`; see ../../../attach-secret-options.ts).
+ */
+export interface OpaqueKeys {
+  signingKey?: Uint8Array | undefined;
+  attachSecretKey?: Uint8Array | undefined;
+}
+
+/**
+ * The options a catalog_attach packs into the attach value after the catalog's
+ * own bytes (secret ones encrypted). See ../../../attach-secret-options.ts.
+ */
+export interface AttachOptionsToPack {
+  /** The request's `options` IPC batch (null / empty: no options, no trailer). */
+  optionsIpc: Uint8Array | null | undefined;
+  /** Lower-cased names of the options declared `secret: true`. */
+  secretNames: ReadonlySet<string>;
+  /** Explicit root key for the secret options, if configured. */
+  attachSecretKey?: Uint8Array | undefined;
+}
 
 export type GetCatalog = () => CatalogInterface;
 
@@ -36,17 +60,31 @@ export type GetCatalog = () => CatalogInterface;
  * across re-seals and globally unique, unlike the random-nonce ciphertext or
  * the (possibly non-unique) catalog bytes. openAttach strips the UUID back off
  * so the catalog only ever sees its own bytes. Mirrors vgi-python/-go.
+ *
+ * With `options`, the attach's ATTACH options are packed after the catalog's
+ * bytes (secret ones encrypted, never plaintext) so `attachOptions()` can hand
+ * them to every function call and transaction hook of this attach.
  */
 export async function sealAttach(
   plaintext: Uint8Array,
   auth: AuthContext | undefined,
   signingKey: Uint8Array | undefined,
+  options?: AttachOptionsToPack,
 ): Promise<Uint8Array> {
   const uuid = new Uint8Array(ATTACH_UUID_LEN);
   crypto.getRandomValues(uuid);
-  const minted = new Uint8Array(ATTACH_UUID_LEN + plaintext.length);
+  // The attach's options ride after the catalog's bytes, the secret ones
+  // encrypted under a key bound to this uuid (empty when there are none).
+  const trailer = options
+    ? await packAttachOptionsTrailer(uuid, options.optionsIpc, options.secretNames, {
+        explicit: options.attachSecretKey,
+        signingKey,
+      })
+    : new Uint8Array(0);
+  const minted = new Uint8Array(ATTACH_UUID_LEN + plaintext.length + trailer.length);
   minted.set(uuid, 0);
   minted.set(plaintext, ATTACH_UUID_LEN);
+  minted.set(trailer, ATTACH_UUID_LEN + plaintext.length);
   if (!signingKey) return minted;
   return sealBytes(minted, signingKey, attachAad(auth), ATTACH_ENVELOPE_VERSION);
 }
@@ -73,9 +111,12 @@ export async function openAttach(
   envelope: Uint8Array,
   auth: AuthContext | undefined,
   signingKey: Uint8Array | undefined,
+  attachSecretKey?: Uint8Array,
 ): Promise<Uint8Array> {
   const full = await openAttachFull(envelope, auth, signingKey);
-  return full.length < ATTACH_UUID_LEN ? full : full.subarray(ATTACH_UUID_LEN);
+  // Strips the uuid and the options trailer, decrypting secret options and
+  // recording all of them for attachOptions().
+  return openFrameworkAttach(full, { explicit: attachSecretKey, signingKey });
 }
 
 /** Hex of a byte array (lowercase). */
@@ -154,8 +195,9 @@ export async function openTransaction(
 async function unwrapParamsOpaque(
   params: Record<string, any>,
   ctx: CallContext | undefined,
-  signingKey: Uint8Array | undefined,
+  keys: OpaqueKeys,
 ): Promise<void> {
+  const { signingKey, attachSecretKey } = keys;
   const auth = ctx?.auth;
   let sealedAttach: Uint8Array = new Uint8Array(0);
   if (params.attach_opaque_data != null) {
@@ -171,7 +213,7 @@ async function unwrapParamsOpaque(
       const full = signingKey
         ? await openBytes(env, signingKey, attachAad(auth), ATTACH_ENVELOPE_VERSION, "attach_opaque_data")
         : env;
-      params.attach_opaque_data = full.length < ATTACH_UUID_LEN ? full : full.subarray(ATTACH_UUID_LEN);
+      params.attach_opaque_data = await openFrameworkAttach(full, { explicit: attachSecretKey, signingKey });
     }
   }
   // transaction_opaque_data is sealed only on HTTP (no UUID prefix); subprocess
@@ -197,9 +239,13 @@ async function unwrapParamsOpaque(
  * bespoke. The body sees the flattened params as a plain record.
  */
 export function catalogHandler<R>(
-  signingKey: Uint8Array | undefined,
+  keysOrSigningKey: OpaqueKeys | Uint8Array | undefined,
   handler: (params: Record<string, any>, ctx: CallContext) => R | Promise<R>,
 ): (params: object, ctx: CallContext) => Promise<R> {
+  const keys: OpaqueKeys =
+    keysOrSigningKey instanceof Uint8Array || keysOrSigningKey === undefined
+      ? { signingKey: keysOrSigningKey }
+      : keysOrSigningKey;
   return async (wire: object, ctx: CallContext) => {
     let params = wire as Record<string, any>;
     // catalog_create / catalog_table_create / catalog_macro_create (and
@@ -214,7 +260,7 @@ export function catalogHandler<R>(
       params = unwrapRequest(params.request);
     }
     normalizeRequestSchemaPaths(params);
-    await unwrapParamsOpaque(params, ctx, signingKey);
+    await unwrapParamsOpaque(params, ctx, keys);
     return handler(params, ctx);
   };
 }

@@ -709,6 +709,57 @@ $ VGI_RPC_GRANT_KEYS="$(openssl rand -base64 32)" bun run scripts/serve.ts
 - Sealed grants are not individually revocable: keep the lifetime short; removing a
   key revokes every grant it minted.
 
+### ATTACH options in functions and transaction hooks (secret ones included)
+
+A catalog declares its ATTACH options (`attachOptions` on the descriptor, or
+`attachOptionSpecs()`); a credential is declared `secret: true`. Every function call
+and transaction hook of an attach reads the options with **`attachOptions()`**, secret
+values included. The framework carries them for you, so you never pack options (and
+never a credential) into your own `attach_opaque_data`:
+
+```ts
+import { attachOptions, ReadOnlyCatalogInterface, type CatalogAttachResult } from "@query-farm/vgi";
+
+// In any function (bind, or init/process via params.initCall.bind_call):
+const { api_key, region } = attachOptions(params.bindCall.attach_opaque_data);
+
+// In a catalog method or transaction hook:
+class MyCatalog extends ReadOnlyCatalogInterface {
+  override async attach(name: string, options?: Record<string, unknown>): Promise<CatalogAttachResult> {
+    const result = await super.attach(name, options);
+    return { ...result, supports_transactions: options?.transactional === true }; // no options in the bytes
+  }
+  override async transactionCommit(attach: Uint8Array, tx: Uint8Array) {
+    const { api_key } = this.attachOptions(attach);
+    // ...
+  }
+}
+```
+
+How it works: `catalog_attach` appends the options to the catalog's attach bytes and
+encrypts the secret ones (XChaCha20-Poly1305, a fresh random nonce each time) under
+`HKDF-SHA256(root, info "vgi.attach_secret_options.v1")`, with the attach's
+framework UUID as associated data — a blob copied into another attach value does not
+open (`attach_opaque_data not recognized`). The framework strips all of it before
+your code sees the attach bytes. A secret value is never in plaintext in any opaque
+value, on any transport (the sealing spec's rule 5).
+
+The root key is, in order:
+
+1. `attachSecretKey` (`Worker`, `serveVgiWorker`, or `protocol` on `createVgiFetch`),
+2. the HTTP signing key (`VGI_SIGNING_KEY`, or the one the worker minted at startup),
+3. on stdio / AF_UNIX / launcher pools, the **host-local key file**, shared by every
+   VGI worker of the user on the host whatever its SDK:
+   `$VGI_ATTACH_SECRET_KEY_FILE`, else `$XDG_RUNTIME_DIR/vgi/attach-secret-options.key`,
+   else `<tmpdir>/vgi-<user>/attach-secret-options.key` — 32 random bytes, created
+   atomically on first use with mode 0600 in a 0700 directory, refused if anyone else
+   can read it. It is read only when a secret option actually has a value.
+
+Every process that may receive a given attach must have the same root key (a
+multi-instance HTTP deployment sets `VGI_SIGNING_KEY`). A runtime with no filesystem
+(browser, Workers) and no signing key cannot accept a secret option: the ATTACH fails
+and says so. Secret values, the key and the blob are never logged.
+
 ### Attach tickets: reattach as a user without their options (`vgi.attach_tickets.v1`)
 
 A grant says *who* attaches; an **attach ticket** says *what*. While a user is

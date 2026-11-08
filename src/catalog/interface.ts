@@ -5,6 +5,7 @@ import type { CatalogSnapshotPolicy } from "./publication.js";
 
 import { CatalogNotFoundError, CatalogReadOnlyError, VgiError } from "../errors.js";
 import { schemaPathsEqual } from "../schema-path.js";
+import { attachOptions } from "../attach-secret-options.js";
 import type { CatalogCapabilities, ConstraintSnapshot, ConstraintsApplyRequest } from "../generated/vgi-protocol-types.js";
 import { decodeCatalogObjectRef, decodeConstraintChange, decodeConstraintDefinition } from "../generated/vgi-protocol-types.js";
 import { constraintCapabilities, readConstraintRecord } from "./constraints.js";
@@ -1248,6 +1249,24 @@ export abstract class CatalogInterface {
   catalogContentsOwner(_attachOpaqueData: AttachOpaqueData): CatalogInterface {
     return this;
   }
+  /**
+   * The ATTACH options of the attach `attachOpaqueData` belongs to — every
+   * supplied option, secret ones (`AttachOptionSpec.secret`) included, as
+   * `attach()` received them. Works in every catalog method and transaction
+   * hook (`transactionBegin` / `transactionCommit` / `transactionRollback`)
+   * on the `attachOpaqueData` argument it was given; functions use the
+   * standalone {@link attachOptions} on `bindCall.attach_opaque_data`.
+   *
+   * The framework carries the options inside `attach_opaque_data` itself and
+   * encrypts the secret ones with a worker-held key, so they never appear in
+   * plaintext in any opaque value on any transport. An `attach()` override
+   * therefore never needs to pack options into its own attach bytes, and must
+   * not put a credential there.
+   */
+  attachOptions(attachOpaqueData: AttachOpaqueData): Readonly<Record<string, unknown>> {
+    return attachOptions(attachOpaqueData);
+  }
+
   transactionBegin(attachOpaqueData: AttachOpaqueData): Awaitable<Uint8Array | null> {
     return null;
   }

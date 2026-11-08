@@ -91,6 +91,11 @@ export interface ServeVgiWorkerOptions extends HostingOptions {
   hostname?: string | undefined;
   /** Overrides `$VGI_SIGNING_KEY`. 32 bytes. */
   signingKey?: Uint8Array | undefined;
+  /**
+   * Optional root key for secret ATTACH options (encrypted inside
+   * `attach_opaque_data` for `attachOptions()`). Defaults to the signing key.
+   */
+  attachSecretKey?: Uint8Array | undefined;
   /** Overrides `$VGI_TOKEN_TTL` (default 3600 seconds). */
   tokenTtl?: number | undefined;
   /** Overrides `$CORS_ORIGINS` (default "*"). Pass `null` to disable CORS. */
@@ -242,7 +247,7 @@ export function createVgiWorkerFetch(
   const trustedProxyAddresses = bridge?.trustedProxyAddresses ?? ["127.0.0.1"];
 
   return createVgiFetch({
-    protocol: { registry: opts.registry, catalogInterface: opts.catalogInterface },
+    protocol: { registry: opts.registry, catalogInterface: opts.catalogInterface, attachSecretKey: opts.attachSecretKey },
     signingKey,
     signingKeyConfigured,
     tokenTtl,

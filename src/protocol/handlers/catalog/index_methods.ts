@@ -14,11 +14,13 @@ import {
 import {
   type GetCatalog,
   catalogHandler,
+  type OpaqueKeys,
 } from "./shared.js";
 
-export function catalogIndexHandlers(getCatalog: GetCatalog, signingKey?: Uint8Array): Partial<VgiService> {
+export function catalogIndexHandlers(getCatalog: GetCatalog, signingKey?: Uint8Array, attachSecretKey?: Uint8Array): Partial<VgiService> {
+  const keys: OpaqueKeys = { signingKey, attachSecretKey };
   // catalog_schema_contents_indexes
-  const catalogSchemaContentsIndexes = catalogHandler(signingKey, async (params) => {
+  const catalogSchemaContentsIndexes = catalogHandler(keys, async (params) => {
     const cat = getCatalog();
     const indexes = await cat.schemaContentsIndexes(
       toUint8Array(params.attach_opaque_data),
@@ -31,7 +33,7 @@ export function catalogIndexHandlers(getCatalog: GetCatalog, signingKey?: Uint8A
   });
 
   // catalog_index_get
-  const catalogIndexGet = catalogHandler(signingKey, async (params) => {
+  const catalogIndexGet = catalogHandler(keys, async (params) => {
     const cat = getCatalog();
     const info = await cat.indexGet(
       toUint8Array(params.attach_opaque_data),

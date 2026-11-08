@@ -22,6 +22,7 @@ import {
 import {
   type GetCatalog,
   catalogHandler,
+  type OpaqueKeys,
 } from "./shared.js";
 
 function requireFlatColumnPath(value: unknown, operation: string): string[] {
@@ -35,9 +36,10 @@ function requireFlatColumnPath(value: unknown, operation: string): string[] {
   return path as string[];
 }
 
-export function catalogTableHandlers(getCatalog: GetCatalog, signingKey?: Uint8Array): Partial<VgiService> {
+export function catalogTableHandlers(getCatalog: GetCatalog, signingKey?: Uint8Array, attachSecretKey?: Uint8Array): Partial<VgiService> {
+  const keys: OpaqueKeys = { signingKey, attachSecretKey };
   // catalog_table_get
-  const catalogTableGet = catalogHandler(signingKey, async (params) => {
+  const catalogTableGet = catalogHandler(keys, async (params) => {
     const cat = getCatalog();
     const info = await cat.tableGet(
       toUint8Array(params.attach_opaque_data),
@@ -53,7 +55,7 @@ export function catalogTableHandlers(getCatalog: GetCatalog, signingKey?: Uint8A
   });
 
   // catalog_table_create
-  const catalogTableCreate = catalogHandler(signingKey, async (params) => {
+  const catalogTableCreate = catalogHandler(keys, async (params) => {
     if (params.constraint_definitions == null) throw new Error("constraint_definitions is required");
     const definitions = Array.from(params.constraint_definitions as Iterable<unknown>, (d) => toUint8Array(d as Uint8Array));
     if (params.comment != null || params.tags != null || params.options != null || params.layout != null) {
@@ -89,7 +91,7 @@ export function catalogTableHandlers(getCatalog: GetCatalog, signingKey?: Uint8A
 
   // catalog_table_constraints_apply (ALTER TABLE ... SET/DROP NOT NULL and
   // every other canonical constraint change).
-  const catalogTableConstraintsApply = catalogHandler(signingKey, async (params) => {
+  const catalogTableConstraintsApply = catalogHandler(keys, async (params) => {
     const attach = toUint8Array(params.attach_opaque_data);
     const cat = getCatalog();
     const caps = await cat.catalogCapabilities(attach);
@@ -124,7 +126,7 @@ export function catalogTableHandlers(getCatalog: GetCatalog, signingKey?: Uint8A
   });
 
   // catalog_table_drop
-  const catalogTableDrop = catalogHandler(signingKey, async (params) => {
+  const catalogTableDrop = catalogHandler(keys, async (params) => {
     const cat = getCatalog();
     await cat.tableDrop(
       toUint8Array(params.attach_opaque_data),
@@ -137,7 +139,7 @@ export function catalogTableHandlers(getCatalog: GetCatalog, signingKey?: Uint8A
   });
 
   // catalog_table_column_statistics_get
-  const catalogTableColumnStatisticsGet = catalogHandler(signingKey, async (params) => {
+  const catalogTableColumnStatisticsGet = catalogHandler(keys, async (params) => {
     const cat = getCatalog();
     const stats = await cat.tableColumnStatisticsGet(
       toUint8Array(params.attach_opaque_data),
@@ -149,7 +151,7 @@ export function catalogTableHandlers(getCatalog: GetCatalog, signingKey?: Uint8A
   });
 
   // catalog_table_scan_function_get
-  const catalogTableScanFunctionGet = catalogHandler(signingKey, async (params) => {
+  const catalogTableScanFunctionGet = catalogHandler(keys, async (params) => {
     const cat = getCatalog();
     const scanResult = await cat.tableScanFunctionGet(
       toUint8Array(params.attach_opaque_data),
@@ -167,7 +169,7 @@ export function catalogTableHandlers(getCatalog: GetCatalog, signingKey?: Uint8A
   // into TableInfo is only asked when the client skipped the inline value.
   const optionalTx = (params: Record<string, any>): Uint8Array | undefined =>
     params.transaction_opaque_data ? toUint8Array(params.transaction_opaque_data) : undefined;
-  const catalogTableInsertFunctionGet = catalogHandler(signingKey, async (params) => {
+  const catalogTableInsertFunctionGet = catalogHandler(keys, async (params) => {
     const result = await getCatalog().tableInsertFunctionGet(
       toUint8Array(params.attach_opaque_data),
       params.schema_path,
@@ -177,7 +179,7 @@ export function catalogTableHandlers(getCatalog: GetCatalog, signingKey?: Uint8A
     );
     return wrapResult(result, ScanFunctionResultSchema);
   });
-  const catalogTableUpdateFunctionGet = catalogHandler(signingKey, async (params) => {
+  const catalogTableUpdateFunctionGet = catalogHandler(keys, async (params) => {
     const result = await getCatalog().tableUpdateFunctionGet(
       toUint8Array(params.attach_opaque_data),
       params.schema_path,
@@ -186,7 +188,7 @@ export function catalogTableHandlers(getCatalog: GetCatalog, signingKey?: Uint8A
     );
     return wrapResult(result, ScanFunctionResultSchema);
   });
-  const catalogTableDeleteFunctionGet = catalogHandler(signingKey, async (params) => {
+  const catalogTableDeleteFunctionGet = catalogHandler(keys, async (params) => {
     const result = await getCatalog().tableDeleteFunctionGet(
       toUint8Array(params.attach_opaque_data),
       params.schema_path,
@@ -199,7 +201,7 @@ export function catalogTableHandlers(getCatalog: GetCatalog, signingKey?: Uint8A
   // catalog_table_scan_branches_get — branches-aware variant of
   // scan_function_get. The branches-aware C++ extension calls this for every
   // table scan; single-source catalogs synthesise a one-branch result.
-  const catalogTableScanBranchesGet = catalogHandler(signingKey, async (params) => {
+  const catalogTableScanBranchesGet = catalogHandler(keys, async (params) => {
     const cat = getCatalog();
     const branchesResult = await cat.tableScanBranchesGet(
       toUint8Array(params.attach_opaque_data),
@@ -213,7 +215,7 @@ export function catalogTableHandlers(getCatalog: GetCatalog, signingKey?: Uint8A
   });
 
   // catalog_table_comment_set
-  const catalogTableCommentSet = catalogHandler(signingKey, async (params) => {
+  const catalogTableCommentSet = catalogHandler(keys, async (params) => {
     const cat = getCatalog();
     await cat.tableCommentSet(
       toUint8Array(params.attach_opaque_data),
@@ -227,7 +229,7 @@ export function catalogTableHandlers(getCatalog: GetCatalog, signingKey?: Uint8A
   });
 
   // catalog_table_rename
-  const catalogTableRename = catalogHandler(signingKey, async (params) => {
+  const catalogTableRename = catalogHandler(keys, async (params) => {
     const cat = getCatalog();
     await cat.tableRename(
       toUint8Array(params.attach_opaque_data),
@@ -241,7 +243,7 @@ export function catalogTableHandlers(getCatalog: GetCatalog, signingKey?: Uint8A
   });
 
   // catalog_table_column_add
-  const catalogTableColumnAdd = catalogHandler(signingKey, async (params) => {
+  const catalogTableColumnAdd = catalogHandler(keys, async (params) => {
     params.column_path = requireFlatColumnPath(params.column_path, "catalog_table_column_add");
     validateColumnMetadataIpc(toUint8Array(params.column_definition));
     validateColumnExpressionsIpc(toUint8Array(params.column_definition), params.schema_path);
@@ -259,7 +261,7 @@ export function catalogTableHandlers(getCatalog: GetCatalog, signingKey?: Uint8A
     return {};
   });
   // catalog_table_column_drop
-  const catalogTableColumnDrop = catalogHandler(signingKey, async (params) => {
+  const catalogTableColumnDrop = catalogHandler(keys, async (params) => {
     params.column_path = requireFlatColumnPath(params.column_path, "catalog_table_column_drop");
     const cat = getCatalog();
     await cat.tableColumnDrop(
@@ -275,7 +277,7 @@ export function catalogTableHandlers(getCatalog: GetCatalog, signingKey?: Uint8A
     return {};
   });
   // catalog_table_column_rename
-  const catalogTableColumnRename = catalogHandler(signingKey, async (params) => {
+  const catalogTableColumnRename = catalogHandler(keys, async (params) => {
     params.column_path = requireFlatColumnPath(params.column_path, "catalog_table_column_rename");
     const cat = getCatalog();
     await cat.tableColumnRename(
@@ -290,7 +292,7 @@ export function catalogTableHandlers(getCatalog: GetCatalog, signingKey?: Uint8A
     return {};
   });
   // catalog_table_column_comment_set
-  const catalogTableColumnCommentSet = catalogHandler(signingKey, async (params) => {
+  const catalogTableColumnCommentSet = catalogHandler(keys, async (params) => {
     params.column_path = requireFlatColumnPath(params.column_path, "catalog_table_column_comment_set");
     const cat = getCatalog();
     await cat.tableColumnCommentSet(
@@ -305,7 +307,7 @@ export function catalogTableHandlers(getCatalog: GetCatalog, signingKey?: Uint8A
     return {};
   });
   // catalog_table_column_default_set
-  const catalogTableColumnDefaultSet = catalogHandler(signingKey, async (params) => {
+  const catalogTableColumnDefaultSet = catalogHandler(keys, async (params) => {
     params.column_path = requireFlatColumnPath(params.column_path, "catalog_table_column_default_set");
     const cat = getCatalog();
     await cat.tableColumnDefaultSet(
@@ -320,7 +322,7 @@ export function catalogTableHandlers(getCatalog: GetCatalog, signingKey?: Uint8A
     return {};
   });
   // catalog_table_column_default_drop
-  const catalogTableColumnDefaultDrop = catalogHandler(signingKey, async (params) => {
+  const catalogTableColumnDefaultDrop = catalogHandler(keys, async (params) => {
     params.column_path = requireFlatColumnPath(params.column_path, "catalog_table_column_default_drop");
     const cat = getCatalog();
     await cat.tableColumnDefaultDrop(
@@ -334,7 +336,7 @@ export function catalogTableHandlers(getCatalog: GetCatalog, signingKey?: Uint8A
     return {};
   });
   // catalog_table_column_type_change
-  const catalogTableColumnTypeChange = catalogHandler(signingKey, async (params) => {
+  const catalogTableColumnTypeChange = catalogHandler(keys, async (params) => {
     params.column_path = requireFlatColumnPath(params.column_path, "catalog_table_column_type_change");
     const cat = getCatalog();
     await cat.tableColumnTypeChange(
@@ -350,7 +352,7 @@ export function catalogTableHandlers(getCatalog: GetCatalog, signingKey?: Uint8A
     return {};
   });
   // catalog_table_not_null_set
-  const catalogTableNotNullSet = catalogHandler(signingKey, async (params) => {
+  const catalogTableNotNullSet = catalogHandler(keys, async (params) => {
     params.column_path = requireFlatColumnPath(params.column_path, "catalog_table_not_null_set");
     const cat = getCatalog();
     await cat.tableNotNullSet(
@@ -364,7 +366,7 @@ export function catalogTableHandlers(getCatalog: GetCatalog, signingKey?: Uint8A
     return {};
   });
   // catalog_table_not_null_drop
-  const catalogTableNotNullDrop = catalogHandler(signingKey, async (params) => {
+  const catalogTableNotNullDrop = catalogHandler(keys, async (params) => {
     params.column_path = requireFlatColumnPath(params.column_path, "catalog_table_not_null_drop");
     const cat = getCatalog();
     await cat.tableNotNullDrop(

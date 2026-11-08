@@ -15,11 +15,13 @@ import {
 import {
   type GetCatalog,
   catalogHandler,
+  type OpaqueKeys,
 } from "./shared.js";
 
-export function catalogViewHandlers(getCatalog: GetCatalog, signingKey?: Uint8Array): Partial<VgiService> {
+export function catalogViewHandlers(getCatalog: GetCatalog, signingKey?: Uint8Array, attachSecretKey?: Uint8Array): Partial<VgiService> {
+  const keys: OpaqueKeys = { signingKey, attachSecretKey };
   // catalog_view_get
-  const catalogViewGet = catalogHandler(signingKey, async (params) => {
+  const catalogViewGet = catalogHandler(keys, async (params) => {
     const cat = getCatalog();
     const info = await cat.viewGet(
       toUint8Array(params.attach_opaque_data),
@@ -33,7 +35,7 @@ export function catalogViewHandlers(getCatalog: GetCatalog, signingKey?: Uint8Ar
   });
 
   // catalog_view_create
-  const catalogViewCreate = catalogHandler(signingKey, async (params) => {
+  const catalogViewCreate = catalogHandler(keys, async (params) => {
     if (params.security !== "regular") throw new Error(`view security mode ${params.security} is unsupported`);
     const tags = catalogStringMap(params.tags);
     const columnComments = catalogStringMap(params.column_comments);
@@ -55,7 +57,7 @@ export function catalogViewHandlers(getCatalog: GetCatalog, signingKey?: Uint8Ar
   });
 
   // catalog_view_drop
-  const catalogViewDrop = catalogHandler(signingKey, async (params) => {
+  const catalogViewDrop = catalogHandler(keys, async (params) => {
     const cat = getCatalog();
     await cat.viewDrop(
       toUint8Array(params.attach_opaque_data),
@@ -68,7 +70,7 @@ export function catalogViewHandlers(getCatalog: GetCatalog, signingKey?: Uint8Ar
   });
 
   // catalog_view_rename
-  const catalogViewRename = catalogHandler(signingKey, async (params) => {
+  const catalogViewRename = catalogHandler(keys, async (params) => {
     const cat = getCatalog();
     await cat.viewRename(
       toUint8Array(params.attach_opaque_data),
@@ -82,7 +84,7 @@ export function catalogViewHandlers(getCatalog: GetCatalog, signingKey?: Uint8Ar
   });
 
   // catalog_view_comment_set
-  const catalogViewCommentSet = catalogHandler(signingKey, async (params) => {
+  const catalogViewCommentSet = catalogHandler(keys, async (params) => {
     const cat = getCatalog();
     await cat.viewCommentSet(
       toUint8Array(params.attach_opaque_data),
@@ -95,7 +97,7 @@ export function catalogViewHandlers(getCatalog: GetCatalog, signingKey?: Uint8Ar
     return {};
   });
 
-  const catalogViewColumnCommentSet = catalogHandler(signingKey, async (params) => {
+  const catalogViewColumnCommentSet = catalogHandler(keys, async (params) => {
     const path: string[] = Array.from(params.column_path);
     if (path.length !== 1 || !path[0] || path[0].includes("\0")) throw new Error("view column comments require one raw output identifier");
     await getCatalog().viewColumnCommentSet(

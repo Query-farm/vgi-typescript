@@ -10,6 +10,10 @@
 // table declares an update function and write result modes, ATTACH options
 // (one of them secret), a per-attach `supports_transactions`, and the
 // catalog's transactionBegin / transactionCommit / transactionRollback hooks.
+// Functions and hooks read the options (the secret `token` included) only
+// through the SDK's `attachOptions()` accessor: the catalog never puts them in
+// its own attach bytes, and the SDK keeps the token encrypted inside
+// attach_opaque_data (whoami().token_in_attach_data checks it never shows).
 //
 //   ATTACH 'txfix' AS t   (TYPE vgi, LOCATION '...', token 'tok-123');
 //   ATTACH 'txfix' AS ttx (TYPE vgi, LOCATION '...', token 'tok-123', transactional true);
@@ -31,6 +35,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   type AttachOptionSpec,
+  attachOptions,
   type CatalogAttachResult,
   type CatalogDescriptor,
   constraintRecord,
@@ -70,19 +75,36 @@ interface AttachOptions {
   transactional: boolean;
 }
 
-const MAGIC = "txfix1:";
 const encoder = new TextEncoder();
-const decoder = new TextDecoder();
 
-function encodeAttach(options: Record<string, unknown> | undefined): Uint8Array {
-  const token = typeof options?.token === "string" ? options.token : null;
-  return encoder.encode(MAGIC + JSON.stringify({ token, transactional: options?.transactional === true }));
+/** The attach's options, from the SDK's accessor (never from the attach bytes). */
+function decodeAttach(bytes: Uint8Array | null | undefined): AttachOptions {
+  if (!bytes || bytes.length === 0) throw new Error("txfix: call has no attach_opaque_data");
+  const o = attachOptions(bytes);
+  return { token: typeof o.token === "string" ? o.token : null, transactional: o.transactional === true };
 }
 
-function decodeAttach(bytes: Uint8Array | null | undefined): AttachOptions {
-  const text = bytes && bytes.length ? decoder.decode(bytes) : "";
-  if (!text.startsWith(MAGIC)) throw new Error("txfix: attach_opaque_data missing or not minted by this worker");
-  return JSON.parse(text.slice(MAGIC.length)) as AttachOptions;
+/** Whether `needle` occurs in `haystack`. */
+function contains(haystack: Uint8Array, needle: Uint8Array): boolean {
+  outer: for (let i = 0; i + needle.length <= haystack.length; i++) {
+    for (let j = 0; j < needle.length; j++) if (haystack[i + j] !== needle[j]) continue outer;
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Whether the token's UTF-8 bytes appear in the attach bytes this call got.
+ * The SDK hands functions a view of the whole attach value it opened (on HTTP
+ * the unsealed inner bytes, on stdio / unix the raw wire bytes): framework
+ * uuid, the catalog's bytes, and the SDK's options trailer. Search the entire
+ * backing buffer, not just the catalog's slice of it.
+ */
+function tokenInAttachData(bytes: Uint8Array, token: string | null): boolean {
+  if (token == null) return false;
+  const needle = encoder.encode(token);
+  const whole = new Uint8Array(bytes.buffer, 0, bytes.buffer.byteLength);
+  return contains(bytes, needle) || contains(whole, needle);
 }
 
 const hex = (bytes: Uint8Array) => Buffer.from(bytes).toString("hex");
@@ -314,10 +336,14 @@ const resetFn = oneShot("reset", "Restore this token's initial rows; clear its s
 const whoamiFn = oneShot(
   "whoami",
   "The attach's options as functions see them",
-  schema([field("token", utf8(), true), field("transactional", bool(), true)]),
+  schema([field("token", utf8(), true), field("transactional", bool(), true), field("token_in_attach_data", bool(), true)]),
   (bindCall) => {
     const o = decodeAttach(bindCall.attach_opaque_data);
-    return { token: [o.token], transactional: [o.transactional] };
+    return {
+      token: [o.token],
+      transactional: [o.transactional],
+      token_in_attach_data: [tokenInAttachData(bindCall.attach_opaque_data!, o.token)],
+    };
   },
 );
 
@@ -407,10 +433,11 @@ export class TxfixCatalog extends ReadOnlyCatalogInterface {
     implementationVersion?: string | null,
     clientCapabilities?: Uint8Array | null,
   ): Promise<CatalogAttachResult> {
+    // super.attach mints a random attach id; the options (token included)
+    // reach functions and hooks through attachOptions(), not these bytes.
     const result = await super.attach(name, options, dataVersionSpec, implementationVersion, clientCapabilities);
     return {
       ...result,
-      attach_opaque_data: encodeAttach(options),
       // Per attach: only `transactional true` asks DuckDB for the hooks below.
       supports_transactions: options?.transactional === true,
     };

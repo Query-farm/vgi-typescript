@@ -30,6 +30,17 @@ export interface ProtocolConfig {
    * unsealed — OS process ownership already enforces identity there.
    */
   signingKey?: Uint8Array | undefined;
+  /**
+   * Optional root key for secret ATTACH options (`AttachOptionSpec.secret`),
+   * which the framework encrypts inside `attach_opaque_data` so functions and
+   * transaction hooks can read them with `attachOptions()`. Defaults to the
+   * signing key when there is one (HTTP), else the host-local key file
+   * (`$VGI_ATTACH_SECRET_KEY_FILE`, or `vgi/attach-secret-options.key` under
+   * `$XDG_RUNTIME_DIR` / the per-user temp dir). Any length; the AEAD key is
+   * always derived from it with HKDF-SHA256. Every worker process that may
+   * receive a given attach must use the same key.
+   */
+  attachSecretKey?: Uint8Array | undefined;
 }
 
 /**
@@ -85,11 +96,12 @@ export function buildVgiService(config: ProtocolConfig): VgiService {
     ...functionHandlers({
       registry: config.registry,
       signingKey: config.signingKey,
+      attachSecretKey: config.attachSecretKey,
       catalogInterface: config.catalogInterface,
     }),
     ...aggregateHandlers(config.registry),
-    ...tableBufferingHandlers(config.registry, config.signingKey),
-    ...catalogHandlers(config.catalogInterface, config.signingKey),
+    ...tableBufferingHandlers(config.registry, config.signingKey, config.attachSecretKey),
+    ...catalogHandlers(config.catalogInterface, config.signingKey, config.attachSecretKey),
   };
 }
 
