@@ -24,6 +24,7 @@ import type {
   ViewInfo,
 } from "./interface.js";
 import { CatalogInterface } from "./interface.js";
+import type { ScanPlanningFilters } from "./scan-planning.js";
 import { OpaqueDataRejectedError } from "../crypto.js";
 import { VgiError } from "../errors.js";
 
@@ -164,6 +165,10 @@ export class CompositeCatalogInterface extends CatalogInterface {
 
   override async tableScanBranchesGet(attachOpaqueData: AttachOpaqueData, schemaPath: string[], name: string, atUnit?: string, atValue?: string, transactionOpaqueData?: TransactionOpaqueData): Promise<any> {
     return await this._route(attachOpaqueData).tableScanBranchesGet(attachOpaqueData, schemaPath, name, atUnit, atValue, transactionOpaqueData);
+  }
+
+  override async tableScanBranchesPlan(attachOpaqueData: AttachOpaqueData, schemaPath: string[], name: string, atUnit: string | undefined, atValue: string | undefined, transactionOpaqueData: TransactionOpaqueData | undefined, pushdownFilters: ScanPlanningFilters | null): Promise<any> {
+    return await this._route(attachOpaqueData).tableScanBranchesPlan(attachOpaqueData, schemaPath, name, atUnit, atValue, transactionOpaqueData, pushdownFilters);
   }
 
   override async tableColumnStatisticsGet(attachOpaqueData: AttachOpaqueData, schemaPath: string[], name: string, transactionOpaqueData?: TransactionOpaqueData): Promise<{ bytes: Uint8Array; cacheMaxAgeSeconds: number | null } | null> {

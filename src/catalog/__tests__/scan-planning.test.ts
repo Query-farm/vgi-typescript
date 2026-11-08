@@ -9,6 +9,7 @@ import {
   type AttachOpaqueData, type CatalogAttachResult, type SchemaInfo, type TableInfo, type TransactionOpaqueData,
 } from "../interface.js";
 import { ReadOnlyCatalogInterface } from "../read-only.js";
+import { CompositeCatalogInterface } from "../composite.js";
 import { servedValidatedTableInfo, validateTableInfoColumns } from "../column-metadata.js";
 import {
   ScanPlanningFilters, filtersMayMatch, validateScanPlanning, type ScanCandidateStatistics,
@@ -234,6 +235,14 @@ describe("catalog_table_scan_branches_get dispatch", () => {
     expect(branches(await handler(catalog)({ pushdown_filters: null }))).toHaveLength(5);
     expect(catalog.seen).toEqual([null]);
     expect(catalog.tableGets).toBe(0);
+  });
+
+  test("a composite catalog routes the planning hook with its filters", async () => {
+    const inner = new PlanningCatalog();
+    const composite = new CompositeCatalogInterface([inner]);
+    const out = branches(await handler(composite)({ attach_opaque_data: new Uint8Array([0]), pushdown_filters: FILTER_BYTES }));
+    expect(out).toHaveLength(3);
+    expect(inner.seen[0]).toBeInstanceOf(ScanPlanningFilters);
   });
 
   test("the default hook delegates to tableScanBranchesGet", async () => {

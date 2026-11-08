@@ -50,14 +50,14 @@ function branchPath(name: string): string {
 
 // Protocol 3.2 filtered scan planning fixtures
 // (test/sql/integration/catalog/scan_planning_*.test). Five days of data, one
-// parquet file per day under ${BRANCH_DIR}/planned_days/. The tests create the
+// parquet file per day: ${BRANCH_DIR}/planned_days_<day>.parquet (flat — the
+// tests' COPY cannot create directories). The tests create the
 // files for the first four days only: the 2026-10-05 file never exists, so any
 // scan that fails to prune that day errors with "No files found" — a passing
 // query proves the pruning happened. Mirrors vgi-python's _PLANNED_DAYS.
 const PLANNED_DAYS: readonly Date[] = [1, 2, 3, 4, 5].map((d) => new Date(Date.UTC(2026, 9, d)));
-const PLANNED_DIR = branchPath("planned_days");
 const isoDay = (day: Date): string => day.toISOString().slice(0, 10);
-const plannedDayFile = (day: Date): string => `${PLANNED_DIR}/${isoDay(day)}.parquet`;
+const plannedDayFile = (day: Date): string => branchPath(`planned_days_${isoDay(day)}.parquet`);
 const plannedDayStats = (day: Date): ColumnStatistics[] => [{
   columnName: "event_date", arrowType: new DateDay(), min: day, max: day,
   hasNull: false, hasNotNull: true, distinctCount: null, containsUnicode: null, maxStringLength: null,
@@ -72,9 +72,10 @@ async function plannedDaysBranches(name: string, filters: ScanPlanningFilters | 
     const days: Date[] = [];
     for (const day of PLANNED_DAYS) if (filters == null || await filters.mayMatch(plannedDayStats(day))) days.push(day);
     // Record what the worker saw so tests can assert the predicates arrived.
-    fs.mkdirSync(PLANNED_DIR, { recursive: true });
-    fs.writeFileSync(`${PLANNED_DIR}/last_plan.json`,
-      JSON.stringify({ received_filters: filters != null, days: days.map(isoDay) }));
+    // Same bytes as Python's json.dump (", " / ": " separators).
+    const days_json = days.map((d) => JSON.stringify(isoDay(d))).join(", ");
+    fs.writeFileSync(branchPath("planned_days_last_plan.json"),
+      `{"received_filters": ${filters != null}, "days": [${days_json}]}`);
     if (days.length === 0) return buildScanBranchesResult([], ["parquet"]);
     return buildScanBranchesResult(
       [{ functionName: "read_parquet", positionalArguments: [strList(days.map(plannedDayFile))], rowCount: 10 * days.length }],
@@ -686,6 +687,13 @@ export const catalog: CatalogDescriptor = {
           name: "planned_days_bf",
           columns: plannedDaysColumns(),
           comment: "Protocol 3.2: pruning by branch_filter contradiction — scan_planning_branch_filter.test",
+        },
+        // Protocol 3.2: branch_filter must be ONE expression. "n < 5, n > 2"
+        // parses as two; 3.1 clients silently kept the first.
+        {
+          name: "multi_branch_comma_filter",
+          columns: new Schema([new Field("n", new Int64(), true)]),
+          comment: "Protocol 3.2: multi-expression branch_filter is rejected",
         },
         {
           name: "multi_branch_numbers",
@@ -1342,6 +1350,9 @@ export function createExampleCatalog(base: ReadOnlyCatalogInterface): ReadOnlyCa
       switch (name.toLowerCase()) {
         case "multi_branch_numbers":
           return buildScanBranchesResult([seq(50), seq(50)]);
+        case "multi_branch_comma_filter":
+          // The extension must reject a branch_filter holding two expressions.
+          return buildScanBranchesResult([seq(10, { branchFilter: "n < 5, n > 2" })]);
         case "multi_branch_filtered_numbers":
           return buildScanBranchesResult([
             seq(100, { branchFilter: "n < 50" }),
