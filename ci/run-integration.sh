@@ -76,6 +76,10 @@ VERSIONED_TABLES_HTTP="$BIN_DIR/vgi-example-versioned-tables-http-worker"
 ATTACH_OPTIONS="$BIN_DIR/vgi-example-attach-options-worker"
 ATTACH_OPTIONS_HTTP="$BIN_DIR/vgi-example-attach-options-http-worker"
 SIMPLE_WRITABLE="$BIN_DIR/vgi-example-simple-writable-worker"
+# The txfix writable-table / transaction-hook fixture (examples/writable-tx-worker.ts);
+# its http wrapper adds --http.
+WRITABLE_TX="$BIN_DIR/vgi-example-writable-tx-worker"
+WRITABLE_TX_HTTP="$BIN_DIR/vgi-example-writable-tx-http-worker"
 
 # database_worker/package.sh needs a real stdio executable even when the main
 # integration lane attaches over HTTP. It uses the lane's Arrow backend.
@@ -84,7 +88,7 @@ if [ -z "${VGI_DATABASE_PACKAGE_WORKER:-}" ]; then
 fi
 for b in "$WORKER" "$HTTP_WORKER" "$VERSIONED" "$VERSIONED_HTTP" \
          "$VERSIONED_TABLES" "$VERSIONED_TABLES_HTTP" \
-         "$ATTACH_OPTIONS" "$ATTACH_OPTIONS_HTTP"; do
+         "$ATTACH_OPTIONS" "$ATTACH_OPTIONS_HTTP" "$WRITABLE_TX" "$WRITABLE_TX_HTTP"; do
   [ -x "$b" ] || { echo "::error::missing worker wrapper $b"; exit 1; }
 done
 command -v bun >/dev/null 2>&1 || { echo "::error::bun not on PATH (the workers exec it)"; exit 1; }
@@ -206,6 +210,14 @@ export VGI_SYNC_INIT_GLOBAL=1
 # (vgi docs/secret_lookup_fixtures.md, examples/secret_lookup.ts), so opt in to
 # secret/secret_lookup_*.test on every lane.
 export VGI_SECRET_LOOKUP_FIXTURES=1
+
+# examples/writable-tx-worker.ts implements the writable-table and
+# transaction-hook fixtures (vgi docs/writable_tx_fixtures.md), so opt in to
+# writable_tx/*.test on every lane (VGI_WRITABLE_TX_WORKER is set per transport
+# below). Its state file goes in a directory private to this run, so lanes
+# running at the same time on one host do not share rows or event logs.
+export VGI_WRITABLE_TX_FIXTURES=1
+export VGI_TXFIX_STATE_DIR="${VGI_TXFIX_STATE_DIR:-$(mktemp -d)}"
 
 # Engine-feature gates (vgi 285ba5b, docs/upstream-duckdb-build.md). Every runner
 # this lane uses is Haybarn, which has both features, so default them to 1 the
@@ -363,6 +375,7 @@ case "$TRANSPORT" in
     export VGI_ATTACH_OPTIONS_REQUIRED_WORKER="$VGI_ATTACH_OPTIONS_WORKER"
     # Writable tables (INSERT/UPDATE/DELETE): test/sql/integration/simple_writable.
     export VGI_SIMPLE_WRITABLE_WORKER="$SIMPLE_WRITABLE"
+    export VGI_WRITABLE_TX_WORKER="$WRITABLE_TX"
     export VGI_ENGINE_DELETE_RETURNING_VIRTUAL_COLUMNS=1   # haybarn-unittest (see skips above)
     # A private worker per DuckDB process makes the SIGKILL-self crash tests safe.
     export VGI_TEST_DEDICATED_WORKER="$WORKER"
@@ -387,6 +400,7 @@ case "$TRANSPORT" in
     # of the shared attach_options_echo.test behind this env var).
     export VGI_ATTACH_OPTIONS_REQUIRED_WORKER="$VGI_ATTACH_OPTIONS_WORKER"
     export VGI_SIMPLE_WRITABLE_WORKER="launch:${SIMPLE_WRITABLE}"
+    export VGI_WRITABLE_TX_WORKER="launch:${WRITABLE_TX}"
     export VGI_ENGINE_DELETE_RETURNING_VIRTUAL_COLUMNS=1   # haybarn-unittest (see skips above)
     export VGI_REQUIRE_LAUNCHER_TRANSPORT=1
     export VGI_WORKER_IDLE_TIMEOUT="${VGI_WORKER_IDLE_TIMEOUT:-120}"
@@ -411,6 +425,8 @@ case "$TRANSPORT" in
     export VGI_ATTACH_OPTIONS_REQUIRED_WORKER="$VGI_ATTACH_OPTIONS_WORKER"
     boot_http_worker "$VERSIONED_TABLES_HTTP" || exit 1
     export VGI_VERSIONED_TABLES_HTTP_WORKER="http://localhost:${BOOTED_PORT}"
+    boot_http_worker "$WRITABLE_TX_HTTP" || exit 1
+    export VGI_WRITABLE_TX_WORKER="http://localhost:${BOOTED_PORT}"
     # attach/versioning.test and attach/versioned_tables*.test attach the
     # versioned catalogs over the SUBPROCESS transport (they assert bind-time
     # version resolution, which is transport-agnostic). Wire the stdio wrappers

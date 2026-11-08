@@ -26,6 +26,9 @@ VERSIONED_TABLES_HTTP   := $(CURDIR)/bin/vgi-example-versioned-tables-http-worke
 ATTACH_OPTIONS_WORKER := $(CURDIR)/bin/vgi-example-attach-options-worker
 ATTACH_OPTIONS_HTTP   := $(CURDIR)/bin/vgi-example-attach-options-http-worker
 SIMPLE_WRITABLE_WORKER := $(CURDIR)/bin/vgi-example-simple-writable-worker
+# The txfix fixture (vgi docs/writable_tx_fixtures.md): writable_tx/*.test.
+WRITABLE_TX_WORKER    := $(CURDIR)/bin/vgi-example-writable-tx-worker
+WRITABLE_TX_HTTP      := $(CURDIR)/bin/vgi-example-writable-tx-http-worker
 
 # Engine feature flags the vgi SQL suite gates on (see vgi's Makefile and
 # docs/upstream-duckdb-build.md): 1 on a Haybarn build, unset on upstream DuckDB.
@@ -238,6 +241,7 @@ test:
 	export VGI_VERSIONED_TABLES_WORKER="launch:$(VERSIONED_TABLES_WORKER)"; \
 	export VGI_ATTACH_OPTIONS_WORKER="launch:$(ATTACH_OPTIONS_WORKER)"; \
 	export VGI_SIMPLE_WRITABLE_WORKER="launch:$(SIMPLE_WRITABLE_WORKER)"; \
+	export VGI_WRITABLE_TX_FIXTURES=1 VGI_WRITABLE_TX_WORKER="launch:$(WRITABLE_TX_WORKER)"; \
 	export VGI_REQUIRE_LAUNCHER_TRANSPORT=1; \
 	export VGI_WORKER_IDLE_TIMEOUT=$(LAUNCHER_IDLE_TIMEOUT); \
 	export VGI_TEST_BRANCH_DIR="$(VGI_TEST_BRANCH_DIR)"; \
@@ -264,6 +268,7 @@ test-subprocess:
 	export VGI_VERSIONED_TABLES_WORKER="$(VERSIONED_TABLES_WORKER)"; \
 	export VGI_ATTACH_OPTIONS_WORKER="$(ATTACH_OPTIONS_WORKER)"; \
 	export VGI_SIMPLE_WRITABLE_WORKER="$(SIMPLE_WRITABLE_WORKER)"; \
+	export VGI_WRITABLE_TX_FIXTURES=1 VGI_WRITABLE_TX_WORKER="$(WRITABLE_TX_WORKER)"; \
 	python3 scripts/run_tests.py -j $(JOBS) --test-config $(TEST_CONFIG) $(TEST_PATTERNS) > $(TEST_LOG) 2>&1; \
 	rc=$$?; \
 	tail -n 20 $(TEST_LOG); \
@@ -296,18 +301,22 @@ test-http:
 	$(ATTACH_OPTIONS_HTTP) > "$$aport_fifo" 2>/dev/null & ahttp_pid=$$!; \
 	tport_fifo=$$(mktemp -u); mkfifo "$$tport_fifo"; exec 6<>"$$tport_fifo"; \
 	$(VERSIONED_TABLES_HTTP) > "$$tport_fifo" 2>/dev/null & thttp_pid=$$!; \
+	wport_fifo=$$(mktemp -u); mkfifo "$$wport_fifo"; exec 7<>"$$wport_fifo"; \
+	$(WRITABLE_TX_HTTP) > "$$wport_fifo" 2>/dev/null & whttp_pid=$$!; \
 	cleanup() { \
-		kill $$http_pid $$vhttp_pid $$ahttp_pid $$thttp_pid 2>/dev/null; \
-		wait $$http_pid $$vhttp_pid $$ahttp_pid $$thttp_pid 2>/dev/null; \
-		exec 3>&- 4>&- 5>&- 6>&- 2>/dev/null; \
-		rm -f "$$port_fifo" "$$vport_fifo" "$$aport_fifo" "$$tport_fifo"; \
+		kill $$http_pid $$vhttp_pid $$ahttp_pid $$thttp_pid $$whttp_pid 2>/dev/null; \
+		wait $$http_pid $$vhttp_pid $$ahttp_pid $$thttp_pid $$whttp_pid 2>/dev/null; \
+		exec 3>&- 4>&- 5>&- 6>&- 7>&- 2>/dev/null; \
+		rm -f "$$port_fifo" "$$vport_fifo" "$$aport_fifo" "$$tport_fifo" "$$wport_fifo"; \
 	}; \
 	trap cleanup EXIT; \
 	read -t 60 port_line <&3 || { echo "ERROR: HTTP worker timeout"; echo "--- worker stderr ---"; cat /tmp/vgi-http-worker.err 2>/dev/null; exit 1; }; \
 	read -t 60 vport_line <&4 || { echo "ERROR: versioned HTTP worker timeout"; exit 1; }; \
 	read -t 60 aport_line <&5 || { echo "ERROR: attach-options HTTP worker timeout"; exit 1; }; \
 	read -t 60 tport_line <&6 || { echo "ERROR: versioned-tables HTTP worker timeout"; exit 1; }; \
+	read -t 60 wport_line <&7 || { echo "ERROR: writable-tx HTTP worker timeout"; exit 1; }; \
 	export VGI_SECRET_LOOKUP_FIXTURES=1; \
+	export VGI_WRITABLE_TX_FIXTURES=1 VGI_WRITABLE_TX_WORKER="http://localhost:$${wport_line#PORT:}"; \
 	export VGI_TEST_WORKER="http://localhost:$${port_line#PORT:}"; \
 	export VGI_DATABASE_PACKAGE_WORKER="$${VGI_DATABASE_PACKAGE_WORKER:-VGI_BUN_CONDITIONS= $(WORKER)}"; \
 	export VGI_VERSIONED_HTTP_WORKER="http://localhost:$${vport_line#PORT:}"; \
@@ -352,6 +361,7 @@ test/%:
 	export VGI_VERSIONED_TABLES_WORKER="launch:$(VERSIONED_TABLES_WORKER)"; \
 	export VGI_ATTACH_OPTIONS_WORKER="launch:$(ATTACH_OPTIONS_WORKER)"; \
 	export VGI_SIMPLE_WRITABLE_WORKER="launch:$(SIMPLE_WRITABLE_WORKER)"; \
+	export VGI_WRITABLE_TX_FIXTURES=1 VGI_WRITABLE_TX_WORKER="launch:$(WRITABLE_TX_WORKER)"; \
 	export VGI_REQUIRE_LAUNCHER_TRANSPORT=1; \
 	export VGI_WORKER_IDLE_TIMEOUT=$(LAUNCHER_IDLE_TIMEOUT); \
 	cd $(VGI_DIR) && ./build/release/test/unittest --test-config $(TEST_CONFIG) -s "test/sql/$*.test"
@@ -371,6 +381,7 @@ test-subprocess/%:
 	export VGI_VERSIONED_TABLES_WORKER="$(VERSIONED_TABLES_WORKER)"; \
 	export VGI_ATTACH_OPTIONS_WORKER="$(ATTACH_OPTIONS_WORKER)"; \
 	export VGI_SIMPLE_WRITABLE_WORKER="$(SIMPLE_WRITABLE_WORKER)"; \
+	export VGI_WRITABLE_TX_FIXTURES=1 VGI_WRITABLE_TX_WORKER="$(WRITABLE_TX_WORKER)"; \
 	cd $(VGI_DIR) && ./build/release/test/unittest --test-config $(TEST_CONFIG) -s "test/sql/$*.test"
 
 # test-http/% — single-test HTTP entry point. Spawns the HTTP worker
@@ -389,18 +400,22 @@ test-http/%:
 	$(ATTACH_OPTIONS_HTTP) > "$$aport_fifo" 2>/dev/null & ahttp_pid=$$!; \
 	tport_fifo=$$(mktemp -u); mkfifo "$$tport_fifo"; exec 6<>"$$tport_fifo"; \
 	$(VERSIONED_TABLES_HTTP) > "$$tport_fifo" 2>/dev/null & thttp_pid=$$!; \
+	wport_fifo=$$(mktemp -u); mkfifo "$$wport_fifo"; exec 7<>"$$wport_fifo"; \
+	$(WRITABLE_TX_HTTP) > "$$wport_fifo" 2>/dev/null & whttp_pid=$$!; \
 	cleanup() { \
-		kill $$http_pid $$vhttp_pid $$ahttp_pid $$thttp_pid 2>/dev/null; \
-		wait $$http_pid $$vhttp_pid $$ahttp_pid $$thttp_pid 2>/dev/null; \
-		exec 3>&- 4>&- 5>&- 6>&- 2>/dev/null; \
-		rm -f "$$port_fifo" "$$vport_fifo" "$$aport_fifo" "$$tport_fifo"; \
+		kill $$http_pid $$vhttp_pid $$ahttp_pid $$thttp_pid $$whttp_pid 2>/dev/null; \
+		wait $$http_pid $$vhttp_pid $$ahttp_pid $$thttp_pid $$whttp_pid 2>/dev/null; \
+		exec 3>&- 4>&- 5>&- 6>&- 7>&- 2>/dev/null; \
+		rm -f "$$port_fifo" "$$vport_fifo" "$$aport_fifo" "$$tport_fifo" "$$wport_fifo"; \
 	}; \
 	trap cleanup EXIT; \
 	read -t 60 port_line <&3 || { echo "ERROR: HTTP worker timeout"; echo "--- worker stderr ---"; cat /tmp/vgi-http-worker.err 2>/dev/null; exit 1; }; \
 	read -t 60 vport_line <&4 || { echo "ERROR: versioned HTTP worker timeout"; exit 1; }; \
 	read -t 60 aport_line <&5 || { echo "ERROR: attach-options HTTP worker timeout"; exit 1; }; \
 	read -t 60 tport_line <&6 || { echo "ERROR: versioned-tables HTTP worker timeout"; exit 1; }; \
+	read -t 60 wport_line <&7 || { echo "ERROR: writable-tx HTTP worker timeout"; exit 1; }; \
 	export VGI_SECRET_LOOKUP_FIXTURES=1; \
+	export VGI_WRITABLE_TX_FIXTURES=1 VGI_WRITABLE_TX_WORKER="http://localhost:$${wport_line#PORT:}"; \
 	export VGI_TEST_WORKER="http://localhost:$${port_line#PORT:}"; \
 	export VGI_DATABASE_PACKAGE_WORKER="$${VGI_DATABASE_PACKAGE_WORKER:-VGI_BUN_CONDITIONS= $(WORKER)}"; \
 	export VGI_VERSIONED_HTTP_WORKER="http://localhost:$${vport_line#PORT:}"; \

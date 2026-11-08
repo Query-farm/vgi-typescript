@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# The txfix writable-table / transaction-hook fixture (examples/writable-tx-worker.ts).
+# VGI_BUN_CONDITIONS (e.g. "worker") selects the flechette Arrow backend.
+exec bun ${VGI_BUN_CONDITIONS:+--conditions="$VGI_BUN_CONDITIONS"} run "$(dirname "$0")/../examples/writable-tx-worker.ts" --http "$@"
