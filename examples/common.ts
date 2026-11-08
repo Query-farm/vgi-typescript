@@ -71,11 +71,15 @@ async function plannedDaysBranches(name: string, filters: ScanPlanningFilters | 
   if (name === "planned_days") {
     const days: Date[] = [];
     for (const day of PLANNED_DAYS) if (filters == null || await filters.mayMatch(plannedDayStats(day))) days.push(day);
-    // Record what the worker saw so tests can assert the predicates arrived.
-    // Same bytes as Python's json.dump (", " / ": " separators).
-    const days_json = days.map((d) => JSON.stringify(isoDay(d))).join(", ");
-    fs.writeFileSync(branchPath("planned_days_last_plan.json"),
-      `{"received_filters": ${filters != null}, "days": [${days_json}]}`);
+    // Record what a filtered planning call saw so tests can assert the
+    // predicates arrived. Only filtered calls write it: unfiltered calls
+    // (vgi_table_branches() from concurrent tests sharing the branch dir)
+    // would otherwise race and overwrite it. Same bytes as Python's json.dump.
+    if (filters != null) {
+      const daysJson = days.map((d) => JSON.stringify(isoDay(d))).join(", ");
+      fs.writeFileSync(branchPath("planned_days_last_plan.json"),
+        `{"received_filters": true, "days": [${daysJson}]}`);
+    }
     if (days.length === 0) return buildScanBranchesResult([], ["parquet"]);
     return buildScanBranchesResult(
       [{ functionName: "read_parquet", positionalArguments: [strList(days.map(plannedDayFile))], rowCount: 10 * days.length }],
