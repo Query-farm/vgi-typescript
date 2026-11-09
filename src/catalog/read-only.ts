@@ -26,6 +26,11 @@ import { schemaDescriptorPath, type CatalogDescriptor, type SchemaDescriptor, ty
 import { serializeColumnStatistics } from "../util/statistics.js";
 import type { VgiFunction } from "../functions/types.js";
 import type { FunctionRegistry } from "../functions/registry.js";
+
+// Schema and view lookups may be overridden with async implementations, for a
+// catalog that discovers them from a remote service; the dispatcher awaits
+// them. (schemaContentsTables/tableGet are async already.)
+type Awaitable<T> = T | Promise<T>;
 import { argumentSpecsToSchema } from "../arguments/argument-spec.js";
 import { serializeSchema, serializeBatch, emptyBatch, batchFromColumns } from "../util/arrow/index.js";
 import { resolveMetadata } from "../metadata/resolve.js";
@@ -329,7 +334,7 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
     return super.catalogContentsCacheable() && !this.perAttachItemIds;
   }
 
-  schemas(attachOpaqueData: AttachOpaqueData, transactionOpaqueData?: TransactionOpaqueData): SchemaInfo[] {
+  schemas(attachOpaqueData: AttachOpaqueData, transactionOpaqueData?: TransactionOpaqueData): Awaitable<SchemaInfo[]> {
     return this._descriptor.schemas.map((s) => ({
       path: schemaDescriptorPath(s),
       comment: s.comment ?? null,
@@ -364,7 +369,7 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
     attachOpaqueData: AttachOpaqueData,
     path: string[],
     transactionOpaqueData?: TransactionOpaqueData
-  ): SchemaInfo | null {
+  ): Awaitable<SchemaInfo | null> {
     const desc = this._descriptor.schemas.find((s) => schemaPathsEqual(schemaDescriptorPath(s), path));
     if (!desc) return null;
     return {
@@ -546,7 +551,7 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
     attachOpaqueData: AttachOpaqueData,
     path: string[],
     transactionOpaqueData?: TransactionOpaqueData
-  ): ViewInfo[] {
+  ): Awaitable<ViewInfo[]> {
     const schema = this._descriptor.schemas.find((s) => schemaPathsEqual(schemaDescriptorPath(s), path));
     if (!schema || !schema.views) return [];
 
@@ -1009,13 +1014,13 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
     return tables.find((t) => t.name === name) ?? null;
   }
 
-  override viewGet(
+  override async viewGet(
     attachOpaqueData: AttachOpaqueData,
     schemaPath: string[],
     name: string,
     transactionOpaqueData?: TransactionOpaqueData
-  ): ViewInfo | null {
-    const views = this.schemaContentsViews(attachOpaqueData, schemaPath, transactionOpaqueData);
+  ): Promise<ViewInfo | null> {
+    const views = await this.schemaContentsViews(attachOpaqueData, schemaPath, transactionOpaqueData);
     return views.find((v) => v.name === name) ?? null;
   }
 

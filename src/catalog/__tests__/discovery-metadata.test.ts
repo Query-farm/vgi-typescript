@@ -39,7 +39,7 @@ describe("ReadOnlyCatalogInterface discovery metadata", () => {
     expect(infos[0].source_url ?? null).toBeNull();
   });
 
-  test("schemas() carries the descriptor's tags into SchemaInfo", () => {
+  test("schemas() carries the descriptor's tags into SchemaInfo", async () => {
     const tags = {
       "vgi.description_llm": "An example schema.",
       "vgi.description_md": "An example schema.",
@@ -48,7 +48,7 @@ describe("ReadOnlyCatalogInterface discovery metadata", () => {
       { name: "example", schemas: [{ name: "main", tags }] },
       new FunctionRegistry(),
     );
-    const schemas = catalog.schemas(new Uint8Array([1]));
+    const schemas = await catalog.schemas(new Uint8Array([1]));
     expect(schemas).toHaveLength(1);
     expect(schemas[0].tags).toEqual(tags);
     const back = decodeSchemaInfo(encodeSchemaInfo(schemas[0]));
