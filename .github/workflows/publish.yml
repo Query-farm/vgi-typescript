@@ -104,10 +104,13 @@ jobs:
           steps.exists.outputs.already == 'false' &&
           github.event_name == 'workflow_dispatch' &&
           inputs.dry-run
-        run: npm publish --provenance --access public --dry-run
+        run: npm publish --provenance --access public --tag release-0.48 --dry-run
 
       - name: Publish
         if: >-
           steps.exists.outputs.already == 'false' &&
           !(github.event_name == 'workflow_dispatch' && inputs.dry-run)
-        run: npm publish --provenance --access public
+        # Maintenance line: npm refuses to tag a version lower than the newest
+        # release as "latest", so 0.48.x publishes under its own dist-tag.
+        # Consumers pinning ~0.48 resolve by semver and are unaffected.
+        run: npm publish --provenance --access public --tag release-0.48
