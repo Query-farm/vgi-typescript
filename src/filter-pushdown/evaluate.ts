@@ -233,9 +233,13 @@ class WkbBoundsReader {
     const x = this.float64(littleEndian);
     const y = this.float64(littleEndian);
     for (let dimension = 2; dimension < dimensions; dimension++) this.float64(littleEndian);
+    // Matches DuckDB core `&&`: an all-NaN point (how WKB spells POINT EMPTY)
+    // has no vertex; NaN on one axis leaves that axis unbounded; ±inf are
+    // ordinary values.
     if (Number.isNaN(x) && Number.isNaN(y)) return null;
-    if (!Number.isFinite(x) || !Number.isFinite(y)) throw new FilterV2Error("WKB coordinate must be finite");
-    return { minX: x, minY: y, maxX: x, maxY: y };
+    const [minX, maxX] = Number.isNaN(x) ? [-Infinity, Infinity] : [x, x];
+    const [minY, maxY] = Number.isNaN(y) ? [-Infinity, Infinity] : [y, y];
+    return { minX, minY, maxX, maxY };
   }
 
   private count(littleEndian: boolean): number {
@@ -503,14 +507,19 @@ export class PushdownFilters {
     mask.fill(1);
     for (const predicate of this.predicates) {
       if (predicate.expression.node === "runtime_filter" && !predicate.expression.supported) continue;
-      let values: unknown[];
-      try {
-        values = Array.from({ length: batch.numRows }, (_, row) => evaluateExpression(
-          predicate.expression, batch, row, this.evaluationContext));
-      } catch (error) {
-        if (predicate.mode === "advisory") continue;
-        throw error;
-      }
+      // A required predicate that cannot be evaluated fails the scan: DuckDB
+      // has dropped it from its own plan. An advisory one only prunes, so a
+      // row it cannot evaluate (malformed WKB, a non-binary value, ...) is
+      // kept, and the other rows are still filtered.
+      const advisory = predicate.mode === "advisory";
+      const values = Array.from({ length: batch.numRows }, (_, row) => {
+        try {
+          return evaluateExpression(predicate.expression, batch, row, this.evaluationContext);
+        } catch (error) {
+          if (advisory) return true;
+          throw error;
+        }
+      });
       for (let row = 0; row < batch.numRows; row++) mask[row]! &= values[row] === true ? 1 : 0;
     }
     return mask;
