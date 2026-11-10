@@ -231,15 +231,19 @@ class WkbBoundsReader {
 
   /**
    * One vertex, as DuckDB core `&&` sees it: NaN on an axis leaves that axis
-   * unbounded and ±inf are ordinary values. Only a POINT geometry whose X and
-   * Y are both NaN (how WKB spells POINT EMPTY) has no vertex at all; the
-   * same coordinates in a LINESTRING or POLYGON are unbounded on both axes.
+   * unbounded and ±inf are ordinary values. Only a POINT geometry whose
+   * coordinates are ALL NaN, Z and M included (how WKB spells POINT EMPTY),
+   * has no vertex at all: `POINT Z (nan nan 5)` is a vertex unbounded on both
+   * axes, as are all-NaN coordinates in a LINESTRING or POLYGON.
    */
   private point(littleEndian: boolean, dimensions: number, isPointGeometry = false): Bounds | null {
     const x = this.float64(littleEndian);
     const y = this.float64(littleEndian);
-    for (let dimension = 2; dimension < dimensions; dimension++) this.float64(littleEndian);
-    if (isPointGeometry && Number.isNaN(x) && Number.isNaN(y)) return null;
+    let allNaN = Number.isNaN(x) && Number.isNaN(y);
+    for (let dimension = 2; dimension < dimensions; dimension++) {
+      allNaN = Number.isNaN(this.float64(littleEndian)) && allNaN;
+    }
+    if (isPointGeometry && allNaN) return null;
     const [minX, maxX] = Number.isNaN(x) ? [-Infinity, Infinity] : [x, x];
     const [minY, maxY] = Number.isNaN(y) ? [-Infinity, Infinity] : [y, y];
     return { minX, minY, maxX, maxY };
