@@ -70,7 +70,7 @@ const ENCODINGS = [["wkb_le", "wkb_le"], ["wkb_le", "wkb_be"], ["wkb_be", "wkb_l
 
 describe("duckdb.spatial/intersects_extent@1 matches DuckDB core", () => {
   test("fixture is complete", () => {
-    expect(FIXTURE.geometries.length).toBe(37);
+    expect(FIXTURE.geometries.length).toBe(43);
     expect(FIXTURE.cases.length).toBe(FIXTURE.geometries.length ** 2);
   });
 

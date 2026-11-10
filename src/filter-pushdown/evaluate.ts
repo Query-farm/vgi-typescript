@@ -229,14 +229,17 @@ class WkbBoundsReader {
     return value;
   }
 
-  private point(littleEndian: boolean, dimensions: number): Bounds | null {
+  /**
+   * One vertex, as DuckDB core `&&` sees it: NaN on an axis leaves that axis
+   * unbounded and ±inf are ordinary values. Only a POINT geometry whose X and
+   * Y are both NaN (how WKB spells POINT EMPTY) has no vertex at all; the
+   * same coordinates in a LINESTRING or POLYGON are unbounded on both axes.
+   */
+  private point(littleEndian: boolean, dimensions: number, isPointGeometry = false): Bounds | null {
     const x = this.float64(littleEndian);
     const y = this.float64(littleEndian);
     for (let dimension = 2; dimension < dimensions; dimension++) this.float64(littleEndian);
-    // Matches DuckDB core `&&`: an all-NaN point (how WKB spells POINT EMPTY)
-    // has no vertex; NaN on one axis leaves that axis unbounded; ±inf are
-    // ordinary values.
-    if (Number.isNaN(x) && Number.isNaN(y)) return null;
+    if (isPointGeometry && Number.isNaN(x) && Number.isNaN(y)) return null;
     const [minX, maxX] = Number.isNaN(x) ? [-Infinity, Infinity] : [x, x];
     const [minY, maxY] = Number.isNaN(y) ? [-Infinity, Infinity] : [y, y];
     return { minX, minY, maxX, maxY };
@@ -290,7 +293,7 @@ class WkbBoundsReader {
     }
     if (hasSrid) this.uint32(littleEndian);
 
-    if (type === 1) return this.point(littleEndian, dimensions);
+    if (type === 1) return this.point(littleEndian, dimensions, true);
     if (type === 2) return this.points(littleEndian, dimensions);
     if (type === 3) {
       let bounds: Bounds | null = null;

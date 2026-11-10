@@ -224,6 +224,42 @@
    "wkt": "GEOMETRYCOLLECTION(POINT(nan 1), POINT(3 3))",
    "wkb_le": "0107000000020000000101000000000000000000f87f000000000000f03f010100000000000000000008400000000000000840",
    "wkb_be": "00000000070000000200000000017ff80000000000003ff0000000000000000000000140080000000000004008000000000000"
+  },
+  {
+   "name": "ls_nan_nan_vertex",
+   "wkt": "LINESTRING(nan nan, 5 5)",
+   "wkb_le": "010200000002000000000000000000f87f000000000000f87f00000000000014400000000000001440",
+   "wkb_be": "0000000002000000027ff80000000000007ff800000000000040140000000000004014000000000000"
+  },
+  {
+   "name": "ls_all_nan",
+   "wkt": "LINESTRING(nan nan, nan nan)",
+   "wkb_le": "010200000002000000000000000000f87f000000000000f87f000000000000f87f000000000000f87f",
+   "wkb_be": "0000000002000000027ff80000000000007ff80000000000007ff80000000000007ff8000000000000"
+  },
+  {
+   "name": "ls_mixed_nan",
+   "wkt": "LINESTRING(nan 1, 1 nan)",
+   "wkb_le": "010200000002000000000000000000f87f000000000000f03f000000000000f03f000000000000f87f",
+   "wkb_be": "0000000002000000027ff80000000000003ff00000000000003ff00000000000007ff8000000000000"
+  },
+  {
+   "name": "poly_nan_vertex",
+   "wkt": "POLYGON((nan nan, 5 5, 6 6, nan nan))",
+   "wkb_le": "01030000000100000004000000000000000000f87f000000000000f87f0000000000001440000000000000144000000000000018400000000000001840000000000000f87f000000000000f87f",
+   "wkb_be": "000000000300000001000000047ff80000000000007ff800000000000040140000000000004014000000000000401800000000000040180000000000007ff80000000000007ff8000000000000"
+  },
+  {
+   "name": "mpt_nan_member",
+   "wkt": "MULTIPOINT((nan nan), (5 5))",
+   "wkb_le": "0104000000020000000101000000000000000000f87f000000000000f87f010100000000000000000014400000000000001440",
+   "wkb_be": "00000000040000000200000000017ff80000000000007ff8000000000000000000000140140000000000004014000000000000"
+  },
+  {
+   "name": "gc_nan_nan_point",
+   "wkt": "GEOMETRYCOLLECTION(POINT(nan nan), POINT(3 3))",
+   "wkb_le": "0107000000020000000101000000000000000000f87f000000000000f87f010100000000000000000008400000000000000840",
+   "wkb_be": "00000000070000000200000000017ff80000000000007ff8000000000000000000000140080000000000004008000000000000"
   }
  ],
  "cases": [
@@ -413,6 +449,36 @@
    "expected": false
   },
   {
+   "left": "pt_origin",
+   "right": "ls_nan_nan_vertex",
+   "expected": true
+  },
+  {
+   "left": "pt_origin",
+   "right": "ls_all_nan",
+   "expected": true
+  },
+  {
+   "left": "pt_origin",
+   "right": "ls_mixed_nan",
+   "expected": true
+  },
+  {
+   "left": "pt_origin",
+   "right": "poly_nan_vertex",
+   "expected": true
+  },
+  {
+   "left": "pt_origin",
+   "right": "mpt_nan_member",
+   "expected": false
+  },
+  {
+   "left": "pt_origin",
+   "right": "gc_nan_nan_point",
+   "expected": false
+  },
+  {
    "left": "pt_one",
    "right": "pt_origin",
    "expected": false
@@ -598,6 +664,36 @@
    "expected": true
   },
   {
+   "left": "pt_one",
+   "right": "ls_nan_nan_vertex",
+   "expected": true
+  },
+  {
+   "left": "pt_one",
+   "right": "ls_all_nan",
+   "expected": true
+  },
+  {
+   "left": "pt_one",
+   "right": "ls_mixed_nan",
+   "expected": true
+  },
+  {
+   "left": "pt_one",
+   "right": "poly_nan_vertex",
+   "expected": true
+  },
+  {
+   "left": "pt_one",
+   "right": "mpt_nan_member",
+   "expected": false
+  },
+  {
+   "left": "pt_one",
+   "right": "gc_nan_nan_point",
+   "expected": false
+  },
+  {
    "left": "pt_half",
    "right": "pt_origin",
    "expected": false
@@ -783,6 +879,36 @@
    "expected": false
   },
   {
+   "left": "pt_half",
+   "right": "ls_nan_nan_vertex",
+   "expected": true
+  },
+  {
+   "left": "pt_half",
+   "right": "ls_all_nan",
+   "expected": true
+  },
+  {
+   "left": "pt_half",
+   "right": "ls_mixed_nan",
+   "expected": true
+  },
+  {
+   "left": "pt_half",
+   "right": "poly_nan_vertex",
+   "expected": true
+  },
+  {
+   "left": "pt_half",
+   "right": "mpt_nan_member",
+   "expected": false
+  },
+  {
+   "left": "pt_half",
+   "right": "gc_nan_nan_point",
+   "expected": false
+  },
+  {
    "left": "pt_far",
    "right": "pt_origin",
    "expected": false
@@ -968,6 +1094,36 @@
    "expected": false
   },
   {
+   "left": "pt_far",
+   "right": "ls_nan_nan_vertex",
+   "expected": true
+  },
+  {
+   "left": "pt_far",
+   "right": "ls_all_nan",
+   "expected": true
+  },
+  {
+   "left": "pt_far",
+   "right": "ls_mixed_nan",
+   "expected": true
+  },
+  {
+   "left": "pt_far",
+   "right": "poly_nan_vertex",
+   "expected": true
+  },
+  {
+   "left": "pt_far",
+   "right": "mpt_nan_member",
+   "expected": true
+  },
+  {
+   "left": "pt_far",
+   "right": "gc_nan_nan_point",
+   "expected": false
+  },
+  {
    "left": "pt_neg",
    "right": "pt_origin",
    "expected": false
@@ -1153,6 +1309,36 @@
    "expected": false
   },
   {
+   "left": "pt_neg",
+   "right": "ls_nan_nan_vertex",
+   "expected": true
+  },
+  {
+   "left": "pt_neg",
+   "right": "ls_all_nan",
+   "expected": true
+  },
+  {
+   "left": "pt_neg",
+   "right": "ls_mixed_nan",
+   "expected": true
+  },
+  {
+   "left": "pt_neg",
+   "right": "poly_nan_vertex",
+   "expected": true
+  },
+  {
+   "left": "pt_neg",
+   "right": "mpt_nan_member",
+   "expected": false
+  },
+  {
+   "left": "pt_neg",
+   "right": "gc_nan_nan_point",
+   "expected": false
+  },
+  {
    "left": "pt_just_outside",
    "right": "pt_origin",
    "expected": false
@@ -1338,6 +1524,36 @@
    "expected": false
   },
   {
+   "left": "pt_just_outside",
+   "right": "ls_nan_nan_vertex",
+   "expected": true
+  },
+  {
+   "left": "pt_just_outside",
+   "right": "ls_all_nan",
+   "expected": true
+  },
+  {
+   "left": "pt_just_outside",
+   "right": "ls_mixed_nan",
+   "expected": true
+  },
+  {
+   "left": "pt_just_outside",
+   "right": "poly_nan_vertex",
+   "expected": true
+  },
+  {
+   "left": "pt_just_outside",
+   "right": "mpt_nan_member",
+   "expected": false
+  },
+  {
+   "left": "pt_just_outside",
+   "right": "gc_nan_nan_point",
+   "expected": false
+  },
+  {
    "left": "pt_huge",
    "right": "pt_origin",
    "expected": false
@@ -1523,6 +1739,36 @@
    "expected": false
   },
   {
+   "left": "pt_huge",
+   "right": "ls_nan_nan_vertex",
+   "expected": true
+  },
+  {
+   "left": "pt_huge",
+   "right": "ls_all_nan",
+   "expected": true
+  },
+  {
+   "left": "pt_huge",
+   "right": "ls_mixed_nan",
+   "expected": true
+  },
+  {
+   "left": "pt_huge",
+   "right": "poly_nan_vertex",
+   "expected": true
+  },
+  {
+   "left": "pt_huge",
+   "right": "mpt_nan_member",
+   "expected": false
+  },
+  {
+   "left": "pt_huge",
+   "right": "gc_nan_nan_point",
+   "expected": false
+  },
+  {
    "left": "pt_nan_x",
    "right": "pt_origin",
    "expected": false
@@ -1708,6 +1954,36 @@
    "expected": true
   },
   {
+   "left": "pt_nan_x",
+   "right": "ls_nan_nan_vertex",
+   "expected": true
+  },
+  {
+   "left": "pt_nan_x",
+   "right": "ls_all_nan",
+   "expected": true
+  },
+  {
+   "left": "pt_nan_x",
+   "right": "ls_mixed_nan",
+   "expected": true
+  },
+  {
+   "left": "pt_nan_x",
+   "right": "poly_nan_vertex",
+   "expected": true
+  },
+  {
+   "left": "pt_nan_x",
+   "right": "mpt_nan_member",
+   "expected": false
+  },
+  {
+   "left": "pt_nan_x",
+   "right": "gc_nan_nan_point",
+   "expected": false
+  },
+  {
    "left": "pt_nan_y",
    "right": "pt_origin",
    "expected": false
@@ -1893,6 +2169,36 @@
    "expected": true
   },
   {
+   "left": "pt_nan_y",
+   "right": "ls_nan_nan_vertex",
+   "expected": true
+  },
+  {
+   "left": "pt_nan_y",
+   "right": "ls_all_nan",
+   "expected": true
+  },
+  {
+   "left": "pt_nan_y",
+   "right": "ls_mixed_nan",
+   "expected": true
+  },
+  {
+   "left": "pt_nan_y",
+   "right": "poly_nan_vertex",
+   "expected": true
+  },
+  {
+   "left": "pt_nan_y",
+   "right": "mpt_nan_member",
+   "expected": false
+  },
+  {
+   "left": "pt_nan_y",
+   "right": "gc_nan_nan_point",
+   "expected": false
+  },
+  {
    "left": "pt_nan_xy",
    "right": "pt_origin",
    "expected": false
@@ -2078,6 +2384,36 @@
    "expected": false
   },
   {
+   "left": "pt_nan_xy",
+   "right": "ls_nan_nan_vertex",
+   "expected": false
+  },
+  {
+   "left": "pt_nan_xy",
+   "right": "ls_all_nan",
+   "expected": false
+  },
+  {
+   "left": "pt_nan_xy",
+   "right": "ls_mixed_nan",
+   "expected": false
+  },
+  {
+   "left": "pt_nan_xy",
+   "right": "poly_nan_vertex",
+   "expected": false
+  },
+  {
+   "left": "pt_nan_xy",
+   "right": "mpt_nan_member",
+   "expected": false
+  },
+  {
+   "left": "pt_nan_xy",
+   "right": "gc_nan_nan_point",
+   "expected": false
+  },
+  {
    "left": "pt_inf_x",
    "right": "pt_origin",
    "expected": false
@@ -2263,6 +2599,36 @@
    "expected": false
   },
   {
+   "left": "pt_inf_x",
+   "right": "ls_nan_nan_vertex",
+   "expected": true
+  },
+  {
+   "left": "pt_inf_x",
+   "right": "ls_all_nan",
+   "expected": true
+  },
+  {
+   "left": "pt_inf_x",
+   "right": "ls_mixed_nan",
+   "expected": true
+  },
+  {
+   "left": "pt_inf_x",
+   "right": "poly_nan_vertex",
+   "expected": true
+  },
+  {
+   "left": "pt_inf_x",
+   "right": "mpt_nan_member",
+   "expected": false
+  },
+  {
+   "left": "pt_inf_x",
+   "right": "gc_nan_nan_point",
+   "expected": false
+  },
+  {
    "left": "pt_neginf_x",
    "right": "pt_origin",
    "expected": false
@@ -2448,6 +2814,36 @@
    "expected": false
   },
   {
+   "left": "pt_neginf_x",
+   "right": "ls_nan_nan_vertex",
+   "expected": true
+  },
+  {
+   "left": "pt_neginf_x",
+   "right": "ls_all_nan",
+   "expected": true
+  },
+  {
+   "left": "pt_neginf_x",
+   "right": "ls_mixed_nan",
+   "expected": true
+  },
+  {
+   "left": "pt_neginf_x",
+   "right": "poly_nan_vertex",
+   "expected": true
+  },
+  {
+   "left": "pt_neginf_x",
+   "right": "mpt_nan_member",
+   "expected": false
+  },
+  {
+   "left": "pt_neginf_x",
+   "right": "gc_nan_nan_point",
+   "expected": false
+  },
+  {
    "left": "pt_empty",
    "right": "pt_origin",
    "expected": false
@@ -2633,6 +3029,36 @@
    "expected": false
   },
   {
+   "left": "pt_empty",
+   "right": "ls_nan_nan_vertex",
+   "expected": false
+  },
+  {
+   "left": "pt_empty",
+   "right": "ls_all_nan",
+   "expected": false
+  },
+  {
+   "left": "pt_empty",
+   "right": "ls_mixed_nan",
+   "expected": false
+  },
+  {
+   "left": "pt_empty",
+   "right": "poly_nan_vertex",
+   "expected": false
+  },
+  {
+   "left": "pt_empty",
+   "right": "mpt_nan_member",
+   "expected": false
+  },
+  {
+   "left": "pt_empty",
+   "right": "gc_nan_nan_point",
+   "expected": false
+  },
+  {
    "left": "pt_z",
    "right": "pt_origin",
    "expected": false
@@ -2818,6 +3244,36 @@
    "expected": false
   },
   {
+   "left": "pt_z",
+   "right": "ls_nan_nan_vertex",
+   "expected": true
+  },
+  {
+   "left": "pt_z",
+   "right": "ls_all_nan",
+   "expected": true
+  },
+  {
+   "left": "pt_z",
+   "right": "ls_mixed_nan",
+   "expected": true
+  },
+  {
+   "left": "pt_z",
+   "right": "poly_nan_vertex",
+   "expected": true
+  },
+  {
+   "left": "pt_z",
+   "right": "mpt_nan_member",
+   "expected": false
+  },
+  {
+   "left": "pt_z",
+   "right": "gc_nan_nan_point",
+   "expected": false
+  },
+  {
    "left": "pt_m",
    "right": "pt_origin",
    "expected": false
@@ -3003,6 +3459,36 @@
    "expected": false
   },
   {
+   "left": "pt_m",
+   "right": "ls_nan_nan_vertex",
+   "expected": true
+  },
+  {
+   "left": "pt_m",
+   "right": "ls_all_nan",
+   "expected": true
+  },
+  {
+   "left": "pt_m",
+   "right": "ls_mixed_nan",
+   "expected": true
+  },
+  {
+   "left": "pt_m",
+   "right": "poly_nan_vertex",
+   "expected": true
+  },
+  {
+   "left": "pt_m",
+   "right": "mpt_nan_member",
+   "expected": false
+  },
+  {
+   "left": "pt_m",
+   "right": "gc_nan_nan_point",
+   "expected": false
+  },
+  {
    "left": "pt_zm",
    "right": "pt_origin",
    "expected": false
@@ -3188,6 +3674,36 @@
    "expected": true
   },
   {
+   "left": "pt_zm",
+   "right": "ls_nan_nan_vertex",
+   "expected": true
+  },
+  {
+   "left": "pt_zm",
+   "right": "ls_all_nan",
+   "expected": true
+  },
+  {
+   "left": "pt_zm",
+   "right": "ls_mixed_nan",
+   "expected": true
+  },
+  {
+   "left": "pt_zm",
+   "right": "poly_nan_vertex",
+   "expected": true
+  },
+  {
+   "left": "pt_zm",
+   "right": "mpt_nan_member",
+   "expected": false
+  },
+  {
+   "left": "pt_zm",
+   "right": "gc_nan_nan_point",
+   "expected": false
+  },
+  {
    "left": "pt_z_nan_z",
    "right": "pt_origin",
    "expected": false
@@ -3373,6 +3889,36 @@
    "expected": false
   },
   {
+   "left": "pt_z_nan_z",
+   "right": "ls_nan_nan_vertex",
+   "expected": true
+  },
+  {
+   "left": "pt_z_nan_z",
+   "right": "ls_all_nan",
+   "expected": true
+  },
+  {
+   "left": "pt_z_nan_z",
+   "right": "ls_mixed_nan",
+   "expected": true
+  },
+  {
+   "left": "pt_z_nan_z",
+   "right": "poly_nan_vertex",
+   "expected": true
+  },
+  {
+   "left": "pt_z_nan_z",
+   "right": "mpt_nan_member",
+   "expected": false
+  },
+  {
+   "left": "pt_z_nan_z",
+   "right": "gc_nan_nan_point",
+   "expected": false
+  },
+  {
    "left": "ls_diag",
    "right": "pt_origin",
    "expected": true
@@ -3558,6 +4104,36 @@
    "expected": true
   },
   {
+   "left": "ls_diag",
+   "right": "ls_nan_nan_vertex",
+   "expected": true
+  },
+  {
+   "left": "ls_diag",
+   "right": "ls_all_nan",
+   "expected": true
+  },
+  {
+   "left": "ls_diag",
+   "right": "ls_mixed_nan",
+   "expected": true
+  },
+  {
+   "left": "ls_diag",
+   "right": "poly_nan_vertex",
+   "expected": true
+  },
+  {
+   "left": "ls_diag",
+   "right": "mpt_nan_member",
+   "expected": false
+  },
+  {
+   "left": "ls_diag",
+   "right": "gc_nan_nan_point",
+   "expected": false
+  },
+  {
    "left": "ls_edge",
    "right": "pt_origin",
    "expected": false
@@ -3743,6 +4319,36 @@
    "expected": false
   },
   {
+   "left": "ls_edge",
+   "right": "ls_nan_nan_vertex",
+   "expected": true
+  },
+  {
+   "left": "ls_edge",
+   "right": "ls_all_nan",
+   "expected": true
+  },
+  {
+   "left": "ls_edge",
+   "right": "ls_mixed_nan",
+   "expected": true
+  },
+  {
+   "left": "ls_edge",
+   "right": "poly_nan_vertex",
+   "expected": true
+  },
+  {
+   "left": "ls_edge",
+   "right": "mpt_nan_member",
+   "expected": false
+  },
+  {
+   "left": "ls_edge",
+   "right": "gc_nan_nan_point",
+   "expected": false
+  },
+  {
    "left": "ls_far",
    "right": "pt_origin",
    "expected": false
@@ -3928,6 +4534,36 @@
    "expected": true
   },
   {
+   "left": "ls_far",
+   "right": "ls_nan_nan_vertex",
+   "expected": true
+  },
+  {
+   "left": "ls_far",
+   "right": "ls_all_nan",
+   "expected": true
+  },
+  {
+   "left": "ls_far",
+   "right": "ls_mixed_nan",
+   "expected": true
+  },
+  {
+   "left": "ls_far",
+   "right": "poly_nan_vertex",
+   "expected": true
+  },
+  {
+   "left": "ls_far",
+   "right": "mpt_nan_member",
+   "expected": false
+  },
+  {
+   "left": "ls_far",
+   "right": "gc_nan_nan_point",
+   "expected": true
+  },
+  {
    "left": "ls_empty",
    "right": "pt_origin",
    "expected": false
@@ -4113,6 +4749,36 @@
    "expected": false
   },
   {
+   "left": "ls_empty",
+   "right": "ls_nan_nan_vertex",
+   "expected": false
+  },
+  {
+   "left": "ls_empty",
+   "right": "ls_all_nan",
+   "expected": false
+  },
+  {
+   "left": "ls_empty",
+   "right": "ls_mixed_nan",
+   "expected": false
+  },
+  {
+   "left": "ls_empty",
+   "right": "poly_nan_vertex",
+   "expected": false
+  },
+  {
+   "left": "ls_empty",
+   "right": "mpt_nan_member",
+   "expected": false
+  },
+  {
+   "left": "ls_empty",
+   "right": "gc_nan_nan_point",
+   "expected": false
+  },
+  {
    "left": "ls_nan_vertex",
    "right": "pt_origin",
    "expected": true
@@ -4298,6 +4964,36 @@
    "expected": true
   },
   {
+   "left": "ls_nan_vertex",
+   "right": "ls_nan_nan_vertex",
+   "expected": true
+  },
+  {
+   "left": "ls_nan_vertex",
+   "right": "ls_all_nan",
+   "expected": true
+  },
+  {
+   "left": "ls_nan_vertex",
+   "right": "ls_mixed_nan",
+   "expected": true
+  },
+  {
+   "left": "ls_nan_vertex",
+   "right": "poly_nan_vertex",
+   "expected": true
+  },
+  {
+   "left": "ls_nan_vertex",
+   "right": "mpt_nan_member",
+   "expected": false
+  },
+  {
+   "left": "ls_nan_vertex",
+   "right": "gc_nan_nan_point",
+   "expected": false
+  },
+  {
    "left": "poly_unit",
    "right": "pt_origin",
    "expected": true
@@ -4483,6 +5179,36 @@
    "expected": true
   },
   {
+   "left": "poly_unit",
+   "right": "ls_nan_nan_vertex",
+   "expected": true
+  },
+  {
+   "left": "poly_unit",
+   "right": "ls_all_nan",
+   "expected": true
+  },
+  {
+   "left": "poly_unit",
+   "right": "ls_mixed_nan",
+   "expected": true
+  },
+  {
+   "left": "poly_unit",
+   "right": "poly_nan_vertex",
+   "expected": true
+  },
+  {
+   "left": "poly_unit",
+   "right": "mpt_nan_member",
+   "expected": false
+  },
+  {
+   "left": "poly_unit",
+   "right": "gc_nan_nan_point",
+   "expected": false
+  },
+  {
    "left": "poly_far",
    "right": "pt_origin",
    "expected": false
@@ -4668,6 +5394,36 @@
    "expected": true
   },
   {
+   "left": "poly_far",
+   "right": "ls_nan_nan_vertex",
+   "expected": true
+  },
+  {
+   "left": "poly_far",
+   "right": "ls_all_nan",
+   "expected": true
+  },
+  {
+   "left": "poly_far",
+   "right": "ls_mixed_nan",
+   "expected": true
+  },
+  {
+   "left": "poly_far",
+   "right": "poly_nan_vertex",
+   "expected": true
+  },
+  {
+   "left": "poly_far",
+   "right": "mpt_nan_member",
+   "expected": false
+  },
+  {
+   "left": "poly_far",
+   "right": "gc_nan_nan_point",
+   "expected": true
+  },
+  {
    "left": "poly_hole",
    "right": "pt_origin",
    "expected": true
@@ -4853,6 +5609,36 @@
    "expected": true
   },
   {
+   "left": "poly_hole",
+   "right": "ls_nan_nan_vertex",
+   "expected": true
+  },
+  {
+   "left": "poly_hole",
+   "right": "ls_all_nan",
+   "expected": true
+  },
+  {
+   "left": "poly_hole",
+   "right": "ls_mixed_nan",
+   "expected": true
+  },
+  {
+   "left": "poly_hole",
+   "right": "poly_nan_vertex",
+   "expected": true
+  },
+  {
+   "left": "poly_hole",
+   "right": "mpt_nan_member",
+   "expected": true
+  },
+  {
+   "left": "poly_hole",
+   "right": "gc_nan_nan_point",
+   "expected": true
+  },
+  {
    "left": "poly_empty",
    "right": "pt_origin",
    "expected": false
@@ -5038,6 +5824,36 @@
    "expected": false
   },
   {
+   "left": "poly_empty",
+   "right": "ls_nan_nan_vertex",
+   "expected": false
+  },
+  {
+   "left": "poly_empty",
+   "right": "ls_all_nan",
+   "expected": false
+  },
+  {
+   "left": "poly_empty",
+   "right": "ls_mixed_nan",
+   "expected": false
+  },
+  {
+   "left": "poly_empty",
+   "right": "poly_nan_vertex",
+   "expected": false
+  },
+  {
+   "left": "poly_empty",
+   "right": "mpt_nan_member",
+   "expected": false
+  },
+  {
+   "left": "poly_empty",
+   "right": "gc_nan_nan_point",
+   "expected": false
+  },
+  {
    "left": "mpt",
    "right": "pt_origin",
    "expected": true
@@ -5223,6 +6039,36 @@
    "expected": true
   },
   {
+   "left": "mpt",
+   "right": "ls_nan_nan_vertex",
+   "expected": true
+  },
+  {
+   "left": "mpt",
+   "right": "ls_all_nan",
+   "expected": true
+  },
+  {
+   "left": "mpt",
+   "right": "ls_mixed_nan",
+   "expected": true
+  },
+  {
+   "left": "mpt",
+   "right": "poly_nan_vertex",
+   "expected": true
+  },
+  {
+   "left": "mpt",
+   "right": "mpt_nan_member",
+   "expected": false
+  },
+  {
+   "left": "mpt",
+   "right": "gc_nan_nan_point",
+   "expected": false
+  },
+  {
    "left": "mpt_with_empty",
    "right": "pt_origin",
    "expected": false
@@ -5408,6 +6254,36 @@
    "expected": true
   },
   {
+   "left": "mpt_with_empty",
+   "right": "ls_nan_nan_vertex",
+   "expected": true
+  },
+  {
+   "left": "mpt_with_empty",
+   "right": "ls_all_nan",
+   "expected": true
+  },
+  {
+   "left": "mpt_with_empty",
+   "right": "ls_mixed_nan",
+   "expected": true
+  },
+  {
+   "left": "mpt_with_empty",
+   "right": "poly_nan_vertex",
+   "expected": true
+  },
+  {
+   "left": "mpt_with_empty",
+   "right": "mpt_nan_member",
+   "expected": false
+  },
+  {
+   "left": "mpt_with_empty",
+   "right": "gc_nan_nan_point",
+   "expected": true
+  },
+  {
    "left": "mpt_empty",
    "right": "pt_origin",
    "expected": false
@@ -5593,6 +6469,36 @@
    "expected": false
   },
   {
+   "left": "mpt_empty",
+   "right": "ls_nan_nan_vertex",
+   "expected": false
+  },
+  {
+   "left": "mpt_empty",
+   "right": "ls_all_nan",
+   "expected": false
+  },
+  {
+   "left": "mpt_empty",
+   "right": "ls_mixed_nan",
+   "expected": false
+  },
+  {
+   "left": "mpt_empty",
+   "right": "poly_nan_vertex",
+   "expected": false
+  },
+  {
+   "left": "mpt_empty",
+   "right": "mpt_nan_member",
+   "expected": false
+  },
+  {
+   "left": "mpt_empty",
+   "right": "gc_nan_nan_point",
+   "expected": false
+  },
+  {
    "left": "mls",
    "right": "pt_origin",
    "expected": true
@@ -5778,6 +6684,36 @@
    "expected": true
   },
   {
+   "left": "mls",
+   "right": "ls_nan_nan_vertex",
+   "expected": true
+  },
+  {
+   "left": "mls",
+   "right": "ls_all_nan",
+   "expected": true
+  },
+  {
+   "left": "mls",
+   "right": "ls_mixed_nan",
+   "expected": true
+  },
+  {
+   "left": "mls",
+   "right": "poly_nan_vertex",
+   "expected": true
+  },
+  {
+   "left": "mls",
+   "right": "mpt_nan_member",
+   "expected": true
+  },
+  {
+   "left": "mls",
+   "right": "gc_nan_nan_point",
+   "expected": true
+  },
+  {
    "left": "mpoly",
    "right": "pt_origin",
    "expected": false
@@ -5963,6 +6899,36 @@
    "expected": true
   },
   {
+   "left": "mpoly",
+   "right": "ls_nan_nan_vertex",
+   "expected": true
+  },
+  {
+   "left": "mpoly",
+   "right": "ls_all_nan",
+   "expected": true
+  },
+  {
+   "left": "mpoly",
+   "right": "ls_mixed_nan",
+   "expected": true
+  },
+  {
+   "left": "mpoly",
+   "right": "poly_nan_vertex",
+   "expected": true
+  },
+  {
+   "left": "mpoly",
+   "right": "mpt_nan_member",
+   "expected": true
+  },
+  {
+   "left": "mpoly",
+   "right": "gc_nan_nan_point",
+   "expected": true
+  },
+  {
    "left": "mpoly_empty",
    "right": "pt_origin",
    "expected": false
@@ -6148,6 +7114,36 @@
    "expected": false
   },
   {
+   "left": "mpoly_empty",
+   "right": "ls_nan_nan_vertex",
+   "expected": false
+  },
+  {
+   "left": "mpoly_empty",
+   "right": "ls_all_nan",
+   "expected": false
+  },
+  {
+   "left": "mpoly_empty",
+   "right": "ls_mixed_nan",
+   "expected": false
+  },
+  {
+   "left": "mpoly_empty",
+   "right": "poly_nan_vertex",
+   "expected": false
+  },
+  {
+   "left": "mpoly_empty",
+   "right": "mpt_nan_member",
+   "expected": false
+  },
+  {
+   "left": "mpoly_empty",
+   "right": "gc_nan_nan_point",
+   "expected": false
+  },
+  {
    "left": "gc_empty",
    "right": "pt_origin",
    "expected": false
@@ -6333,6 +7329,36 @@
    "expected": false
   },
   {
+   "left": "gc_empty",
+   "right": "ls_nan_nan_vertex",
+   "expected": false
+  },
+  {
+   "left": "gc_empty",
+   "right": "ls_all_nan",
+   "expected": false
+  },
+  {
+   "left": "gc_empty",
+   "right": "ls_mixed_nan",
+   "expected": false
+  },
+  {
+   "left": "gc_empty",
+   "right": "poly_nan_vertex",
+   "expected": false
+  },
+  {
+   "left": "gc_empty",
+   "right": "mpt_nan_member",
+   "expected": false
+  },
+  {
+   "left": "gc_empty",
+   "right": "gc_nan_nan_point",
+   "expected": false
+  },
+  {
    "left": "gc_empty_parts",
    "right": "pt_origin",
    "expected": false
@@ -6518,6 +7544,36 @@
    "expected": false
   },
   {
+   "left": "gc_empty_parts",
+   "right": "ls_nan_nan_vertex",
+   "expected": false
+  },
+  {
+   "left": "gc_empty_parts",
+   "right": "ls_all_nan",
+   "expected": false
+  },
+  {
+   "left": "gc_empty_parts",
+   "right": "ls_mixed_nan",
+   "expected": false
+  },
+  {
+   "left": "gc_empty_parts",
+   "right": "poly_nan_vertex",
+   "expected": false
+  },
+  {
+   "left": "gc_empty_parts",
+   "right": "mpt_nan_member",
+   "expected": false
+  },
+  {
+   "left": "gc_empty_parts",
+   "right": "gc_nan_nan_point",
+   "expected": false
+  },
+  {
    "left": "gc_mixed",
    "right": "pt_origin",
    "expected": false
@@ -6703,6 +7759,36 @@
    "expected": false
   },
   {
+   "left": "gc_mixed",
+   "right": "ls_nan_nan_vertex",
+   "expected": true
+  },
+  {
+   "left": "gc_mixed",
+   "right": "ls_all_nan",
+   "expected": true
+  },
+  {
+   "left": "gc_mixed",
+   "right": "ls_mixed_nan",
+   "expected": true
+  },
+  {
+   "left": "gc_mixed",
+   "right": "poly_nan_vertex",
+   "expected": true
+  },
+  {
+   "left": "gc_mixed",
+   "right": "mpt_nan_member",
+   "expected": false
+  },
+  {
+   "left": "gc_mixed",
+   "right": "gc_nan_nan_point",
+   "expected": false
+  },
+  {
    "left": "gc_nested",
    "right": "pt_origin",
    "expected": false
@@ -6888,6 +7974,36 @@
    "expected": true
   },
   {
+   "left": "gc_nested",
+   "right": "ls_nan_nan_vertex",
+   "expected": true
+  },
+  {
+   "left": "gc_nested",
+   "right": "ls_all_nan",
+   "expected": true
+  },
+  {
+   "left": "gc_nested",
+   "right": "ls_mixed_nan",
+   "expected": true
+  },
+  {
+   "left": "gc_nested",
+   "right": "poly_nan_vertex",
+   "expected": true
+  },
+  {
+   "left": "gc_nested",
+   "right": "mpt_nan_member",
+   "expected": true
+  },
+  {
+   "left": "gc_nested",
+   "right": "gc_nan_nan_point",
+   "expected": true
+  },
+  {
    "left": "gc_nan_part",
    "right": "pt_origin",
    "expected": false
@@ -7070,6 +8186,1326 @@
   {
    "left": "gc_nan_part",
    "right": "gc_nan_part",
+   "expected": true
+  },
+  {
+   "left": "gc_nan_part",
+   "right": "ls_nan_nan_vertex",
+   "expected": true
+  },
+  {
+   "left": "gc_nan_part",
+   "right": "ls_all_nan",
+   "expected": true
+  },
+  {
+   "left": "gc_nan_part",
+   "right": "ls_mixed_nan",
+   "expected": true
+  },
+  {
+   "left": "gc_nan_part",
+   "right": "poly_nan_vertex",
+   "expected": true
+  },
+  {
+   "left": "gc_nan_part",
+   "right": "mpt_nan_member",
+   "expected": false
+  },
+  {
+   "left": "gc_nan_part",
+   "right": "gc_nan_nan_point",
+   "expected": true
+  },
+  {
+   "left": "ls_nan_nan_vertex",
+   "right": "pt_origin",
+   "expected": true
+  },
+  {
+   "left": "ls_nan_nan_vertex",
+   "right": "pt_one",
+   "expected": true
+  },
+  {
+   "left": "ls_nan_nan_vertex",
+   "right": "pt_half",
+   "expected": true
+  },
+  {
+   "left": "ls_nan_nan_vertex",
+   "right": "pt_far",
+   "expected": true
+  },
+  {
+   "left": "ls_nan_nan_vertex",
+   "right": "pt_neg",
+   "expected": true
+  },
+  {
+   "left": "ls_nan_nan_vertex",
+   "right": "pt_just_outside",
+   "expected": true
+  },
+  {
+   "left": "ls_nan_nan_vertex",
+   "right": "pt_huge",
+   "expected": true
+  },
+  {
+   "left": "ls_nan_nan_vertex",
+   "right": "pt_nan_x",
+   "expected": true
+  },
+  {
+   "left": "ls_nan_nan_vertex",
+   "right": "pt_nan_y",
+   "expected": true
+  },
+  {
+   "left": "ls_nan_nan_vertex",
+   "right": "pt_nan_xy",
+   "expected": false
+  },
+  {
+   "left": "ls_nan_nan_vertex",
+   "right": "pt_inf_x",
+   "expected": true
+  },
+  {
+   "left": "ls_nan_nan_vertex",
+   "right": "pt_neginf_x",
+   "expected": true
+  },
+  {
+   "left": "ls_nan_nan_vertex",
+   "right": "pt_empty",
+   "expected": false
+  },
+  {
+   "left": "ls_nan_nan_vertex",
+   "right": "pt_z",
+   "expected": true
+  },
+  {
+   "left": "ls_nan_nan_vertex",
+   "right": "pt_m",
+   "expected": true
+  },
+  {
+   "left": "ls_nan_nan_vertex",
+   "right": "pt_zm",
+   "expected": true
+  },
+  {
+   "left": "ls_nan_nan_vertex",
+   "right": "pt_z_nan_z",
+   "expected": true
+  },
+  {
+   "left": "ls_nan_nan_vertex",
+   "right": "ls_diag",
+   "expected": true
+  },
+  {
+   "left": "ls_nan_nan_vertex",
+   "right": "ls_edge",
+   "expected": true
+  },
+  {
+   "left": "ls_nan_nan_vertex",
+   "right": "ls_far",
+   "expected": true
+  },
+  {
+   "left": "ls_nan_nan_vertex",
+   "right": "ls_empty",
+   "expected": false
+  },
+  {
+   "left": "ls_nan_nan_vertex",
+   "right": "ls_nan_vertex",
+   "expected": true
+  },
+  {
+   "left": "ls_nan_nan_vertex",
+   "right": "poly_unit",
+   "expected": true
+  },
+  {
+   "left": "ls_nan_nan_vertex",
+   "right": "poly_far",
+   "expected": true
+  },
+  {
+   "left": "ls_nan_nan_vertex",
+   "right": "poly_hole",
+   "expected": true
+  },
+  {
+   "left": "ls_nan_nan_vertex",
+   "right": "poly_empty",
+   "expected": false
+  },
+  {
+   "left": "ls_nan_nan_vertex",
+   "right": "mpt",
+   "expected": true
+  },
+  {
+   "left": "ls_nan_nan_vertex",
+   "right": "mpt_with_empty",
+   "expected": true
+  },
+  {
+   "left": "ls_nan_nan_vertex",
+   "right": "mpt_empty",
+   "expected": false
+  },
+  {
+   "left": "ls_nan_nan_vertex",
+   "right": "mls",
+   "expected": true
+  },
+  {
+   "left": "ls_nan_nan_vertex",
+   "right": "mpoly",
+   "expected": true
+  },
+  {
+   "left": "ls_nan_nan_vertex",
+   "right": "mpoly_empty",
+   "expected": false
+  },
+  {
+   "left": "ls_nan_nan_vertex",
+   "right": "gc_empty",
+   "expected": false
+  },
+  {
+   "left": "ls_nan_nan_vertex",
+   "right": "gc_empty_parts",
+   "expected": false
+  },
+  {
+   "left": "ls_nan_nan_vertex",
+   "right": "gc_mixed",
+   "expected": true
+  },
+  {
+   "left": "ls_nan_nan_vertex",
+   "right": "gc_nested",
+   "expected": true
+  },
+  {
+   "left": "ls_nan_nan_vertex",
+   "right": "gc_nan_part",
+   "expected": true
+  },
+  {
+   "left": "ls_nan_nan_vertex",
+   "right": "ls_nan_nan_vertex",
+   "expected": true
+  },
+  {
+   "left": "ls_nan_nan_vertex",
+   "right": "ls_all_nan",
+   "expected": true
+  },
+  {
+   "left": "ls_nan_nan_vertex",
+   "right": "ls_mixed_nan",
+   "expected": true
+  },
+  {
+   "left": "ls_nan_nan_vertex",
+   "right": "poly_nan_vertex",
+   "expected": true
+  },
+  {
+   "left": "ls_nan_nan_vertex",
+   "right": "mpt_nan_member",
+   "expected": true
+  },
+  {
+   "left": "ls_nan_nan_vertex",
+   "right": "gc_nan_nan_point",
+   "expected": true
+  },
+  {
+   "left": "ls_all_nan",
+   "right": "pt_origin",
+   "expected": true
+  },
+  {
+   "left": "ls_all_nan",
+   "right": "pt_one",
+   "expected": true
+  },
+  {
+   "left": "ls_all_nan",
+   "right": "pt_half",
+   "expected": true
+  },
+  {
+   "left": "ls_all_nan",
+   "right": "pt_far",
+   "expected": true
+  },
+  {
+   "left": "ls_all_nan",
+   "right": "pt_neg",
+   "expected": true
+  },
+  {
+   "left": "ls_all_nan",
+   "right": "pt_just_outside",
+   "expected": true
+  },
+  {
+   "left": "ls_all_nan",
+   "right": "pt_huge",
+   "expected": true
+  },
+  {
+   "left": "ls_all_nan",
+   "right": "pt_nan_x",
+   "expected": true
+  },
+  {
+   "left": "ls_all_nan",
+   "right": "pt_nan_y",
+   "expected": true
+  },
+  {
+   "left": "ls_all_nan",
+   "right": "pt_nan_xy",
+   "expected": false
+  },
+  {
+   "left": "ls_all_nan",
+   "right": "pt_inf_x",
+   "expected": true
+  },
+  {
+   "left": "ls_all_nan",
+   "right": "pt_neginf_x",
+   "expected": true
+  },
+  {
+   "left": "ls_all_nan",
+   "right": "pt_empty",
+   "expected": false
+  },
+  {
+   "left": "ls_all_nan",
+   "right": "pt_z",
+   "expected": true
+  },
+  {
+   "left": "ls_all_nan",
+   "right": "pt_m",
+   "expected": true
+  },
+  {
+   "left": "ls_all_nan",
+   "right": "pt_zm",
+   "expected": true
+  },
+  {
+   "left": "ls_all_nan",
+   "right": "pt_z_nan_z",
+   "expected": true
+  },
+  {
+   "left": "ls_all_nan",
+   "right": "ls_diag",
+   "expected": true
+  },
+  {
+   "left": "ls_all_nan",
+   "right": "ls_edge",
+   "expected": true
+  },
+  {
+   "left": "ls_all_nan",
+   "right": "ls_far",
+   "expected": true
+  },
+  {
+   "left": "ls_all_nan",
+   "right": "ls_empty",
+   "expected": false
+  },
+  {
+   "left": "ls_all_nan",
+   "right": "ls_nan_vertex",
+   "expected": true
+  },
+  {
+   "left": "ls_all_nan",
+   "right": "poly_unit",
+   "expected": true
+  },
+  {
+   "left": "ls_all_nan",
+   "right": "poly_far",
+   "expected": true
+  },
+  {
+   "left": "ls_all_nan",
+   "right": "poly_hole",
+   "expected": true
+  },
+  {
+   "left": "ls_all_nan",
+   "right": "poly_empty",
+   "expected": false
+  },
+  {
+   "left": "ls_all_nan",
+   "right": "mpt",
+   "expected": true
+  },
+  {
+   "left": "ls_all_nan",
+   "right": "mpt_with_empty",
+   "expected": true
+  },
+  {
+   "left": "ls_all_nan",
+   "right": "mpt_empty",
+   "expected": false
+  },
+  {
+   "left": "ls_all_nan",
+   "right": "mls",
+   "expected": true
+  },
+  {
+   "left": "ls_all_nan",
+   "right": "mpoly",
+   "expected": true
+  },
+  {
+   "left": "ls_all_nan",
+   "right": "mpoly_empty",
+   "expected": false
+  },
+  {
+   "left": "ls_all_nan",
+   "right": "gc_empty",
+   "expected": false
+  },
+  {
+   "left": "ls_all_nan",
+   "right": "gc_empty_parts",
+   "expected": false
+  },
+  {
+   "left": "ls_all_nan",
+   "right": "gc_mixed",
+   "expected": true
+  },
+  {
+   "left": "ls_all_nan",
+   "right": "gc_nested",
+   "expected": true
+  },
+  {
+   "left": "ls_all_nan",
+   "right": "gc_nan_part",
+   "expected": true
+  },
+  {
+   "left": "ls_all_nan",
+   "right": "ls_nan_nan_vertex",
+   "expected": true
+  },
+  {
+   "left": "ls_all_nan",
+   "right": "ls_all_nan",
+   "expected": true
+  },
+  {
+   "left": "ls_all_nan",
+   "right": "ls_mixed_nan",
+   "expected": true
+  },
+  {
+   "left": "ls_all_nan",
+   "right": "poly_nan_vertex",
+   "expected": true
+  },
+  {
+   "left": "ls_all_nan",
+   "right": "mpt_nan_member",
+   "expected": true
+  },
+  {
+   "left": "ls_all_nan",
+   "right": "gc_nan_nan_point",
+   "expected": true
+  },
+  {
+   "left": "ls_mixed_nan",
+   "right": "pt_origin",
+   "expected": true
+  },
+  {
+   "left": "ls_mixed_nan",
+   "right": "pt_one",
+   "expected": true
+  },
+  {
+   "left": "ls_mixed_nan",
+   "right": "pt_half",
+   "expected": true
+  },
+  {
+   "left": "ls_mixed_nan",
+   "right": "pt_far",
+   "expected": true
+  },
+  {
+   "left": "ls_mixed_nan",
+   "right": "pt_neg",
+   "expected": true
+  },
+  {
+   "left": "ls_mixed_nan",
+   "right": "pt_just_outside",
+   "expected": true
+  },
+  {
+   "left": "ls_mixed_nan",
+   "right": "pt_huge",
+   "expected": true
+  },
+  {
+   "left": "ls_mixed_nan",
+   "right": "pt_nan_x",
+   "expected": true
+  },
+  {
+   "left": "ls_mixed_nan",
+   "right": "pt_nan_y",
+   "expected": true
+  },
+  {
+   "left": "ls_mixed_nan",
+   "right": "pt_nan_xy",
+   "expected": false
+  },
+  {
+   "left": "ls_mixed_nan",
+   "right": "pt_inf_x",
+   "expected": true
+  },
+  {
+   "left": "ls_mixed_nan",
+   "right": "pt_neginf_x",
+   "expected": true
+  },
+  {
+   "left": "ls_mixed_nan",
+   "right": "pt_empty",
+   "expected": false
+  },
+  {
+   "left": "ls_mixed_nan",
+   "right": "pt_z",
+   "expected": true
+  },
+  {
+   "left": "ls_mixed_nan",
+   "right": "pt_m",
+   "expected": true
+  },
+  {
+   "left": "ls_mixed_nan",
+   "right": "pt_zm",
+   "expected": true
+  },
+  {
+   "left": "ls_mixed_nan",
+   "right": "pt_z_nan_z",
+   "expected": true
+  },
+  {
+   "left": "ls_mixed_nan",
+   "right": "ls_diag",
+   "expected": true
+  },
+  {
+   "left": "ls_mixed_nan",
+   "right": "ls_edge",
+   "expected": true
+  },
+  {
+   "left": "ls_mixed_nan",
+   "right": "ls_far",
+   "expected": true
+  },
+  {
+   "left": "ls_mixed_nan",
+   "right": "ls_empty",
+   "expected": false
+  },
+  {
+   "left": "ls_mixed_nan",
+   "right": "ls_nan_vertex",
+   "expected": true
+  },
+  {
+   "left": "ls_mixed_nan",
+   "right": "poly_unit",
+   "expected": true
+  },
+  {
+   "left": "ls_mixed_nan",
+   "right": "poly_far",
+   "expected": true
+  },
+  {
+   "left": "ls_mixed_nan",
+   "right": "poly_hole",
+   "expected": true
+  },
+  {
+   "left": "ls_mixed_nan",
+   "right": "poly_empty",
+   "expected": false
+  },
+  {
+   "left": "ls_mixed_nan",
+   "right": "mpt",
+   "expected": true
+  },
+  {
+   "left": "ls_mixed_nan",
+   "right": "mpt_with_empty",
+   "expected": true
+  },
+  {
+   "left": "ls_mixed_nan",
+   "right": "mpt_empty",
+   "expected": false
+  },
+  {
+   "left": "ls_mixed_nan",
+   "right": "mls",
+   "expected": true
+  },
+  {
+   "left": "ls_mixed_nan",
+   "right": "mpoly",
+   "expected": true
+  },
+  {
+   "left": "ls_mixed_nan",
+   "right": "mpoly_empty",
+   "expected": false
+  },
+  {
+   "left": "ls_mixed_nan",
+   "right": "gc_empty",
+   "expected": false
+  },
+  {
+   "left": "ls_mixed_nan",
+   "right": "gc_empty_parts",
+   "expected": false
+  },
+  {
+   "left": "ls_mixed_nan",
+   "right": "gc_mixed",
+   "expected": true
+  },
+  {
+   "left": "ls_mixed_nan",
+   "right": "gc_nested",
+   "expected": true
+  },
+  {
+   "left": "ls_mixed_nan",
+   "right": "gc_nan_part",
+   "expected": true
+  },
+  {
+   "left": "ls_mixed_nan",
+   "right": "ls_nan_nan_vertex",
+   "expected": true
+  },
+  {
+   "left": "ls_mixed_nan",
+   "right": "ls_all_nan",
+   "expected": true
+  },
+  {
+   "left": "ls_mixed_nan",
+   "right": "ls_mixed_nan",
+   "expected": true
+  },
+  {
+   "left": "ls_mixed_nan",
+   "right": "poly_nan_vertex",
+   "expected": true
+  },
+  {
+   "left": "ls_mixed_nan",
+   "right": "mpt_nan_member",
+   "expected": true
+  },
+  {
+   "left": "ls_mixed_nan",
+   "right": "gc_nan_nan_point",
+   "expected": true
+  },
+  {
+   "left": "poly_nan_vertex",
+   "right": "pt_origin",
+   "expected": true
+  },
+  {
+   "left": "poly_nan_vertex",
+   "right": "pt_one",
+   "expected": true
+  },
+  {
+   "left": "poly_nan_vertex",
+   "right": "pt_half",
+   "expected": true
+  },
+  {
+   "left": "poly_nan_vertex",
+   "right": "pt_far",
+   "expected": true
+  },
+  {
+   "left": "poly_nan_vertex",
+   "right": "pt_neg",
+   "expected": true
+  },
+  {
+   "left": "poly_nan_vertex",
+   "right": "pt_just_outside",
+   "expected": true
+  },
+  {
+   "left": "poly_nan_vertex",
+   "right": "pt_huge",
+   "expected": true
+  },
+  {
+   "left": "poly_nan_vertex",
+   "right": "pt_nan_x",
+   "expected": true
+  },
+  {
+   "left": "poly_nan_vertex",
+   "right": "pt_nan_y",
+   "expected": true
+  },
+  {
+   "left": "poly_nan_vertex",
+   "right": "pt_nan_xy",
+   "expected": false
+  },
+  {
+   "left": "poly_nan_vertex",
+   "right": "pt_inf_x",
+   "expected": true
+  },
+  {
+   "left": "poly_nan_vertex",
+   "right": "pt_neginf_x",
+   "expected": true
+  },
+  {
+   "left": "poly_nan_vertex",
+   "right": "pt_empty",
+   "expected": false
+  },
+  {
+   "left": "poly_nan_vertex",
+   "right": "pt_z",
+   "expected": true
+  },
+  {
+   "left": "poly_nan_vertex",
+   "right": "pt_m",
+   "expected": true
+  },
+  {
+   "left": "poly_nan_vertex",
+   "right": "pt_zm",
+   "expected": true
+  },
+  {
+   "left": "poly_nan_vertex",
+   "right": "pt_z_nan_z",
+   "expected": true
+  },
+  {
+   "left": "poly_nan_vertex",
+   "right": "ls_diag",
+   "expected": true
+  },
+  {
+   "left": "poly_nan_vertex",
+   "right": "ls_edge",
+   "expected": true
+  },
+  {
+   "left": "poly_nan_vertex",
+   "right": "ls_far",
+   "expected": true
+  },
+  {
+   "left": "poly_nan_vertex",
+   "right": "ls_empty",
+   "expected": false
+  },
+  {
+   "left": "poly_nan_vertex",
+   "right": "ls_nan_vertex",
+   "expected": true
+  },
+  {
+   "left": "poly_nan_vertex",
+   "right": "poly_unit",
+   "expected": true
+  },
+  {
+   "left": "poly_nan_vertex",
+   "right": "poly_far",
+   "expected": true
+  },
+  {
+   "left": "poly_nan_vertex",
+   "right": "poly_hole",
+   "expected": true
+  },
+  {
+   "left": "poly_nan_vertex",
+   "right": "poly_empty",
+   "expected": false
+  },
+  {
+   "left": "poly_nan_vertex",
+   "right": "mpt",
+   "expected": true
+  },
+  {
+   "left": "poly_nan_vertex",
+   "right": "mpt_with_empty",
+   "expected": true
+  },
+  {
+   "left": "poly_nan_vertex",
+   "right": "mpt_empty",
+   "expected": false
+  },
+  {
+   "left": "poly_nan_vertex",
+   "right": "mls",
+   "expected": true
+  },
+  {
+   "left": "poly_nan_vertex",
+   "right": "mpoly",
+   "expected": true
+  },
+  {
+   "left": "poly_nan_vertex",
+   "right": "mpoly_empty",
+   "expected": false
+  },
+  {
+   "left": "poly_nan_vertex",
+   "right": "gc_empty",
+   "expected": false
+  },
+  {
+   "left": "poly_nan_vertex",
+   "right": "gc_empty_parts",
+   "expected": false
+  },
+  {
+   "left": "poly_nan_vertex",
+   "right": "gc_mixed",
+   "expected": true
+  },
+  {
+   "left": "poly_nan_vertex",
+   "right": "gc_nested",
+   "expected": true
+  },
+  {
+   "left": "poly_nan_vertex",
+   "right": "gc_nan_part",
+   "expected": true
+  },
+  {
+   "left": "poly_nan_vertex",
+   "right": "ls_nan_nan_vertex",
+   "expected": true
+  },
+  {
+   "left": "poly_nan_vertex",
+   "right": "ls_all_nan",
+   "expected": true
+  },
+  {
+   "left": "poly_nan_vertex",
+   "right": "ls_mixed_nan",
+   "expected": true
+  },
+  {
+   "left": "poly_nan_vertex",
+   "right": "poly_nan_vertex",
+   "expected": true
+  },
+  {
+   "left": "poly_nan_vertex",
+   "right": "mpt_nan_member",
+   "expected": true
+  },
+  {
+   "left": "poly_nan_vertex",
+   "right": "gc_nan_nan_point",
+   "expected": true
+  },
+  {
+   "left": "mpt_nan_member",
+   "right": "pt_origin",
+   "expected": false
+  },
+  {
+   "left": "mpt_nan_member",
+   "right": "pt_one",
+   "expected": false
+  },
+  {
+   "left": "mpt_nan_member",
+   "right": "pt_half",
+   "expected": false
+  },
+  {
+   "left": "mpt_nan_member",
+   "right": "pt_far",
+   "expected": true
+  },
+  {
+   "left": "mpt_nan_member",
+   "right": "pt_neg",
+   "expected": false
+  },
+  {
+   "left": "mpt_nan_member",
+   "right": "pt_just_outside",
+   "expected": false
+  },
+  {
+   "left": "mpt_nan_member",
+   "right": "pt_huge",
+   "expected": false
+  },
+  {
+   "left": "mpt_nan_member",
+   "right": "pt_nan_x",
+   "expected": false
+  },
+  {
+   "left": "mpt_nan_member",
+   "right": "pt_nan_y",
+   "expected": false
+  },
+  {
+   "left": "mpt_nan_member",
+   "right": "pt_nan_xy",
+   "expected": false
+  },
+  {
+   "left": "mpt_nan_member",
+   "right": "pt_inf_x",
+   "expected": false
+  },
+  {
+   "left": "mpt_nan_member",
+   "right": "pt_neginf_x",
+   "expected": false
+  },
+  {
+   "left": "mpt_nan_member",
+   "right": "pt_empty",
+   "expected": false
+  },
+  {
+   "left": "mpt_nan_member",
+   "right": "pt_z",
+   "expected": false
+  },
+  {
+   "left": "mpt_nan_member",
+   "right": "pt_m",
+   "expected": false
+  },
+  {
+   "left": "mpt_nan_member",
+   "right": "pt_zm",
+   "expected": false
+  },
+  {
+   "left": "mpt_nan_member",
+   "right": "pt_z_nan_z",
+   "expected": false
+  },
+  {
+   "left": "mpt_nan_member",
+   "right": "ls_diag",
+   "expected": false
+  },
+  {
+   "left": "mpt_nan_member",
+   "right": "ls_edge",
+   "expected": false
+  },
+  {
+   "left": "mpt_nan_member",
+   "right": "ls_far",
+   "expected": false
+  },
+  {
+   "left": "mpt_nan_member",
+   "right": "ls_empty",
+   "expected": false
+  },
+  {
+   "left": "mpt_nan_member",
+   "right": "ls_nan_vertex",
+   "expected": false
+  },
+  {
+   "left": "mpt_nan_member",
+   "right": "poly_unit",
+   "expected": false
+  },
+  {
+   "left": "mpt_nan_member",
+   "right": "poly_far",
+   "expected": false
+  },
+  {
+   "left": "mpt_nan_member",
+   "right": "poly_hole",
+   "expected": true
+  },
+  {
+   "left": "mpt_nan_member",
+   "right": "poly_empty",
+   "expected": false
+  },
+  {
+   "left": "mpt_nan_member",
+   "right": "mpt",
+   "expected": false
+  },
+  {
+   "left": "mpt_nan_member",
+   "right": "mpt_with_empty",
+   "expected": false
+  },
+  {
+   "left": "mpt_nan_member",
+   "right": "mpt_empty",
+   "expected": false
+  },
+  {
+   "left": "mpt_nan_member",
+   "right": "mls",
+   "expected": true
+  },
+  {
+   "left": "mpt_nan_member",
+   "right": "mpoly",
+   "expected": true
+  },
+  {
+   "left": "mpt_nan_member",
+   "right": "mpoly_empty",
+   "expected": false
+  },
+  {
+   "left": "mpt_nan_member",
+   "right": "gc_empty",
+   "expected": false
+  },
+  {
+   "left": "mpt_nan_member",
+   "right": "gc_empty_parts",
+   "expected": false
+  },
+  {
+   "left": "mpt_nan_member",
+   "right": "gc_mixed",
+   "expected": false
+  },
+  {
+   "left": "mpt_nan_member",
+   "right": "gc_nested",
+   "expected": true
+  },
+  {
+   "left": "mpt_nan_member",
+   "right": "gc_nan_part",
+   "expected": false
+  },
+  {
+   "left": "mpt_nan_member",
+   "right": "ls_nan_nan_vertex",
+   "expected": true
+  },
+  {
+   "left": "mpt_nan_member",
+   "right": "ls_all_nan",
+   "expected": true
+  },
+  {
+   "left": "mpt_nan_member",
+   "right": "ls_mixed_nan",
+   "expected": true
+  },
+  {
+   "left": "mpt_nan_member",
+   "right": "poly_nan_vertex",
+   "expected": true
+  },
+  {
+   "left": "mpt_nan_member",
+   "right": "mpt_nan_member",
+   "expected": true
+  },
+  {
+   "left": "mpt_nan_member",
+   "right": "gc_nan_nan_point",
+   "expected": false
+  },
+  {
+   "left": "gc_nan_nan_point",
+   "right": "pt_origin",
+   "expected": false
+  },
+  {
+   "left": "gc_nan_nan_point",
+   "right": "pt_one",
+   "expected": false
+  },
+  {
+   "left": "gc_nan_nan_point",
+   "right": "pt_half",
+   "expected": false
+  },
+  {
+   "left": "gc_nan_nan_point",
+   "right": "pt_far",
+   "expected": false
+  },
+  {
+   "left": "gc_nan_nan_point",
+   "right": "pt_neg",
+   "expected": false
+  },
+  {
+   "left": "gc_nan_nan_point",
+   "right": "pt_just_outside",
+   "expected": false
+  },
+  {
+   "left": "gc_nan_nan_point",
+   "right": "pt_huge",
+   "expected": false
+  },
+  {
+   "left": "gc_nan_nan_point",
+   "right": "pt_nan_x",
+   "expected": false
+  },
+  {
+   "left": "gc_nan_nan_point",
+   "right": "pt_nan_y",
+   "expected": false
+  },
+  {
+   "left": "gc_nan_nan_point",
+   "right": "pt_nan_xy",
+   "expected": false
+  },
+  {
+   "left": "gc_nan_nan_point",
+   "right": "pt_inf_x",
+   "expected": false
+  },
+  {
+   "left": "gc_nan_nan_point",
+   "right": "pt_neginf_x",
+   "expected": false
+  },
+  {
+   "left": "gc_nan_nan_point",
+   "right": "pt_empty",
+   "expected": false
+  },
+  {
+   "left": "gc_nan_nan_point",
+   "right": "pt_z",
+   "expected": false
+  },
+  {
+   "left": "gc_nan_nan_point",
+   "right": "pt_m",
+   "expected": false
+  },
+  {
+   "left": "gc_nan_nan_point",
+   "right": "pt_zm",
+   "expected": false
+  },
+  {
+   "left": "gc_nan_nan_point",
+   "right": "pt_z_nan_z",
+   "expected": false
+  },
+  {
+   "left": "gc_nan_nan_point",
+   "right": "ls_diag",
+   "expected": false
+  },
+  {
+   "left": "gc_nan_nan_point",
+   "right": "ls_edge",
+   "expected": false
+  },
+  {
+   "left": "gc_nan_nan_point",
+   "right": "ls_far",
+   "expected": true
+  },
+  {
+   "left": "gc_nan_nan_point",
+   "right": "ls_empty",
+   "expected": false
+  },
+  {
+   "left": "gc_nan_nan_point",
+   "right": "ls_nan_vertex",
+   "expected": false
+  },
+  {
+   "left": "gc_nan_nan_point",
+   "right": "poly_unit",
+   "expected": false
+  },
+  {
+   "left": "gc_nan_nan_point",
+   "right": "poly_far",
+   "expected": true
+  },
+  {
+   "left": "gc_nan_nan_point",
+   "right": "poly_hole",
+   "expected": true
+  },
+  {
+   "left": "gc_nan_nan_point",
+   "right": "poly_empty",
+   "expected": false
+  },
+  {
+   "left": "gc_nan_nan_point",
+   "right": "mpt",
+   "expected": false
+  },
+  {
+   "left": "gc_nan_nan_point",
+   "right": "mpt_with_empty",
+   "expected": true
+  },
+  {
+   "left": "gc_nan_nan_point",
+   "right": "mpt_empty",
+   "expected": false
+  },
+  {
+   "left": "gc_nan_nan_point",
+   "right": "mls",
+   "expected": true
+  },
+  {
+   "left": "gc_nan_nan_point",
+   "right": "mpoly",
+   "expected": true
+  },
+  {
+   "left": "gc_nan_nan_point",
+   "right": "mpoly_empty",
+   "expected": false
+  },
+  {
+   "left": "gc_nan_nan_point",
+   "right": "gc_empty",
+   "expected": false
+  },
+  {
+   "left": "gc_nan_nan_point",
+   "right": "gc_empty_parts",
+   "expected": false
+  },
+  {
+   "left": "gc_nan_nan_point",
+   "right": "gc_mixed",
+   "expected": false
+  },
+  {
+   "left": "gc_nan_nan_point",
+   "right": "gc_nested",
+   "expected": true
+  },
+  {
+   "left": "gc_nan_nan_point",
+   "right": "gc_nan_part",
+   "expected": true
+  },
+  {
+   "left": "gc_nan_nan_point",
+   "right": "ls_nan_nan_vertex",
+   "expected": true
+  },
+  {
+   "left": "gc_nan_nan_point",
+   "right": "ls_all_nan",
+   "expected": true
+  },
+  {
+   "left": "gc_nan_nan_point",
+   "right": "ls_mixed_nan",
+   "expected": true
+  },
+  {
+   "left": "gc_nan_nan_point",
+   "right": "poly_nan_vertex",
+   "expected": true
+  },
+  {
+   "left": "gc_nan_nan_point",
+   "right": "mpt_nan_member",
+   "expected": false
+  },
+  {
+   "left": "gc_nan_nan_point",
+   "right": "gc_nan_nan_point",
    "expected": true
   }
  ]
