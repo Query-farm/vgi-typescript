@@ -1,5 +1,33 @@
 # Migration guide
 
+## Unreleased — vgi.v3 / 3.3.0 table function visibility
+
+Protocol 3.3.0 is a minor bump of `vgi.v3`; peers match exact major and minor,
+so this SDK requires the matching 3.3 VGI extension (upgrade both together).
+
+- **`FunctionInfo.visibility`** (nullable utf8): `"public"` (also what
+  null/absent means) or `"table_only"`. A `table_only` function is sent only so
+  DuckDB knows the capabilities of a table's scan or write function
+  (projection/filter pushdown, rowid, `has_finalize`, required secrets, ...);
+  it is absent from `duckdb_functions()` and cannot be called from SQL.
+  Exported as `FUNCTION_VISIBILITY_PUBLIC` / `FUNCTION_VISIBILITY_TABLE_ONLY`
+  (type `FunctionVisibility`).
+- **Every table scan and write function is now sent.** `ReadOnlyCatalogInterface`
+  lists each function a `TableDescriptor` names (`function`, `insertFunction`,
+  `updateFunction`, `deleteFunction`) even when no schema declares it in
+  `functions`: such a function is listed in its table's schema. Previously an
+  unlisted scan ran with every capability off (a rowid table failed with
+  "Virtual columns require projection pushdown") and an unlisted write
+  function lost `has_finalize`. Listing the scan in `functions` just to get its
+  capabilities is no longer necessary.
+- **User-visible: scans and write functions leave `duckdb_functions()`.** Write
+  functions are always `table_only`, even when a schema also declares them. A
+  table's scan is `table_only` unless the table sets the new
+  **`exposeScan: true`** or a schema declares the function in `functions`
+  (then it is public and callable, as before).
+- A hand-written `CatalogInterface` that builds `FunctionInfo` records itself
+  may set `visibility`; omitting it keeps them public.
+
 ## Unreleased — vgi.v3 / 3.2.0 filtered scan planning
 
 Protocol 3.2.0 is a minor bump of `vgi.v3`; peers match exact major and minor,

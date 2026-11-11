@@ -39,21 +39,41 @@ export interface TableDescriptor {
   definitionRevision?: Uint8Array | null;
   name: string;
   columns?: VgiSchema;
+  /**
+   * The table's scan function. It need not be listed in any schema's
+   * `functions`: the SDK always sends it in the table's schema listing so
+   * DuckDB knows its capabilities (projection/filter pushdown, rowid, ...),
+   * as `table_only` (absent from `duckdb_functions()`, not callable from SQL)
+   * unless `exposeScan` is set or a schema also lists it in `functions`.
+   */
   function?: VgiFunction;
+  /**
+   * Protocol 3.3: also expose the scan `function` as an ordinary, callable
+   * table function (`visibility: "public"`). Default false: the scan is sent
+   * `table_only`, so it resolves this table but is absent from
+   * `duckdb_functions()` and cannot be called directly. Listing the function
+   * in a schema's `functions` makes it public too. Requires `function`.
+   */
+  exposeScan?: boolean;
   arguments?: Arguments;
   /**
    * Table in-out function backing `INSERT INTO <table>`. It receives the new
    * rows (the table's user columns) and returns a `writeResultSchema` batch
    * for the mode in its `write_options` (see `write-results.ts`). Omitted
    * means the table does not accept INSERT.
+   *
+   * Write functions are always sent `table_only` (protocol 3.3): DuckDB
+   * learns their capabilities (`has_finalize`, the write schema) but they are
+   * not callable from SQL, even when a schema also lists them in `functions`.
    */
   insertFunction?: VgiFunction;
   /**
    * Table in-out function backing `UPDATE <table>`. It receives the changed
    * columns plus the row-id column (`rowIdField()`, which the scan
    * `function` must emit) for each updated row. Requires `function`, which
-   * must also support projection pushdown and be listed in the schema's
-   * `functions` (see `rowIdField`).
+   * must also support projection pushdown (see `rowIdField`). The scan need
+   * not be listed in the schema's `functions`: it is always sent, as
+   * `table_only` unless `exposeScan`.
    */
   updateFunction?: VgiFunction;
   /**
@@ -137,6 +157,19 @@ export interface TableDescriptor {
   comment?: string;
   tags?: Record<string, string>;
 }
+
+/**
+ * Protocol 3.3 `FunctionInfo.visibility` values. Null/absent on the wire means
+ * `public`.
+ *
+ * - `public`: an ordinary catalog function, listed in `duckdb_functions()` and
+ *   callable from SQL.
+ * - `table_only`: sent only so the client knows the capabilities of a table's
+ *   scan or write function; hidden from `duckdb_functions()` and not callable.
+ */
+export const FUNCTION_VISIBILITY_PUBLIC = "public";
+export const FUNCTION_VISIBILITY_TABLE_ONLY = "table_only";
+export type FunctionVisibility = typeof FUNCTION_VISIBILITY_PUBLIC | typeof FUNCTION_VISIBILITY_TABLE_ONLY;
 
 export interface ViewDescriptor {
   name: string;

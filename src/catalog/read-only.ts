@@ -22,7 +22,7 @@ import {
   encodeScanFunctionResult,
   buildCatalogAttachResult,
 } from "./interface.js";
-import { schemaDescriptorPath, type CatalogDescriptor, type SchemaDescriptor, type TableDescriptor, type ViewDescriptor, type MacroDescriptor, type SettingDescriptor, type SecretTypeDescriptor, type ForeignKeyDef, type DefaultValue } from "./descriptors.js";
+import { schemaDescriptorPath, FUNCTION_VISIBILITY_PUBLIC, FUNCTION_VISIBILITY_TABLE_ONLY, type FunctionVisibility, type CatalogDescriptor, type SchemaDescriptor, type TableDescriptor, type ViewDescriptor, type MacroDescriptor, type SettingDescriptor, type SecretTypeDescriptor, type ForeignKeyDef, type DefaultValue } from "./descriptors.js";
 import { serializeColumnStatistics } from "../util/statistics.js";
 import { SCAN_PLANNING_BIND, SCAN_PLANNING_FILTERED, validateScanPlanning } from "./scan-planning.js";
 import type { VgiFunction } from "../functions/types.js";
@@ -108,6 +108,13 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
   private _functionListings = new Map<SchemaDescriptor, Map<FunctionListingKind, readonly FunctionInfo[]>>();
   /** One frozen FunctionInfo per (declaring schema, function), shared by listings and `global_functions`. */
   private _functionInfos = new Map<SchemaDescriptor, Map<VgiFunction, FunctionInfo>>();
+  /**
+   * Protocol 3.3: every function each schema's listing carries, in order, with
+   * its visibility -- the schema's own `functions`, then each of its tables'
+   * scan and write functions that no schema declares (see
+   * `buildFunctionListings`).
+   */
+  private _builtListings?: ReturnType<typeof buildFunctionListings>;
 
   constructor(
     descriptor: CatalogDescriptor,
@@ -145,6 +152,24 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
     }
   }
 
+  /** Per-schema listings, built on first use (the descriptor is immutable from then on). */
+  private get _listings(): Map<SchemaDescriptor, Map<VgiFunction, FunctionVisibility>> {
+    return (this._builtListings ??= buildFunctionListings(this._descriptor)).listings;
+  }
+
+  /** The schema whose listing carries each function (first one wins). */
+  private get _listedIn(): Map<VgiFunction, SchemaDescriptor> {
+    return (this._builtListings ??= buildFunctionListings(this._descriptor)).listedIn;
+  }
+
+  /**
+   * The visibility `fn` is listed with in `schema` (protocol 3.3), or null
+   * when that schema's listing does not carry it.
+   */
+  functionVisibility(schema: SchemaDescriptor, fn: VgiFunction): FunctionVisibility | null {
+    return this._listings.get(schema)?.get(fn) ?? null;
+  }
+
   /**
    * Which schema declares `fn`, by object identity, or null if no schema does.
    *
@@ -162,10 +187,11 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
    * Mirrors vgi-python's `ReadOnlyCatalogInterface._schema_for_function`.
    */
   private _schemaForFunction(fn: VgiFunction): string[] | null {
-    for (const sch of this._descriptor.schemas ?? []) {
-      if ((sch.functions ?? []).includes(fn)) return schemaDescriptorPath(sch);
-    }
-    return null;
+    // Protocol 3.3: a table's scan/write function is always listed -- in the
+    // schema that declares it, else in its table's schema as table_only -- so
+    // this is null only for a function no listing carries.
+    const sch = this._listedIn.get(fn);
+    return sch ? schemaDescriptorPath(sch) : null;
   }
 
   catalogs(): string[] {
@@ -350,7 +376,9 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
   // partitioned by kind to match python's behavior.
   private _estimatedObjectCount(s: SchemaDescriptor): Record<string, number> {
     let scalar = 0, aggregate = 0, table = 0;
-    for (const f of s.functions ?? []) {
+    // Count what the listing carries: a table's auto-included scan/write
+    // functions too, or a zero count would make the client skip the listing.
+    for (const f of this._listings.get(s)?.keys() ?? []) {
       if (f.kind === "scalar") scalar++;
       else if ((f.kind as string) === "aggregate") aggregate++;
       else table++; // "table" and "table_in_out"
@@ -576,7 +604,9 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
     transactionOpaqueData?: TransactionOpaqueData
   ): FunctionInfo[] {
     const schema = this._descriptor.schemas.find((s) => schemaPathsEqual(schemaDescriptorPath(s), path));
-    if (!schema || !schema.functions) return [];
+    const entries = schema ? this._listings.get(schema) : undefined;
+    if (!schema || !entries || entries.size === 0) return [];
+    const listed = [...entries.keys()];
 
     // Filter by SchemaObjectType (lowercase on the wire: scalar_function,
     // table_function, aggregate_function). Unknown filter values pass
@@ -587,7 +617,7 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
       // Schema names match case-insensitively, and an item's schema_path keeps
       // the caller's spelling, so a differently-spelled request is built fresh,
       // exactly as before, rather than growing the cache per spelling.
-      return schema.functions.filter((f) => inListing(f, kind)).map((f) => this._functionToInfo(f, path));
+      return listed.filter((f) => inListing(f, kind)).map((f) => this._functionToInfo(f, path, entries.get(f)!));
     }
     let listings = this._functionListings.get(schema);
     if (!listings) {
@@ -597,7 +627,7 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
     let listing = listings.get(kind);
     if (!listing) {
       listing = Object.freeze(
-        schema.functions.filter((f) => inListing(f, kind)).map((f) => this._sharedFunctionInfo(schema, f)),
+        listed.filter((f) => inListing(f, kind)).map((f) => this._sharedFunctionInfo(schema, f)),
       );
       listings.set(kind, listing);
     }
@@ -621,7 +651,8 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
       // Cloned before freezing: the built item shares arrays with the function's
       // own metadata (categories, monotonicity, ...), which must stay the
       // author's to do with as they like.
-      info = freezeCatalogItem(structuredClone(this._functionToInfo(f, schemaDescriptorPath(schema))));
+      const visibility = this.functionVisibility(schema, f) ?? FUNCTION_VISIBILITY_PUBLIC;
+      info = freezeCatalogItem(structuredClone(this._functionToInfo(f, schemaDescriptorPath(schema), visibility)));
       infos.set(f, info);
     }
     return info;
@@ -635,7 +666,7 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
    * (schema contents *and* `global_functions`) must carry the same value in
    * both. Shared by `schemaContentsFunctions` and `_globalFunctionInfos`.
    */
-  private _functionToInfo(f: VgiFunction, path: string[]): FunctionInfo {
+  private _functionToInfo(f: VgiFunction, path: string[], visibility: FunctionVisibility): FunctionInfo {
         const meta = resolveMetadata(f);
         const argSchema = argumentSpecsToSchema(f.argumentSpecs);
         const argBytes = serializeSchema(argSchema);
@@ -795,6 +826,9 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
             scope: s.scope,
             secret_name: s.secret_name,
           })),
+          // Protocol 3.3: table_only for a table's hidden scan and every
+          // write function; public otherwise.
+          visibility,
         };
   }
 
@@ -1391,7 +1425,74 @@ function validateTableScanPlanning(table: TableDescriptor): void {
   }
 }
 
+/**
+ * Protocol 3.3 function listings for a descriptor: per schema, every function
+ * its listing carries and the visibility each is sent with.
+ *
+ * The rules (enforced here, so authors need do nothing):
+ * - Every function a table names (scan, insert, update, delete) is sent: a
+ *   function a schema declares in `functions` is listed there; any other is
+ *   listed in its table's schema, after the declared functions.
+ * - Write functions are always `table_only`, wherever they are listed.
+ * - A scan is `table_only` unless a schema declares it in `functions` or a
+ *   table naming it sets `exposeScan`; then it is `public`.
+ * - Every other declared function is `public`.
+ */
+export function buildFunctionListings(descriptor: CatalogDescriptor): {
+  listings: Map<SchemaDescriptor, Map<VgiFunction, FunctionVisibility>>;
+  listedIn: Map<VgiFunction, SchemaDescriptor>;
+} {
+  const listings = new Map<SchemaDescriptor, Map<VgiFunction, FunctionVisibility>>();
+  const listedIn = new Map<VgiFunction, SchemaDescriptor>();
+  const writeFunctions = new Set<VgiFunction>();
+  for (const sch of descriptor.schemas ?? []) {
+    for (const tbl of sch.tables ?? []) {
+      for (const op of WRITE_OPERATIONS) {
+        const fn = writeFunctionOf(tbl, op);
+        if (fn) writeFunctions.add(fn);
+      }
+    }
+  }
+  const listingOf = (sch: SchemaDescriptor): Map<VgiFunction, FunctionVisibility> => {
+    let listing = listings.get(sch);
+    if (!listing) listings.set(sch, (listing = new Map()));
+    return listing;
+  };
+  for (const sch of descriptor.schemas ?? []) {
+    const listing = listingOf(sch);
+    for (const fn of sch.functions ?? []) {
+      if (!listedIn.has(fn)) listedIn.set(fn, sch);
+      listing.set(fn, writeFunctions.has(fn) ? FUNCTION_VISIBILITY_TABLE_ONLY : FUNCTION_VISIBILITY_PUBLIC);
+    }
+  }
+  const declared = new Set(listedIn.keys());
+  for (const sch of descriptor.schemas ?? []) {
+    for (const tbl of sch.tables ?? []) {
+      const named: Array<[VgiFunction | undefined, boolean]> = [
+        [tbl.function, false],
+        ...WRITE_OPERATIONS.map((op): [VgiFunction | undefined, boolean] => [writeFunctionOf(tbl, op), true]),
+      ];
+      for (const [fn, isWrite] of named) {
+        if (!fn || declared.has(fn)) continue;
+        const owner = listedIn.get(fn) ?? sch;
+        if (!listedIn.has(fn)) listedIn.set(fn, owner);
+        const listing = listingOf(owner);
+        const visibility: FunctionVisibility =
+          !isWrite && !writeFunctions.has(fn) && tbl.exposeScan === true
+            ? FUNCTION_VISIBILITY_PUBLIC
+            : FUNCTION_VISIBILITY_TABLE_ONLY;
+        // Exposure wins: a scan shared by tables is public if any exposes it.
+        if (listing.get(fn) !== FUNCTION_VISIBILITY_PUBLIC) listing.set(fn, visibility);
+      }
+    }
+  }
+  return { listings, listedIn };
+}
+
 function validateWritableTable(table: TableDescriptor): void {
+  if (table.exposeScan && !table.function) {
+    throw new Error(`Table '${table.name}': exposeScan requires a scan function (set 'function')`);
+  }
   const modes = validateWriteResultModes((table.writeResultModes ?? {}) as Record<string, string>);
   for (const operation of Object.keys(modes) as WriteOperation[]) {
     if (!writeFunctionOf(table, operation)) {

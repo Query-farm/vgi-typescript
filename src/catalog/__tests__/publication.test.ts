@@ -30,7 +30,7 @@ test("published catalogs upload/read back once, recover after restart, and isola
   const [a,b] = await Promise.all([manager.warm(identity, f.build), manager.warm(identity, f.build)]);
   expect(a).toEqual(b);
   expect(a.protocolName).toBe("vgi.v3");
-  expect(a.protocolVersion).toBe("3.2.0");
+  expect(a.protocolVersion).toBe("3.3.0");
   expect(f.counters()).toEqual({ builds: 1, uploads: 1, gets: 1 });
   await manager.warm(identity, f.build);
   expect(f.counters()).toEqual({ builds: 1, uploads: 1, gets: 1 });

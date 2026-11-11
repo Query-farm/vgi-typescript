@@ -6,7 +6,7 @@ import { Protocol, type TokenIdentity } from "@query-farm/vgi-rpc";
 import { buildSecondaryProtocol } from "@query-farm/vgi-rpc/conformance";
 import { buildRpcServer, grantKeysFromArgv, type HostingOptions, type ServerTransport } from "../rpc-server.js";
 
-const primary = () => new Protocol("vgi.v3", { protocolVersion: "3.2.0" });
+const primary = () => new Protocol("vgi.v3", { protocolVersion: "3.3.0" });
 const resolveToken = (_token: string): TokenIdentity | null => ({ principal: "p" });
 const ALL: ServerTransport[] = ["pipe", "unix", "tcp", "iroh", "stream", "http"];
 

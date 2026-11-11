@@ -248,8 +248,9 @@ export const descriptor: CatalogDescriptor = {
   schemas: [
     {
       name: "main",
-      // Listed (as the Python fixture lists its functions) so DuckDB knows the
-      // scan's capabilities -- projection pushdown, which rowid needs.
+      // Listed in `functions`, so the scan is also a public, callable table
+      // function. (Protocol 3.3: the SDK would send it anyway, as table_only,
+      // so DuckDB knows its projection pushdown, which rowid needs.)
       functions: [scan],
       tables: [
         table("items", {

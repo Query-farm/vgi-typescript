@@ -407,6 +407,9 @@ const labelsTable: TableDescriptor = {
   name: "labels",
   columns: LABELS,
   function: labelsScan,
+  // Protocol 3.3 fixture contract: labels_scan is callable; items_scan stays
+  // table_only (the default), so it is hidden from duckdb_functions().
+  exposeScan: true,
   constraints: constraints("labels", ["id"], "id"),
 };
 
@@ -417,8 +420,10 @@ export const descriptor: CatalogDescriptor = {
   schemas: [
     {
       name: "main",
-      // items_scan is listed so DuckDB sees its projection pushdown (rowid needs it).
-      functions: [itemsScan, resetFn, whoamiFn, currentTxFn, eventsFn, tagTxFn],
+      // items_scan, labels_scan and items_update are not listed here: the SDK
+      // always sends a table's scan and write functions (protocol 3.3), so
+      // DuckDB still sees the projection pushdown items_scan needs for rowid.
+      functions: [resetFn, whoamiFn, currentTxFn, eventsFn, tagTxFn],
       tables: [itemsTable, labelsTable],
     },
   ],
