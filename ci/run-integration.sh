@@ -219,6 +219,14 @@ export VGI_SECRET_LOOKUP_FIXTURES=1
 export VGI_WRITABLE_TX_FIXTURES=1
 export VGI_TXFIX_STATE_DIR="${VGI_TXFIX_STATE_DIR:-$(mktemp -d)}"
 
+# Function storage (src/functions/storage.ts) defaults to one SQLite file per
+# user (~/.local/state/vgi/vgi_storage.db). Give each run its own, so lanes
+# running at the same time on one host never share or contend on that file.
+if [ -z "${VGI_WORKER_SQLITE_PATH:-}" ]; then
+  VGI_WORKER_SQLITE_DIR="$(mktemp -d)"
+  export VGI_WORKER_SQLITE_PATH="$VGI_WORKER_SQLITE_DIR/vgi_storage.db"
+fi
+
 # Engine-feature gates (vgi 285ba5b, docs/upstream-duckdb-build.md). Every runner
 # this lane uses is Haybarn, which has both features, so default them to 1 the
 # way vgi's Makefile does on Haybarn. Unset them only for an upstream DuckDB
@@ -235,8 +243,11 @@ export VGI_ENGINE_DELETE_RETURNING_VIRTUAL_COLUMNS="${VGI_ENGINE_DELETE_RETURNIN
 BG_PIDS_FILE="$(mktemp)"
 # shellcheck disable=SC2329  # invoked indirectly via `trap cleanup EXIT` below
 cleanup() {
-  [ -f "$BG_PIDS_FILE" ] || return 0
-  while read -r p; do [ -n "$p" ] && kill "$p" 2>/dev/null || true; done < "$BG_PIDS_FILE"
+  if [ -f "$BG_PIDS_FILE" ]; then
+    while read -r p; do [ -n "$p" ] && kill "$p" 2>/dev/null || true; done < "$BG_PIDS_FILE"
+  fi
+  # Remove the per-run function-storage db only if this script created it.
+  if [ -n "${VGI_WORKER_SQLITE_DIR:-}" ]; then rm -rf "$VGI_WORKER_SQLITE_DIR"; fi
 }
 trap cleanup EXIT
 

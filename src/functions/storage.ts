@@ -184,6 +184,10 @@ function int64FromKey(b: Uint8Array): number {
   return Number(new DataView(b.buffer, b.byteOffset, 8).getBigInt64(0, false));
 }
 
+const BUSY_TIMEOUT_MS = 30000;
+// Synchronous sleep for the constructor's lock-retry loop.
+const _SLEEP_CELL = new Int32Array(new SharedArrayBuffer(4));
+
 export class FunctionStorageSqlite implements FunctionStorage {
   readonly dbPath: string;
   private _db: Database;
@@ -196,12 +200,49 @@ export class FunctionStorageSqlite implements FunctionStorage {
     // writes across processes via file locking.
     const Db = _loadDatabase();
     this._db = new Db(this.dbPath);
-    this._db.exec("PRAGMA journal_mode=WAL");
+    // busy_timeout must come first so every later statement waits for
+    // another process's lock instead of failing at once with SQLITE_BUSY
+    // ("database is locked") — several workers on one host routinely open
+    // the same brand-new file at the same moment.
+    this._db.exec(`PRAGMA busy_timeout=${BUSY_TIMEOUT_MS}`);
+    this._setWal();
     this._db.exec("PRAGMA synchronous=NORMAL");
-    this._db.exec("PRAGMA busy_timeout=30000");
     this._db.exec("PRAGMA temp_store=MEMORY");
     this._db.exec("PRAGMA cache_size=-65536");
-    this._ensureTables();
+    // BEGIN IMMEDIATE takes the write lock up front (honouring busy_timeout),
+    // so concurrent schema setup serializes instead of hitting the
+    // read-to-write upgrade deadlock SQLite reports as an immediate BUSY.
+    this._db.exec("BEGIN IMMEDIATE");
+    try {
+      this._ensureTables();
+      this._db.exec("COMMIT");
+    } catch (e) {
+      try {
+        this._db.exec("ROLLBACK");
+      } catch {
+        // No transaction left to roll back.
+      }
+      throw e;
+    }
+  }
+
+  /**
+   * Switch to WAL. Converting a fresh rollback-journal file needs an exclusive
+   * lock, and when two connections attempt it together SQLite returns
+   * SQLITE_BUSY without consulting the busy handler (waiting could deadlock),
+   * so retry here until busy_timeout's worth of time has passed.
+   */
+  private _setWal(): void {
+    const deadline = Date.now() + BUSY_TIMEOUT_MS;
+    for (let delay = 5; ; delay = Math.min(delay * 2, 100)) {
+      try {
+        this._db.exec("PRAGMA journal_mode=WAL");
+        return;
+      } catch (e: any) {
+        if (!String(e?.code ?? "").startsWith("SQLITE_BUSY") || Date.now() >= deadline) throw e;
+        Atomics.wait(_SLEEP_CELL, 0, 0, delay);
+      }
+    }
   }
 
   close(): void {
