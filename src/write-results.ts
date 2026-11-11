@@ -152,14 +152,21 @@ export function writeResultBatch(
 /** What DuckDB asked a write function for, decoded from `write_options`. */
 export interface WriteOptions {
   resultMode: WriteResultMode;
-  /** `throw` (default), or the INSERT ... ON CONFLICT action DuckDB requested. */
+  /**
+   * @deprecated Always `"throw"`. Protocol 3.3 removed `on_conflict` from the
+   * `write_options` batch: DuckDB rewrites every `INSERT ... ON CONFLICT` and
+   * `INSERT OR REPLACE` into a MERGE before any catalog hook runs, so a write
+   * function never received anything else.
+   */
   onConflict: string;
+  /** @deprecated Always empty: protocol 3.3 removed `on_conflict_columns` (see `onConflict`). */
   onConflictColumns: string[];
 }
 
 /**
  * Decode the `write_options` named argument of a write function's bind (a
  * serialized one-row batch). Missing options mean a plain `count` write.
+ * Protocol 3.3: the batch carries only `result_mode`.
  */
 export function writeOptions(bindCall: Pick<BindRequest, "arguments">): WriteOptions {
   const out: WriteOptions = { resultMode: "count", onConflict: "throw", onConflictColumns: [] };
@@ -168,7 +175,5 @@ export function writeOptions(bindCall: Pick<BindRequest, "arguments">): WriteOpt
   const row = [...iterRows(deserializeBatch(toUint8Array(raw)))][0] as Record<string, unknown> | undefined;
   if (!row) return out;
   if (row.result_mode != null) out.resultMode = coerceWriteResultMode(row.result_mode);
-  if (row.on_conflict != null) out.onConflict = String(row.on_conflict);
-  if (row.on_conflict_columns != null) out.onConflictColumns = Array.from(row.on_conflict_columns as Iterable<string>);
   return out;
 }

@@ -235,18 +235,21 @@ describe.skipIf(skip)("VgiClient — macros", () => {
 });
 
 // ============================================================================
-// tableScanFunctionGet — the "how does DuckDB read this table" indirection
+// tableScanBranchesGet — the "how does DuckDB read this table" indirection
+// (protocol 3.3: the only scan-discovery RPC)
 // ============================================================================
 
-describe.skipIf(skip)("VgiClient — tableScanFunctionGet", () => {
-  test("returns a record describing the scan function for a known table", async () => {
-    const result = await client.tableScanFunctionGet(attachOpaqueData, "data", "numbers");
-    // Shape comes back as { result: <bytes> } unwrapped by VgiClient — the
-    // outer call returns the inner dict. We only assert it's a non-null
-    // object; its exact schema (function_name, arguments, required_extensions)
-    // is an internal wire detail covered by DuckDB's integration tests.
-    expect(result).toBeDefined();
-    expect(typeof result).toBe("object");
+describe.skipIf(skip)("VgiClient — tableScanBranchesGet", () => {
+  test("returns at least one branch naming a scan function for a known table", async () => {
+    const result = await client.tableScanBranchesGet(attachOpaqueData, "data", "numbers");
+    expect(result.branches.length).toBeGreaterThanOrEqual(1);
+    const first = result.branches[0]!;
+    expect(first.functionName.length + (first.formatName?.length ?? 0)).toBeGreaterThan(0);
+    expect(Array.isArray(result.requiredExtensions)).toBe(true);
+  });
+
+  test("the removed single-function method is gone from the client", () => {
+    expect((client as unknown as Record<string, unknown>).tableScanFunctionGet).toBeUndefined();
   });
 });
 

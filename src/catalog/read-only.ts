@@ -529,8 +529,8 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
         write_result_modes: writeResultModesFor(t),
         supports_column_statistics: t.statistics != null && Object.keys(t.statistics).length > 0,
         // Inline scan_function only for purely function-backed tables.
-        // When explicit `columns` are also declared, the table is on the
-        // legacy catalog_table_scan_function_get path; inlining would
+        // When explicit `columns` are also declared, the scan is resolved per
+        // call through catalog_table_scan_branches_get; inlining would
         // shadow the per-call dispatch and prevent workers from varying
         // the scan function (e.g. version-resolved time-travel).
         scan_function: t.function && !t.columns
@@ -1207,8 +1207,8 @@ function inferScalarType(val: any): VgiDataType {
 // Mirrors python's _inline_function_result: a serialized one-row batch of
 // ScanFunctionResultSchema (function_name, arguments, required_extensions,
 // schema_path). The C++ extension uses these bytes verbatim and skips the
-// catalog_table_scan_function_get RPC, so the schema this inlines has to agree
-// with what that RPC would have answered.
+// catalog_table_scan_branches_get RPC, so what this inlines has to agree with
+// the one branch that RPC would have answered.
 function inlineScanFunction(
   func: VgiFunction,
   args: Arguments | undefined,

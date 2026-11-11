@@ -259,7 +259,7 @@ export class InMemoryCatalog extends CatalogInterface {
     onConflict: string,
     constraintDefinitions?: Uint8Array[],
     transactionOpaqueData?: TransactionOpaqueData
-  ): void {
+  ): boolean {
     // This store holds no rows and enforces nothing, so it advertises no constraint profile.
     if (constraintDefinitions?.length) throw new Error("this in-memory catalog does not enforce constraints: CREATE TABLE with NOT NULL, PRIMARY KEY, UNIQUE, CHECK or FOREIGN KEY is unsupported");
     validateColumnExpressionsIpc(columns, schemaPath, false);
@@ -268,7 +268,7 @@ export class InMemoryCatalog extends CatalogInterface {
     const schema = att.schemas.get(schemaPathKey(schemaPath));
     if (!schema) throw new CatalogNotFoundError("Schema", schemaPathDisplay(schemaPath));
     if (schema.tables.has(name)) {
-      if (String(onConflict).toUpperCase() === "IGNORE") return;
+      if (String(onConflict).toUpperCase() === "IGNORE") return false; // IF NOT EXISTS: left unchanged
       if (String(onConflict).toUpperCase() === "REPLACE") {
         schema.tables.delete(name);
       } else {
@@ -286,6 +286,7 @@ export class InMemoryCatalog extends CatalogInterface {
       tags: {},
     });
     this._version++;
+    return true;
   }
 
   override tableDrop(

@@ -7,7 +7,8 @@
 // test/sql/integration/writable_tx/*.test (VGI_WRITABLE_TX_WORKER).
 //
 // Built only from the SDK's public API: a descriptor catalog whose `items`
-// table declares an update function and write result modes, ATTACH options
+// table declares insert, update and delete functions (each with a finalize
+// stage) and write result modes, a column default (`qty DEFAULT 0`), ATTACH options
 // (one of them secret), a per-attach `supports_transactions`, and the
 // catalog's transactionBegin / transactionCommit / transactionRollback hooks.
 // Functions and hooks read the options (the secret `token` included) only
@@ -18,10 +19,11 @@
 //   ATTACH 'txfix' AS t   (TYPE vgi, LOCATION '...', token 'tok-123');
 //   ATTACH 'txfix' AS ttx (TYPE vgi, LOCATION '...', token 'tok-123', transactional true);
 //
-// On a transactional attach UPDATE stages its changes under the plaintext
-// transaction id the function sees; scans on that attach read their own
-// writes; the commit hook applies them (or refuses a negative qty) and the
-// rollback hook discards them. State lives in one SQLite file under
+// On a transactional attach INSERT, UPDATE and DELETE stage their changes
+// under the plaintext transaction id the function sees; scans on that attach
+// read their own writes; the commit hook applies them (or refuses a negative
+// qty) and the rollback hook discards them. Every write call is logged
+// (`writes()`), and its finalize stage marks the log row finalized. State lives in one SQLite file under
 // $VGI_TXFIX_STATE_DIR (default <tmpdir>/vgi-txfix), partitioned by the
 // `token` option, because the extension may route the statements of one
 // transaction to different worker processes.
@@ -39,6 +41,8 @@ import {
   type CatalogAttachResult,
   type CatalogDescriptor,
   constraintRecord,
+  DEFAULT_EXPRESSION_KEY,
+  defaultExpressionMetadata,
   defineTableFunction,
   defineTableInOutFunction,
   FunctionRegistry,
@@ -130,6 +134,9 @@ const INITIAL_LABELS: [number, string][] = [
   [2, "y"],
 ];
 
+/** Every per-partition table of the state file. */
+const PART_TABLES = ["items", "labels", "staged_rows", "events", "write_calls"];
+
 function openState(): Database {
   const dir = process.env.VGI_TXFIX_STATE_DIR || join(tmpdir(), "vgi-txfix");
   mkdirSync(dir, { recursive: true });
@@ -140,14 +147,19 @@ function openState(): Database {
     "CREATE TABLE IF NOT EXISTS parts (part TEXT PRIMARY KEY);" +
       "CREATE TABLE IF NOT EXISTS items (part TEXT NOT NULL, id INTEGER NOT NULL, name TEXT, qty INTEGER, PRIMARY KEY (part, id));" +
       "CREATE TABLE IF NOT EXISTS labels (part TEXT NOT NULL, id INTEGER NOT NULL, label TEXT, PRIMARY KEY (part, id));" +
-      "CREATE TABLE IF NOT EXISTS staged (part TEXT NOT NULL, tx TEXT NOT NULL, id INTEGER NOT NULL, name TEXT, qty INTEGER, PRIMARY KEY (part, tx, id));" +
-      "CREATE TABLE IF NOT EXISTS events (seq INTEGER PRIMARY KEY AUTOINCREMENT, part TEXT NOT NULL, kind TEXT NOT NULL, tx TEXT, ok INTEGER NOT NULL);",
+      // A transaction's staged image of a row: its new values, or `deleted`.
+      "CREATE TABLE IF NOT EXISTS staged_rows (part TEXT NOT NULL, tx TEXT NOT NULL, id INTEGER NOT NULL, name TEXT, qty INTEGER, " +
+      "deleted INTEGER NOT NULL, PRIMARY KEY (part, tx, id));" +
+      "CREATE TABLE IF NOT EXISTS events (seq INTEGER PRIMARY KEY AUTOINCREMENT, part TEXT NOT NULL, kind TEXT NOT NULL, tx TEXT, ok INTEGER NOT NULL);" +
+      // One row per finished write call (written by its finalize stage).
+      "CREATE TABLE IF NOT EXISTS write_calls (seq INTEGER PRIMARY KEY AUTOINCREMENT, part TEXT NOT NULL, op TEXT NOT NULL, " +
+      "tx TEXT, rows INTEGER NOT NULL, finalized INTEGER NOT NULL);",
   );
   return db;
 }
 
 /** Run `fn` in one write transaction (BEGIN IMMEDIATE: the cross-process lock). */
-function withState<T>(fn: (db: Database) => T): T {
+export function withState<T>(fn: (db: Database) => T): T {
   const db = openState();
   try {
     return db.transaction(fn).immediate(db);
@@ -156,10 +168,10 @@ function withState<T>(fn: (db: Database) => T): T {
   }
 }
 
-function seed(db: Database, part: string, force: boolean): void {
+export function seed(db: Database, part: string, force: boolean): void {
   const fresh = db.query("INSERT OR IGNORE INTO parts (part) VALUES (?)").run(part).changes === 1;
   if (!fresh && !force) return;
-  for (const t of ["items", "labels", "staged", "events"]) db.query(`DELETE FROM ${t} WHERE part = ?`).run(part);
+  for (const t of PART_TABLES) db.query(`DELETE FROM ${t} WHERE part = ?`).run(part);
   for (const [id, name, qty] of INITIAL_ITEMS) {
     db.query("INSERT INTO items (part, id, name, qty) VALUES (?, ?, ?, ?)").run(part, id, name, qty);
   }
@@ -168,7 +180,7 @@ function seed(db: Database, part: string, force: boolean): void {
   }
 }
 
-interface ItemRow {
+export interface ItemRow {
   id: number;
   name: string | null;
   qty: bigint | null;
@@ -181,28 +193,151 @@ const toItem = (r: { id: unknown; name: unknown; qty: unknown }): ItemRow => ({
   qty: r.qty == null ? null : BigInt(r.qty as bigint),
 });
 
-/** The rows `part` sees: committed, with transaction `tx`'s staged rows on top. */
-function visibleItems(db: Database, part: string, tx: string | null): Map<number, ItemRow> {
+/** The rows `part` sees: committed, with transaction `tx`'s staged changes on top. */
+export function visibleItems(db: Database, part: string, tx: string | null): Map<number, ItemRow> {
   seed(db, part, false);
   const rows = new Map<number, ItemRow>();
   for (const r of db.query("SELECT id, name, qty FROM items WHERE part = ? ORDER BY id").all(part) as any[]) {
     rows.set(Number(r.id), toItem(r));
   }
   if (tx) {
-    for (const r of db.query("SELECT id, name, qty FROM staged WHERE part = ? AND tx = ?").all(part, tx) as any[]) {
-      rows.set(Number(r.id), toItem(r));
+    for (const r of db.query("SELECT id, name, qty, deleted FROM staged_rows WHERE part = ? AND tx = ?").all(part, tx) as any[]) {
+      if (Number(r.deleted) === 1) rows.delete(Number(r.id));
+      else rows.set(Number(r.id), toItem(r));
     }
   }
   return new Map([...rows.entries()].sort((a, b) => a[0] - b[0]));
+}
+
+/** Write `row` (or, with `deleted`, its removal): applied now without `tx`, staged under `tx` with one. */
+function putItem(db: Database, part: string, tx: string | null, row: ItemRow, deleted = false): void {
+  if (tx) {
+    db.query("INSERT OR REPLACE INTO staged_rows (part, tx, id, name, qty, deleted) VALUES (?, ?, ?, ?, ?, ?)").run(
+      part, tx, row.id, row.name, row.qty, deleted ? 1 : 0,
+    );
+  } else if (deleted) {
+    db.query("DELETE FROM items WHERE part = ? AND id = ?").run(part, row.id);
+  } else {
+    db.query("INSERT OR REPLACE INTO items (part, id, name, qty) VALUES (?, ?, ?, ?)").run(part, row.id, row.name, row.qty);
+  }
 }
 
 function logEvent(db: Database, part: string, kind: string, tx: string | null, ok: boolean): void {
   db.query("INSERT INTO events (part, kind, tx, ok) VALUES (?, ?, ?, ?)").run(part, kind, tx, ok ? 1 : 0);
 }
 
+/**
+ * Record one finished write call (its finalize stage ran): `rows` is the sum
+ * of what its batches reported, carried to finalize in the call's state.
+ */
+export function logWriteCall(db: Database, part: string, op: string, tx: string | null, rows: number): void {
+  db.query("INSERT INTO write_calls (part, op, tx, rows, finalized) VALUES (?, ?, ?, ?, 1)").run(part, op, tx, rows);
+}
+
+const UPDATABLE = new Set(["name", "qty"]);
+
+function same(a: unknown, b: unknown): boolean {
+  if (a == null || b == null) return a == null && b == null;
+  return String(a) === String(b);
+}
+
+/** Refuse a negative qty now on the plain attach; a transactional one refuses it at commit. */
+function checkQty(tx: string | null, qty: bigint | null): void {
+  if (!tx && qty != null && qty < 0n) throw new Error("txfix: qty must be >= 0");
+}
+
+/**
+ * INSERT `rows` (one batch). Validates every row before applying any: NULL
+ * name, an id that is NULL or already present (committed, staged by `tx`, or
+ * earlier in this batch; earlier batches of the statement are already applied
+ * or staged), and on the plain attach a negative qty.
+ */
+export function applyInsert(db: Database, part: string, tx: string | null, rows: ItemRow[]): ItemRow[] {
+  const current = visibleItems(db, part, tx);
+  for (const row of rows) {
+    if (row.id == null || Number.isNaN(row.id)) throw new Error("txfix: id required");
+    if (row.name == null) throw new Error("txfix: name required");
+    if (current.has(row.id)) throw new Error(`txfix: duplicate id ${row.id}`);
+    checkQty(tx, row.qty);
+    current.set(row.id, row);
+  }
+  for (const row of rows) putItem(db, part, tx, row);
+  return rows;
+}
+
+/** UPDATE: `changes[i]` holds the new values of the row whose rowid is `rowids[i]`. */
+export function applyUpdate(
+  db: Database,
+  part: string,
+  tx: string | null,
+  rowids: number[],
+  changes: Record<string, unknown>[],
+): { before: ItemRow[]; after: ItemRow[] } {
+  const current = visibleItems(db, part, tx);
+  const before: ItemRow[] = [];
+  const after: ItemRow[] = [];
+  // Validate every row before applying any.
+  rowids.forEach((rowid, i) => {
+    const old = current.get(rowid);
+    if (!old) throw new Error(`txfix: no row with rowid ${rowid}`);
+    const next: ItemRow = { ...old };
+    for (const [name, value] of Object.entries(changes[i]!)) {
+      if (same(value, old[name])) continue;
+      if (name === "id") throw new Error("txfix: id is not updatable");
+      if (!UPDATABLE.has(name)) throw new Error(`txfix: ${name} is not a column of items`);
+      if (name === "name" && value == null) throw new Error("txfix: name must not be NULL");
+      next[name] = name === "qty" && value != null ? BigInt(value as bigint) : value;
+    }
+    checkQty(tx, next.qty);
+    before.push(old);
+    after.push(next);
+    current.set(rowid, next);
+  });
+  for (const r of after) putItem(db, part, tx, r);
+  return { before, after };
+}
+
+/** DELETE by rowid (= id). A missing id is a no-op and a repeated one counts once. */
+export function applyDelete(db: Database, part: string, tx: string | null, rowids: number[]): ItemRow[] {
+  const current = visibleItems(db, part, tx);
+  const deleted: ItemRow[] = [];
+  for (const rowid of rowids) {
+    const old = current.get(rowid);
+    if (!old) continue;
+    current.delete(rowid);
+    deleted.push(old);
+  }
+  for (const r of deleted) putItem(db, part, tx, r, true);
+  return deleted;
+}
+
+/**
+ * Apply transaction `tx`'s staged changes, or refuse the commit (discarding
+ * them) when a row it leaves behind has a negative qty. Returns the refusal.
+ */
+export function commitStaged(db: Database, part: string, tx: string): string | null {
+  const staged = db.query("SELECT id, name, qty, deleted FROM staged_rows WHERE part = ? AND tx = ? ORDER BY id").all(part, tx) as any[];
+  db.query("DELETE FROM staged_rows WHERE part = ? AND tx = ?").run(part, tx);
+  const bad = staged.find((r) => Number(r.deleted) !== 1 && r.qty != null && BigInt(r.qty) < 0n);
+  if (bad) {
+    logEvent(db, part, "commit", tx, false);
+    return `txfix: commit refused: qty ${bad.qty} for id ${bad.id}`;
+  }
+  for (const r of staged) putItem(db, part, null, toItem(r), Number(r.deleted) === 1);
+  logEvent(db, part, "commit", tx, true);
+  return null;
+}
+
 // ------------------------------------------------------------------ tables
 
+// The rows of items, as scans and write results carry them.
 const ITEMS = schema([field("id", int32(), false), field("name", utf8(), false), field("qty", int64(), true)]);
+// The table's declared columns: `qty BIGINT DEFAULT 0`, a canonical
+// vgi.column.default.v1 constant, which DuckDB fills in for an omitted qty
+// before items_insert sees the row. (Column-expression metadata belongs on the
+// table's columns only, never on a function's output schema.)
+const QTY_DEFAULT = new Map([[DEFAULT_EXPRESSION_KEY, defaultExpressionMetadata("0", ["main"])]]);
+const ITEMS_COLUMNS = schema([ITEMS.fields[0]!, ITEMS.fields[1]!, field("qty", int64(), true, QTY_DEFAULT)]);
 const LABELS = schema([field("id", int32(), false), field("label", utf8(), true)]);
 
 function constraints(table: string, notNull: string[], key: string): Uint8Array[] {
@@ -250,6 +385,8 @@ const itemsScan = defineTableFunction<Record<string, never>, Once>({
   projectionPushdown: true,
   onBind: () => ({ outputSchema: schema([...ITEMS.fields, rowIdField()]) }),
   initialState: () => ({ done: false }),
+  // The scan reads its snapshot once, when it starts, and emits it whole: so
+  // INSERT INTO items SELECT ... FROM items never sees the rows it inserts.
   process: (params, state, out) => {
     if (state.done) return out.finish();
     state.done = true;
@@ -272,62 +409,104 @@ const labelsScan = oneShot("labels_scan", "The rows of main.labels", LABELS, (bi
   return { id: rows.map((r) => Number(r.id)), label: rows.map((r) => r.label) };
 });
 
-const UPDATABLE = new Set(["name", "qty"]);
+type WriteOp = "insert" | "update" | "delete";
 
-function same(a: unknown, b: unknown): boolean {
-  if (a == null || b == null) return a == null && b == null;
-  return String(a) === String(b);
+/** The call's attach partition and the transaction it stages under (transactional attaches only). */
+function writeContext(params: { initCall: { bind_call: any } }) {
+  const bindCall = params.initCall.bind_call;
+  const attach = decodeAttach(bindCall.attach_opaque_data);
+  return {
+    bindCall,
+    part: partOf(attach),
+    // Staging (and writes().tx_id): only a transactional attach stages, under
+    // the plaintext id; NULL on the non-transactional attach.
+    tx: attach.transactional ? txOf(bindCall) : null,
+  };
 }
 
-const itemsUpdate = defineTableInOutFunction({
-  name: "items_update",
-  description: "Backs UPDATE main.items: applies (or, in a transaction, stages) the new values",
-  stability: FunctionStability.VOLATILE,
-  onBind: (params) => ({ outputSchema: writeResultSchema(writeOptions(params.bindCall).resultMode, ITEMS) }),
-  process: (params, _state, batch: VgiBatch, out) => {
-    const bindCall = params.initCall.bind_call;
-    const attach = decodeAttach(bindCall.attach_opaque_data);
-    const part = partOf(attach);
-    const tx = attach.transactional ? txOf(bindCall) : null;
-    const { before, after } = withState((db) => {
-      const current = visibleItems(db, part, tx);
-      const before: ItemRow[] = [];
-      const after: ItemRow[] = [];
-      // Validate every row before applying any.
-      for (let i = 0; i < batch.numRows; i++) {
-        const rowid = Number(batch.getChild("rowid")?.get(i));
-        const old = current.get(rowid);
-        if (!old) throw new Error(`txfix: no row with rowid ${rowid}`);
-        const next: ItemRow = { ...old };
-        for (const f of batch.schema.fields) {
-          if (f.name === "rowid") continue;
-          const value = batch.getChild(f.name)?.get(i) ?? null;
-          if (same(value, old[f.name])) continue;
-          if (f.name === "id") throw new Error("txfix: id is not updatable");
-          if (!UPDATABLE.has(f.name)) throw new Error(`txfix: ${f.name} is not a column of items`);
-          if (f.name === "name" && value == null) throw new Error("txfix: name must not be NULL");
-          next[f.name] = f.name === "qty" && value != null ? BigInt(value as bigint) : value;
-        }
-        if (!tx && next.qty != null && next.qty < 0n) throw new Error("txfix: qty must be >= 0");
-        before.push(old);
-        after.push(next);
-        current.set(rowid, next);
-      }
-      const stage = db.query("INSERT OR REPLACE INTO staged (part, tx, id, name, qty) VALUES (?, ?, ?, ?, ?)");
-      const apply = db.query("UPDATE items SET name = ?, qty = ? WHERE part = ? AND id = ?");
-      for (const r of after) {
-        if (tx) stage.run(part, tx, r.id, r.name, r.qty);
-        else apply.run(r.name, r.qty, part, r.id);
-      }
-      return { before, after };
+/** Per write call: the rows its batches reported so far (the SDK carries it to finalize). */
+interface WriteCallState {
+  rows: number;
+}
+
+/**
+ * A write function of `items`. `apply` validates and applies (or stages) one
+ * batch inside the state lock and returns the old/new row images for the
+ * result. The call's state counts the rows; its finalize stage records the
+ * call in `writes()`.
+ */
+function itemsWriteFunction(
+  op: WriteOp,
+  description: string,
+  apply: (db: Database, part: string, tx: string | null, batch: VgiBatch) => { before: (ItemRow | null)[]; after: (ItemRow | null)[] },
+): VgiFunction {
+  return defineTableInOutFunction<Record<string, never>, WriteCallState>({
+    name: `items_${op}`,
+    description,
+    stability: FunctionStability.VOLATILE,
+    onBind: (params) => ({ outputSchema: writeResultSchema(writeOptions(params.bindCall).resultMode, ITEMS) }),
+    initialState: () => ({ rows: 0 }),
+    process: (params, state, batch: VgiBatch, out) => {
+      const ctx = writeContext(params);
+      const { before, after } = withState((db) => apply(db, ctx.part, ctx.tx, batch));
+      state.rows += after.length;
+      out.emit(writeResultBatch(writeOptions(ctx.bindCall).resultMode, ITEMS, before, after));
+    },
+    // DuckDB runs this once per write call after its last batch (also for a
+    // call that got none), and never after a failed statement. No output: the
+    // count is the batches' sum.
+    finalize: (params, states) => {
+      const ctx = writeContext(params);
+      const rows = states.reduce((sum, st) => sum + (st?.rows ?? 0), 0);
+      withState((db) => logWriteCall(db, ctx.part, op, ctx.tx, rows));
+      return [];
+    },
+  });
+}
+
+const cell = (batch: VgiBatch, name: string, i: number): unknown => batch.getChild(name)?.get(i) ?? null;
+const rowidsOf = (batch: VgiBatch): number[] => Array.from({ length: batch.numRows }, (_, i) => Number(cell(batch, "rowid", i)));
+
+const itemsInsert = itemsWriteFunction(
+  "insert",
+  "Backs INSERT INTO main.items: inserts (or, in a transaction, stages) the new rows",
+  (db, part, tx, batch) => {
+    const rows: ItemRow[] = Array.from({ length: batch.numRows }, (_, i) => {
+      const id = cell(batch, "id", i);
+      const qty = cell(batch, "qty", i);
+      return {
+        id: id == null ? Number.NaN : Number(id),
+        name: (cell(batch, "name", i) as string | null) ?? null,
+        qty: qty == null ? null : BigInt(qty as bigint),
+      };
     });
-    out.emit(writeResultBatch(writeOptions(bindCall).resultMode, ITEMS, before, after));
+    const inserted = applyInsert(db, part, tx, rows);
+    return { before: inserted.map(() => null), after: inserted };
   },
-});
+);
+
+const itemsUpdate = itemsWriteFunction(
+  "update",
+  "Backs UPDATE main.items: applies (or, in a transaction, stages) the new values",
+  (db, part, tx, batch) => {
+    const names = batch.schema.fields.map((f) => f.name).filter((n) => n !== "rowid");
+    const changes = Array.from({ length: batch.numRows }, (_, i) => Object.fromEntries(names.map((n) => [n, cell(batch, n, i)])));
+    return applyUpdate(db, part, tx, rowidsOf(batch), changes);
+  },
+);
+
+const itemsDelete = itemsWriteFunction(
+  "delete",
+  "Backs DELETE FROM main.items: deletes (or, in a transaction, stages the deletion of) rows by rowid",
+  (db, part, tx, batch) => {
+    const deleted = applyDelete(db, part, tx, rowidsOf(batch));
+    return { before: deleted, after: deleted.map(() => null) };
+  },
+);
 
 // --------------------------------------------------------------- functions
 
-const resetFn = oneShot("reset", "Restore this token's initial rows; clear its staged changes and events", schema([field("ok", bool(), true)]), (bindCall) => {
+const resetFn = oneShot("reset", "Restore this token's initial rows; clear its staged changes, events and write log", schema([field("ok", bool(), true)]), (bindCall) => {
   const part = partOf(decodeAttach(bindCall.attach_opaque_data));
   withState((db) => seed(db, part, true));
   return { ok: [true] };
@@ -373,6 +552,29 @@ const eventsFn = oneShot(
   },
 );
 
+const writesFn = oneShot(
+  "writes",
+  "This token's write-call log: one row per call of items_insert / items_update / items_delete",
+  schema([
+    field("seq", int64(), true),
+    field("op", utf8(), true),
+    field("tx_id", utf8(), true),
+    field("rows", int64(), true),
+    field("finalized", bool(), true),
+  ]),
+  (bindCall) => {
+    const part = partOf(decodeAttach(bindCall.attach_opaque_data));
+    const rows = withState((db) => db.query("SELECT seq, op, tx, rows, finalized FROM write_calls WHERE part = ? ORDER BY seq").all(part) as any[]);
+    return {
+      seq: rows.map((r) => BigInt(r.seq)),
+      op: rows.map((r) => r.op),
+      tx_id: rows.map((r) => r.tx ?? null),
+      rows: rows.map((r) => BigInt(r.rows)),
+      finalized: rows.map((r) => Number(r.finalized) === 1),
+    };
+  },
+);
+
 const tagTxFn = defineTableInOutFunction({
   name: "tag_tx",
   description: "Pass every input row through, adding the transaction id seen while processing it",
@@ -396,10 +598,12 @@ const tagTxFn = defineTableInOutFunction({
 
 const itemsTable: TableDescriptor = {
   name: "items",
-  columns: schema([...ITEMS.fields, rowIdField()]),
+  columns: schema([...ITEMS_COLUMNS.fields, rowIdField()]),
   function: itemsScan,
+  insertFunction: itemsInsert,
   updateFunction: itemsUpdate,
-  writeResultModes: { update: "changes" },
+  deleteFunction: itemsDelete,
+  writeResultModes: { insert: "changes", update: "changes", delete: "changes" },
   constraints: constraints("items", ["id", "name"], "id"),
 };
 
@@ -420,10 +624,11 @@ export const descriptor: CatalogDescriptor = {
   schemas: [
     {
       name: "main",
-      // items_scan, labels_scan and items_update are not listed here: the SDK
-      // always sends a table's scan and write functions (protocol 3.3), so
-      // DuckDB still sees the projection pushdown items_scan needs for rowid.
-      functions: [resetFn, whoamiFn, currentTxFn, eventsFn, tagTxFn],
+      // items_scan, labels_scan and the items_* write functions are not listed
+      // here: the SDK always sends a table's scan and write functions
+      // (protocol 3.3), so DuckDB still sees the projection pushdown items_scan
+      // needs for rowid and the write functions' has_finalize.
+      functions: [resetFn, whoamiFn, currentTxFn, eventsFn, writesFn, tagTxFn],
       tables: [itemsTable, labelsTable],
     },
   ],
@@ -460,20 +665,7 @@ export class TxfixCatalog extends ReadOnlyCatalogInterface {
 
   override transactionCommit(attachOpaqueData: Uint8Array, transactionOpaqueData: Uint8Array): void {
     const part = partOf(decodeAttach(attachOpaqueData));
-    const tx = hex(transactionOpaqueData);
-    const refusal = withState((db) => {
-      const rows = (db.query("SELECT id, name, qty FROM staged WHERE part = ? AND tx = ? ORDER BY id").all(part, tx) as any[]).map(toItem);
-      db.query("DELETE FROM staged WHERE part = ? AND tx = ?").run(part, tx);
-      const bad = rows.find((r) => r.qty != null && r.qty < 0n);
-      if (bad) {
-        logEvent(db, part, "commit", tx, false);
-        return `txfix: commit refused: qty ${bad.qty} for id ${bad.id}`;
-      }
-      const apply = db.query("UPDATE items SET name = ?, qty = ? WHERE part = ? AND id = ?");
-      for (const r of rows) apply.run(r.name, r.qty, part, r.id);
-      logEvent(db, part, "commit", tx, true);
-      return null;
-    });
+    const refusal = withState((db) => commitStaged(db, part, hex(transactionOpaqueData)));
     if (refusal) throw new Error(refusal);
   }
 
@@ -481,7 +673,7 @@ export class TxfixCatalog extends ReadOnlyCatalogInterface {
     const part = partOf(decodeAttach(attachOpaqueData));
     const tx = hex(transactionOpaqueData);
     withState((db) => {
-      db.query("DELETE FROM staged WHERE part = ? AND tx = ?").run(part, tx);
+      db.query("DELETE FROM staged_rows WHERE part = ? AND tx = ?").run(part, tx);
       logEvent(db, part, "rollback", tx, true);
     });
   }

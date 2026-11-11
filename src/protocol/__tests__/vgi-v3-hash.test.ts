@@ -21,7 +21,7 @@ import { VGI_PROTOCOL_NAME, VGI_V3_PROTOCOL_HASH } from "../dispatch.js";
 import { UNIMPLEMENTED_METHODS, unimplementedMessage } from "../handlers/unimplemented.js";
 
 /** The combined canonical Python reference hosts exactly this many vgi.v3 methods. */
-const REFERENCE_METHOD_COUNT = 85;
+const REFERENCE_METHOD_COUNT = 84;
 
 let server: { port: number; stop(force?: boolean): void };
 let baseUrl: string;

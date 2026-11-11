@@ -50,8 +50,8 @@ import {
   type TransactionOpaqueData,
   decodeCatalogInfo,
   type CatalogInfo,
-  type ScanFunctionResult,
-  decodeScanFunctionResult,
+  type ScanBranchesInfo,
+  decodeScanBranchesResult,
 } from "../catalog/interface.js";
 import { wrapRequest, unwrapResult } from "./protocol.js";
 import { toUint8Array } from "../util/bytes.js";
@@ -1222,7 +1222,11 @@ export class VgiClient {
     return items[0] ?? null;
   }
 
-  /** Create a new table. */
+  /**
+   * Create a new table. Resolves to whether this call created it: `false`
+   * when `onConflict` is IGNORE (`IF NOT EXISTS`) and the table already
+   * existed (protocol 3.3 `created`).
+   */
   async tableCreate(
     attachOpaqueData: AttachOpaqueData,
     schemaPath: string[] | string,
@@ -1231,8 +1235,8 @@ export class VgiClient {
     onConflict: OnCreateConflict,
     constraintDefinitions: Uint8Array[] = [],
     transactionOpaqueData?: TransactionOpaqueData,
-  ): Promise<void> {
-    await this.rpc.call("catalog_table_create", {
+  ): Promise<boolean> {
+    const result = await this.rpc.call("catalog_table_create", {
       request: encodeASD(TableCreateRequestSchema, {
       attach_opaque_data: attachOpaqueData,
       schema_path: normalizeSchemaPath(schemaPath),
@@ -1243,6 +1247,8 @@ export class VgiClient {
       transaction_opaque_data: transactionOpaqueData ?? null,
       }),
     });
+    if (!result) throw new VgiClientError("table_create returned null");
+    return unwrapResult(result).created === true;
   }
 
   /** Drop a table by name. */
@@ -1265,28 +1271,31 @@ export class VgiClient {
   }
 
   /**
-   * Get the scan function for a table — tells DuckDB which function to call
-   * to read the table data (e.g. `read_parquet` with a path argument). Used
-   * by the VGI extension during query planning.
+   * Get a table's scan branches -- tells DuckDB which function (or file
+   * format) reads each physical source of the table. A single-source table
+   * has one branch. Protocol 3.3 removed the single-function
+   * `catalog_table_scan_function_get` RPC (and this client's
+   * `tableScanFunctionGet`); this is the only scan-discovery call.
    */
-  async tableScanFunctionGet(
+  async tableScanBranchesGet(
     attachOpaqueData: AttachOpaqueData,
     schemaPath: string[] | string,
     name: string,
     atUnit?: string | null,
     atValue?: string | null,
     transactionOpaqueData?: TransactionOpaqueData,
-  ): Promise<ScanFunctionResult> {
-    const result = await this.rpc.call("catalog_table_scan_function_get", {
+  ): Promise<ScanBranchesInfo> {
+    const result = await this.rpc.call("catalog_table_scan_branches_get", {
       attach_opaque_data: attachOpaqueData,
       schema_path: normalizeSchemaPath(schemaPath),
       name,
       at_unit: atUnit ?? null,
       at_value: atValue ?? null,
       transaction_opaque_data: transactionOpaqueData ?? null,
+      pushdown_filters: null,
     });
-    if (!result) throw new VgiClientError("table_scan_function_get returned null");
-    return decodeScanFunctionResult(unwrapResult(result));
+    if (!result) throw new VgiClientError("table_scan_branches_get returned null");
+    return decodeScanBranchesResult(unwrapResult(result));
   }
 
   /** Set or clear the comment on a table. */

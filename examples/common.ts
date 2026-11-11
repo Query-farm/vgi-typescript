@@ -445,7 +445,7 @@ export const catalog: CatalogDescriptor = {
         // Function-backed table over the no-arg ten_thousand function. Used
         // by integration/table/inlined_scan_function.test to verify the C++
         // extension reads the inlined scan_function from TableInfo and
-        // skips catalog_table_scan_function_get.
+        // skips catalog_table_scan_branches_get.
         {
           name: "ten_thousand_table",
           function: tenThousandFunction,

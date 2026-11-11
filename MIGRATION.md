@@ -1,5 +1,37 @@
 # Migration guide
 
+## Unreleased — vgi.v3 / 3.3.0 write path
+
+Also part of protocol 3.3.0 (the version stays 3.3.0; the `vgi.v3` hash
+changes, so the matching extension is required):
+
+- **`catalog_table_scan_function_get` is removed.** `catalog_table_scan_branches_get`
+  is the only scan-discovery RPC, and a worker must answer it. Nothing changes
+  for catalog authors: `CatalogInterface.tableScanFunctionGet` keeps working,
+  answered as a one-branch `tableScanBranchesGet` reply (the default). The
+  client's `VgiClient.tableScanFunctionGet` is removed with the RPC; use the new
+  `VgiClient.tableScanBranchesGet(attach, schemaPath, name, atUnit?, atValue?, tx?)`,
+  which decodes the reply into `{ branches: ScanBranchInfo[], requiredExtensions }`
+  (`decodeScanBranchesResult` is exported for raw replies).
+- **`catalog_table_create` replies `created: bool`.** `CatalogInterface.tableCreate`
+  may now return a boolean: return **`false` when `onConflict` is `IGNORE`
+  (`IF NOT EXISTS`) and the table already existed**, leaving it unchanged.
+  `true` or nothing means this call created it, so existing catalogs keep
+  working, but one that returns nothing for an existing table makes
+  `CREATE TABLE IF NOT EXISTS ... AS SELECT` insert its rows into that table.
+  Anything but a boolean or nothing is refused. `VgiClient.tableCreate` now
+  resolves to the `created` flag.
+- **`write_options` carries only `result_mode`.** `on_conflict` and
+  `on_conflict_columns` were removed from the batch: DuckDB rewrites every
+  `INSERT ... ON CONFLICT` and `INSERT OR REPLACE` into a MERGE before the
+  catalog sees it, so a write function only ever received `"throw"` and `[]`.
+  `WriteOptions.onConflict` / `onConflictColumns` remain, deprecated, with
+  those constant values. MERGE and `INSERT ... ON CONFLICT` on a VGI table are
+  emulated by the extension, one write call per MERGE action (atomic only on a
+  transactional attach, and they need a rowid).
+- `encodeScanFunctionResult` / `decodeScanFunctionResult` are exported from the
+  package root, for hand-written catalogs that inline a table's functions.
+
 ## Unreleased — vgi.v3 / 3.3.0 table function visibility
 
 Protocol 3.3.0 is a minor bump of `vgi.v3`; peers match exact major and minor,

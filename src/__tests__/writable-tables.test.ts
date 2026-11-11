@@ -9,7 +9,7 @@
 // examples/simple-writable-worker.ts.
 
 import { describe, expect, test } from "bun:test";
-import { batchFromColumns, deserializeBatch, field, int64, iterRows, schema, serializeBatch, utf8 } from "../arrow/index.js";
+import { batchFromColumns, deserializeBatch, field, int64, iterRows, list, schema, serializeBatch, utf8 } from "../arrow/index.js";
 import { Arguments } from "../arguments/arguments.js";
 import { decodeScanFunctionResult } from "../catalog/interface.js";
 import { ReadOnlyCatalogInterface } from "../catalog/read-only.js";
@@ -154,14 +154,26 @@ describe("write results", () => {
     expect([...iterRows(writeResultBatch("count", USER, [null, null], [{}, {}]))]).toEqual([{ count: 2n }]);
   });
 
-  test("write_options decodes the mode DuckDB asked for", () => {
-    const opts = batchFromColumns(
-      { result_mode: ["changes"], on_conflict: ["throw"] },
-      schema([field("result_mode", utf8(), true), field("on_conflict", utf8(), true)]),
-    );
+  test("write_options decodes the mode DuckDB asked for (protocol 3.3: result_mode only)", () => {
+    const opts = batchFromColumns({ result_mode: ["changes"] }, schema([field("result_mode", utf8(), false)]));
     const bindCall = { arguments: new Arguments([], new Map([["write_options", serializeBatch(opts)]])) };
     expect(writeOptions(bindCall)).toEqual({ resultMode: "changes", onConflict: "throw", onConflictColumns: [] });
     expect(writeOptions({ arguments: new Arguments() }).resultMode).toBe("count");
+  });
+
+  test("write_options ignores the pre-3.3 on_conflict fields (deprecated accessors are constant)", () => {
+    // A 3.2 peer's batch: on_conflict was always "throw" in practice, but a
+    // stray value must not leak into the deprecated accessors.
+    const opts = batchFromColumns(
+      { result_mode: ["rows"], on_conflict: ["nothing"], on_conflict_columns: [["id"]] },
+      schema([
+        field("result_mode", utf8(), false),
+        field("on_conflict", utf8(), true),
+        field("on_conflict_columns", list(field("item", utf8(), true)), true),
+      ]),
+    );
+    const bindCall = { arguments: new Arguments([], new Map([["write_options", serializeBatch(opts)]])) };
+    expect(writeOptions(bindCall)).toEqual({ resultMode: "rows", onConflict: "throw", onConflictColumns: [] });
   });
 });
 

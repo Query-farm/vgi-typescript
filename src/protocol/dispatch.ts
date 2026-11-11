@@ -73,18 +73,20 @@ export { VGI_PROTOCOL_NAME };
 
 /**
  * The `vgi.v3` protocol hash `vgi_rpc.Reflection.v1` must report for this
- * worker: the combined reference's 85 methods. Every SDK hosts
+ * worker: the combined reference's 84 methods. Every SDK hosts
  * every `vgi.v3` method with the reference's schemas, so the hash is one value
  * across the ports; a method this SDK does not implement is still registered
  * with the generated UNIMPLEMENTED default (src/generated/vgi-service.ts). The
  * hash covers method names, types and the params/result/header schemas only
  * (WIRE_PROTOCOL.md §14).
  *
- * It changes only with vgi.v3's protocol version (currently 3.2.0). Asserted
+ * It changes only with vgi.v3's protocol version (currently 3.3.0: 3.3 removed
+ * catalog_table_scan_function_get and gave catalog_table_create a `created`
+ * result). Asserted
  * by src/protocol/__tests__/vgi-v3-hash.test.ts; if that test fails, the
  * surface drifted from the reference -- fix the schemas, do not bump this.
  */
-export const VGI_V3_PROTOCOL_HASH = "171ac8263bf22ffdd5dd4ac2c3d3c4e1dc186a7ceba45d386f324af8c9c6fced";
+export const VGI_V3_PROTOCOL_HASH = "ad10c6b137db8cd0054c8c3d80b0f50946382d52bbd549beaad209e00c180f08";
 
 /**
  * This worker's `vgi.v3` implementation: the generated UNIMPLEMENTED default

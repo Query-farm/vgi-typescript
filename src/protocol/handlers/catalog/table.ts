@@ -2,12 +2,14 @@
 import { encodeValidatedTableInfo, validateColumnMetadataIpc } from "../../../catalog/column-metadata.js";
 import { validateColumnExpressionsIpc } from "../../../catalog/column-expressions.js";
 import { MethodNotImplementedError } from "@query-farm/vgi-rpc";
-// Catalog table handlers: table_get/create/drop, scan_function_get,
+// Catalog table handlers: table_get/create/drop, scan_branches_get (the only
+// scan-discovery RPC since protocol 3.3), the write-function lookups,
 // column_statistics_get, comment_set, rename, plus all column_* mutations.
 
 import type { VgiService } from "../../../generated/vgi-service.js";
 import {
   CatalogTableConstraintsApplyResultSchema,
+  CatalogTableCreateResultSchema,
   CatalogTableGetResultSchema,
   ScanBranchesResultSchema,
   ScanFunctionResultSchema,
@@ -79,7 +81,7 @@ export function catalogTableHandlers(getCatalog: GetCatalog, signingKey?: Uint8A
     validateColumnMetadataIpc(toUint8Array(params.columns));
     validateColumnExpressionsIpc(toUint8Array(params.columns), params.schema_path);
     requireCreateColumns(toUint8Array(params.columns), definitions);
-    await cat.tableCreate(
+    const created = await cat.tableCreate(
       attach,
       params.schema_path,
       params.name,
@@ -88,7 +90,12 @@ export function catalogTableHandlers(getCatalog: GetCatalog, signingKey?: Uint8A
       definitions,
       params.transaction_opaque_data ? toUint8Array(params.transaction_opaque_data) : undefined
     );
-    return {};
+    // Protocol 3.3 `created`: a catalog returns false only when IF NOT EXISTS
+    // found the table; nothing (the pre-3.3 contract) means it created it.
+    if (created != null && typeof created !== "boolean") {
+      throw new TypeError(`tableCreate must return a boolean or nothing, got ${typeof created}`);
+    }
+    return wrapResult({ created: created !== false }, CatalogTableCreateResultSchema);
   });
 
   // catalog_table_constraints_apply (ALTER TABLE ... SET/DROP NOT NULL and
@@ -152,20 +159,6 @@ export function catalogTableHandlers(getCatalog: GetCatalog, signingKey?: Uint8A
     return { result: stats?.bytes ?? null };
   });
 
-  // catalog_table_scan_function_get
-  const catalogTableScanFunctionGet = catalogHandler(keys, async (params) => {
-    const cat = getCatalog();
-    const scanResult = await cat.tableScanFunctionGet(
-      toUint8Array(params.attach_opaque_data),
-      params.schema_path,
-      params.name,
-      params.at_unit,
-      params.at_value,
-      params.transaction_opaque_data ? toUint8Array(params.transaction_opaque_data) : undefined
-    );
-    return wrapResult(scanResult, ScanFunctionResultSchema);
-  });
-
   // catalog_table_{insert,update,delete}_function_get — the table in-out
   // function backing each DML statement. A catalog whose tables inline these
   // into TableInfo is only asked when the client skipped the inline value.
@@ -200,9 +193,10 @@ export function catalogTableHandlers(getCatalog: GetCatalog, signingKey?: Uint8A
     return wrapResult(result, ScanFunctionResultSchema);
   });
 
-  // catalog_table_scan_branches_get — branches-aware variant of
-  // scan_function_get. The branches-aware C++ extension calls this for every
-  // table scan; single-source catalogs synthesise a one-branch result.
+  // catalog_table_scan_branches_get — the extension calls this for every table
+  // scan. Protocol 3.3 removed catalog_table_scan_function_get, so it is the
+  // only scan-discovery RPC; a single-source catalog's tableScanFunctionGet is
+  // wrapped as a one-branch result by the CatalogInterface default.
   //
   // Protocol 3.2: always dispatches to tableScanBranchesPlan with the
   // `pushdown_filters` wrapped as a ScanPlanningFilters (decoded lazily against
@@ -396,7 +390,6 @@ export function catalogTableHandlers(getCatalog: GetCatalog, signingKey?: Uint8A
     catalogTableCreate,
     catalogTableDrop,
     catalogTableColumnStatisticsGet,
-    catalogTableScanFunctionGet,
     catalogTableInsertFunctionGet,
     catalogTableUpdateFunctionGet,
     catalogTableDeleteFunctionGet,

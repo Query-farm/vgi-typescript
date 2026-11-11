@@ -168,8 +168,9 @@ export const encodeAttachCatalogInfo = (v: AttachCatalogInfo): Uint8Array =>
   });
 
 // ============================================================================
-// ScanFunctionResult — typed result for catalog_table_scan_function_get.
-// Mirrors vgi-python's ScanFunctionResult (catalog_interface.py:380).
+// ScanFunctionResult — one table function plus its arguments: what a catalog's
+// tableScanFunctionGet returns (wrapped as one ScanBranch on the wire) and the
+// write-function lookups' reply. Mirrors vgi-python's ScanFunctionResult.
 // ============================================================================
 
 import { deserializeBatch, serializeBatch, batchFromColumns } from "../util/arrow/index.js";
@@ -219,9 +220,9 @@ export interface ScanFunctionResultRecord {
 
 /**
  * Encode a ScanFunctionResult wire record — the single-row batch shape
- * `{ function_name, arguments, required_extensions, schema_path }` that
- * `catalog_table_scan_function_get` returns and that a function-backed table
- * inlines into `TableInfo.scan_function`.
+ * `{ function_name, arguments, required_extensions, schema_path }` that the
+ * write-function lookups return and that a function-backed table inlines into
+ * `TableInfo.scan_function` / `insert_function` / ....
  *
  * It exists so there is exactly one place that names those columns. The
  * inline-scan path used to restate the schema locally even though codegen
@@ -304,11 +305,64 @@ export function decodeScanFunctionResult(inner: Record<string, unknown>): ScanFu
   };
 }
 
+/** One decoded `ScanBranch`: a function branch, or a format branch (`formatName`). */
+export interface ScanBranchInfo extends ScanFunctionResult {
+  /** SQL predicate routing rows to this branch, or null. */
+  branchFilter: string | null;
+  /** Whether INSERTs route to this branch. */
+  writable: boolean;
+  sourceCatalog: string | null;
+  sourceSchemaPath: string[] | null;
+  sourceTable: string | null;
+  /** DuckDB file format (e.g. `parquet`) for a format branch; null for a function branch. */
+  formatName: string | null;
+  formatLocations: string[] | null;
+  rowCount: bigint | null;
+}
+
+/** A decoded `ScanBranchesResult` (the reply of `catalog_table_scan_branches_get`). */
+export interface ScanBranchesInfo {
+  branches: ScanBranchInfo[];
+  requiredExtensions: string[];
+}
+
+const stringList = (value: unknown): string[] | null =>
+  value == null
+    ? null
+    : (Array.isArray(value) ? value : [...(value as Iterable<unknown>)]).filter((v) => v != null).map(String);
+
 /**
- * Synthesise a one-branch `ScanBranchesResult` wire dict from a legacy
- * `tableScanFunctionGet` wire result. Mirrors vgi-python's default
- * `table_scan_branches_get` (catalog_interface.py): a single-source worker is
- * automatically compatible with the branches-aware C++ side.
+ * Decode a `ScanBranchesResult` wire dict (`branches`: one IPC stream per
+ * `ScanBranch`, `required_extensions`).
+ */
+export function decodeScanBranchesResult(inner: Record<string, unknown>): ScanBranchesInfo {
+  const raw = inner.branches == null ? [] : Array.isArray(inner.branches) ? inner.branches : [...(inner.branches as Iterable<unknown>)];
+  const branches = raw.map((bytes): ScanBranchInfo => {
+    const batch = deserializeBatch(toUint8Array(bytes as Uint8Array));
+    const row: Record<string, unknown> = {};
+    for (const f of batch.schema.fields) row[f.name] = batch.getChild(f.name)?.get(0) ?? null;
+    const fn = decodeScanFunctionResult(row);
+    return {
+      ...fn,
+      branchFilter: row.branch_filter == null ? null : String(row.branch_filter),
+      writable: row.writable === true,
+      sourceCatalog: row.source_catalog == null ? null : String(row.source_catalog),
+      sourceSchemaPath: stringList(row.source_schema_path),
+      sourceTable: row.source_table == null ? null : String(row.source_table),
+      formatName: row.format_name == null ? null : String(row.format_name),
+      formatLocations: stringList(row.format_locations),
+      rowCount: row.row_count == null ? null : BigInt(row.row_count as bigint | number),
+    };
+  });
+  return { branches, requiredExtensions: stringList(inner.required_extensions) ?? [] };
+}
+
+/**
+ * Synthesise a one-branch `ScanBranchesResult` wire dict from a
+ * `tableScanFunctionGet` result. Mirrors vgi-python's default
+ * `table_scan_branches_get` (catalog_interface.py): this is how a
+ * single-source catalog answers `catalog_table_scan_branches_get`, the only
+ * scan-discovery RPC since protocol 3.3.
  *
  * Each branch is its own IPC stream carried in a `list<binary>` column. The
  * legacy result's `arguments` field is already the nested-IPC form
@@ -789,6 +843,13 @@ export abstract class CatalogInterface {
    * `catalogCapabilities()`), and the catalog must then enforce every one on
    * every write and serve each back as an ENFORCED + ALL_ROWS `ConstraintInfo`
    * record (see `constraintRecord`). Refuse any it cannot enforce.
+   *
+   * Return `false` when `onConflict` is `IGNORE` (`IF NOT EXISTS`) and the
+   * table already existed, leaving it unchanged; `true` or nothing means this
+   * call created the table. The worker sends this as the reply's `created`
+   * (protocol 3.3), which keeps `CREATE TABLE IF NOT EXISTS ... AS SELECT`
+   * from appending into the existing table. A catalog that returns nothing
+   * for an existing table makes that CTAS insert its rows into it.
    */
   tableCreate(
     attachOpaqueData: AttachOpaqueData,
@@ -798,7 +859,7 @@ export abstract class CatalogInterface {
     onConflict: string,
     constraintDefinitions?: Uint8Array[],
     transactionOpaqueData?: TransactionOpaqueData
-  ): Awaitable<void> {
+  ): Awaitable<boolean | void> {
     throw new CatalogReadOnlyError("table_create");
   }
   /**
@@ -890,6 +951,13 @@ export abstract class CatalogInterface {
   ): Awaitable<void> {
     throw new CatalogReadOnlyError("table_drop");
   }
+  /**
+   * The table function that reads a single-source table. Protocol 3.3 has no
+   * RPC of this name any more: the default `tableScanBranchesGet` calls it and
+   * sends the result as a one-branch `catalog_table_scan_branches_get` reply,
+   * so a single-source catalog implements only this. Override
+   * `tableScanBranchesGet` instead for a multi-source table.
+   */
   tableScanFunctionGet(
     attachOpaqueData: AttachOpaqueData,
     schemaPath: string[],

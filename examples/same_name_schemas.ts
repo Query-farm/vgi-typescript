@@ -8,9 +8,9 @@
 // `examples/same_name_exchange.ts` for the table-in-out / buffered / aggregate
 // probes, and `examples/same_name_cached.ts` for the result-cache probe). Those
 // are reached by calling a function directly; this one is reached ONLY through
-// `catalog_table_scan_function_get` / `catalog_table_scan_branches_get` — the
-// RPC pair that tells a client which function backs a *declarative catalog
-// table*.
+// `catalog_table_scan_branches_get` (before protocol 3.3 also the removed
+// `catalog_table_scan_function_get`) — the RPC that tells a client which
+// function backs a *declarative catalog table*.
 //
 // `test_same_name_table_scan` is a one-row producer registered under the SAME
 // NAME in BOTH the `main` and `data` schemas of the `example` catalog, each

@@ -75,6 +75,10 @@ export {
   type CatalogAttachResult,
   type AttachOpaqueData,
   type TransactionOpaqueData,
+  type ScanFunctionResult,
+  type ScanBranchInfo,
+  type ScanBranchesInfo,
+  decodeScanBranchesResult,
 } from "./catalog/interface.js";
 
 // vgi.v3 records: decode constraint records (readConstraintRecord), negotiate

@@ -238,14 +238,14 @@ abstract class PrivateMemoryCatalog extends CatalogInterface {
     columns: Uint8Array,
     onConflict: string,
     constraintDefinitions?: Uint8Array[],
-  ): void {
+  ): boolean {
     // This store holds no rows and enforces nothing, so it advertises no constraint profile.
     if (constraintDefinitions?.length) throw new Error("this in-memory catalog does not enforce constraints: CREATE TABLE with NOT NULL, PRIMARY KEY, UNIQUE, CHECK or FOREIGN KEY is unsupported");
     validateColumnExpressionsIpc(columns, schemaPath, false);
     requireUnconstrainedColumns(columns);
     const state = this._state(attach);
     const schema = this._requireSchema(attach, schemaPath);
-    if (schema.tables.has(name) && !this._replace("Table", name, onConflict)) return;
+    if (schema.tables.has(name) && !this._replace("Table", name, onConflict)) return false; // IF NOT EXISTS
     schema.tables.set(name, {
       comment: null,
       tags: {},
@@ -260,6 +260,7 @@ abstract class PrivateMemoryCatalog extends CatalogInterface {
       scan_planning: "bind",
     });
     state.version++;
+    return true;
   }
 
   override tableDrop(attach: AttachOpaqueData, schemaPath: string[], name: string, ignoreNotFound?: boolean): void {

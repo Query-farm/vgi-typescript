@@ -193,8 +193,8 @@ export class CompositeCatalogInterface extends CatalogInterface {
   override async schemaDrop(...args: Parameters<CatalogInterface["schemaDrop"]>): Promise<void> {
     await (this._route(args[0]).schemaDrop as (...a: typeof args) => unknown)(...args);
   }
-  override async tableCreate(...args: Parameters<CatalogInterface["tableCreate"]>): Promise<void> {
-    await (this._route(args[0]).tableCreate as (...a: typeof args) => unknown)(...args);
+  override async tableCreate(...args: Parameters<CatalogInterface["tableCreate"]>): Promise<boolean | void> {
+    return (await (this._route(args[0]).tableCreate as (...a: typeof args) => unknown)(...args)) as boolean | void;
   }
   override async tableDrop(...args: Parameters<CatalogInterface["tableDrop"]>): Promise<void> {
     await (this._route(args[0]).tableDrop as (...a: typeof args) => unknown)(...args);
