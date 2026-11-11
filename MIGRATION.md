@@ -25,8 +25,13 @@ so this SDK requires the matching 3.3 VGI extension (upgrade both together).
   table's scan is `table_only` unless the table sets the new
   **`exposeScan: true`** or a schema declares the function in `functions`
   (then it is public and callable, as before).
-- A hand-written `CatalogInterface` that builds `FunctionInfo` records itself
-  may set `visibility`; omitting it keeps them public.
+- **Hand-written `CatalogInterface` subclasses must list their tables'
+  functions.** The 3.3 extension refuses (BinderException) a table whose scan
+  or write function no listing carries, instead of silently scanning with
+  every capability off. Return them from `schemaContentsFunctions`, built with
+  the new `functionInfoFor(fn, schemaPath, FUNCTION_VISIBILITY_TABLE_ONLY)`
+  (see `examples/versioned-tables-common.ts`). A `FunctionInfo` without
+  `visibility` stays public.
 
 ## Unreleased — vgi.v3 / 3.2.0 filtered scan planning
 

@@ -109,7 +109,7 @@ export type { VgiFunction, FunctionMeta, StreamHandlers, FunctionExample, Handle
 export { CatalogInterface, type CatalogAttachResult, type CatalogAttachResultInit, buildCatalogAttachResult, type SchemaContentsInfo, type CatalogContentsResult, type SchemaInfo, encodeSchemaInfo, decodeSchemaInfo, type TableInfo, encodeTableInfo, decodeTableInfo, type ViewInfo, encodeViewInfo, decodeViewInfo, type CatalogInfo, encodeCatalogInfo, decodeCatalogInfo, type FunctionInfo, encodeFunctionInfo, decodeFunctionInfo, type FunctionInfoOptions, type MacroInfo, encodeMacroInfo, decodeMacroInfo, type MacroType, type CopyFromFormatInfo, encodeCopyFromFormatInfo, type AttachOpaqueData, type TransactionOpaqueData, buildScanBranchesResult, encodeFormatOptions, type ScanBranchInput } from "./catalog/interface.js";
 export type { CatalogDescriptor, SchemaDescriptor, TableDescriptor, ViewDescriptor, MacroDescriptor, SettingDescriptor, SecretTypeDescriptor, ForeignKeyDef, DefaultValue, FunctionVisibility } from "./catalog/descriptors.js";
 export { FUNCTION_VISIBILITY_PUBLIC, FUNCTION_VISIBILITY_TABLE_ONLY } from "./catalog/descriptors.js";
-export { ReadOnlyCatalogInterface, READ_ONLY_ITEM_ATTACH_ID } from "./catalog/read-only.js";
+export { ReadOnlyCatalogInterface, READ_ONLY_ITEM_ATTACH_ID, functionInfoFor } from "./catalog/read-only.js";
 // vgi.v3 records: constraints, capabilities, column expressions, indexes, macro overloads.
 export * from "./catalog/public-codecs.js";
 export { CompositeCatalogInterface } from "./catalog/composite.js";

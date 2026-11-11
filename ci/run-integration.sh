@@ -291,6 +291,7 @@ EXPECTED_SKIP_REASONS=(
   'require-env VGI_DATABASE_PYTHON_WORKER'   # external database-worker fixture, not provisioned here
   'require-env VGI_DATABASE_RUST_WORKER'     # external database-worker fixture, not provisioned here
   'require-env VGI_WORKER_SUPPORTS_DYNAMIC_CODE'  # dynamic-code registration, not implemented
+  'require-env VGI_VISIBILITY_WORKER'      # extension-only visibility fixture (bad visibility, unresolved function), not an SDK fixture
   # Infrastructure this repo's CI deliberately does not stand up.
   'require-env VGI_DOCKER_IMAGE'             # containerised worker lane
   'require-env VGI_DOCKER_TCP_IMAGE'         # containerised worker over TCP

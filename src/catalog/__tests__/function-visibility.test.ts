@@ -21,7 +21,7 @@ import { rowIdField } from "../../write-results.js";
 import { deserializeBatch } from "../../util/arrow/index.js";
 import { FUNCTION_VISIBILITY_PUBLIC, FUNCTION_VISIBILITY_TABLE_ONLY } from "../../index.core.js";
 import type { CatalogDescriptor, TableDescriptor } from "../descriptors.js";
-import { ReadOnlyCatalogInterface } from "../read-only.js";
+import { functionInfoFor, ReadOnlyCatalogInterface } from "../read-only.js";
 
 const COLUMNS = schema([field("id", int64(), true), field("name", utf8(), true), rowIdField()]);
 const ATTACH = new Uint8Array([1]);
@@ -179,5 +179,29 @@ describe("descriptor listings", () => {
   test("exposeScan without a scan function is rejected", () => {
     expect(() => catalog({ name: "c", schemas: [{ name: "main", tables: [{ name: "t", columns: COLUMNS, exposeScan: true }] }] }))
       .toThrow(/exposeScan requires a scan function/);
+  });
+});
+
+describe("functionInfoFor (hand-written CatalogInterface listings)", () => {
+  test("defaults to public and takes table_only", () => {
+    const scan = scanFn("my_scan");
+    expect(functionInfoFor(scan, ["main"]).visibility).toBe(FUNCTION_VISIBILITY_PUBLIC);
+    const hidden = functionInfoFor(scan, ["main"], FUNCTION_VISIBILITY_TABLE_ONLY);
+    expect(hidden.visibility).toBe(FUNCTION_VISIBILITY_TABLE_ONLY);
+    expect(hidden.projection_pushdown).toBe(true);
+    expect(hidden.schema_path).toEqual(["main"]);
+  });
+
+  test("the versioned-tables fixture lists every scan table_only", async () => {
+    const { VersionedTablesCatalog } = await import("../../../examples/versioned-tables-common.js");
+    const cat = new VersionedTablesCatalog();
+    const fns = await cat.schemaContentsFunctions(ATTACH, ["main"], "table_function");
+    expect(fns.map((f) => f.name).sort()).toEqual([
+      "versioned_tables_animals_color_scan",
+      "versioned_tables_animals_scan",
+      "versioned_tables_plants_scan",
+    ]);
+    expect(fns.every((f) => f.visibility === FUNCTION_VISIBILITY_TABLE_ONLY)).toBe(true);
+    expect(await cat.schemaContentsFunctions(ATTACH, ["main"], "scalar_function")).toEqual([]);
   });
 });

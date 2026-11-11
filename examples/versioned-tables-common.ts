@@ -17,6 +17,9 @@
 import {
   CatalogInterface,
   defineTableFunction,
+  functionInfoFor,
+  FUNCTION_VISIBILITY_TABLE_ONLY,
+  type FunctionInfo,
   batchFromColumns,
   toSchema,
   serializeSchema,
@@ -290,6 +293,16 @@ class VersionedTablesCatalog extends CatalogInterface {
       required_filters: [],
       scan_planning: "bind",
     };
+  }
+
+  // Protocol 3.3: the client takes a table's scan capabilities only from the
+  // schema listing and refuses a table whose scan no listing carries, so list
+  // every scan, table_only: they back the tables but are not callable.
+  schemaContentsFunctions(_attachOpaqueData: AttachOpaqueData, path: string[], type: string): FunctionInfo[] {
+    if (path.join(".").toLowerCase() !== "main") return [];
+    const t = String(type ?? "").toLowerCase();
+    if (t === "scalar_function" || t === "aggregate_function") return [];
+    return versionedTablesFunctions.map((f) => functionInfoFor(f, ["main"], FUNCTION_VISIBILITY_TABLE_ONLY));
   }
 
   schemaContentsTables(attachOpaqueData: AttachOpaqueData, path: string[]): TableInfo[] {

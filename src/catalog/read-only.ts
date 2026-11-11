@@ -667,169 +667,7 @@ export class ReadOnlyCatalogInterface extends CatalogInterface {
    * both. Shared by `schemaContentsFunctions` and `_globalFunctionInfos`.
    */
   private _functionToInfo(f: VgiFunction, path: string[], visibility: FunctionVisibility): FunctionInfo {
-        const meta = resolveMetadata(f);
-        const argSchema = argumentSpecsToSchema(f.argumentSpecs);
-        const argBytes = serializeSchema(argSchema);
-        const defaults = f.meta.parameterDefaultValues ?? null;
-        if (defaults) {
-          if (defaults.numRows !== 1) {
-            throw new Error(`parameterDefaultValues must contain exactly one row, got ${defaults.numRows}`);
-          }
-          let argumentIndex = 0;
-          for (const defaultField of defaults.schema.fields) {
-            while (argumentIndex < argSchema.fields.length && argSchema.fields[argumentIndex]!.name !== defaultField.name) {
-              argumentIndex++;
-            }
-            if (argumentIndex === argSchema.fields.length) {
-              throw new Error(`parameterDefaultValues field '${defaultField.name}' is not in argument signature order`);
-            }
-            const argumentField = argSchema.fields[argumentIndex]!;
-            if (typeSignature(argumentField.type) !== typeSignature(defaultField.type)) {
-              throw new Error(
-                `parameterDefaultValues field '${defaultField.name}' has type ${typeSignature(defaultField.type)}, ` +
-                `expected ${typeSignature(argumentField.type)}`,
-              );
-            }
-            argumentIndex++;
-          }
-        }
-
-        // Use the function's default output schema if available,
-        // otherwise empty schema (table functions determine output at bind time)
-        const outputSchemaBytes = serializeSchema(
-          f.defaultOutputSchema ?? schema_([])
-        );
-
-        // Every validated requirement reaches the wire: type, scope and name.
-        const requiredSecrets = meta.requiredSecrets.map((s) => ({
-          secret_type: s.secretType,
-          scope: s.scope,
-          secret_name: s.secretName,
-        }));
-
-        // Function-level tags surfaced into duckdb_functions().tags. The wire
-        // map is string→string, so the metadata linter (vgi-lint-check) and any
-        // worker-side conventions (e.g. VGI307's `vgi.columns_md` on a dynamic
-        // table function) can read them. Worker-provided tags are MERGED OVER
-        // any SDK-derived tags rather than replacing them — and derived tags
-        // never clobber worker-set keys. There are no SDK-derived function tags
-        // today (examples flow into FunctionInfo.examples, not a tag), so the
-        // derived base is empty; the merge keeps that invariant if one is ever
-        // added.
-        const derivedTags: Record<string, string> = {};
-        const tags: Record<string, string> = { ...derivedTags, ...(meta.tags ?? {}) };
-
-        return {
-          comment: null,
-          tags,
-          name: f.meta.name,
-          schema_path: normalizeSchemaPath(path),
-          function_type: meta.functionType.toUpperCase() as "SCALAR" | "TABLE" | "TABLE_BUFFERING" | "AGGREGATE",
-          arguments: argBytes,
-          output_schema: outputSchemaBytes,
-          parameter_default_values: defaults
-            ? serializeBatch(defaults)
-            : null,
-          stability: meta.stability as any,
-          null_handling: meta.nullHandling as any,
-          argument_monotonicity: meta.argumentMonotonicity,
-          description: meta.description,
-          examples: meta.examples.map((e) => ({
-            sql: e.sql,
-            description: e.description,
-            expected_output: null,
-          })),
-          categories: meta.categories,
-          projection_pushdown: meta.projectionPushdown,
-          filter_pushdown: meta.filterPushdown,
-          sampling_pushdown: meta.samplingPushdown,
-          // Mirror Python: None for scalars, the meta flag for table functions.
-          // The C++ extension only honours this for rowid-bearing tables.
-          late_materialization:
-            (f.kind as string) === "table" && f.meta.lateMaterialization === true ? true : null,
-          filter_semantic_profiles: meta.filterSemanticProfiles,
-          additional_filter_functions: meta.additionalFilterFunctions.map((value) => ({
-            namespace: value.namespace, name: value.name, version: BigInt(value.version) as any,
-          })),
-          runtime_filter_algorithms: meta.runtimeFilterAlgorithms.map((value) => ({
-            namespace: value.namespace, name: value.name, version: BigInt(value.version) as any,
-          })),
-          filter_evaluation_contexts: meta.filterEvaluationContexts.map((value) => ({
-            profile: value.profile, provider_fingerprint: value.providerFingerprint,
-          })),
-          order_preservation: meta.preservesOrder as any,
-          max_workers: meta.maxWorkers ?? DEFAULT_MAX_WORKERS,
-          // Opt-in features the read-only catalog's functions do not use; the
-          // regenerated FunctionInfo schema requires these non-nullable
-          // fields, so default them explicitly. table_buffering functions
-          // thread their batch_index requirement through supports_batch_index
-          // so the C++ operator declares RequiredPartitionInfo=BatchIndex.
-          supports_batch_index:
-            ((f.kind as string) === "table_buffering" && f.meta.requiresInputBatchIndex === true) ||
-            ((f.kind as string) === "table" && f.meta.supportsBatchIndex === true),
-          // Split-based scan planning (protocol 1.4.0). A function opts in by
-          // declaring `supportsSplits` AND implementing plan()/onSplit(): the
-          // declaration is what a distributed engine reads to decide it can
-          // retry a task, because a split NAMES its work and re-running one
-          // reads exactly the same rows.
-          supports_splits: (f.kind as string) === "table" && f.meta.supportsSplits === true,
-          // The worker applies pushed filters EXACTLY, so the engine may drop
-          // its own copy. Wrong answers if declared falsely.
-          filters_exactly_applied:
-            (f.kind as string) === "table" && f.meta.filtersExactlyApplied === true,
-          // Addressable positions in the data, for incremental/streaming reads.
-          supports_positions: (f.kind as string) === "table" && f.meta.supportsPositions === true,
-          // null means UNBOUNDED, not "expires immediately" — a client must not
-          // assume a TTL exists, or long-running streams are foreclosed.
-          split_token_ttl_seconds:
-            (f.kind as string) === "table" ? (f.meta.splitTokenTtlSeconds ?? null) : null,
-          partition_kind:
-            (f.kind as string) === "table" && f.meta.partitionKind
-              ? f.meta.partitionKind
-              : "NOT_PARTITIONED",
-          order_dependent: meta.orderDependent as any,
-          distinct_dependent: meta.distinctDependent as any,
-          supports_window: false,
-          streaming_partitioned: false,
-          // table_in_out functions with a finalize callback, AND every
-          // table_buffering function (the Source phase always runs), get the
-          // FINALIZE init() phase. Advertising has_finalize=true on a function
-          // without it makes DuckDB call FinalExecute and crash with
-          // 'FinalExecute not supported for project_input'.
-          has_finalize:
-            (f.kind === "table_in_out" && f.meta.hasFinalize === true) ||
-            (f.kind as string) === "table_buffering",
-          source_order_dependent:
-            (f.kind as string) === "table_buffering" && f.meta.sourceOrderDependent === true,
-          sink_order_dependent:
-            (f.kind as string) === "table_buffering" && f.meta.sinkOrderDependent === true,
-          requires_input_batch_index:
-            (f.kind as string) === "table_buffering" && f.meta.requiresInputBatchIndex === true,
-          // Blended ("UNNEST-style") table-in-out: positional args ARE the
-          // per-row input columns (real typed args, no TABLE placeholder), so
-          // one registration serves literal / column / LATERAL call shapes.
-          // Set by defineRowTransformFunction; the C++ extension reads it to
-          // enter the in-out registration branch with real-typed args and
-          // drive the literal single-row scan-mode. False for scalars —
-          // mirrors Python's `input_from_args=False if is_scalar else ...`.
-          input_from_args:
-            f.kind === "table_in_out" && f.meta.inputFromArgs === true,
-          // Blended only: the most input rows per worker call (null = a whole
-          // chunk). Mirrors Python's `None if is_scalar else ...`.
-          input_rows_per_call:
-            f.kind === "table_in_out" && f.meta.inputFromArgs === true
-              ? (f.meta.inputRowsPerCall ?? null)
-              : null,
-          required_settings: meta.requiredSettings,
-          required_secrets: requiredSecrets.map((s) => ({
-            secret_type: s.secret_type,
-            scope: s.scope,
-            secret_name: s.secret_name,
-          })),
-          // Protocol 3.3: table_only for a table's hidden scan and every
-          // write function; public otherwise.
-          visibility,
-        };
+    return functionInfoFor(f, path, visibility);
   }
 
   /**
@@ -1401,6 +1239,189 @@ function sameSpelling(left: Iterable<unknown> | string, right: Iterable<unknown>
   const a = normalizeSchemaPath(left);
   const b = normalizeSchemaPath(right);
   return a.length === b.length && a.every((part, i) => part === b[i]);
+}
+
+/**
+ * Build the wire `FunctionInfo` a schema listing carries for `f`.
+ *
+ * `schemaPath` is the schema the function is listed in (the bind-dispatch
+ * key). `visibility` is protocol 3.3's `FunctionInfo.visibility`: pass
+ * `FUNCTION_VISIBILITY_TABLE_ONLY` for a table's scan or write function that
+ * must not be callable from SQL. A hand-written `CatalogInterface` uses this
+ * from `schemaContentsFunctions` to list the functions its tables name (the
+ * client takes their capabilities only from the listing and refuses a table
+ * whose function no listing carries). `ReadOnlyCatalogInterface` builds its
+ * listings with it.
+ */
+export function functionInfoFor(
+  f: VgiFunction,
+  schemaPath: string[],
+  visibility: FunctionVisibility = FUNCTION_VISIBILITY_PUBLIC,
+): FunctionInfo {
+  const path = schemaPath;
+  const meta = resolveMetadata(f);
+  const argSchema = argumentSpecsToSchema(f.argumentSpecs);
+  const argBytes = serializeSchema(argSchema);
+  const defaults = f.meta.parameterDefaultValues ?? null;
+  if (defaults) {
+    if (defaults.numRows !== 1) {
+      throw new Error(`parameterDefaultValues must contain exactly one row, got ${defaults.numRows}`);
+    }
+    let argumentIndex = 0;
+    for (const defaultField of defaults.schema.fields) {
+      while (argumentIndex < argSchema.fields.length && argSchema.fields[argumentIndex]!.name !== defaultField.name) {
+        argumentIndex++;
+      }
+      if (argumentIndex === argSchema.fields.length) {
+        throw new Error(`parameterDefaultValues field '${defaultField.name}' is not in argument signature order`);
+      }
+      const argumentField = argSchema.fields[argumentIndex]!;
+      if (typeSignature(argumentField.type) !== typeSignature(defaultField.type)) {
+        throw new Error(
+          `parameterDefaultValues field '${defaultField.name}' has type ${typeSignature(defaultField.type)}, ` +
+          `expected ${typeSignature(argumentField.type)}`,
+        );
+      }
+      argumentIndex++;
+    }
+  }
+
+  // Use the function's default output schema if available,
+  // otherwise empty schema (table functions determine output at bind time)
+  const outputSchemaBytes = serializeSchema(
+    f.defaultOutputSchema ?? schema_([])
+  );
+
+  // Every validated requirement reaches the wire: type, scope and name.
+  const requiredSecrets = meta.requiredSecrets.map((s) => ({
+    secret_type: s.secretType,
+    scope: s.scope,
+    secret_name: s.secretName,
+  }));
+
+  // Function-level tags surfaced into duckdb_functions().tags. The wire
+  // map is string→string, so the metadata linter (vgi-lint-check) and any
+  // worker-side conventions (e.g. VGI307's `vgi.columns_md` on a dynamic
+  // table function) can read them. Worker-provided tags are MERGED OVER
+  // any SDK-derived tags rather than replacing them — and derived tags
+  // never clobber worker-set keys. There are no SDK-derived function tags
+  // today (examples flow into FunctionInfo.examples, not a tag), so the
+  // derived base is empty; the merge keeps that invariant if one is ever
+  // added.
+  const derivedTags: Record<string, string> = {};
+  const tags: Record<string, string> = { ...derivedTags, ...(meta.tags ?? {}) };
+
+  return {
+    comment: null,
+    tags,
+    name: f.meta.name,
+    schema_path: normalizeSchemaPath(path),
+    function_type: meta.functionType.toUpperCase() as "SCALAR" | "TABLE" | "TABLE_BUFFERING" | "AGGREGATE",
+    arguments: argBytes,
+    output_schema: outputSchemaBytes,
+    parameter_default_values: defaults
+      ? serializeBatch(defaults)
+      : null,
+    stability: meta.stability as any,
+    null_handling: meta.nullHandling as any,
+    argument_monotonicity: meta.argumentMonotonicity,
+    description: meta.description,
+    examples: meta.examples.map((e) => ({
+      sql: e.sql,
+      description: e.description,
+      expected_output: null,
+    })),
+    categories: meta.categories,
+    projection_pushdown: meta.projectionPushdown,
+    filter_pushdown: meta.filterPushdown,
+    sampling_pushdown: meta.samplingPushdown,
+    // Mirror Python: None for scalars, the meta flag for table functions.
+    // The C++ extension only honours this for rowid-bearing tables.
+    late_materialization:
+      (f.kind as string) === "table" && f.meta.lateMaterialization === true ? true : null,
+    filter_semantic_profiles: meta.filterSemanticProfiles,
+    additional_filter_functions: meta.additionalFilterFunctions.map((value) => ({
+      namespace: value.namespace, name: value.name, version: BigInt(value.version) as any,
+    })),
+    runtime_filter_algorithms: meta.runtimeFilterAlgorithms.map((value) => ({
+      namespace: value.namespace, name: value.name, version: BigInt(value.version) as any,
+    })),
+    filter_evaluation_contexts: meta.filterEvaluationContexts.map((value) => ({
+      profile: value.profile, provider_fingerprint: value.providerFingerprint,
+    })),
+    order_preservation: meta.preservesOrder as any,
+    max_workers: meta.maxWorkers ?? DEFAULT_MAX_WORKERS,
+    // Opt-in features the read-only catalog's functions do not use; the
+    // regenerated FunctionInfo schema requires these non-nullable
+    // fields, so default them explicitly. table_buffering functions
+    // thread their batch_index requirement through supports_batch_index
+    // so the C++ operator declares RequiredPartitionInfo=BatchIndex.
+    supports_batch_index:
+      ((f.kind as string) === "table_buffering" && f.meta.requiresInputBatchIndex === true) ||
+      ((f.kind as string) === "table" && f.meta.supportsBatchIndex === true),
+    // Split-based scan planning (protocol 1.4.0). A function opts in by
+    // declaring `supportsSplits` AND implementing plan()/onSplit(): the
+    // declaration is what a distributed engine reads to decide it can
+    // retry a task, because a split NAMES its work and re-running one
+    // reads exactly the same rows.
+    supports_splits: (f.kind as string) === "table" && f.meta.supportsSplits === true,
+    // The worker applies pushed filters EXACTLY, so the engine may drop
+    // its own copy. Wrong answers if declared falsely.
+    filters_exactly_applied:
+      (f.kind as string) === "table" && f.meta.filtersExactlyApplied === true,
+    // Addressable positions in the data, for incremental/streaming reads.
+    supports_positions: (f.kind as string) === "table" && f.meta.supportsPositions === true,
+    // null means UNBOUNDED, not "expires immediately" — a client must not
+    // assume a TTL exists, or long-running streams are foreclosed.
+    split_token_ttl_seconds:
+      (f.kind as string) === "table" ? (f.meta.splitTokenTtlSeconds ?? null) : null,
+    partition_kind:
+      (f.kind as string) === "table" && f.meta.partitionKind
+        ? f.meta.partitionKind
+        : "NOT_PARTITIONED",
+    order_dependent: meta.orderDependent as any,
+    distinct_dependent: meta.distinctDependent as any,
+    supports_window: false,
+    streaming_partitioned: false,
+    // table_in_out functions with a finalize callback, AND every
+    // table_buffering function (the Source phase always runs), get the
+    // FINALIZE init() phase. Advertising has_finalize=true on a function
+    // without it makes DuckDB call FinalExecute and crash with
+    // 'FinalExecute not supported for project_input'.
+    has_finalize:
+      (f.kind === "table_in_out" && f.meta.hasFinalize === true) ||
+      (f.kind as string) === "table_buffering",
+    source_order_dependent:
+      (f.kind as string) === "table_buffering" && f.meta.sourceOrderDependent === true,
+    sink_order_dependent:
+      (f.kind as string) === "table_buffering" && f.meta.sinkOrderDependent === true,
+    requires_input_batch_index:
+      (f.kind as string) === "table_buffering" && f.meta.requiresInputBatchIndex === true,
+    // Blended ("UNNEST-style") table-in-out: positional args ARE the
+    // per-row input columns (real typed args, no TABLE placeholder), so
+    // one registration serves literal / column / LATERAL call shapes.
+    // Set by defineRowTransformFunction; the C++ extension reads it to
+    // enter the in-out registration branch with real-typed args and
+    // drive the literal single-row scan-mode. False for scalars —
+    // mirrors Python's `input_from_args=False if is_scalar else ...`.
+    input_from_args:
+      f.kind === "table_in_out" && f.meta.inputFromArgs === true,
+    // Blended only: the most input rows per worker call (null = a whole
+    // chunk). Mirrors Python's `None if is_scalar else ...`.
+    input_rows_per_call:
+      f.kind === "table_in_out" && f.meta.inputFromArgs === true
+        ? (f.meta.inputRowsPerCall ?? null)
+        : null,
+    required_settings: meta.requiredSettings,
+    required_secrets: requiredSecrets.map((s) => ({
+      secret_type: s.secret_type,
+      scope: s.scope,
+      secret_name: s.secret_name,
+    })),
+    // Protocol 3.3: table_only for a table's hidden scan and every
+    // write function; public otherwise.
+    visibility,
+  };
 }
 
 // ---------------------------------------------------------------- writable tables
