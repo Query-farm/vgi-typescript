@@ -28,8 +28,20 @@ const DEFAULT_TTL_SECONDS = 300;
 // `cache_nonce` (in initialState, which the client only reaches on a cache
 // MISS). A pooled worker persists it across calls, so a served-from-cache hit
 // never advances it — that's exactly the HIT/MISS signal tests assert on.
+//
+// The counter alone is unique only WITHIN a process. The client's subprocess
+// pool holds several worker processes and hands a scan whichever it pops, so
+// two MISSes can land in two different processes; with a bare counter both
+// could mint 0 and a recompute would read as a HIT (cache/
+// transaction_scope.test's "t2 nonce <> t1a nonce" failed that way on the
+// stdio lane). So the pid is folded into the high bits: the nonces of all live
+// processes are disjoint, while the low 31 bits stay a per-process count
+// (pid = Math.floor(nonce / 2 ** 31)). Linux pids are < 2 ** 22, so the value
+// stays below 2 ** 53 and is exact both as a JS number and in the Int64 column.
+export const NONCE_PID_SHIFT = 2 ** 31;
+const nonceBase = process.pid * NONCE_PID_SHIFT;
 let nonceCounter = 0;
-const nextNonce = (): number => nonceCounter++;
+export const nextNonce = (): number => nonceBase + nonceCounter++;
 
 // Queue item encodings. Values stay well within 2^53 for the test sizes, so
 // float64 slots are exact — matching packTriple/packOne in table_partition.ts.
