@@ -35,7 +35,7 @@ test("historical facts are validated against version-owned rows and columns", ()
   }
 });
 
-test("example selects only offered read profiles through composite attach", async () => {
+test("example selects only offered read and write profiles through composite attach", async () => {
   const registry = new FunctionRegistry();
   for (const fn of allFunctions) registry.register(fn);
   const example = createExampleCatalog(new ReadOnlyCatalogInterface(catalog, registry));
@@ -48,7 +48,10 @@ test("example selects only offered read profiles through composite attach", asyn
     const result = await composite.attach("example", {}, null, null, capabilities);
     const selected = decodeCatalogCapabilities(result.selected_capabilities!);
     expect(selected.read).toEqual(read.includes("vgi.constraint.records.read.v1") ? read : []);
-    expect(selected.write).toEqual([]);
+    // contract.notes (writable, NOT_NULL record) makes the example catalog
+    // enforce constraints; enforcement needs constraint records read.
+    expect(selected.write).toEqual(read.includes("vgi.constraint.records.read.v1") ? ["vgi.constraint.enforce.v1"] : []);
+    expect(decodeCatalogCapabilities(result.catalog_capabilities!).write).toEqual(["vgi.constraint.enforce.v1"]);
     expect(selected.ddl).toEqual([]);
     expect(selected.transaction).toEqual([]);
   }

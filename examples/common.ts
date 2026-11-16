@@ -22,6 +22,7 @@ import * as os from "node:os";
 import * as fs from "node:fs";
 import { fixtureConstraint as constraint, versionedFixtureConstraints, FIXTURE_CONSTRAINT_REVISION } from "./canonical_constraints.js";
 import { fixtureIndex } from "./canonical_indexes.js";
+import { contractSchema } from "./contract.js";
 
 /**
  * Scratch directory the multi-branch fixtures share with the `.test` files.
@@ -1143,6 +1144,9 @@ export const catalog: CatalogDescriptor = {
         },
       ],
     },
+    // Cross-SDK protocol 3.3 contract fixtures (table_only scans, finalize-only
+    // INSERT count, decimal widths). See ./contract.ts.
+    contractSchema,
   ],
 };
 
@@ -1163,14 +1167,20 @@ export function createExampleCatalog(base: ReadOnlyCatalogInterface): ReadOnlyCa
     const result = await origAttach(name, options, dataVersionSpec, implementationVersion, clientCapabilities);
     const profiles = ["vgi.constraint.records.read.v1", "vgi.expression.duckdb.scalar.v1"];
     const client = clientCapabilities == null ? null : decodeASD(ClientCapabilitiesSchema, clientCapabilities);
-    const offer = client?.catalog == null ? [] : decodeCatalogCapabilities(client.catalog).read;
+    const offered = client?.catalog == null ? null : decodeCatalogCapabilities(client.catalog);
+    const offer = offered?.read ?? [];
     const selected = profiles.filter(profile => offer.includes(profile));
     // Scalar CHECK import depends on reading canonical constraint records.
     const read = selected.includes(profiles[0]!) ? selected : [];
+    // contract.notes is writable and carries a NOT_NULL record, so the catalog
+    // promises to enforce its constraints (vgi.constraint.enforce.v1), which
+    // likewise needs constraint records read.
+    const writeProfiles = base.catalogWriteProfiles();
+    const write = read.length ? writeProfiles.filter(profile => offered?.write?.includes(profile)) : [];
     // Existing transaction_storage fixture support remains available.
     result.supports_transactions = true;
-    result.catalog_capabilities = encodeCatalogCapabilities({ read: profiles, ddl: [], write: [], transaction: [] });
-    result.selected_capabilities = encodeCatalogCapabilities({ read, ddl: [], write: [], transaction: [] });
+    result.catalog_capabilities = encodeCatalogCapabilities({ read: profiles, ddl: [], write: writeProfiles, transaction: [] });
+    result.selected_capabilities = encodeCatalogCapabilities({ read, ddl: [], write, transaction: [] });
     return result;
   };
   const origTableGet = base.tableGet.bind(base);
