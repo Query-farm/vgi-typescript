@@ -1,6 +1,6 @@
 # Migration guide
 
-## Unreleased — FunctionStorage sharding, sealing and aggregate state
+## 0.51.0 — FunctionStorage sharding, sealing and aggregate state
 
 - **`FunctionStorage` gained `stateGetMany` / `statePutMany`** (required) and an
   optional `forShard(shardKey)`. A custom backend must implement the two batched
