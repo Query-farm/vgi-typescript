@@ -1,5 +1,38 @@
 # Migration guide
 
+## Unreleased — FunctionStorage sharding, sealing and aggregate state
+
+- **`FunctionStorage` gained `stateGetMany` / `statePutMany`** (required) and an
+  optional `forShard(shardKey)`. A custom backend must implement the two batched
+  methods; implement `forShard` only if it partitions by attach.
+- **`BoundStorage` takes a fourth constructor argument, `shardKey`** (default
+  `""`). Framework code passes `shardKeyOf(request.bind_call)`; user code that
+  builds its own `BoundStorage` for a request should do the same, or its calls
+  land on the anonymous shard on the Cloudflare DO.
+- **`cloudflare-do` now works**: every call carries the attach's
+  `att-<uuid hex>` shard (it used to send `""`, which the DO rejects with 400).
+  A call bound to no ATTACH goes to `loc-anon`.
+- **Framework payloads are sealed.** `FrameworkNS.BUFFERING_INIT` and the
+  aggregate bind context are stored as sealed framework payload v1; values
+  written by an older release do not open (`StoragePayloadError`). Executions
+  are short-lived, so nothing needs migrating; do not mix releases inside one
+  running query. The stored buffered init no longer carries the attach or
+  transaction values (the process/combine requests do).
+- **The buffered init is persisted by the init handler**, not by the function's
+  `globalInit` (only the handler holds the signing key). A test that called
+  `func.globalInit()` and then expected a `BUFFERING_INIT` row should call
+  `persistBufferingInit(request, response, signingKey)`.
+- **Aggregate state moved from `os.tmpdir()/vgi-agg` to `FunctionStorage`.**
+  `VGI_AGG_STATE_DIR` is ignored, and `getExecutionState` / `setExecutionState`
+  / `persistGroupStates` / `deleteExecutionState` are removed. Secret values are
+  no longer written anywhere; as documented, `update` / `combine` / `finalize`
+  (and `initialState` / `combine` when called from them) see empty `secrets` —
+  only `onBind` sees them. The aggregate destructor now clears the whole
+  execution, as vgi-python's does.
+- `aggregateHandlers(registry, signingKey?, attachSecretKey?)` — new optional
+  arguments (wired by `buildVgiService`).
+- The default SQLite state directory is created `0700`.
+
 ## Unreleased — vgi.v3 / 3.3.0 write path
 
 Also part of protocol 3.3.0 (the version stays 3.3.0; the `vgi.v3` hash

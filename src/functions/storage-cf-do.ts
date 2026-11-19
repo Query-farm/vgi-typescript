@@ -4,8 +4,9 @@
 // Port of vgi-python's vgi/function_storage_cf_do.py. Talks the Cloudflare
 // Worker + Durable Object's unified state_* / queue_* protocol
 // (vgi-cloudflare-durable-object-storage/src/index.ts). Every request carries
-// the per-attach `shard_key` (set via forShard); destructive ops carry a fresh
-// 32-hex `attempt_id`. The DO is single-threaded SQLite, so ops are atomic.
+// the per-attach `shard_key` (BoundStorage calls forShard with the shard the
+// framework derived from the request's attach; "" goes to `loc-anon`);
+// destructive ops carry a fresh 32-hex `attempt_id`, reused across retries. The DO is single-threaded SQLite, so ops are atomic.
 //
 // Usage:
 //   Set `VGI_WORKER_SHARED_STORAGE=cloudflare-do` plus `VGI_CF_DO_URL`.
@@ -18,8 +19,37 @@ import { UnknownInvocationError, workerStateKey } from "./storage.js";
  *  Cloudflare service-binding Fetcher (`env.<BINDING>`). */
 export type FetchLike = (
   input: string,
-  init?: { method?: string; headers?: Record<string, string>; body?: string },
+  init?: { method?: string; headers?: Record<string, string>; body?: string; signal?: AbortSignal },
 ) => Promise<Response>;
+
+/** The DO server's shard_key rule (vgi-cloudflare-durable-object-storage). */
+export const SHARD_KEY_RE = /^[A-Za-z0-9._-]{1,128}$/;
+
+/**
+ * Shard for a call not bound to an ATTACH (no attach uuid to shard on): one
+ * shared DO per tenant, as vgi-python's client does. Every attach-bound call
+ * carries its own `att-<uuid hex>` shard instead.
+ */
+export const ANONYMOUS_SHARD_KEY = "loc-anon";
+
+/** Retry policy for the DO client. */
+export interface CfDoRetryOptions {
+  /** Per-attempt fetch timeout, ms (default 30000; 0 disables). */
+  timeoutMs?: number;
+  /** Total attempts including the first (default 4). */
+  maxAttempts?: number;
+  /** First backoff, ms (default 100); doubles per attempt, full jitter. */
+  baseDelayMs?: number;
+  /** Backoff cap, ms (default 2000). */
+  maxDelayMs?: number;
+}
+
+/** A transient failure worth retrying: transport error, timeout, 5xx or 429. */
+class RetryableError extends Error {
+  constructor(message: string, readonly retryAfterMs: number | null = null) {
+    super(message);
+  }
+}
 
 // Namespaces under the unified state_* table for the legacy worker/queue
 // families the DO no longer has dedicated endpoints for.
@@ -35,18 +65,39 @@ export class FunctionStorageCfDo implements FunctionStorage {
    *  the same account/zone — a same-zone public-URL fetch is rejected (CF
    *  error 1042), but a service binding routes worker-to-worker directly. */
   private readonly _fetch: FetchLike;
+  private readonly _retry: Required<CfDoRetryOptions>;
+  /** Test hook: how the client waits between attempts. */
+  private readonly _sleep: (ms: number) => Promise<void>;
 
   constructor(opts: {
     url: string;
     token?: string | null;
     shardKey?: string;
     fetch?: FetchLike;
+    retry?: CfDoRetryOptions;
+    sleep?: (ms: number) => Promise<void>;
   }) {
     // Strip trailing slash so endpoint paths can be appended unconditionally.
     this._baseUrl = opts.url.replace(/\/+$/, "");
     this._token = opts.token ?? null;
-    this._shardKey = opts.shardKey ?? "";
+    const shard = opts.shardKey ?? "";
+    if (shard !== "" && !SHARD_KEY_RE.test(shard)) {
+      throw new Error(`invalid CF DO shard_key ${JSON.stringify(shard)} (1-128 chars, [A-Za-z0-9._-])`);
+    }
+    this._shardKey = shard;
     this._fetch = opts.fetch ?? ((input, init) => fetch(input as any, init));
+    this._retry = {
+      timeoutMs: opts.retry?.timeoutMs ?? 30_000,
+      maxAttempts: Math.max(1, opts.retry?.maxAttempts ?? 4),
+      baseDelayMs: opts.retry?.baseDelayMs ?? 100,
+      maxDelayMs: opts.retry?.maxDelayMs ?? 2_000,
+    };
+    this._sleep = opts.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
+  }
+
+  /** The shard this instance routes to ("" = the anonymous shard). */
+  get shardKey(): string {
+    return this._shardKey;
   }
 
   /** Build an instance from environment variables. */
@@ -69,11 +120,14 @@ export class FunctionStorageCfDo implements FunctionStorage {
    * per logical ATTACH. Shares the URL/token; only the shard key differs.
    */
   forShard(shardKey: string): FunctionStorageCfDo {
+    if (shardKey === this._shardKey) return this;
     return new FunctionStorageCfDo({
       url: this._baseUrl,
       token: this._token,
       shardKey,
       fetch: this._fetch,
+      retry: this._retry,
+      sleep: this._sleep,
     });
   }
 
@@ -123,17 +177,30 @@ export class FunctionStorageCfDo implements FunctionStorage {
   // --- Namespaced key/value state ---
 
   async stateGet(scopeId: Uint8Array, ns: Uint8Array, key: Uint8Array): Promise<Uint8Array | null> {
-    const data = await this._post<{ rows: Array<{ value: string } | null> }>("state_get_many", {
-      scope_id: bytesToB64(scopeId),
-      ns: bytesToB64(ns),
-      keys: [bytesToB64(key)],
-    });
-    const row = (data.rows ?? [])[0];
-    return row ? b64ToBytes(row.value) : null;
+    return (await this.stateGetMany(scopeId, ns, [key]))[0] ?? null;
   }
 
   async statePut(scopeId: Uint8Array, ns: Uint8Array, key: Uint8Array, value: Uint8Array): Promise<void> {
     await this._statePutMany(scopeId, ns, [[key, value]]);
+  }
+
+  async stateGetMany(scopeId: Uint8Array, ns: Uint8Array, keys: Uint8Array[]): Promise<Array<Uint8Array | null>> {
+    if (keys.length === 0) return [];
+    const data = await this._post<{ rows: Array<{ value: string } | null> }>("state_get_many", {
+      scope_id: bytesToB64(scopeId),
+      ns: bytesToB64(ns),
+      keys: keys.map(bytesToB64),
+    });
+    const rows = data.rows ?? [];
+    return keys.map((_, i) => {
+      const row = rows[i];
+      return row ? b64ToBytes(row.value) : null;
+    });
+  }
+
+  async statePutMany(scopeId: Uint8Array, ns: Uint8Array, items: Array<[Uint8Array, Uint8Array]>): Promise<void> {
+    if (items.length === 0) return;
+    await this._statePutMany(scopeId, ns, items);
   }
 
   // --- Append-only log ---
@@ -216,6 +283,14 @@ export class FunctionStorageCfDo implements FunctionStorage {
 
   // --- HTTP plumbing ---
 
+  /**
+   * POST one call. The body (and so its `attempt_id`, for destructive ops) is
+   * built once and resent unchanged on every retry, so the DO's replay
+   * detection makes a retried put/drain/pop a no-op. Retries transport errors,
+   * timeouts, 5xx and 429 with exponential backoff and full jitter, bounded by
+   * `maxAttempts`. 4xx other than 429 is the caller's error and is not retried.
+   * The bearer token never appears in an error message.
+   */
   private async _post<T = Record<string, unknown>>(
     endpoint: string,
     body: Record<string, unknown>,
@@ -224,24 +299,73 @@ export class FunctionStorageCfDo implements FunctionStorage {
     const headers: Record<string, string> = { "Content-Type": "application/json" };
     if (this._token) headers["Authorization"] = `Bearer ${this._token}`;
     // The Worker routes on shard_key (idFromName) and rejects requests without
-    // one — always splice it in.
-    const payload = JSON.stringify({ ...body, shard_key: this._shardKey });
+    // one. An attach-bound call carries att-<uuid hex>; one bound to no ATTACH
+    // goes to the shared anonymous shard, as in vgi-python.
+    const payload = JSON.stringify({ ...body, shard_key: this._shardKey || ANONYMOUS_SHARD_KEY });
 
-    let lastErr: unknown;
-    // One retry on transport-level failures, matching the python client.
-    for (let attempt = 0; attempt < 2; attempt++) {
+    const { maxAttempts, baseDelayMs, maxDelayMs } = this._retry;
+    let lastErr: Error | undefined;
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      if (attempt > 0) {
+        const cap = Math.min(maxDelayMs, baseDelayMs * 2 ** (attempt - 1));
+        const jittered = Math.random() * cap;
+        const hinted = lastErr instanceof RetryableError && lastErr.retryAfterMs != null
+          ? Math.min(maxDelayMs, lastErr.retryAfterMs)
+          : 0;
+        await this._sleep(Math.max(jittered, hinted));
+      }
+      try {
+        return await this._once<T>(url, endpoint, headers, payload);
+      } catch (e) {
+        if (!(e instanceof RetryableError)) throw e;
+        lastErr = e;
+      }
+    }
+    throw new Error(
+      `CF DO storage ${endpoint} failed after ${maxAttempts} attempts: ${lastErr?.message ?? "unknown error"}`,
+    );
+  }
+
+  private async _once<T>(
+    url: string,
+    endpoint: string,
+    headers: Record<string, string>,
+    payload: string,
+  ): Promise<T> {
+    const { timeoutMs } = this._retry;
+    const controller = timeoutMs > 0 ? new AbortController() : null;
+    const timer = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
+    try {
       let resp: Response;
       try {
-        resp = await this._fetch(url, { method: "POST", headers, body: payload });
-      } catch (err) {
-        lastErr = err;
-        continue;
+        resp = await this._fetch(url, {
+          method: "POST",
+          headers,
+          body: payload,
+          ...(controller ? { signal: controller.signal } : {}),
+        });
+      } catch (err: any) {
+        if (controller?.signal.aborted) {
+          throw new RetryableError(`timed out after ${timeoutMs} ms on ${endpoint}`);
+        }
+        throw new RetryableError(`transport error on ${endpoint}: ${err?.message ?? String(err)}`);
+      }
+
+      if (resp.status === 429 || resp.status >= 500) {
+        const text = await resp.text().catch(() => "");
+        throw new RetryableError(
+          `CF DO storage error ${resp.status} on ${endpoint}: ${text.slice(0, 200) || "<empty body>"}`,
+          parseRetryAfter(resp.headers?.get?.("Retry-After") ?? null),
+        );
       }
 
       let data: any;
       try {
         data = await resp.json();
-      } catch {
+      } catch (err: any) {
+        if (controller?.signal.aborted) {
+          throw new RetryableError(`timed out after ${timeoutMs} ms reading ${endpoint}`);
+        }
         if (!resp.ok) {
           throw new Error(`CF DO storage error ${resp.status} on ${endpoint}: <non-json body>`);
         }
@@ -261,11 +385,17 @@ export class FunctionStorageCfDo implements FunctionStorage {
         throw new Error(`CF DO storage error ${resp.status} on ${endpoint}: ${JSON.stringify(data)}`);
       }
       return data as T;
+    } finally {
+      if (timer) clearTimeout(timer);
     }
-    throw lastErr instanceof Error
-      ? lastErr
-      : new Error(`CF DO storage transport error on ${endpoint}: ${String(lastErr)}`);
   }
+}
+
+/** `Retry-After` in ms (delta-seconds form only), or null. */
+function parseRetryAfter(v: string | null): number | null {
+  if (!v) return null;
+  const n = Number(v.trim());
+  return Number.isFinite(n) && n >= 0 ? n * 1000 : null;
 }
 
 /** Fresh 32-char lowercase-hex idempotency token (the DO's attempt_id shape). */

@@ -76,4 +76,20 @@ describe.skipIf(!URL)("FunctionStorageCfDo over the wire", () => {
     await s.executionClear(exec);
     expect(await s.stateGet(exec, ns, enc.encode("k"))).toBeNull();
   });
+  test("batched get/put many round-trips in key order", async () => {
+    const s = liveStorage();
+    const scope = crypto.getRandomValues(new Uint8Array(16));
+    const ns = enc.encode("_vgi/aggregate_state");
+    await s.statePutMany(scope, ns, [[enc.encode("a"), enc.encode("1")], [enc.encode("b"), enc.encode("2")]]);
+    const got = await s.stateGetMany(scope, ns, [enc.encode("b"), enc.encode("missing"), enc.encode("a")]);
+    expect(got.map((v) => (v ? dec.decode(v) : null))).toEqual(["2", null, "1"]);
+  });
+
+  test("a call bound to no ATTACH is accepted on the anonymous shard", async () => {
+    const s = new FunctionStorageCfDo({ url: URL!, token: process.env.VGI_CF_DO_TOKEN || null });
+    const scope = crypto.getRandomValues(new Uint8Array(16));
+    await s.statePut(scope, enc.encode("ns"), enc.encode("k"), enc.encode("v"));
+    expect(dec.decode((await s.stateGet(scope, enc.encode("ns"), enc.encode("k")))!)).toBe("v");
+    await s.executionClear(scope);
+  });
 });

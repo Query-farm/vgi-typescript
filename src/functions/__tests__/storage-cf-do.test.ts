@@ -192,10 +192,11 @@ describe("FunctionStorageCfDo unified protocol", () => {
     expect(await s.queuePop(exec)).toBeNull();
   });
 
-  test("empty shard_key (no forShard) is rejected by the server contract", async () => {
+  test("no forShard (a call bound to no ATTACH) routes to the loc-anon shard", async () => {
     const cap = installMock();
-    const s = new FunctionStorageCfDo({ url: "https://mock" }); // no forShard -> shard_key ""
-    await expect(s.statePut(enc.encode("e"), enc.encode("n"), enc.encode("k"), enc.encode("v"))).rejects.toThrow();
-    expect(cap.missingShard).toBeGreaterThan(0);
+    const s = new FunctionStorageCfDo({ url: "https://mock" });
+    await s.statePut(enc.encode("e"), enc.encode("n"), enc.encode("k"), enc.encode("v"));
+    expect(cap.missingShard).toBe(0);
+    expect([...cap.shardKeys]).toEqual(["loc-anon"]);
   });
 });

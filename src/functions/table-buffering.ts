@@ -56,7 +56,9 @@ import {
   type PushdownFilters,
 } from "../filter-pushdown/index.js";
 import { FunctionStability } from "../types.js";
-import { BoundStorage, storage as defaultStorage, FrameworkNS } from "./storage.js";
+import { BoundStorage, storage as defaultStorage, FrameworkNS, shardKeyOf } from "./storage.js";
+import { ExecutionCache } from "./execution-cache.js";
+import { StoragePayloadError } from "./storage-seal.js";
 import {
   serializeInitRequest,
   deserializeInitRequest,
@@ -333,18 +335,9 @@ export function defineTableBufferingFunction<
         opaque_data: null,
       };
 
-      // On the sink-side init, persist init metadata so any pool worker can
-      // cold-load it when serving subsequent process()/combine() unary RPCs
-      // (which carry no init context themselves). Mirrors Python's
-      // FrameworkNS.BUFFERING_INIT state_put.
-      if (request.phase === TableInOutPhase.TABLE_BUFFERING) {
-        const bound = new BoundStorage(defaultStorage, executionId);
-        await bound.statePut(
-          FrameworkNS.BUFFERING_INIT,
-          BoundStorage.packIntKey(-1),
-          encodeBufferingInit(request, response),
-        );
-      }
+      // The sink-side init's context is persisted (sealed) by the init
+      // handler right after this returns -- see persistBufferingInit -- so
+      // any pool worker can cold-load it for the process()/combine() RPCs.
       return response;
     },
 
@@ -376,6 +369,8 @@ export function defineTableBufferingFunction<
       const bound = new BoundStorage(
         defaultStorage,
         response.execution_id ?? new Uint8Array(16),
+        null,
+        shardKeyOf(request.bind_call),
       );
 
       const params: TableBufferingParams<TArgs> = {
@@ -532,6 +527,75 @@ function makeProjectingCollector(
 // Init-metadata persistence (mirrors Python _encode/_decode_table_buffering_init)
 // ============================================================================
 
+/** Storage key of the buffered init within FrameworkNS.BUFFERING_INIT. */
+const BUFFERING_INIT_KEY = BoundStorage.packIntKey(-1);
+
+/** Decoded buffered init context, as cached and as returned by the loader. */
+export interface BufferingInit {
+  request: InitRequest;
+  response: GlobalInitResponse;
+}
+
+/**
+ * Decoded buffered-init context per (shard, execution). The init is written
+ * once and read on every process/combine RPC; with this, a process batch costs
+ * the function's own storage calls only. Small: one entry per in-flight
+ * buffered execution, evicted by the destructor.
+ */
+export const bufferingInitCache = new ExecutionCache<BufferingInit>(64);
+
+/**
+ * Persist a buffered sink init's context so any worker can serve the unary
+ * process/combine RPCs that follow, which carry no init context themselves.
+ *
+ * The stored InitRequest carries `bind_call.secrets`, so it is sealed
+ * (./storage-seal.ts) to its (shard, execution, ns, key) slot. Its attach and
+ * transaction values are NOT stored: every process/combine request carries
+ * them, and the loader fills them in from the request after opening them.
+ */
+export async function persistBufferingInit(
+  request: InitRequest,
+  response: GlobalInitResponse,
+  signingKey: Uint8Array | undefined,
+): Promise<void> {
+  const shardKey = shardKeyOf(request.bind_call);
+  const stored: InitRequest = {
+    ...request,
+    bind_call: { ...request.bind_call, attach_opaque_data: null, transaction_opaque_data: null },
+  };
+  const bound = new BoundStorage(defaultStorage, response.execution_id, null, shardKey);
+  await bound.sealedPut(FrameworkNS.BUFFERING_INIT, BUFFERING_INIT_KEY, encodeBufferingInit(stored, response), signingKey);
+  bufferingInitCache.set(shardKey, response.execution_id, { request: stored, response });
+}
+
+/**
+ * Load a buffered execution's init context: the in-process cache, else the
+ * sealed storage copy (opened, decoded, then cached). Throws when the
+ * execution is unknown, and StoragePayloadError when the stored copy does not
+ * authenticate for this shard / execution.
+ */
+export async function loadBufferingInit(
+  bound: BoundStorage,
+  signingKey: Uint8Array | undefined,
+): Promise<BufferingInit> {
+  const cached = bufferingInitCache.get(bound.shardKey, bound.executionId);
+  if (cached) return cached;
+  const payload = await bound.sealedGet(FrameworkNS.BUFFERING_INIT, BUFFERING_INIT_KEY, signingKey);
+  if (payload == null) {
+    throw new Error(
+      `table_buffering: unknown execution_id ${hexOf(bound.executionId)} ` +
+        `(init never ran or destructor already fired)`,
+    );
+  }
+  const decoded = decodeBufferingInit(payload);
+  bufferingInitCache.set(bound.shardKey, bound.executionId, decoded);
+  return decoded;
+}
+
+function hexOf(buf: Uint8Array): string {
+  return Array.from(buf, (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
 export function encodeBufferingInit(
   request: InitRequest,
   response: GlobalInitResponse,
@@ -593,8 +657,11 @@ function concatLenPrefixed(parts: Uint8Array[]): Uint8Array {
   return out;
 }
 
-// Always returns exactly `count` parts (a short buffer throws a RangeError from
-// the DataView), which the overloads encode as a tuple.
+// Always returns exactly `count` parts, which the overloads encode as a tuple,
+// and consumes the whole buffer: a truncated header, a length running past
+// the end, or trailing bytes are a StoragePayloadError, never a silently short
+// part. (The payload is authenticated before this runs; this guards the
+// framing itself.)
 function splitLenPrefixed(buf: Uint8Array, count: 2): [Uint8Array, Uint8Array];
 function splitLenPrefixed(buf: Uint8Array, count: 3): [Uint8Array, Uint8Array, Uint8Array];
 function splitLenPrefixed(buf: Uint8Array, count: number): Uint8Array[] {
@@ -602,10 +669,19 @@ function splitLenPrefixed(buf: Uint8Array, count: number): Uint8Array[] {
   const parts: Uint8Array[] = [];
   let off = 0;
   for (let i = 0; i < count; i++) {
+    if (off + 4 > buf.length) {
+      throw new StoragePayloadError(`table_buffering: truncated init payload (part ${i} header)`);
+    }
     const len = dv.getUint32(off, true);
     off += 4;
+    if (len > buf.length - off) {
+      throw new StoragePayloadError(`table_buffering: truncated init payload (part ${i} is ${len} bytes, ${buf.length - off} left)`);
+    }
     parts.push(buf.subarray(off, off + len));
     off += len;
+  }
+  if (off !== buf.length) {
+    throw new StoragePayloadError(`table_buffering: ${buf.length - off} trailing bytes in init payload`);
   }
   return parts;
 }

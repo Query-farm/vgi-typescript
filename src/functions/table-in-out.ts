@@ -43,7 +43,7 @@ import {
   replayFilterHistory,
 } from "../filter-pushdown/history.js";
 import { FunctionStability } from "../types.js";
-import { BoundStorage, storage as defaultStorage, FrameworkNS } from "./storage.js";
+import { BoundStorage, storage as defaultStorage, FrameworkNS, shardKeyOf } from "./storage.js";
 import { serializeUserState, deserializeUserState } from "../protocol/state-serializer.js";
 import { PARENT_ROW_METADATA_KEY, encodeParentRows } from "../util/parent-rows.js";
 import { checkInputRowsPerCall, checkResumeContract, continuationTurn } from "./continuation.js";
@@ -378,6 +378,7 @@ export function defineTableInOutFunction<
         defaultStorage,
         response.execution_id ?? new Uint8Array(16),
         request.substream_id ?? null,
+        shardKeyOf(request.bind_call),
       );
 
       const processParams: TableInOutProcessParams<TArgs> = {
@@ -1056,6 +1057,7 @@ export function defineRowTransformFunction<
         defaultStorage,
         response.execution_id ?? new Uint8Array(16),
         request.substream_id ?? null,
+        shardKeyOf(request.bind_call),
       );
 
       const processParams: RowTransformProcessParams<TArgs> = {

@@ -20,17 +20,16 @@ import {
   TableBufferingProcessResultSchema,
 } from "../../generated/vgi-protocol-schemas.js";
 import { unwrapRequest, wrapResult } from "./shared.js";
-import { openAttach } from "./catalog/shared.js";
+import { openAttachWithShard, openTransaction } from "./catalog/shared.js";
+import { BoundStorage, storage as defaultStorage } from "../../functions/storage.js";
 import {
-  BoundStorage,
-  storage as defaultStorage,
-  FrameworkNS,
-} from "../../functions/storage.js";
-import {
-  decodeBufferingInit,
+  bufferingInitCache,
+  loadBufferingInit,
   type TableBufferingVgiFunction,
   type TableBufferingParams,
 } from "../../functions/table-buffering.js";
+import type { InitRequest } from "../types.js";
+import { currentRequestAuth } from "../../request-auth.js";
 import { Arguments } from "../../arguments/arguments.js";
 
 /** The table_buffering lifecycle's `vgi.v3` handlers. */
@@ -67,31 +66,38 @@ export function tableBufferingHandlers(
   ): Promise<{ func: TableBufferingVgiFunction; params: TableBufferingParams<any> }> {
     const functionName: string = inner.function_name;
     const executionId = toUint8Array(inner.execution_id);
+    const auth = ctx?.auth ?? currentRequestAuth();
     // Unseal attach_opaque_data so combine()/process() see the SAME plaintext,
-    // attach-scoped bytes that bind()/init() and plain table functions see.
-    // Without this, on HTTP transport the buffering RPCs would scope persistent
-    // BoundStorage by the *sealed* envelope while reads scope by the plaintext,
-    // so attach-scoped state written in combine() is invisible to later reads.
+    // attach-scoped bytes that bind()/init() and plain table functions see,
+    // and derive the storage shard from its framework UUID: the init context
+    // and every BoundStorage call of this execution live in that shard.
     const rawAttach = inner.attach_opaque_data ? toUint8Array(inner.attach_opaque_data) : null;
-    const attach =
-      rawAttach && rawAttach.length > 0
-        ? await openAttach(rawAttach, ctx?.auth, signingKey, attachSecretKey)
-        : rawAttach;
+    const { attach, shardKey } = await openAttachWithShard(rawAttach, auth, signingKey, attachSecretKey);
     const transactionId = inner.transaction_id ? toUint8Array(inner.transaction_id) : null;
 
     const func = resolveBuffering(functionName, inner.schema_path ?? null);
-    const bound = new BoundStorage(defaultStorage, executionId);
-    const payload = await bound.stateGet(
-      FrameworkNS.BUFFERING_INIT,
-      BoundStorage.packIntKey(-1),
-    );
-    if (payload == null) {
-      throw new Error(
-        `table_buffering: unknown execution_id ${hex(executionId)} ` +
-          `(init never ran or destructor already fired)`,
-      );
+    const bound = new BoundStorage(defaultStorage, executionId, null, shardKey);
+    // Cached per (shard, execution) after the first load; storage (sealed) is
+    // authoritative on a miss. The stored request carries no attach or
+    // transaction: they come from this request, opened as the init turn did.
+    const init = await loadBufferingInit(bound, signingKey);
+    let txnPlain = transactionId;
+    if (txnPlain && txnPlain.length > 0 && signingKey && rawAttach) {
+      try {
+        txnPlain = await openTransaction(txnPlain, rawAttach, auth, signingKey);
+      } catch {
+        // Not a sealed transaction value: keep it as given.
+      }
     }
-    const { request } = decodeBufferingInit(payload);
+    const request: InitRequest = {
+      ...init.request,
+      bind_call: {
+        ...init.request.bind_call,
+        attach_opaque_data: attach,
+        transaction_opaque_data: txnPlain,
+        storage_shard_key: shardKey,
+      },
+    };
     const args = func.bufferingExtractArgs(request.bind_call);
     const settings = batchToScalarDict(request.bind_call.settings);
     const secrets = batchToSecretDict(request.bind_call.secrets);
@@ -159,11 +165,20 @@ export function tableBufferingHandlers(
   // ------------------------------------------------------------------------
   // table_buffering_destructor — best-effort end-of-query cleanup (unary)
   // ------------------------------------------------------------------------
-  const tableBufferingDestructor: VgiService["tableBufferingDestructor"] = async (rpcParams) => {
+  const tableBufferingDestructor: VgiService["tableBufferingDestructor"] = async (rpcParams, ctx?: any) => {
     try {
       const inner = unwrapRequest(rpcParams.request);
       const executionId = toUint8Array(inner.execution_id);
-      const bound = new BoundStorage(defaultStorage, executionId);
+      const rawAttach = inner.attach_opaque_data ? toUint8Array(inner.attach_opaque_data) : null;
+      // The execution's state lives in its attach's shard, not the default one.
+      const { shardKey } = await openAttachWithShard(
+        rawAttach,
+        ctx?.auth ?? currentRequestAuth(),
+        signingKey,
+        attachSecretKey,
+      );
+      bufferingInitCache.delete(shardKey, executionId);
+      const bound = new BoundStorage(defaultStorage, executionId, null, shardKey);
       await bound.executionClear();
     } catch {
       // Teardown path — swallow; the entry is wiped when the worker exits.
@@ -194,8 +209,4 @@ function decodeBytesList(raw: any): Uint8Array[] {
     out.push(toUint8Array(entry));
   }
   return out;
-}
-
-function hex(buf: Uint8Array): string {
-  return Array.from(buf, (b) => b.toString(16).padStart(2, "0")).join("");
 }

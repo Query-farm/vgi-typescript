@@ -13,6 +13,8 @@
 // We resolve all node:* and bun:* dependencies through indirect string
 // variables that esbuild can't trace statically, so workerd bundles cleanly
 // without nodejs_compat polyfills for paths we never run.
+import { sealPayload, openPayload, type StorageSlot } from "./storage-seal.js";
+
 type Database = any;
 const _BUN_SQLITE_MOD = "bun:sqlite";
 const _NODE_OS_MOD = "node:os";
@@ -107,6 +109,12 @@ export interface FunctionStorage {
   // --- Namespaced key/value state (scoped by execution_id) ---
   stateGet(scopeId: Uint8Array, ns: Uint8Array, key: Uint8Array): Promise<Uint8Array | null>;
   statePut(scopeId: Uint8Array, ns: Uint8Array, key: Uint8Array, value: Uint8Array): Promise<void>;
+  /** Batched read: one value (or null) per key, in key order. One round trip
+   *  on a remote backend. */
+  stateGetMany(scopeId: Uint8Array, ns: Uint8Array, keys: Uint8Array[]): Promise<Array<Uint8Array | null>>;
+  /** Batched atomic upsert of `(key, value)` pairs. One round trip on a remote
+   *  backend; a no-op for an empty list. */
+  statePutMany(scopeId: Uint8Array, ns: Uint8Array, items: Array<[Uint8Array, Uint8Array]>): Promise<void>;
   // --- Append-only log (scoped by execution_id) ---
   stateAppend(scopeId: Uint8Array, ns: Uint8Array, key: Uint8Array, item: Uint8Array): Promise<number>;
   stateLogScan(
@@ -120,6 +128,15 @@ export interface FunctionStorage {
   executionClear(scopeId: Uint8Array): Promise<number>;
   /** Optional cleanup hook. Implementations holding a connection should release it here. */
   close?(): Promise<void> | void;
+  /**
+   * Optional: a view of this backend routed to one attach shard. A backend
+   * that partitions remotely (the Cloudflare DO, one Durable Object per
+   * logical ATTACH) implements it; a local backend that needs no routing
+   * omits it. {@link BoundStorage} calls it with the shard key the framework
+   * derived from the request's authenticated attach (`att-<uuid hex>`), or
+   * `""` when the call is not bound to an ATTACH.
+   */
+  forShard?(shardKey: string): FunctionStorage;
 }
 
 // FrameworkNS — namespaces the framework itself uses (mirrors Python's
@@ -127,6 +144,9 @@ export interface FunctionStorage {
 export const FrameworkNS = {
   BUFFERING_INIT: textBytes("_vgi/buffering_init"),
   STREAMING_FINALIZE: textBytes("_vgi/streaming_finalize"),
+  /** Aggregate group states (key = packIntKey(group_id)) and, at key
+   *  packIntKey(-2), the sealed bind context. Same bytes as vgi-python. */
+  AGGREGATE_STATE: textBytes("_vgi/aggregate_state"),
 } as const;
 
 function textBytes(s: string): Uint8Array {
@@ -156,7 +176,9 @@ function getDefaultDbPath(): string {
     platform() === "darwin"
       ? join(home, "Library", "Application Support", "vgi")
       : join(home, ".local", "state", "vgi");
-  mkdirSync(stateDir, { recursive: true });
+  // Owner-only: the file holds other executions' in-flight state. Framework
+  // context in it is sealed (./storage-seal.ts), user state is not.
+  mkdirSync(stateDir, { recursive: true, mode: 0o700 });
   return join(stateDir, "vgi_storage.db");
 }
 
@@ -327,6 +349,34 @@ export class FunctionStorageSqlite implements FunctionStorage {
       .run(bufferArg(scopeId), bufferArg(ns), bufferArg(key), bufferArg(value));
   }
 
+  async stateGetMany(scopeId: Uint8Array, ns: Uint8Array, keys: Uint8Array[]): Promise<Array<Uint8Array | null>> {
+    if (keys.length === 0) return [];
+    const stmt = this._db.prepare("SELECT value FROM function_state WHERE scope_id = ? AND ns = ? AND key = ?");
+    const sid = bufferArg(scopeId);
+    const nsb = bufferArg(ns);
+    return keys.map((k) => {
+      const row = stmt.get(sid, nsb, bufferArg(k)) as { value: Uint8Array } | null;
+      return row ? new Uint8Array(row.value) : null;
+    });
+  }
+
+  async statePutMany(scopeId: Uint8Array, ns: Uint8Array, items: Array<[Uint8Array, Uint8Array]>): Promise<void> {
+    if (items.length === 0) return;
+    const stmt = this._db.prepare(
+      "INSERT OR REPLACE INTO function_state (scope_id, ns, key, value) VALUES (?, ?, ?, ?)",
+    );
+    const sid = bufferArg(scopeId);
+    const nsb = bufferArg(ns);
+    this._db.exec("BEGIN IMMEDIATE");
+    try {
+      for (const [k, v] of items) stmt.run(sid, nsb, bufferArg(k), bufferArg(v));
+      this._db.exec("COMMIT");
+    } catch (e) {
+      this._db.exec("ROLLBACK");
+      throw e;
+    }
+  }
+
   async stateAppend(scopeId: Uint8Array, ns: Uint8Array, key: Uint8Array, item: Uint8Array): Promise<number> {
     const res = this._db
       .prepare("INSERT INTO function_state_log (scope_id, ns, key, value) VALUES (?, ?, ?, ?)")
@@ -444,17 +494,39 @@ export class BoundStorage {
   private _base: FunctionStorage;
   private _executionId: Uint8Array;
   private _substreamId: Uint8Array | null;
+  private _shardKey: string;
 
   /**
    * @param substreamId The table-in-out substream this storage serves -- the
    *   client-minted `InitRequest.substream_id`, identical across the
    *   substream's init, every tick and its finalize -- or `null` when the
    *   client sent none. Keys {@link put}.
+   * @param shardKey The attach shard every call routes to: `att-<uuid hex>`,
+   *   derived by the framework from the request's authenticated attach (see
+   *   {@link shardKeyOf}), or `""` when the call is not bound to an ATTACH. A
+   *   backend with `forShard` (the Cloudflare DO) routes on it; it is also part
+   *   of every sealed framework payload's AAD.
    */
-  constructor(storage: FunctionStorage, executionId: Uint8Array, substreamId: Uint8Array | null = null) {
-    this._base = storage;
+  constructor(
+    storage: FunctionStorage,
+    executionId: Uint8Array,
+    substreamId: Uint8Array | null = null,
+    shardKey: string = "",
+  ) {
+    this._base = typeof storage.forShard === "function" ? storage.forShard(shardKey) : storage;
     this._executionId = executionId;
     this._substreamId = substreamId;
+    this._shardKey = shardKey;
+  }
+
+  /** The attach shard this view routes to ("" when not bound to an ATTACH). */
+  get shardKey(): string {
+    return this._shardKey;
+  }
+
+  /** The execution (scope) id this view is bound to. */
+  get executionId(): Uint8Array {
+    return this._executionId;
   }
 
   /**
@@ -503,6 +575,16 @@ export class BoundStorage {
     return this._base.statePut(this._executionId, ns, key, value);
   }
 
+  /** Batched read, one value (or null) per key. One round trip remotely. */
+  stateGetMany(ns: Uint8Array, keys: Uint8Array[]): Promise<Array<Uint8Array | null>> {
+    return this._base.stateGetMany(this._executionId, ns, keys);
+  }
+
+  /** Batched atomic upsert. One round trip remotely. */
+  statePutMany(ns: Uint8Array, items: Array<[Uint8Array, Uint8Array]>): Promise<void> {
+    return this._base.statePutMany(this._executionId, ns, items);
+  }
+
   stateAppend(ns: Uint8Array, key: Uint8Array, item: Uint8Array): Promise<number> {
     return this._base.stateAppend(this._executionId, ns, key, item);
   }
@@ -520,9 +602,44 @@ export class BoundStorage {
     return this._base.executionClear(this._executionId);
   }
 
+  // --- Sealed framework payloads (./storage-seal.ts) ---------------------
+  // For framework context only (init requests, bind context): authenticated
+  // encryption bound to (shard, execution, ns, key). `signingKey` is the
+  // worker's HTTP signing key, or undefined (the host-local key is used).
+
+  private _slot(ns: Uint8Array, key: Uint8Array): StorageSlot {
+    return { shardKey: this._shardKey, scopeId: this._executionId, ns, key };
+  }
+
+  /** Seal `payload` to its slot, store it, and return the stored envelope. */
+  async sealedPut(ns: Uint8Array, key: Uint8Array, payload: Uint8Array, signingKey: Uint8Array | undefined): Promise<Uint8Array> {
+    const sealed = await sealPayload(payload, signingKey, this._slot(ns, key));
+    await this.statePut(ns, key, sealed);
+    return sealed;
+  }
+
+  /** Open an envelope from {@link sealedPut} for this slot (StoragePayloadError on failure). */
+  openSealed(ns: Uint8Array, key: Uint8Array, sealed: Uint8Array, signingKey: Uint8Array | undefined): Promise<Uint8Array> {
+    return openPayload(sealed, signingKey, this._slot(ns, key));
+  }
+
+  /** Read and open a sealed framework payload; null when the slot is empty. */
+  async sealedGet(ns: Uint8Array, key: Uint8Array, signingKey: Uint8Array | undefined): Promise<Uint8Array | null> {
+    const sealed = await this.stateGet(ns, key);
+    return sealed == null ? null : this.openSealed(ns, key, sealed, signingKey);
+  }
+
   static packIntKey(i: number | bigint): Uint8Array {
     return packIntKey(i);
   }
+}
+
+/**
+ * The attach shard key the framework stamped on a request's bind call when it
+ * opened the attach (`att-<uuid hex>`), or `""` when there is none.
+ */
+export function shardKeyOf(bindCall: { storage_shard_key?: string | null | undefined } | null | undefined): string {
+  return bindCall?.storage_shard_key ?? "";
 }
 
 // ============================================================================

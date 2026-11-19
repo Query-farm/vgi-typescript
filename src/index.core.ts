@@ -412,9 +412,11 @@ export {
   UnknownInvocationError,
   resolveStorageFromEnv,
   setStorage,
+  shardKeyOf,
   storage as functionStorage,
 } from "./functions/storage.js";
-export { FunctionStorageCfDo, type FetchLike } from "./functions/storage-cf-do.js";
+export { FunctionStorageCfDo, type FetchLike, type CfDoRetryOptions } from "./functions/storage-cf-do.js";
+export { StoragePayloadError } from "./functions/storage-seal.js";
 
 // Client
 export { VgiClient, VgiClientError } from "./client/client.js";

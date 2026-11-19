@@ -34,7 +34,7 @@ import type { CopySecretLookup } from "./copy-to.js";
 import type { ArgumentSpec } from "../arguments/argument-spec.js";
 import { narrowArgValue } from "../arguments/argument-spec.js";
 import { batchToScalarDict, batchToSecretDict, safeNumber } from "../util/arrow/index.js";
-import { BoundStorage, storage as globalStorage } from "./storage.js";
+import { BoundStorage, storage as globalStorage, shardKeyOf } from "./storage.js";
 import type { TableProcessParams } from "./table.js";
 
 /** Declaration of a single COPY option (a named function argument). */
@@ -240,7 +240,7 @@ export function defineCopyFromFunction<TArgs = Record<string, unknown>>(
       const settings = batchToScalarDict(request.bind_call.settings);
       const secrets = batchToSecretDict(request.bind_call.secrets);
       const outputSchema = request.output_schema;
-      const boundStorage = new BoundStorage(globalStorage, response.execution_id);
+      const boundStorage = new BoundStorage(globalStorage, response.execution_id, null, shardKeyOf(request.bind_call));
 
       const processParams: TableProcessParams<TArgs> = {
         args,

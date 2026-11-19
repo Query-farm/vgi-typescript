@@ -12,6 +12,8 @@ import { exchangeStream, type VgiService } from "../../generated/vgi-service.js"
 import type { FunctionRegistry } from "../../functions/registry.js";
 import type { StreamHandlers, HandlerState } from "../../functions/types.js";
 import { refuseMoreOutput } from "../../functions/continuation.js";
+import { persistBufferingInit } from "../../functions/table-buffering.js";
+import { TableInOutPhase } from "../../types.js";
 import {
   deserializeBindRequest,
   serializeBindResponse,
@@ -34,7 +36,7 @@ import {
 } from "../../generated/vgi-protocol-schemas.js";
 import { unwrapRequest, wrapResult, overloadContext } from "./shared.js";
 import { parseCarriedInitRequest } from "../carried-init-request.js";
-import { openAttach, openTransaction } from "./catalog/shared.js";
+import { openAttach, openAttachWithShard, openTransaction, shardKeyForAttach } from "./catalog/shared.js";
 import { currentRequestAuth } from "../../request-auth.js";
 import { batchFromColumns, serializeBatch } from "../../util/arrow/index.js";
 import {
@@ -218,19 +220,12 @@ export function functionHandlers(config: FunctionHandlerConfig): Partial<VgiServ
   // the same principal. Getting an authenticated caller's identity wrong here
   // is not a degraded lookup but a hard `OpaqueDataRejectedError`: the envelope
   // is sealed under `attachAad(auth)`.
-  async function stripAttach(attach: any, ctx: any): Promise<Uint8Array | null> {
-    if (attach == null) return null;
-    const env = toUint8Array(attach);
-    if (env.length === 0) return env;
-    return openAttach(env, ctx?.auth ?? currentRequestAuth(), signingKey, attachSecretKey);
-  }
-
   // Unseal a bind call's opaque values in place, as the catalog handlers do:
   // the transaction first (its envelope binds the *sealed* attach), then the
   // attach. Every function-side request goes through this, so function bodies
   // see the same transaction plaintext that transactionCommit/Rollback get.
   async function openOpaque(
-    bindCall: { attach_opaque_data?: Uint8Array | null; transaction_opaque_data?: Uint8Array | null },
+    bindCall: { attach_opaque_data?: Uint8Array | null; transaction_opaque_data?: Uint8Array | null; storage_shard_key?: string | null },
     ctx: any,
   ): Promise<void> {
     const sealedAttach = bindCall.attach_opaque_data != null ? toUint8Array(bindCall.attach_opaque_data) : new Uint8Array(0);
@@ -242,7 +237,18 @@ export function functionHandlers(config: FunctionHandlerConfig): Partial<VgiServ
         signingKey,
       );
     }
-    bindCall.attach_opaque_data = await stripAttach(bindCall.attach_opaque_data, ctx);
+    // One open yields both what the body sees and the storage shard of the
+    // attach's framework UUID, which the strip removes. Stamped on the bind
+    // call (in memory only, never serialized) so every BoundStorage the
+    // function builds routes to this attach's shard.
+    const opened = await openAttachWithShard(
+      bindCall.attach_opaque_data != null ? toUint8Array(bindCall.attach_opaque_data) : null,
+      ctx?.auth ?? currentRequestAuth(),
+      signingKey,
+      attachSecretKey,
+    );
+    bindCall.attach_opaque_data = opened.attach;
+    (bindCall as { storage_shard_key?: string }).storage_shard_key = opened.shardKey;
   }
 
   // Build an overload context whose attach has been unsealed, so catalog
@@ -332,6 +338,14 @@ export function functionHandlers(config: FunctionHandlerConfig): Partial<VgiServ
       // globalInit is async — table function onInit may touch HTTP-backed
       // FunctionStorage (e.g. Cloudflare DO).
       const initResponse = await func.globalInit(request);
+
+      // A buffered (sink+source) sink init persists its init context, sealed,
+      // so any worker can serve the unary process/combine RPCs that follow.
+      // Done here rather than in the function because only this layer holds
+      // the signing key the seal derives from.
+      if ((func as any).kind === "table_buffering" && request.phase === TableInOutPhase.TABLE_BUFFERING) {
+        await persistBufferingInit(request, initResponse, signingKey);
+      }
 
       // A FINALIZE stream reads its accumulated states from storage, where
       // every INPUT turn persisted them. Its `init_opaque_data` is the primary
@@ -429,7 +443,7 @@ export function functionHandlers(config: FunctionHandlerConfig): Partial<VgiServ
         // SPLIT_TOKEN_INVALID "minted for a different bind".
         await resolveSplitPayloads(request, { bind_call: carried.bindCallIpc }, {
           // Same principal the tokens were sealed under. The exchange dispatch
-          // gets no ctx (see stripAttach above), so the request-scoped identity
+          // gets no ctx (see openOpaque above), so the request-scoped identity
           // is the only source — opening under the anonymous tail would fail
           // authentication for every authenticated caller's own tokens.
           auth: currentRequestAuth(),
@@ -645,6 +659,16 @@ export function functionHandlers(config: FunctionHandlerConfig): Partial<VgiServ
       ? toUint8Array(innerParams.bind_opaque_data)
       : null;
     const func = registry.get(bindCall.function_name, await strippedContext(bindCall));
+    // Its BoundStorage must reach the same attach shard as the scan's.
+    try {
+      bindCall.storage_shard_key = await shardKeyForAttach(
+        bindCall.attach_opaque_data ?? undefined,
+        currentRequestAuth(),
+        signingKey,
+      );
+    } catch {
+      bindCall.storage_shard_key = "";
+    }
     const map = func.dynamicToString
       ? await func.dynamicToString({ bindCall, bindOpaqueData, globalExecutionId })
       : {};

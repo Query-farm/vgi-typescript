@@ -64,7 +64,7 @@ import {
   type OrderDependence,
   type DistinctDependence,
 } from "../types.js";
-import { BoundStorage, storage as globalStorage } from "./storage.js";
+import { BoundStorage, storage as globalStorage, shardKeyOf } from "./storage.js";
 import { CACHE_IF_MODIFIED_SINCE_KEY, CACHE_IF_NONE_MATCH_KEY } from "../cache-control.js";
 
 // Wrap an OutputCollector so each emitted RecordBatch is projected-by-name
@@ -517,7 +517,7 @@ export function defineTableFunction<
 
       if (config.onInit) {
         const args = extractArgs(request.bind_call);
-        const boundStorage = new BoundStorage(globalStorage, executionId);
+        const boundStorage = new BoundStorage(globalStorage, executionId, null, shardKeyOf(request.bind_call));
         return await config.onInit({
           args,
           initCall: request,
@@ -570,7 +570,7 @@ export function defineTableFunction<
         carriedFilterHistory,
       );
 
-      const boundStorage = new BoundStorage(globalStorage, response.execution_id);
+      const boundStorage = new BoundStorage(globalStorage, response.execution_id, null, shardKeyOf(request.bind_call));
 
       const processParams: TableProcessParams<TArgs> = {
         args,
@@ -727,7 +727,7 @@ export function defineTableFunction<
           const args = extractArgs(request.bindCall);
           const settings = batchToScalarDict(request.bindCall.settings);
           const secrets = batchToSecretDict(request.bindCall.secrets);
-          const storage = new BoundStorage(globalStorage, request.globalExecutionId);
+          const storage = new BoundStorage(globalStorage, request.globalExecutionId, null, shardKeyOf(request.bindCall));
           return config.dynamicToString!(
             {
               args,

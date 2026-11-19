@@ -24,19 +24,29 @@ import {
   AggregateFinalizeResultSchema,
 } from "../../generated/vgi-protocol-schemas.js";
 import {
-  getExecutionState,
-  setExecutionState,
-  persistGroupStates,
   GROUP_COLUMN_NAME,
+  AGGREGATE_CONTEXT_KEY,
+  aggregateContextCache,
+  encodeAggregateContext,
+  decodeAggregateContext,
+  loadGroupStates,
+  storeGroupStates,
   type AggregateFunctionConfig,
   type AggregateBindParams,
 } from "../../functions/aggregate.js";
+import { BoundStorage, FrameworkNS, storage as defaultStorage } from "../../functions/storage.js";
+import { openAttachWithShard } from "./catalog/shared.js";
+import { currentRequestAuth } from "../../request-auth.js";
 import { Arguments } from "../../arguments/arguments.js";
 import { validateConstConstraints } from "../../arguments/argument-spec.js";
 import { unwrapRequest, wrapResult } from "./shared.js";
 
 /** The aggregate lifecycle's `vgi.v3` handlers. */
-export function aggregateHandlers(registry: FunctionRegistry): Partial<VgiService> {
+export function aggregateHandlers(
+  registry: FunctionRegistry,
+  signingKey?: Uint8Array,
+  attachSecretKey?: Uint8Array,
+): Partial<VgiService> {
   // `schemaPath` scopes resolution to the schema the caller named. Every
   // aggregate RPC carries it (protocol 1.2.0), so an aggregate name declared in
   // two schemas dispatches to the one the request names rather than colliding
@@ -57,52 +67,96 @@ export function aggregateHandlers(registry: FunctionRegistry): Partial<VgiServic
     return func.aggregateConfig as AggregateFunctionConfig<any, any>;
   }
 
+  // The execution's storage: its attach's shard (derived from the request's
+  // authenticated attach, as for every other function kind), scoped by the
+  // execution id.
+  async function boundFor(innerParams: Record<string, any>, ctx: any, executionId: Uint8Array): Promise<BoundStorage> {
+    const raw = innerParams.attach_opaque_data ? toUint8Array(innerParams.attach_opaque_data) : null;
+    const { shardKey } = await openAttachWithShard(raw, ctx?.auth ?? currentRequestAuth(), signingKey, attachSecretKey);
+    return new BoundStorage(defaultStorage, executionId, null, shardKey);
+  }
+
+  // The bind context of an execution: cached in-process, else the sealed
+  // storage copy (authoritative). Throws when the execution is unknown.
+  async function loadContext(
+    cfg: AggregateFunctionConfig<any, any>,
+    storage: BoundStorage,
+    rpc: string,
+  ): Promise<AggregateBindParams<any>> {
+    const cached = aggregateContextCache.get(storage.shardKey, storage.executionId);
+    if (cached) return cached;
+    const payload = await storage.sealedGet(FrameworkNS.AGGREGATE_STATE, AGGREGATE_CONTEXT_KEY, signingKey);
+    if (payload == null) {
+      throw new Error(`${rpc}: unknown execution_id for '${cfg.name}' (bind missing or state dropped)`);
+    }
+    const stored = decodeAggregateContext(payload);
+    const args = deserializeArguments(stored.argumentsIpc);
+    const params: AggregateBindParams<any> = {
+      args: extractArgMap(cfg, args),
+      arguments: args,
+      inputSchema: stored.inputSchemaIpc ? deserializeSchema(stored.inputSchemaIpc) : null,
+      settings: {},
+      // Secret values are delivered on aggregate_bind only, and never stored.
+      secrets: {},
+      argumentNames: stored.argumentNames,
+    };
+    aggregateContextCache.set(storage.shardKey, storage.executionId, params);
+    return params;
+  }
+
   // ------------------------------------------------------------------------
   // aggregate_bind — allocate execution_id, return output schema
   // ------------------------------------------------------------------------
-  const aggregateBind: VgiService["aggregateBind"] = async (params) => {
+  const aggregateBind: VgiService["aggregateBind"] = async (params, ctx?: any) => {
     const innerParams = unwrapRequest(params.request);
     const functionName: string = innerParams.function_name;
     const cfg = resolveAggregate(functionName, innerParams.schema_path ?? null);
     const argBytes = toUint8Array(innerParams.arguments);
     const args = deserializeArguments(argBytes);
-    const inputSchema = innerParams.input_schema
-      ? deserializeSchema(toUint8Array(innerParams.input_schema))
-      : null;
+    const inputSchemaIpc = innerParams.input_schema ? toUint8Array(innerParams.input_schema) : null;
+    const inputSchema = inputSchemaIpc && inputSchemaIpc.length > 0 ? deserializeSchema(inputSchemaIpc) : null;
     // Decode the resolved-secrets batch the extension pre-resolves for
     // aggregates that declared `requiredSecrets`. Mirrors the table-buffering
     // handler (batchToSecretDict). The secret VALUES are delivered only here,
-    // at bind time — update/combine/finalize see no secrets by design.
+    // at bind time — update/combine/finalize see no secrets by design, and
+    // they are never written to storage.
     const secretsBytes = innerParams.secrets ? toUint8Array(innerParams.secrets) : null;
     const secretsBatch =
       secretsBytes && secretsBytes.length > 0 ? deserializeBatch(secretsBytes) : null;
     const secrets = secretsBatch ? batchToSecretDict(secretsBatch) : {};
+    const argumentNames: (string | null)[] | null = innerParams.argument_names
+      ? (Array.isArray(innerParams.argument_names)
+        ? innerParams.argument_names
+        : [...innerParams.argument_names])
+        .map((value: unknown) => value == null ? null : String(value))
+      : null;
     const bindParams: AggregateBindParams<any> = {
       args: extractArgMap(cfg, args),
       arguments: args,
       inputSchema,
       settings: {},
       secrets,
-      argumentNames: innerParams.argument_names
-        ? (Array.isArray(innerParams.argument_names)
-          ? innerParams.argument_names
-          : [...innerParams.argument_names])
-          .map((value: unknown) => value == null ? null : String(value))
-        : null,
+      argumentNames,
     };
-    const executionId = new Uint8Array(16);
-    crypto.getRandomValues(executionId);
-    setExecutionState(executionId, {
-      states: new Map(),
-      bindArgs: args,
-      bindParams,
-    });
     // Output schema is a single "result" column. Type comes from the
     // optional onBind hook (for aggregates whose return type depends on
     // input — e.g. vgi_generic_sum takes ANY and returns the same type);
     // otherwise the declared cfg.outputType.
     const outType = cfg.onBind ? await cfg.onBind(bindParams) : cfg.outputType;
     const outSchema = makeSchema([field("result", outType, true)]);
+
+    const executionId = new Uint8Array(16);
+    crypto.getRandomValues(executionId);
+    // Persist the bind context (sealed; no secrets) so any worker can serve
+    // this execution's update/combine/finalize RPCs.
+    const storage = await boundFor(innerParams, ctx, executionId);
+    await storage.sealedPut(
+      FrameworkNS.AGGREGATE_STATE,
+      AGGREGATE_CONTEXT_KEY,
+      encodeAggregateContext({ argumentsIpc: argBytes, inputSchemaIpc, argumentNames }),
+      signingKey,
+    );
+    aggregateContextCache.set(storage.shardKey, executionId, { ...bindParams, secrets: {} });
     return wrapResult(
       { output_schema: serializeSchema(outSchema), execution_id: executionId },
       AggregateBindResultSchema,
@@ -112,7 +166,7 @@ export function aggregateHandlers(registry: FunctionRegistry): Partial<VgiServic
   // ------------------------------------------------------------------------
   // aggregate_update — fold the incoming batch into per-group state
   // ------------------------------------------------------------------------
-  const aggregateUpdate: VgiService["aggregateUpdate"] = (params) => {
+  const aggregateUpdate: VgiService["aggregateUpdate"] = async (params, ctx?: any) => {
     const innerParams = unwrapRequest(params.request);
     const functionName: string = innerParams.function_name;
     const executionId = toUint8Array(innerParams.execution_id);
@@ -133,10 +187,13 @@ export function aggregateHandlers(registry: FunctionRegistry): Partial<VgiServic
       groupIds.push(g);
       uniqueGids.add(g);
     }
-    const exec = getExecutionState(executionId, uniqueGids);
-    if (!exec) {
-      throw new Error(`aggregate_update: unknown execution_id for '${functionName}' (bind missing or state dropped)`);
-    }
+    const storage = await boundFor(innerParams, ctx, executionId);
+    const bindParams = await loadContext(cfg, storage, "aggregate_update");
+    // One batched read of every group this batch touches. Always from
+    // storage: a sibling worker may have just written a newer value, and a
+    // cached copy would overwrite it (read-modify-write race).
+    const gids = [...uniqueGids];
+    const states = await loadGroupStates(storage, gids);
 
     // Build column-arg arrays — every non-__vgi_group_id column, in
     // schema order — and pass to user's update(). We deliberately do NOT
@@ -149,33 +206,30 @@ export function aggregateHandlers(registry: FunctionRegistry): Partial<VgiServic
       columns.push(batch.getChildAt(i));
     }
     const ensureState = (gid: bigint) => {
-      let s = exec.states.get(gid);
+      let s = states.get(gid);
       if (s === undefined) {
-        s = cfg.initialState(exec.bindParams);
-        exec.states.set(gid, s);
+        s = cfg.initialState(bindParams);
+        states.set(gid, s);
       }
       return s;
     };
     cfg.update({
-      states: exec.states,
+      states,
       groupIds,
       columns,
-      args: exec.bindParams.args,
+      args: bindParams.args,
       ensureState,
     });
-    // Flush mutated states to disk so sibling workers see them. We persist
-    // every group that was referenced this call — some may be unchanged
-    // (skipped by NULL handling), in which case the file simply reflects
-    // the pre-existing initial state; the idempotent rewrite is cheap
-    // relative to the RPC overhead.
-    persistGroupStates(executionId, uniqueGids);
+    // One batched write of every referenced group that has a state (groups
+    // skipped by NULL handling stay absent, so finalize sees null).
+    await storeGroupStates(storage, states, gids);
     return wrapResult({}, makeSchema([]));
   };
 
   // ------------------------------------------------------------------------
   // aggregate_combine — merge (source_group_id, target_group_id) pairs
   // ------------------------------------------------------------------------
-  const aggregateCombine: VgiService["aggregateCombine"] = (params) => {
+  const aggregateCombine: VgiService["aggregateCombine"] = async (params, ctx?: any) => {
     const innerParams = unwrapRequest(params.request);
     const functionName: string = innerParams.function_name;
     const executionId = toUint8Array(innerParams.execution_id);
@@ -194,33 +248,29 @@ export function aggregateHandlers(registry: FunctionRegistry): Partial<VgiServic
       srcIds.push(src); tgtIds.push(tgt);
       referencedGids.add(src); referencedGids.add(tgt);
     }
-    const exec = getExecutionState(executionId, referencedGids);
-    if (!exec) {
-      throw new Error(
-        `aggregate_combine: unknown execution_id for '${functionName}' ` +
-        `(context missing on disk — bind may have failed or been cleaned up)`,
-      );
-    }
+    const storage = await boundFor(innerParams, ctx, executionId);
+    const bindParams = await loadContext(cfg, storage, "aggregate_combine");
+    const states = await loadGroupStates(storage, [...referencedGids]);
     const touchedTargets = new Set<bigint>();
     for (let i = 0; i < batch.numRows; i++) {
       const src = srcIds[i]!;
       const tgt = tgtIds[i]!;
-      const srcHas = exec.states.has(src);
-      const tgtHas = exec.states.has(tgt);
+      const srcHas = states.has(src);
+      const tgtHas = states.has(tgt);
       if (!srcHas && !tgtHas) continue;
-      const srcState = srcHas ? exec.states.get(src)! : cfg.initialState(exec.bindParams);
-      const tgtState = tgtHas ? exec.states.get(tgt)! : cfg.initialState(exec.bindParams);
-      exec.states.set(tgt, cfg.combine(srcState, tgtState, exec.bindParams));
+      const srcState = srcHas ? states.get(src)! : cfg.initialState(bindParams);
+      const tgtState = tgtHas ? states.get(tgt)! : cfg.initialState(bindParams);
+      states.set(tgt, cfg.combine(srcState, tgtState, bindParams));
       touchedTargets.add(tgt);
     }
-    persistGroupStates(executionId, touchedTargets);
+    await storeGroupStates(storage, states, touchedTargets);
     return wrapResult({}, makeSchema([]));
   };
 
   // ------------------------------------------------------------------------
   // aggregate_finalize — emit one result row per requested group_id
   // ------------------------------------------------------------------------
-  const aggregateFinalize: VgiService["aggregateFinalize"] = (params) => {
+  const aggregateFinalize: VgiService["aggregateFinalize"] = async (params, ctx?: any) => {
     const innerParams = unwrapRequest(params.request);
     const functionName: string = innerParams.function_name;
     const executionId = toUint8Array(innerParams.execution_id);
@@ -238,18 +288,17 @@ export function aggregateHandlers(registry: FunctionRegistry): Partial<VgiServic
         uniqueGids.add(g);
       }
     }
-    const exec = getExecutionState(executionId, uniqueGids);
-    if (!exec) {
-      throw new Error(`aggregate_finalize: unknown execution_id for '${functionName}'`);
-    }
+    const storage = await boundFor(innerParams, ctx, executionId);
+    const bindParams = await loadContext(cfg, storage, "aggregate_finalize");
+    const stored = await loadGroupStates(storage, [...uniqueGids]);
     // Groups never updated pass state = null so finalize() can emit SQL NULL
     // (matches Python semantics for SUM/AVG/MIN/MAX over zero rows).
     const states = new Map<bigint, any | null>();
     for (const gid of groupIds) {
-      states.set(gid, exec.states.has(gid) ? exec.states.get(gid) : null);
+      states.set(gid, stored.has(gid) ? stored.get(gid) : null);
     }
     const resultBatch = cfg.finalize({
-      groupIds, states, outputSchema, args: exec.bindParams.args,
+      groupIds, states, outputSchema, args: bindParams.args,
     });
     return wrapResult(
       { result_batch: serializeBatchWithSchema(resultBatch) },
@@ -258,32 +307,23 @@ export function aggregateHandlers(registry: FunctionRegistry): Partial<VgiServic
   };
 
   // ------------------------------------------------------------------------
-  // aggregate_destructor — drop state for finished groups (best-effort)
+  // aggregate_destructor — drop the execution's state (best-effort)
   //
-  // DuckDB sends a batch of group_ids to discard; we remove each from the
-  // in-memory state map. We DO NOT tear down the entire execution on an
-  // empty batch — DuckDB may still call finalize afterwards in some plans
-  // (matches Python's conservative behavior; the execution entry is cleaned
-  // up when the worker process exits).
+  // The extension calls this once, when every group state of the execution
+  // has been destroyed (it counts destroys against allocated group ids), so
+  // it clears the whole execution -- group states and the sealed bind
+  // context -- and evicts the in-process cache, as vgi-python does.
   // ------------------------------------------------------------------------
-  const aggregateDestructor: VgiService["aggregateDestructor"] = (params) => {
-    const innerParams = unwrapRequest(params.request);
-    const executionId = toUint8Array(innerParams.execution_id);
-    const exec = getExecutionState(executionId);
-    if (!exec) return wrapResult({}, makeSchema([]));
-    const gidBatch = readSingleBatch(toUint8Array(innerParams.group_ids_batch));
-    if (!gidBatch || gidBatch.numRows === 0) return wrapResult({}, makeSchema([]));
-    const col = gidBatch.getChild("group_id")!;
-    const toDrop = new Set<bigint>();
-    for (let i = 0; i < gidBatch.numRows; i++) {
-      const v = col.get(i);
-      const g = typeof v === "bigint" ? v : BigInt(v as any);
-      exec.states.delete(g);
-      toDrop.add(g);
+  const aggregateDestructor: VgiService["aggregateDestructor"] = async (params, ctx?: any) => {
+    try {
+      const innerParams = unwrapRequest(params.request);
+      const executionId = toUint8Array(innerParams.execution_id);
+      const storage = await boundFor(innerParams, ctx, executionId);
+      aggregateContextCache.delete(storage.shardKey, executionId);
+      await storage.executionClear();
+    } catch {
+      // Teardown path — best-effort.
     }
-    // Persist deletions (unlinks the per-group file so sibling workers
-    // don't revive the state via getExecutionState's lazy disk load).
-    persistGroupStates(executionId, toDrop);
     return wrapResult({}, makeSchema([]));
   };
 

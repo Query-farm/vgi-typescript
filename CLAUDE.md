@@ -312,12 +312,32 @@ Backends:
 
 - **`FunctionStorageSqlite`** — default. `bun:sqlite` with WAL. Honors
   `VGI_WORKER_SQLITE_PATH` (set to `:memory:` for ephemeral single-process fixtures).
-- **`FunctionStorageCfDo`** — Cloudflare Durable Object over HTTPS. The DO is
-  single-threaded SQLite, wire-compatible with `FunctionStorageSqlite`. Deploy the
-  worker from `vgi-python/cloudflare/vgi-storage/` to Cloudflare. Configure the
-  vgi-typescript worker via env vars. Aggregate-state, transaction-state, and
-  window-partition methods are not implemented on the DO side — those operations
-  throw on both the Python and TypeScript clients.
+- **`FunctionStorageCfDo`** — Cloudflare Durable Object over HTTPS
+  (`vgi-cloudflare-durable-object-storage`), one DO per logical ATTACH. Every
+  `BoundStorage` routes to its request's attach shard: the framework derives
+  `att-<uuid hex>` from the framework UUID of the request's authenticated attach
+  (`openAttachWithShard`), stamps it on `bind_call.storage_shard_key` (in memory,
+  never on the wire), and `BoundStorage` calls `forShard(shardKey)`. A call bound
+  to no ATTACH goes to `loc-anon`. The client times out each attempt (30 s,
+  AbortSignal) and retries transport errors, 5xx and 429 with exponential
+  backoff + full jitter (4 attempts), resending the same `attempt_id`.
+
+Every backend implements `stateGetMany` / `statePutMany` (one round trip each on
+the DO). Aggregates keep their state in `FunctionStorage` too (group states under
+`FrameworkNS.AGGREGATE_STATE`, two round trips per update batch), so they work
+multi-host and on Cloudflare Workers; the old `os.tmpdir()/vgi-agg` file store and
+`VGI_AGG_STATE_DIR` are gone.
+
+**Sealed framework payloads** (`src/functions/storage-seal.ts`, the cross-SDK
+"sealed framework payload v1" shared with vgi-python): framework context written
+to storage (the buffered init with `bind_call.secrets`, the aggregate bind
+context) is AES-256-GCM sealed under HKDF(signing key, or the host-local key file
+when there is none) with an AAD binding (shard, execution, namespace, key).
+Opening a value that fails any check throws `StoragePayloadError`; there is no
+plaintext fallback. User data (process() state, group states, queues, finalize
+logs) is not sealed. The decoded buffered init and aggregate context are cached
+per (shard, execution) in a small LRU (`ExecutionCache`), evicted by the
+destructor; storage stays authoritative on a miss.
 
 Backend selection is driven by env vars on first use of the default `storage`
 singleton (matches Python's `_resolve_storage` pattern):

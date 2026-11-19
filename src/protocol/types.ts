@@ -67,6 +67,14 @@ export interface BindRequest {
   transaction_opaque_data: Uint8Array | null;
   resolved_secrets_provided: boolean;
   /**
+   * Framework-derived, never on the wire: the FunctionStorage shard key
+   * (`att-<uuid hex>`) of this call's attach, stamped when the framework opens
+   * the attach and strips its UUID (which the function body never sees).
+   * Absent / "" when the call is not bound to an ATTACH. Read it with
+   * `shardKeyOf(bindCall)`; `BoundStorage` routes and seals by it.
+   */
+  storage_shard_key?: string | null;
+  /**
    * COPY ... FROM context — `null`/absent unless this bind/init opens a
    * COPY-FROM scan. Additive + name-keyed, so ordinary scans (which omit it on
    * the wire) deserialize to `null`. Mirrors vgi-python's `BindRequest.copy_from`.

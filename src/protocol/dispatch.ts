@@ -101,7 +101,7 @@ export function buildVgiService(config: ProtocolConfig): VgiService {
       attachSecretKey: config.attachSecretKey,
       catalogInterface: config.catalogInterface,
     }),
-    ...aggregateHandlers(config.registry),
+    ...aggregateHandlers(config.registry, config.signingKey, config.attachSecretKey),
     ...tableBufferingHandlers(config.registry, config.signingKey, config.attachSecretKey),
     ...catalogHandlers(config.catalogInterface, config.signingKey, config.attachSecretKey),
   };

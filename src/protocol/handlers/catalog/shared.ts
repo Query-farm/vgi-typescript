@@ -119,6 +119,26 @@ export async function openAttach(
   return openFrameworkAttach(full, { explicit: attachSecretKey, signingKey });
 }
 
+/**
+ * Open an attach envelope once, returning both what the function body sees
+ * (the catalog's own bytes, UUID and options trailer stripped) and the
+ * FunctionStorage shard key of its framework UUID. An empty / absent attach
+ * yields `{ attach: <as given>, shardKey: "" }`.
+ */
+export async function openAttachWithShard(
+  envelope: Uint8Array | null | undefined,
+  auth: AuthContext | undefined,
+  signingKey: Uint8Array | undefined,
+  attachSecretKey?: Uint8Array,
+): Promise<{ attach: Uint8Array | null; shardKey: string }> {
+  if (envelope == null) return { attach: null, shardKey: "" };
+  if (envelope.length === 0) return { attach: envelope, shardKey: "" };
+  const full = await openAttachFull(envelope, auth, signingKey);
+  const shardKey = full.length >= ATTACH_UUID_LEN ? deriveShardKey(full.subarray(0, ATTACH_UUID_LEN)) : "";
+  const attach = await openFrameworkAttach(full, { explicit: attachSecretKey, signingKey });
+  return { attach, shardKey };
+}
+
 /** Hex of a byte array (lowercase). */
 function toHex(b: Uint8Array): string {
   let s = "";

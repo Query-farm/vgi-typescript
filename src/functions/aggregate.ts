@@ -1,9 +1,10 @@
 // Copyright 2025, 2026 Query Farm LLC - https://query.farm
 // Aggregate function framework — mirrors vgi-python's vgi/aggregate_function.py
-// protocol at the wire level. Per-execution state lives in an in-memory store
-// keyed by (execution_id, group_id); fine for subprocess workers and for
-// single-instance HTTP. Multi-host HTTP deployments would need a pluggable
-// state backend (same tradeoff Python's FunctionStorage wraps).
+// protocol at the wire level. Per-execution state lives in FunctionStorage
+// (sharded per attach, like every other function kind), so any worker process
+// -- or host, or Cloudflare isolate -- can serve any aggregate RPC of an
+// execution: group states under FrameworkNS.AGGREGATE_STATE keyed by
+// packIntKey(group_id), and the bind context, sealed, at packIntKey(-2).
 //
 // DuckDB drives the lifecycle via five unary RPCs:
 //
@@ -28,32 +29,9 @@ import type {
 } from "./types.js";
 import { DEFAULT_MAX_WORKERS } from "../types.js";
 import type { FunctionExample } from "./types.js";
-// Aggregate state persistence uses node:fs/path/os to spill per-group state to
-// disk under VGI_AGG_STATE_DIR. Workers (Cloudflare workerd / browsers)
-// don't define aggregate functions in the first place, so we resolve the
-// node:* modules through indirect string variables that esbuild can't trace.
-// The bundle stays clean even without nodejs_compat polyfills.
-const _NODE_FS_MOD = "node:fs";
-const _NODE_PATH_MOD = "node:path";
-const _NODE_OS_MOD = "node:os";
-function _aggReq(): any {
-  const req: any = (import.meta as any).require ?? (globalThis as any).require ?? null;
-  if (!req) {
-    throw new Error(
-      "Aggregate state persistence requires Node.js or Bun (node:fs/path/os).",
-    );
-  }
-  return req;
-}
-const fs: any = new Proxy({} as any, {
-  get: (_t, prop) => (_aggReq()(_NODE_FS_MOD) as any)[prop],
-});
-const path: any = new Proxy({} as any, {
-  get: (_t, prop) => (_aggReq()(_NODE_PATH_MOD) as any)[prop],
-});
-const os: any = new Proxy({} as any, {
-  get: (_t, prop) => (_aggReq()(_NODE_OS_MOD) as any)[prop],
-});
+import { FrameworkNS, packIntKey, type BoundStorage } from "./storage.js";
+import { ExecutionCache } from "./execution-cache.js";
+import { StoragePayloadError } from "./storage-seal.js";
 
 // Column name DuckDB prepends to every aggregate_update batch. One entry per
 // input row; the value identifies which group the row belongs to.
@@ -169,30 +147,34 @@ export interface AggregateFunctionConfig<TArgs = Record<string, any>, TState = a
   requiredSecrets?: RequiredSecret[];
 }
 
-// Per-execution state registry. Value = (gid → state) + bind context.
+// ============================================================================
+// Execution state in FunctionStorage
 //
-// Under DuckDB's parallel aggregate with worker pooling, aggregate_* RPCs for
-// the same execution_id can land on different worker processes — so state
-// needs to live in a place all workers can reach. We use a filesystem-backed
-// store (one directory per execution_id, one JSON file per group_id) with
-// atomic rename-on-write. Fine for subprocess transport and for
-// single-instance HTTP; multi-host HTTP would need a shared path or a
-// swap-in network backend. Override with VGI_AGG_STATE_DIR.
+// Under DuckDB's parallel aggregate with worker pooling (and over HTTP, where
+// every RPC may land on another host), the aggregate_* RPCs of one execution
+// reach different processes, so state lives in FunctionStorage, the same
+// shared store the table functions use:
 //
-// In-memory cache sits in front of the filesystem to keep single-process
-// workloads fast — writes go to disk, reads prefer cache, and getExecutionState
-// lazily reconstructs from disk when a different worker's exec is requested.
+//   ns = FrameworkNS.AGGREGATE_STATE ("_vgi/aggregate_state")
+//   key = packIntKey(group_id)  → that group's state (JSON, bigint-tagged);
+//                                 the function's own data, not sealed
+//   key = packIntKey(-2)        → the bind context (constant arguments, input
+//                                 schema, argument names), SEALED to its slot
+//
+// Each update/combine/finalize RPC is one batched read of the groups it
+// touches plus (update/combine) one batched write: two storage round trips per
+// batch, whatever the group count. The bind context is written once at bind
+// and cached per (shard, execution) in-process, so it costs a read only on a
+// process's first RPC of an execution. Secret VALUES are never stored: they are
+// delivered on aggregate_bind only, and update/combine/finalize see an empty
+// `secrets` -- the documented contract (see `requiredSecrets`).
+// ============================================================================
 
-type StateMap = Map<bigint, any>;
+/** Key of the sealed bind context within FrameworkNS.AGGREGATE_STATE. */
+export const AGGREGATE_CONTEXT_KEY = packIntKey(-2);
 
-interface ExecEntry {
-  states: StateMap;
-  bindArgs: Arguments;
-  bindParams: AggregateBindParams<any>;
-  loaded: Set<bigint>; // gids fetched from disk (so we don't refetch in same call)
-}
-
-const stateStore = new Map<string, ExecEntry>();
+/** Per-(shard, execution) cache of the decoded bind context. */
+export const aggregateContextCache = new ExecutionCache<AggregateBindParams<any>>(64);
 
 // Custom JSON codec: BigInt ↔ {"__bigint__":"…"}. Keep the encoder/decoder
 // centralized so aggregate state classes with int64 fields (CountState,
@@ -208,127 +190,94 @@ function jsonReviver(_: string, v: any): any {
   return v;
 }
 
-function stateDirRoot(): string {
-  return process.env.VGI_AGG_STATE_DIR ?? path.join(os.tmpdir(), "vgi-agg");
+const UTF8_ENC = new TextEncoder();
+const UTF8_DEC = new TextDecoder();
+
+/** Encode one group's state for storage. */
+export function encodeGroupState(state: unknown): Uint8Array {
+  return UTF8_ENC.encode(JSON.stringify(state, jsonReplacer));
 }
 
-function execDir(execHex: string): string {
-  return path.join(stateDirRoot(), execHex);
+/** Decode one group's state from storage. */
+export function decodeGroupState(bytes: Uint8Array): any {
+  return JSON.parse(UTF8_DEC.decode(bytes), jsonReviver);
 }
 
-function execKey(executionId: Uint8Array): string {
-  let s = "";
-  for (const b of executionId) s += b.toString(16).padStart(2, "0");
-  return s;
+function b64(buf: Uint8Array): string {
+  let binary = "";
+  for (let i = 0; i < buf.length; i++) binary += String.fromCharCode(buf[i]!);
+  return btoa(binary);
+}
+function unb64(s: string): Uint8Array {
+  const binary = atob(s);
+  const out = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) out[i] = binary.charCodeAt(i);
+  return out;
 }
 
-// Atomic write: write to tmp then rename. Avoids partial reads from another
-// worker mid-update. Node's fs.renameSync is atomic on POSIX for same FS.
-function atomicWriteJson(filePath: string, value: any): void {
-  const tmp = filePath + ".tmp." + process.pid + "." + Math.random().toString(36).slice(2);
-  const parent = path.dirname(filePath);
-  fs.mkdirSync(parent, { recursive: true });
-  fs.writeFileSync(tmp, JSON.stringify(value, jsonReplacer));
-  fs.renameSync(tmp, filePath);
+/**
+ * The stored bind context: the wire `arguments` and `input_schema` bytes and
+ * the argument names, exactly as aggregate_bind received them, so a cold
+ * process rebuilds the same AggregateBindParams (args are re-extracted from
+ * the arguments with the function's declaration). No secrets.
+ */
+export interface StoredAggregateContext {
+  argumentsIpc: Uint8Array;
+  inputSchemaIpc: Uint8Array | null;
+  argumentNames: (string | null)[] | null;
 }
 
-function tryReadJson(filePath: string): any | undefined {
+export function encodeAggregateContext(ctx: StoredAggregateContext): Uint8Array {
+  return UTF8_ENC.encode(
+    JSON.stringify({
+      v: 1,
+      arguments: b64(ctx.argumentsIpc),
+      input_schema: ctx.inputSchemaIpc ? b64(ctx.inputSchemaIpc) : null,
+      argument_names: ctx.argumentNames,
+    }),
+  );
+}
+
+export function decodeAggregateContext(bytes: Uint8Array): StoredAggregateContext {
+  let d: any;
   try {
-    const text = fs.readFileSync(filePath, "utf8");
-    return JSON.parse(text, jsonReviver);
-  } catch (e: any) {
-    if (e?.code === "ENOENT") return undefined;
-    throw e;
+    d = JSON.parse(UTF8_DEC.decode(bytes));
+  } catch {
+    throw new StoragePayloadError("aggregate: unrecognized bind context payload");
   }
+  if (!d || d.v !== 1 || typeof d.arguments !== "string") {
+    throw new StoragePayloadError("aggregate: unrecognized bind context payload format");
+  }
+  return {
+    argumentsIpc: unb64(d.arguments),
+    inputSchemaIpc: typeof d.input_schema === "string" ? unb64(d.input_schema) : null,
+    argumentNames: Array.isArray(d.argument_names) ? d.argument_names : null,
+  };
 }
 
-/**
- * Fetch the execution context — bind args/params + states for requested gids.
- * On cache miss, tries to reconstruct from on-disk files written by a
- * sibling worker. Returns undefined if the exec never existed anywhere.
- * `requestedGids` (optional) tells us which group states to pre-load.
- */
-export function getExecutionState(
-  executionId: Uint8Array,
-  requestedGids?: Iterable<bigint>,
-): ExecEntry | undefined {
-  const key = execKey(executionId);
-  let entry = stateStore.get(key);
-  if (!entry) {
-    // Try to reconstruct bind context from disk.
-    const ctx = tryReadJson(path.join(execDir(key), "context.json"));
-    if (!ctx) return undefined;
-    // Restore bindParams + args from the serialized context. args is kept
-    // only as a plain dict; the Arguments instance isn't needed after bind.
-    entry = {
-      states: new Map(),
-      bindArgs: ctx.bindArgs, // placeholder — Arguments instance is only needed during bind
-      bindParams: ctx.bindParams,
-      loaded: new Set(),
-    };
-    stateStore.set(key, entry);
+/** Read the stored states of `gids` (absent groups are left out of the map). */
+export async function loadGroupStates(storage: BoundStorage, gids: bigint[]): Promise<Map<bigint, any>> {
+  const states = new Map<bigint, any>();
+  if (gids.length === 0) return states;
+  const values = await storage.stateGetMany(FrameworkNS.AGGREGATE_STATE, gids.map((g) => packIntKey(g)));
+  for (let i = 0; i < gids.length; i++) {
+    const v = values[i];
+    if (v != null) states.set(gids[i]!, decodeGroupState(v));
   }
-  if (requestedGids) {
-    // Always re-read from disk each RPC. A sibling worker may have just
-    // written a newer value for this gid; relying on our in-memory cache
-    // would overwrite their update on our next persist (read-modify-write
-    // race). File I/O per-RPC is cheap compared to the RPC overhead.
-    for (const gid of requestedGids) {
-      const stateFile = path.join(execDir(key), gid.toString() + ".json");
-      const s = tryReadJson(stateFile);
-      if (s !== undefined) {
-        entry.states.set(gid, s);
-      } else {
-        entry.states.delete(gid);
-      }
-      entry.loaded.add(gid);
-    }
-  }
-  return entry;
+  return states;
 }
 
-export function setExecutionState(
-  executionId: Uint8Array,
-  entry: Omit<ExecEntry, "loaded">,
-): void {
-  const key = execKey(executionId);
-  stateStore.set(key, { ...entry, loaded: new Set() });
-  // Persist bind context so sibling workers can reconstruct it on demand.
-  atomicWriteJson(path.join(execDir(key), "context.json"), {
-    bindParams: entry.bindParams,
-    // bindArgs is a live Arguments instance; stash its args map separately
-    // if needed for future state-dependent behavior. Workers reading the
-    // context receive `bindParams.args` which is what update/finalize use.
-  });
-}
-
-/**
- * Persist the given group states to disk so sibling workers can pick them up.
- * Deletes the on-disk entry when the in-memory state was removed (gid no
- * longer present in states map).
- */
-export function persistGroupStates(
-  executionId: Uint8Array,
+/** Write the states of `gids` that are present in `states` (one batched put). */
+export async function storeGroupStates(
+  storage: BoundStorage,
+  states: Map<bigint, any>,
   gids: Iterable<bigint>,
-): void {
-  const key = execKey(executionId);
-  const entry = stateStore.get(key);
-  if (!entry) return;
+): Promise<void> {
+  const items: Array<[Uint8Array, Uint8Array]> = [];
   for (const gid of gids) {
-    const stateFile = path.join(execDir(key), gid.toString() + ".json");
-    if (entry.states.has(gid)) {
-      atomicWriteJson(stateFile, entry.states.get(gid));
-    } else {
-      try { fs.unlinkSync(stateFile); } catch { /* already gone */ }
-    }
-    entry.loaded.add(gid);
+    if (states.has(gid)) items.push([packIntKey(gid), encodeGroupState(states.get(gid))]);
   }
-}
-
-export function deleteExecutionState(executionId: Uint8Array): void {
-  const key = execKey(executionId);
-  stateStore.delete(key);
-  try { fs.rmSync(execDir(key), { recursive: true, force: true }); } catch { /* best-effort */ }
+  if (items.length > 0) await storage.statePutMany(FrameworkNS.AGGREGATE_STATE, items);
 }
 
 /**
