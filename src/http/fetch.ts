@@ -43,6 +43,13 @@ export interface VgiFetchOptions extends HostingOptions {
    *  grants): tickets sealed under a generated key would die on restart.
    *  Defaults to `true`, since this factory requires the key to be passed. */
   signingKeyConfigured?: boolean | undefined;
+  /**
+   * Input key material for sealed framework storage payloads. Pass the
+   * configured `VGI_SIGNING_KEY` *string* (its UTF-8 bytes are the cross-SDK
+   * ikm, so Python, Java and TypeScript workers of one deployment agree), or
+   * bytes to use unchanged. Defaults to {@link signingKey}'s bytes.
+   */
+  storageSealKey?: Uint8Array | string | undefined;
   /** State-token TTL in seconds (default 3600). */
   tokenTtl?: number | undefined;
   /** URL path prefix for VGI requests (default "/vgi"). Pass "" to mount at
@@ -203,6 +210,8 @@ export function createVgiFetch(opts: VgiFetchOptions): (req: Request) => Promise
 
   const protocol: Protocol = buildVgiProtocol({
     signingKey: opts.signingKey,
+    storageSealKey:
+      typeof opts.storageSealKey === "string" ? new TextEncoder().encode(opts.storageSealKey) : opts.storageSealKey,
     ...opts.protocol,
   });
 

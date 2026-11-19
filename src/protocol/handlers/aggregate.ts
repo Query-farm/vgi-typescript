@@ -46,6 +46,7 @@ export function aggregateHandlers(
   registry: FunctionRegistry,
   signingKey?: Uint8Array,
   attachSecretKey?: Uint8Array,
+  storageSealKey: Uint8Array | undefined = signingKey,
 ): Partial<VgiService> {
   // `schemaPath` scopes resolution to the schema the caller named. Every
   // aggregate RPC carries it (protocol 1.2.0), so an aggregate name declared in
@@ -85,7 +86,7 @@ export function aggregateHandlers(
   ): Promise<AggregateBindParams<any>> {
     const cached = aggregateContextCache.get(storage.shardKey, storage.executionId);
     if (cached) return cached;
-    const payload = await storage.sealedGet(FrameworkNS.AGGREGATE_STATE, AGGREGATE_CONTEXT_KEY, signingKey);
+    const payload = await storage.sealedGet(FrameworkNS.AGGREGATE_STATE, AGGREGATE_CONTEXT_KEY, storageSealKey);
     if (payload == null) {
       throw new Error(`${rpc}: unknown execution_id for '${cfg.name}' (bind missing or state dropped)`);
     }
@@ -154,7 +155,7 @@ export function aggregateHandlers(
       FrameworkNS.AGGREGATE_STATE,
       AGGREGATE_CONTEXT_KEY,
       encodeAggregateContext({ argumentsIpc: argBytes, inputSchemaIpc, argumentNames }),
-      signingKey,
+      storageSealKey,
     );
     aggregateContextCache.set(storage.shardKey, executionId, { ...bindParams, secrets: {} });
     return wrapResult(

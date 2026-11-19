@@ -89,8 +89,12 @@ export interface ServeVgiWorkerOptions extends HostingOptions {
   port?: number | undefined;
   /** Bind address. Iroh bridge mode defaults to loopback; otherwise Bun's default. */
   hostname?: string | undefined;
-  /** Overrides `$VGI_SIGNING_KEY`. 32 bytes. */
-  signingKey?: Uint8Array | undefined;
+  /**
+   * Overrides `$VGI_SIGNING_KEY`: 32 bytes, or the same 64-hex-character string
+   * the env var takes. A string's UTF-8 bytes are also the storage-seal ikm
+   * (see {@link resolveStorageSealKey}); bytes are used unchanged.
+   */
+  signingKey?: Uint8Array | string | undefined;
   /**
    * Optional root key for secret ATTACH options (encrypted inside
    * `attach_opaque_data` for `attachOptions()`). Defaults to the signing key.
@@ -194,6 +198,27 @@ export function resolveSigningKey(
   return crypto.getRandomValues(new Uint8Array(SIGNING_KEY_BYTES));
 }
 
+/**
+ * The ikm for sealed framework storage payloads (cross-SDK v1): the UTF-8 bytes
+ * of the signing key *as configured* -- an explicit string option, else the raw
+ * `$VGI_SIGNING_KEY` value, unmodified, exactly as vgi-python and vgi-java read
+ * it -- so one deployment key derives one payload key in every SDK. Explicit
+ * bytes are used unchanged; a generated key's bytes are used as-is (it is
+ * process-local anyway). Only the storage seal uses this; state tokens and
+ * opaque-data envelopes keep the hex-decoded key.
+ */
+export function resolveStorageSealKey(
+  explicit: Uint8Array | string | undefined,
+  env: ServeEnv,
+  resolvedSigningKey: Uint8Array,
+): Uint8Array {
+  if (typeof explicit === "string") return new TextEncoder().encode(explicit);
+  if (explicit) return explicit;
+  const raw = env.VGI_SIGNING_KEY;
+  if (raw && raw.trim()) return new TextEncoder().encode(raw);
+  return resolvedSigningKey;
+}
+
 function resolvePort(explicit: number | undefined, env: ServeEnv): number {
   if (explicit !== undefined) return explicit;
   const raw = env.PORT?.trim();
@@ -228,7 +253,11 @@ export function createVgiWorkerFetch(
   opts: ServeVgiWorkerOptions,
 ): (req: Request) => Promise<Response> {
   const env = opts.env ?? (process.env as ServeEnv);
-  const signingKey = resolveSigningKey(opts.signingKey, env);
+  const signingKey = resolveSigningKey(
+    typeof opts.signingKey === "string" ? parseSigningKeyHex(opts.signingKey) : opts.signingKey,
+    env,
+  );
+  const storageSealKey = resolveStorageSealKey(opts.signingKey, env, signingKey);
   // Explicit option or `$VGI_SIGNING_KEY`: a key that survives a restart.
   // The generated fallback never enables attach tickets.
   const signingKeyConfigured = opts.signingKey !== undefined || !!env.VGI_SIGNING_KEY?.trim();
@@ -250,6 +279,7 @@ export function createVgiWorkerFetch(
     protocol: { registry: opts.registry, catalogInterface: opts.catalogInterface, attachSecretKey: opts.attachSecretKey },
     signingKey,
     signingKeyConfigured,
+    storageSealKey,
     tokenTtl,
     prefix: opts.prefix ?? "",
     serverId: opts.serverId ?? opts.name,

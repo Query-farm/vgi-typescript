@@ -331,8 +331,10 @@ multi-host and on Cloudflare Workers; the old `os.tmpdir()/vgi-agg` file store a
 **Sealed framework payloads** (`src/functions/storage-seal.ts`, the cross-SDK
 "sealed framework payload v1" shared with vgi-python): framework context written
 to storage (the buffered init with `bind_call.secrets`, the aggregate bind
-context) is AES-256-GCM sealed under HKDF(signing key, or the host-local key file
-when there is none) with an AAD binding (shard, execution, namespace, key).
+context) is AES-256-GCM sealed under HKDF(ikm) — ikm is the UTF-8 bytes of
+`VGI_SIGNING_KEY` as configured (not its hex-decoded form; `ProtocolConfig.storageSealKey`,
+`resolveStorageSealKey`), so every SDK of one deployment derives the same key, or the
+host-local key file when there is no signing key with an AAD binding (shard, execution, namespace, key).
 Opening a value that fails any check throws `StoragePayloadError`; there is no
 plaintext fallback. User data (process() state, group states, queues, finalize
 logs) is not sealed. The decoded buffered init and aggregate context are cached

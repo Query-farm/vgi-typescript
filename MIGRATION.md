@@ -29,8 +29,14 @@
   (and `initialState` / `combine` when called from them) see empty `secrets` —
   only `onBind` sees them. The aggregate destructor now clears the whole
   execution, as vgi-python's does.
-- `aggregateHandlers(registry, signingKey?, attachSecretKey?)` — new optional
-  arguments (wired by `buildVgiService`).
+- **Seal key material** is the UTF-8 bytes of `VGI_SIGNING_KEY` as configured
+  (the cross-SDK v1 rule), not the 32 hex-decoded bytes the state tokens use.
+  `serveVgiWorker` / `createVgiWorkerFetch` do this for you (and now also accept
+  `signingKey` as the hex string). A Cloudflare Worker calling `createVgiFetch`
+  with decoded bytes should also pass `storageSealKey: env.VGI_SIGNING_KEY` so
+  its payloads match other SDKs'; without it the decoded bytes are used.
+- `aggregateHandlers(registry, signingKey?, attachSecretKey?, storageSealKey?)` and
+  `tableBufferingHandlers(...)` — new optional arguments (wired by `buildVgiService`).
 - The default SQLite state directory is created `0700`.
 
 ## Unreleased — vgi.v3 / 3.3.0 write path

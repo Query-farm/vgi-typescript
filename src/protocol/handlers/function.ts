@@ -60,6 +60,8 @@ export interface FunctionHandlerConfig {
   signingKey?: Uint8Array | undefined;
   /** Explicit root key for secret ATTACH options (see attach-secret-options.ts). */
   attachSecretKey?: Uint8Array | undefined;
+  /** Seal ikm for framework storage payloads (see ProtocolConfig.storageSealKey). */
+  storageSealKey?: Uint8Array | undefined;
   /**
    * Used to map a bind's `attach_opaque_data` to its catalog, so resolution can
    * be scoped when two catalogs declare the same schema and function name.
@@ -209,6 +211,7 @@ async function resolveSplitPayloads(
 /** The per-function lifecycle's `vgi.v3` handlers. */
 export function functionHandlers(config: FunctionHandlerConfig): Partial<VgiService> {
   const { registry, signingKey, catalogInterface, attachSecretKey } = config;
+  const storageSealKey = config.storageSealKey ?? signingKey;
 
   // The framework mints every attach as uuid(16) || catalog_bytes (sealed on
   // HTTP, plaintext on subprocess). Function bodies — like catalog bodies —
@@ -344,7 +347,7 @@ export function functionHandlers(config: FunctionHandlerConfig): Partial<VgiServ
       // Done here rather than in the function because only this layer holds
       // the signing key the seal derives from.
       if ((func as any).kind === "table_buffering" && request.phase === TableInOutPhase.TABLE_BUFFERING) {
-        await persistBufferingInit(request, initResponse, signingKey);
+        await persistBufferingInit(request, initResponse, storageSealKey);
       }
 
       // A FINALIZE stream reads its accumulated states from storage, where

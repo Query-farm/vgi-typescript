@@ -41,6 +41,15 @@ export interface ProtocolConfig {
    * receive a given attach must use the same key.
    */
   attachSecretKey?: Uint8Array | undefined;
+  /**
+   * Input key material for sealed framework storage payloads
+   * (src/functions/storage-seal.ts). The cross-SDK v1 rule is the UTF-8 bytes
+   * of `VGI_SIGNING_KEY` exactly as configured (not its hex-decoded form), so a
+   * deployment's one key derives the same payload key in every SDK. Defaults
+   * to `signingKey` (bytes passed as bytes are used unchanged); with neither,
+   * the host-local key file. The attach / state-token keys are unaffected.
+   */
+  storageSealKey?: Uint8Array | undefined;
 }
 
 /**
@@ -100,9 +109,10 @@ export function buildVgiService(config: ProtocolConfig): VgiService {
       signingKey: config.signingKey,
       attachSecretKey: config.attachSecretKey,
       catalogInterface: config.catalogInterface,
+      storageSealKey: config.storageSealKey ?? config.signingKey,
     }),
-    ...aggregateHandlers(config.registry, config.signingKey, config.attachSecretKey),
-    ...tableBufferingHandlers(config.registry, config.signingKey, config.attachSecretKey),
+    ...aggregateHandlers(config.registry, config.signingKey, config.attachSecretKey, config.storageSealKey ?? config.signingKey),
+    ...tableBufferingHandlers(config.registry, config.signingKey, config.attachSecretKey, config.storageSealKey ?? config.signingKey),
     ...catalogHandlers(config.catalogInterface, config.signingKey, config.attachSecretKey),
   };
 }

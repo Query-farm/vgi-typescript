@@ -58,6 +58,7 @@ import {
   type StorageSlot,
 } from "../storage-seal.js";
 import { buildVgiService } from "../../protocol/dispatch.js";
+import { resolveStorageSealKey, resolveSigningKey, parseSigningKeyHex } from "../../serve-entry.js";
 import { sealAttach } from "../../protocol/handlers/catalog/shared.js";
 import { serializeArguments } from "../../protocol/serializers/arguments.js";
 import { serializeInitRequest } from "../../protocol/serialize.js";
@@ -171,6 +172,80 @@ describe("sealed framework payload v1", () => {
       "6d6491796a40";
     expect(hex(await sealWith(plaintext, ikm, slot, nonce))).toBe(wireHex);
     expect(dec.decode(await openWith(unhex(wireHex), ikm, slot))).toBe("vgi sealed framework payload v1");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Storage-seal ikm = the UTF-8 bytes of VGI_SIGNING_KEY as configured
+// ---------------------------------------------------------------------------
+
+describe("storage-seal ikm resolution", () => {
+  const HEX64 = "0123456789abcdef".repeat(4);
+  const noWarn = () => {};
+
+  test("VGI_SIGNING_KEY (64 hex chars) seals with ikm = those 64 ASCII bytes, not the decoded 32", () => {
+    const env = { VGI_SIGNING_KEY: HEX64 };
+    const tokenKey = resolveSigningKey(undefined, env, noWarn);
+    expect(tokenKey.length).toBe(32); // state tokens / envelopes: unchanged
+    const ikm = resolveStorageSealKey(undefined, env, tokenKey);
+    expect(ikm.length).toBe(64);
+    expect(dec.decode(ikm)).toBe(HEX64);
+  });
+
+  test("explicit string -> its UTF-8; explicit bytes -> unchanged; generated -> its bytes", () => {
+    const decoded = parseSigningKeyHex(HEX64);
+    expect(dec.decode(resolveStorageSealKey(HEX64, {}, decoded))).toBe(HEX64);
+    const bytes = new Uint8Array(32).fill(3);
+    expect(resolveStorageSealKey(bytes, { VGI_SIGNING_KEY: HEX64 }, bytes)).toBe(bytes);
+    const minted = new Uint8Array(32).fill(4);
+    expect(resolveStorageSealKey(undefined, {}, minted)).toBe(minted);
+  });
+
+  // Cross-checked against vgi-python 0.53.3:
+  //   vgi._storage_seal.seal_with(b"aggregate bind context", b"0123456789abcdef"*4,
+  //     shard_key="att-"+"ab"*16, scope_id=bytes(range(16)),
+  //     ns=b"_vgi/aggregate_state", key=BoundStorage.pack_int_key(-2),
+  //     nonce=bytes(range(12, 24)))
+  test("a payload sealed under a 64-hex VGI_SIGNING_KEY matches vgi-python byte for byte", async () => {
+    const ikm = resolveStorageSealKey(undefined, { VGI_SIGNING_KEY: HEX64 }, parseSigningKeyHex(HEX64));
+    expect(hex(await deriveStoragePayloadKey(ikm))).toBe("bcc6b0475564abef4aacbbd08c02a68829f72b91dd31733801a81ed3a8de0006");
+    const slot: StorageSlot = {
+      shardKey: "att-" + "ab".repeat(16),
+      scopeId: Uint8Array.from({ length: 16 }, (_, i) => i),
+      ns: enc.encode("_vgi/aggregate_state"),
+      key: packIntKey(-2),
+    };
+    expect(hex(slot.key)).toBe("feffffffffffffff");
+    const wire = await sealWith(enc.encode("aggregate bind context"), ikm, slot, Uint8Array.from({ length: 12 }, (_, i) => i + 12));
+    expect(hex(wire)).toBe(
+      "010c0d0e0f1011121314151617fe93c8ad50bab6fed0c3f2f00bbd5fe0b1f1b5bd2a0fb56d53a2bb93b5036d03d0be3f10ca11",
+    );
+  });
+
+  test("buildVgiService seals with storageSealKey, not the decoded signing key", async () => {
+    const calls: Call[] = [];
+    const sqlite = new FunctionStorageSqlite(":memory:");
+    setStorage(new CountingStorage(sqlite, calls));
+    const tokenKey = parseSigningKeyHex(HEX64);
+    const sealKey = enc.encode(HEX64);
+    const service: any = buildVgiService({ registry, signingKey: tokenKey, storageSealKey: sealKey });
+    const a = await sealAttach(enc.encode("catalog-bytes"), undefined, tokenKey);
+    const bound = unwrap(
+      await service.aggregateBind(
+        req(AggregateBindRequestSchema, {
+          function_name: "hardening_sum",
+          arguments: serializeArguments(new Arguments()),
+          input_schema: serializeSchema(INPUT),
+          attach_opaque_data: a,
+        }),
+        {},
+      ),
+    );
+    const exec = bound.execution_id as Uint8Array;
+    const raw = (await sqlite.stateGet(exec, FrameworkNS.AGGREGATE_STATE, packIntKey(-2)))!;
+    const slot = new BoundStorage(sqlite, exec, null, calls[0]!.shard);
+    await expect(slot.openSealed(FrameworkNS.AGGREGATE_STATE, packIntKey(-2), raw, sealKey)).resolves.toBeInstanceOf(Uint8Array);
+    await expect(slot.openSealed(FrameworkNS.AGGREGATE_STATE, packIntKey(-2), raw, tokenKey)).rejects.toBeInstanceOf(StoragePayloadError);
   });
 });
 

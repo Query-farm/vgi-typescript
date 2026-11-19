@@ -37,6 +37,7 @@ export function tableBufferingHandlers(
   registry: FunctionRegistry,
   signingKey?: Uint8Array,
   attachSecretKey?: Uint8Array,
+  storageSealKey: Uint8Array | undefined = signingKey,
 ): Partial<VgiService> {
   // `schemaPath` scopes resolution to the schema the caller named. The
   // buffering process/combine RPCs carry it (protocol 1.2.0), so a name
@@ -80,7 +81,7 @@ export function tableBufferingHandlers(
     // Cached per (shard, execution) after the first load; storage (sealed) is
     // authoritative on a miss. The stored request carries no attach or
     // transaction: they come from this request, opened as the init turn did.
-    const init = await loadBufferingInit(bound, signingKey);
+    const init = await loadBufferingInit(bound, storageSealKey);
     let txnPlain = transactionId;
     if (txnPlain && txnPlain.length > 0 && signingKey && rawAttach) {
       try {
