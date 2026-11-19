@@ -36,6 +36,19 @@ Test target names mirror the test file paths under `vgi/test/sql/`, minus the `.
 
 Each test runs the **release** binary first. On failure, it reruns with the **debug** binary (`-s` flag) to show verbose diagnostic output.
 
+### Blob-vendor externalization (the `vendor` lane)
+
+`TRANSPORT=vendor ci/run-integration.sh` is the http lane with everything
+externalized through vgi-rpc-python's fake blob vendor (started by vgi's
+`test/start_fake_blob_vendor.sh`, needs `uvx`), plus
+`$VGI_DIR/test/sql/external_storage/*`. The pieces: `serveVgiWorker` reads
+`VGI_BLOB_VENDOR_URL` & co. (`src/http/blob-vendor.ts`; Cloudflare Workers
+spread `blobVendorHttpConfigFromEnv(env)` into `createVgiFetch`), function
+storage is wrapped in `ExternalizingStorage` (`src/functions/storage-blobs.ts`:
+the cross-SDK value envelope, always on for cloudflare-do, opt-in elsewhere with
+`VGI_STORAGE_EXTERNALIZE=1`), and `examples/blob_catalog.ts` serves the
+`blob_test` catalog (vgi `docs/testing/blob-test-catalog.md` is the contract).
+
 ### Both transports must pass
 
 Always run tests on **both** the local-IPC transport (launcher *or* subprocess)

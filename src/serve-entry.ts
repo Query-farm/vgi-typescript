@@ -33,10 +33,11 @@ import {
   type PeerResolutionOptions,
 } from "@query-farm/vgi-rpc";
 import { createVgiFetch } from "./http/fetch.js";
+import { blobVendorHttpConfigFromEnv, type BlobVendorEnv, type BlobVendorHttpConfig } from "./http/blob-vendor.js";
 import { grantKeysFromArgv, type HostingOptions } from "./rpc-server.js";
 
 /** Environment variables `serveVgiWorker` reads. Injectable for testing. */
-export interface ServeEnv {
+export interface ServeEnv extends BlobVendorEnv {
   PORT?: string;
   VGI_SIGNING_KEY?: string;
   VGI_TOKEN_TTL?: string;
@@ -71,7 +72,14 @@ export interface IrohHttpBridgeOptions {
   peerResolutionContext?: ((request: Request) => PeerResolutionOptions | Promise<PeerResolutionOptions>) | undefined;
 }
 
-export interface ServeVgiWorkerOptions extends HostingOptions {
+/**
+ * The external-location fields ({@link BlobVendorHttpConfig}) default to the
+ * blob-vendor environment (`VGI_BLOB_VENDOR_URL`, `VGI_BLOB_VENDOR_TOKEN`,
+ * `VGI_RPC_EXTERNALIZE_THRESHOLD_BYTES`, `VGI_RPC_EXTERNAL_COMPRESSION`,
+ * `VGI_RPC_MAX_REQUEST_BYTES`, `VGI_RPC_MAX_UPLOAD_BYTES`); an explicit option
+ * wins.
+ */
+export interface ServeVgiWorkerOptions extends HostingOptions, BlobVendorHttpConfig {
   /** Short worker name shown on the landing page, e.g. "ishares". */
   name: string;
   /** One-line description of what the worker serves. */
@@ -274,8 +282,13 @@ export function createVgiWorkerFetch(
     );
   }
   const trustedProxyAddresses = bridge?.trustedProxyAddresses ?? ["127.0.0.1"];
+  const blobVendor = blobVendorHttpConfigFromEnv(env);
 
   return createVgiFetch({
+    externalLocation: opts.externalLocation ?? blobVendor.externalLocation,
+    uploadUrlProvider: opts.uploadUrlProvider ?? blobVendor.uploadUrlProvider,
+    maxRequestBytes: opts.maxRequestBytes ?? blobVendor.maxRequestBytes,
+    maxUploadBytes: opts.maxUploadBytes ?? blobVendor.maxUploadBytes,
     protocol: { registry: opts.registry, catalogInterface: opts.catalogInterface, attachSecretKey: opts.attachSecretKey },
     signingKey,
     signingKeyConfigured,

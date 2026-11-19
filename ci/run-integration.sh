@@ -36,7 +36,10 @@
 #   HAYBARN_UNITTEST  path to the haybarn-unittest binary
 # Optional:
 #   BIN_DIR           dir holding the worker wrappers (default: $REPO/bin)
-#   TRANSPORT         http | stdio | launch          (default: http)
+#   TRANSPORT         http | stdio | launch | vendor (default: http)
+#                     vendor = the http lane with everything externalized
+#                     through a fake blob vendor, plus test/sql/external_storage
+#                     (see "The vendor lane" below)
 #   VGI_BUN_CONDITIONS  Arrow backend for the bun workers (unset | flechette)
 #   EXTRA_EXCLUDES    extra integration-relative paths to drop from staging
 #                     (space-separated; used for tests that are version-skewed
@@ -134,7 +137,7 @@ EXCLUDED=(
   'table_in_out/echo/nested_type_combinations.test'
 )
 AWK_HTTP=0
-if [ "$TRANSPORT" = "http" ]; then
+if [ "$TRANSPORT" = "http" ] || [ "$TRANSPORT" = "vendor" ]; then
   AWK_HTTP=1
   # No http-lane exclusions. This block used to drop five tests, each with a
   # plausible reason, and all five reasons were wrong:
@@ -177,7 +180,17 @@ mkdir -p "$STAGE/test/sql/integration"
 if [ -d "$VGI_SRC/test/support" ]; then
   cp -R "$VGI_SRC/test/support" "$STAGE/test/support"
 fi
-STAGED=$(find "$STAGE/test/sql/integration" -name '*.test' | wc -l | tr -d ' ')
+# The vendor lane also runs the blob-vendor externalization suite.
+if [ "$TRANSPORT" = "vendor" ]; then
+  EXTERNAL_STORAGE="$VGI_SRC/test/sql/external_storage"
+  [ -d "$EXTERNAL_STORAGE" ] || { echo "::error::no test/sql/external_storage under VGI_SRC=$VGI_SRC (needs vgi >= f9e5df3)"; exit 1; }
+  mkdir -p "$STAGE/test/sql/external_storage"
+  for f in "$EXTERNAL_STORAGE"/*.test; do
+    awk -v http=1 -v install="$PREPROCESS" -f "$HERE/preprocess-require.awk" "$f" \
+      > "$STAGE/test/sql/external_storage/$(basename "$f")"
+  done
+fi
+STAGED=$(find "$STAGE/test/sql" -name '*.test' | wc -l | tr -d ' ')
 echo "Staged $STAGED test files."
 
 # `--test-dir $STAGE` makes the runner discover *and* chdir to the staged tree.
@@ -243,6 +256,8 @@ export VGI_ENGINE_DELETE_RETURNING_VIRTUAL_COLUMNS="${VGI_ENGINE_DELETE_RETURNIN
 BG_PIDS_FILE="$(mktemp)"
 # shellcheck disable=SC2329  # invoked indirectly via `trap cleanup EXIT` below
 cleanup() {
+  # The vendor lane's fake blob vendor (test/start_fake_blob_vendor.sh).
+  if declare -F stop_fake_blob_vendor >/dev/null; then stop_fake_blob_vendor; fi
   if [ -f "$BG_PIDS_FILE" ]; then
     while read -r p; do [ -n "$p" ] && kill "$p" 2>/dev/null || true; done < "$BG_PIDS_FILE"
   fi
@@ -307,6 +322,7 @@ EXPECTED_SKIP_REASONS=(
   # Infrastructure this repo's CI deliberately does not stand up.
   'require-env VGI_DOCKER_IMAGE'             # containerised worker lane
   'require-env VGI_DOCKER_TCP_IMAGE'         # containerised worker over TCP
+  'require-env VGI_DOCKER_TX_IMAGE'          # containerised writable-tx worker (vgi >= f9e5df3)
   'require-env VGI_GITHUB_NETWORK_TESTS'     # hits github.com; opt-in only
   'require-env VGI_TEST_COMPANION_TARGET'    # companion-catalog fixture (Python-side)
   'require-env VGI_TEST_BRANCH_DIR'          # multi-branch Iceberg fixture tree
@@ -339,7 +355,7 @@ case "$TRANSPORT" in
     ;;
 esac
 case "$TRANSPORT" in
-  http)
+  http|vendor)
     # The writable-table fixture (examples/simple-writable-worker.ts) has no
     # HTTP serve mode yet; it runs on the stdio and launch lanes.
     EXPECTED_SKIP_REASONS+=('require-env VGI_SIMPLE_WRITABLE_WORKER')
@@ -355,6 +371,15 @@ case "$TRANSPORT" in
     EXPECTED_SKIP_REASONS+=('require-env VGI_REQUIRE_LAUNCHER_TRANSPORT')
     ;;
 esac
+if [ "$TRANSPORT" = "vendor" ]; then
+  # external_storage/fetch_*.test test the extension's own download client
+  # against vgi's test/support/external_location_probe_worker.py, not a worker
+  # SDK (docs/testing/blob-test-catalog.md: "not part of this contract").
+  EXPECTED_SKIP_REASONS+=('require-env VGI_EXTERNAL_PROBE_WORKER')
+  # fetch_loopback_refused.test runs only WITHOUT the loopback allowance, which
+  # the vendor lane must set to reach the fake's http://127.0.0.1 signed URLs.
+  EXPECTED_SKIP_REASONS+=('require-env-not VGI_TEST_ALLOW_LOOPBACK_EXTERNAL_LOCATIONS')
+fi
 
 # Floor on executed test cases. The regression this harness exists to catch is
 # "the suite silently stopped running", which shows up as a collapse in this
@@ -365,7 +390,7 @@ esac
 # far above the 25 that executed before this harness landed. stdio dropped by 2
 # when the two crash-recovery files moved to vgi test_deferred/crash_recovery/.
 case "$TRANSPORT" in
-  http)   MIN_EXECUTED="${MIN_EXECUTED:-245}" ;;
+  http|vendor) MIN_EXECUTED="${MIN_EXECUTED:-245}" ;;
   stdio)  MIN_EXECUTED="${MIN_EXECUTED:-243}" ;;
   launch) MIN_EXECUTED="${MIN_EXECUTED:-240}" ;;
 esac
@@ -415,7 +440,27 @@ case "$TRANSPORT" in
     boot_http_worker "$VERSIONED_HTTP" || exit 1
     export VGI_VERSIONED_HTTP_WORKER="http://localhost:${BOOTED_PORT}"
     ;;
-  http)
+  http|vendor)
+    if [ "$TRANSPORT" = "vendor" ]; then
+      # ── The vendor lane ──────────────────────────────────────────────────
+      # vgi's test/start_fake_blob_vendor.sh starts vgi-rpc-python's
+      # `vgi-rpc-fake-vendor --test-routes` with uvx from a pinned commit and
+      # exports the lane environment: VGI_BLOB_VENDOR_URL/_TOKEN, a 4 KiB
+      # result threshold, a 32 KiB request cap (larger requests go up through
+      # vendor upload URLs), VGI_STORAGE_EXTERNALIZE=1 with a 4 KiB storage
+      # threshold, and the extension's loopback allowance. Every http worker
+      # booted below inherits it: serveVgiWorker reads the vendor variables
+      # (src/http/blob-vendor.ts) and resolveStorageFromEnv wraps SQLite in
+      # ExternalizingStorage. The contract is vgi docs/testing/blob-test-catalog.md;
+      # the main worker serves its `blob_test` catalog (examples/blob_catalog.ts).
+      command -v uvx >/dev/null 2>&1 || { echo "::error::the vendor lane needs uvx (astral-sh/setup-uv)"; exit 1; }
+      # shellcheck source=/dev/null
+      source "$VGI_SRC/test/start_fake_blob_vendor.sh" || { echo "::error::fake blob vendor did not start"; exit 1; }
+      # The SDK's own ExternalizingStorage tests against this lane's vendor
+      # (fault routes included); required here, so a broken vendor is a failure.
+      ( cd "$REPO" && VGI_VENDOR_TESTS_REQUIRED=1 bun ${VGI_BUN_CONDITIONS:+--conditions="$VGI_BUN_CONDITIONS"} \
+          test src/functions/__tests__/storage-blobs.test.ts ) || { echo "::error::storage-blobs unit tests failed against the lane vendor"; exit 1; }
+    fi
     # Whole-suite-over-HTTP (mirrors make test-http): every ATTACH goes over
     # http://, so staging injected `LOAD httpfs` and dropped the pool-semantics
     # files. All four catalogs get their own long-lived server.
@@ -445,7 +490,7 @@ case "$TRANSPORT" in
     export VGI_HTTP_TRANSPORT=1
     ;;
   *)
-    echo "::error::unknown TRANSPORT=$TRANSPORT (expected http|stdio|launch)"; exit 1 ;;
+    echo "::error::unknown TRANSPORT=$TRANSPORT (expected http|stdio|launch|vendor)"; exit 1 ;;
 esac
 
 SUITE_GLOB="test/sql/integration/*"
@@ -577,5 +622,16 @@ SECONDS=0
 suite_rc=0
 run_unittest "$SUITE_GLOB" || suite_rc=$?
 echo "Suite wall clock: ${SECONDS}s for $TOTAL_EXECUTED executed test cases."
+
+if [ "$TRANSPORT" = "vendor" ]; then
+  # The externalization suite, one file at a time in this one process (the
+  # files compare the vendor's lane-wide counters and arm faults). 7 of its 10
+  # files are worker tests; the 3 fetch_* files skip (see the skip list).
+  echo "Running test/sql/external_storage/* against the fake blob vendor ..."
+  MIN_EXECUTED="${MIN_EXECUTED_EXTERNAL_STORAGE:-7}"
+  run_unittest "test/sql/external_storage/*" || suite_rc=1
+  # Evidence the lane externalized at all: the vendor's lifetime counters.
+  echo "fake blob vendor counters: $(curl -fsS "$VGI_BLOB_VENDOR_URL/__stats__" 2>&1 | tr -s ' ')"
+fi
 
 exit "$suite_rc"

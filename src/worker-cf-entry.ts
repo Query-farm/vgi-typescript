@@ -15,6 +15,23 @@
 
 export { createVgiFetch } from "./http/fetch.js";
 export type { VgiFetchOptions } from "./http/fetch.js";
+// Blob vendor: spread blobVendorHttpConfigFromEnv(env) into createVgiFetch, and
+// wrap the Durable Object storage with wrapStorageFromEnv(cfDo, { maxValueBytes:
+// CF_DO_MAX_VALUE_BYTES, env }) before setStorage, so both read the Worker's env.
+export { blobVendorHttpConfigFromEnv } from "./http/blob-vendor.js";
+export type { BlobVendorEnv, BlobVendorHttpConfig } from "./http/blob-vendor.js";
+export {
+  FunctionStorageCfDo,
+  CF_DO_MAX_VALUE_BYTES,
+  ExternalizingStorage,
+  wrapStorageFromEnv,
+  setStorage,
+  StorageBlobError,
+  StorageBlobIntegrityError,
+  StorageBlobMissingError,
+  StorageEnvelopeError,
+  StorageValueTooLargeError,
+} from "./index.core.js";
 export type { HostingOptions } from "./rpc-server.js";
 export {
   AuthUnavailableError,

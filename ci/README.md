@@ -79,9 +79,9 @@ build's own source tree, ignoring every exclusion and every rewrite.
 
 ## Transport lanes
 
-`run-integration.sh` honours `TRANSPORT=http|stdio|launch`, mirroring the
-Makefile's `test-http` / `test-subprocess` / `test` targets. CI runs four legs:
-{`http`, `launch`} × {arrow-js, flechette}.
+`run-integration.sh` honours `TRANSPORT=http|stdio|launch|vendor`, the first
+three mirroring the Makefile's `test-http` / `test-subprocess` / `test` targets.
+CI runs six legs: {`http`, `launch`, `vendor`} × {arrow-js, flechette}.
 
 - **`http`** — the whole suite over the stateless HTTP transport, against the four
   long-lived `bin/vgi-example-*-http-worker` servers. Staging injects
@@ -96,6 +96,18 @@ Makefile's `test-http` / `test-subprocess` / `test` targets. CI runs four legs:
   that covers what http structurally cannot — the `launcher/*` tests and the four
   subprocess-pool-semantics files. Measured: **256 executed / 288 staged, 11,147
   assertions, ~47 s**.
+- **`vendor`** — the `http` lane with everything externalized through a fake
+  blob vendor, plus `test/sql/external_storage/*`. The script sources vgi's
+  `test/start_fake_blob_vendor.sh` (vgi-rpc-python's `vgi-rpc-fake-vendor
+  --test-routes`, run with `uvx` from a pinned commit), which exports
+  `VGI_BLOB_VENDOR_URL`, a 4 KiB result threshold, a 32 KiB request cap and
+  `VGI_STORAGE_EXTERNALIZE=1` with a 4 KiB storage threshold; the http workers
+  inherit it. It first runs `src/functions/__tests__/storage-blobs.test.ts`
+  against the lane's vendor, then the whole integration suite, then the
+  externalization files one at a time (7 run; the 3 `fetch_*` files test the
+  extension's own download client and skip). Its vgi checkout is pinned
+  separately (`VGI_VENDOR_REF` in the workflow), to the commit that defines the
+  `blob_test` contract (vgi `docs/testing/blob-test-catalog.md`). Needs `uvx`.
 - **`stdio`** — plain subprocess transport, one pooled bun worker per DuckDB
   process. Not run in CI: it pays a bun cold start per test
   and thrashes the 2-core runners. Use it locally when debugging worker spawn.
@@ -187,7 +199,7 @@ the two modes run the same set.
 |---|---|
 | `VGI_SRC` | path to a `Query-farm/vgi` checkout (required) |
 | `HAYBARN_UNITTEST` | path to the runner binary (required) |
-| `TRANSPORT` | `http` (default) \| `stdio` \| `launch` |
+| `TRANSPORT` | `http` (default) \| `stdio` \| `launch` \| `vendor` |
 | `VGI_BUN_CONDITIONS` | Arrow backend: unset (arrow-js) \| `flechette` |
 | `RUNNER_LINKS_EXTENSIONS` | `1` selects linked extensions and disables installs |
 | `PREPROCESS` | `1` (default) rewrite `require` gates; `0` for a from-source runner |

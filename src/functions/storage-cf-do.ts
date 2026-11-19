@@ -22,6 +22,14 @@ export type FetchLike = (
   init?: { method?: string; headers?: Record<string, string>; body?: string; signal?: AbortSignal },
 ) => Promise<Response>;
 
+/**
+ * The storage service's per-value cap (`MAX_VALUE_BYTES` in its src/index.ts).
+ * `resolveStorageFromEnv` / `setStorage` wrap this backend in
+ * `ExternalizingStorage` with this cap, which envelopes every value and moves
+ * large ones to the blob vendor.
+ */
+export const MAX_VALUE_BYTES = 1024 * 1024;
+
 /** The DO server's shard_key rule (vgi-cloudflare-durable-object-storage). */
 export const SHARD_KEY_RE = /^[A-Za-z0-9._-]{1,128}$/;
 
@@ -56,6 +64,10 @@ class RetryableError extends Error {
 const NS_WORKER = new TextEncoder().encode("worker");
 
 export class FunctionStorageCfDo implements FunctionStorage {
+  /** Marks this backend for `setStorage`, which always envelopes it. */
+  readonly storageKind = "cloudflare-do";
+  /** The service's per-value cap ({@link MAX_VALUE_BYTES}). */
+  readonly maxValueBytes = MAX_VALUE_BYTES;
   private readonly _baseUrl: string;
   private readonly _token: string | null;
   /** Per-attach routing key (att-<hex uuid>); "" until pinned via forShard. */
@@ -201,6 +213,18 @@ export class FunctionStorageCfDo implements FunctionStorage {
   async statePutMany(scopeId: Uint8Array, ns: Uint8Array, items: Array<[Uint8Array, Uint8Array]>): Promise<void> {
     if (items.length === 0) return;
     await this._statePutMany(scopeId, ns, items);
+  }
+
+  async stateDelete(scopeId: Uint8Array, ns: Uint8Array, keys: Uint8Array[]): Promise<number> {
+    if (keys.length === 0) return 0;
+    // Naturally idempotent; the attempt_id is for audit only.
+    const data = await this._post<{ deleted: number }>("state_delete", {
+      scope_id: bytesToB64(scopeId),
+      ns: bytesToB64(ns),
+      keys: keys.map(bytesToB64),
+      attempt_id: newAttemptId(),
+    });
+    return Number(data.deleted ?? 0);
   }
 
   // --- Append-only log ---

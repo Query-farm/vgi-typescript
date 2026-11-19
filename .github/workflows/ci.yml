@@ -42,6 +42,9 @@ permissions:
 env:
   # Test sources and statically linked binaries come from this exact native commit.
   VGI_REF: 9dae8d55c9692cbd8b69d021c28b20a09aeee438
+  # The vendor lane needs the blob_test contract, test/sql/external_storage
+  # and test/start_fake_blob_vendor.sh, which arrived in vgi f9e5df3.
+  VGI_VENDOR_REF: f9e5df356dcc8fd18f545a3a348ca364ae58fe0e
   VGI_NATIVE_RUNNER_BRANCH: v2.0
 
 jobs:
@@ -57,6 +60,10 @@ jobs:
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
+
+      # TODO(release-wave): drop with the switch to a published vgi-rpc.
+      - name: Build the pinned vgi-rpc's declarations
+        run: scripts/prepare-pinned-vgi-rpc.sh
 
       - name: Build (types + bundles)
         run: bun run build
@@ -141,6 +148,13 @@ jobs:
           - { lane: launch, backend: arrow-js, conditions: '' }
           # RPC 0.29.2 adapts incoming IPC to the selected Arrow backend.
           - { lane: launch, backend: flechette, conditions: flechette }
+          # The http lane with everything externalized through a fake blob
+          # vendor (results over 4 KiB are pointers, requests over 32 KiB go
+          # up through vendor upload URLs, storage values over 4 KiB live in
+          # the vendor), plus test/sql/external_storage. Pinned to the vgi
+          # commit that defines that contract (VGI_VENDOR_REF).
+          - { lane: vendor, backend: arrow-js, conditions: '' }
+          - { lane: vendor, backend: flechette, conditions: flechette }
     steps:
       - name: Checkout vgi-typescript
         uses: actions/checkout@v4
@@ -150,7 +164,7 @@ jobs:
         with:
           repository: Query-farm/vgi
           path: vgi-upstream
-          ref: ${{ env.VGI_REF }}
+          ref: ${{ matrix.lane == 'vendor' && env.VGI_VENDOR_REF || env.VGI_REF }}
 
       - uses: oven-sh/setup-bun@v2
         with:
@@ -158,6 +172,12 @@ jobs:
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
+
+      # The vendor lane's fake blob vendor runs with uvx from a pinned
+      # vgi-rpc-python commit (vgi test/start_fake_blob_vendor.sh).
+      - name: Set up uv (vendor lane)
+        if: matrix.lane == 'vendor'
+        uses: astral-sh/setup-uv@v10.3.3
 
       - name: Download native runner matching the test suite
         run: |

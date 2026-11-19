@@ -14,6 +14,7 @@
 // variables that esbuild can't trace statically, so workerd bundles cleanly
 // without nodejs_compat polyfills for paths we never run.
 import { sealPayload, openPayload, type StorageSlot } from "./storage-seal.js";
+import { wrapStorageFromEnv } from "./storage-blobs.js";
 
 type Database = any;
 const _BUN_SQLITE_MOD = "bun:sqlite";
@@ -115,6 +116,10 @@ export interface FunctionStorage {
   /** Batched atomic upsert of `(key, value)` pairs. One round trip on a remote
    *  backend; a no-op for an empty list. */
   statePutMany(scopeId: Uint8Array, ns: Uint8Array, items: Array<[Uint8Array, Uint8Array]>): Promise<void>;
+  /** Optional: delete the given keys of one namespace, returning how many rows
+   *  went. Missing keys are ignored. Every built-in backend implements it;
+   *  {@link BoundStorage.stateDelete} refuses on a backend that does not. */
+  stateDelete?(scopeId: Uint8Array, ns: Uint8Array, keys: Uint8Array[]): Promise<number>;
   // --- Append-only log (scoped by execution_id) ---
   stateAppend(scopeId: Uint8Array, ns: Uint8Array, key: Uint8Array, item: Uint8Array): Promise<number>;
   stateLogScan(
@@ -377,6 +382,23 @@ export class FunctionStorageSqlite implements FunctionStorage {
     }
   }
 
+  async stateDelete(scopeId: Uint8Array, ns: Uint8Array, keys: Uint8Array[]): Promise<number> {
+    if (keys.length === 0) return 0;
+    const stmt = this._db.prepare("DELETE FROM function_state WHERE scope_id = ? AND ns = ? AND key = ?");
+    const sid = bufferArg(scopeId);
+    const nsb = bufferArg(ns);
+    let deleted = 0;
+    this._db.exec("BEGIN IMMEDIATE");
+    try {
+      for (const k of keys) deleted += stmt.run(sid, nsb, bufferArg(k)).changes as number;
+      this._db.exec("COMMIT");
+    } catch (e) {
+      this._db.exec("ROLLBACK");
+      throw e;
+    }
+    return deleted;
+  }
+
   async stateAppend(scopeId: Uint8Array, ns: Uint8Array, key: Uint8Array, item: Uint8Array): Promise<number> {
     const res = this._db
       .prepare("INSERT INTO function_state_log (scope_id, ns, key, value) VALUES (?, ?, ?, ?)")
@@ -585,6 +607,16 @@ export class BoundStorage {
     return this._base.statePutMany(this._executionId, ns, items);
   }
 
+  /** Delete keys of one namespace; their values' blobs (when externalized)
+   *  stay until the execution is cleared.
+   *  @throws Error if the backend does not implement `stateDelete`. */
+  stateDelete(ns: Uint8Array, keys: Uint8Array[]): Promise<number> {
+    if (typeof this._base.stateDelete !== "function") {
+      return Promise.reject(new Error("this FunctionStorage backend does not implement stateDelete"));
+    }
+    return this._base.stateDelete(this._executionId, ns, keys);
+  }
+
   stateAppend(ns: Uint8Array, key: Uint8Array, item: Uint8Array): Promise<number> {
     return this._base.stateAppend(this._executionId, ns, key, item);
   }
@@ -659,19 +691,25 @@ export function shardKeyOf(bindCall: { storage_shard_key?: string | null | undef
  *                       (including `:memory:`).
  *   - `cloudflare-do` — `FunctionStorageCfDo`. Requires `VGI_CF_DO_URL`;
  *                       optional `VGI_CF_DO_TOKEN` for bearer auth.
+ *
+ * The backend is wrapped in {@link ExternalizingStorage} (value envelope plus
+ * blob-vendor externalization, `./storage-blobs.ts`) always for
+ * `cloudflare-do`, and for any other backend with `VGI_STORAGE_EXTERNALIZE=1`;
+ * see `wrapStorageFromEnv`.
  */
 export function resolveStorageFromEnv(): FunctionStorage {
   const backend = (process.env.VGI_WORKER_SHARED_STORAGE ?? "sqlite").toLowerCase();
   if (backend === "memory") {
-    return new FunctionStorageSqlite(":memory:");
+    return wrapStorageFromEnv(new FunctionStorageSqlite(":memory:"));
   }
   if (backend === "sqlite") {
-    return new FunctionStorageSqlite();
+    return wrapStorageFromEnv(new FunctionStorageSqlite());
   }
   if (backend === "cloudflare-do") {
     // Lazy require to avoid loading the CF client when sqlite is in use.
-    const { FunctionStorageCfDo } = require("./storage-cf-do.js") as typeof import("./storage-cf-do.js");
-    return FunctionStorageCfDo.fromEnv();
+    const { FunctionStorageCfDo, MAX_VALUE_BYTES } = require("./storage-cf-do.js") as typeof import("./storage-cf-do.js");
+    // Always enveloped (vendor or not) so every process writes one format.
+    return wrapStorageFromEnv(FunctionStorageCfDo.fromEnv(), { maxValueBytes: MAX_VALUE_BYTES });
   }
   throw new Error(
     `Unknown VGI_WORKER_SHARED_STORAGE backend: '${backend}'. Supported: 'memory', 'sqlite', 'cloudflare-do'.`,
@@ -695,9 +733,20 @@ function getDefaultStorage(): FunctionStorage {
  * service-binding Fetcher (the binding lives on `env`, not `process.env`, and a
  * same-zone public-URL fetch is rejected with CF error 1042). Takes precedence
  * over `VGI_WORKER_SHARED_STORAGE`.
+ *
+ * A bare `FunctionStorageCfDo` is wrapped in {@link ExternalizingStorage}, as
+ * the env-selected one is, so every process writes the same enveloped format;
+ * the blob vendor comes from `VGI_BLOB_VENDOR_URL` in `process.env` when there
+ * is one. On Cloudflare Workers, where the vendor's URL and token are `env`
+ * bindings, wrap it yourself first --
+ * `setStorage(wrapStorageFromEnv(cfDo, { maxValueBytes: MAX_VALUE_BYTES, env }))`
+ * -- and it is used as given. Any other backend is used as given.
  */
 export function setStorage(impl: FunctionStorage): void {
-  _resolved = impl;
+  _resolved =
+    (impl as { storageKind?: string }).storageKind === "cloudflare-do"
+      ? wrapStorageFromEnv(impl, { maxValueBytes: (impl as { maxValueBytes?: number }).maxValueBytes })
+      : impl;
 }
 
 /** Default FunctionStorage instance. Backend is selected via env on first access. */

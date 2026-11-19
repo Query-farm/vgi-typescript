@@ -415,7 +415,33 @@ export {
   shardKeyOf,
   storage as functionStorage,
 } from "./functions/storage.js";
-export { FunctionStorageCfDo, type FetchLike, type CfDoRetryOptions } from "./functions/storage-cf-do.js";
+export {
+  FunctionStorageCfDo,
+  MAX_VALUE_BYTES as CF_DO_MAX_VALUE_BYTES,
+  type FetchLike,
+  type CfDoRetryOptions,
+} from "./functions/storage-cf-do.js";
+// Value envelope + blob-vendor externalization over any FunctionStorage.
+export {
+  ExternalizingStorage,
+  type ExternalizingStorageOptions,
+  StorageBlobError,
+  StorageBlobIntegrityError,
+  StorageBlobMissingError,
+  StorageEnvelopeError,
+  StorageValueTooLargeError,
+  DEFAULT_EXTERNALIZE_BYTES,
+  blobClientFromEnv,
+  externalizeBytesFromEnv,
+  wrapStorageFromEnv,
+  type WrapStorageOptions,
+} from "./functions/storage-blobs.js";
+// HTTP server settings from the blob-vendor environment.
+export {
+  blobVendorHttpConfigFromEnv,
+  type BlobVendorEnv,
+  type BlobVendorHttpConfig,
+} from "./http/blob-vendor.js";
 export { StoragePayloadError } from "./functions/storage-seal.js";
 
 // Client

@@ -29,8 +29,15 @@ import { createLandingRoutes, type LandingInfo } from "./landing.js";
 import { buildRpcServer, type HostingOptions } from "../rpc-server.js";
 import { setRequestAuthScope, type RequestAuthHolder } from "../request-auth.js";
 import { checkReservedAttachOptions } from "../catalog/attach-option.js";
+import type { BlobVendorHttpConfig } from "./blob-vendor.js";
 
-export interface VgiFetchOptions extends HostingOptions {
+/**
+ * The external-location fields ({@link BlobVendorHttpConfig}) are forwarded to
+ * vgi-rpc's handler: spread `blobVendorHttpConfigFromEnv(env)` in to serve
+ * through the blob vendor (results over the threshold become pointers, large
+ * requests arrive through vended upload URLs).
+ */
+export interface VgiFetchOptions extends HostingOptions, BlobVendorHttpConfig {
   /** Wire-protocol config (registry + catalogInterface). */
   protocol: ProtocolConfig;
   /** HMAC key for state-token signing. Pass a stable, secret 32-byte key
@@ -257,6 +264,10 @@ export function createVgiFetch(opts: VgiFetchOptions): (req: Request) => Promise
     // `null` is the explicit opt-out; `undefined` (omitted) means "*".
     corsOrigins: opts.corsOrigins === null ? undefined : (opts.corsOrigins ?? "*"),
     repositoryUrl: opts.repositoryUrl,
+    externalLocation: opts.externalLocation,
+    uploadUrlProvider: opts.uploadUrlProvider,
+    maxRequestBytes: opts.maxRequestBytes,
+    maxUploadBytes: opts.maxUploadBytes,
     // The landing surface is ours, contributed into vgi-rpc's routing rather
     // than built there. `enableLandingPage: false` drops vgi-rpc's generic
     // "this is an RPC endpoint" page, which would otherwise sit behind ours for

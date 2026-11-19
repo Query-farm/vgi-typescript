@@ -95,10 +95,11 @@
     "@query-farm/apache-arrow": "^21.1.1",
     "@query-farm/vgi-rpc": "^0.29.7"
   },
+  "//devDependencies": "TODO(release-wave): switch @query-farm/vgi-rpc back to the first published release containing the commit below (and raise the peer range to it), then delete scripts/prepare-pinned-vgi-rpc.sh. Until then the dev dependency is pinned to the exact vgi-rpc-typescript commit carrying the blob-vendor client (VendorStorage, VendorBlobClient, externalConfigFromEnv); CI runs the prepare script after bun install so tsc finds its declarations.",
   "devDependencies": {
     "@duckdb/node-api": "^1.5.5-r.4",
     "@query-farm/apache-arrow": "^21.1.1",
-    "@query-farm/vgi-rpc": "^0.29.7",
+    "@query-farm/vgi-rpc": "github:Query-farm/vgi-rpc-typescript#f544b30506a69fee6100589f5a914af5335c813d",
     "@types/bun": "latest",
     "typescript": "^7.0.2"
   },

@@ -16,6 +16,7 @@ import { twinACatalog, twinBCatalog, twinCatalogFunctions } from "./twin_catalog
 import { createCatalogContentsCatalogs } from "./catalog_contents.js";
 import { createTicketProbeCatalog, ticketProbeFunctions } from "./ticket_probe.js";
 import { optionalTestBearerAuthenticate } from "./optional-bearer.js";
+import { blobCatalog, blobCatalogFunctions } from "./blob_catalog.js";
 import {
   buildSecondaryProtocol,
   conformanceAuthenticate,
@@ -34,6 +35,7 @@ for (const func of [
   ...narrowBindFunctions,
   ...twinCatalogFunctions,
   ...ticketProbeFunctions,
+  ...blobCatalogFunctions,
 ]) {
   registry.register(func);
 }
@@ -72,6 +74,11 @@ const catalogInterface = new CompositeCatalogInterface([
   // ticket_probe: attach tickets (vgi.attach_tickets.v1) -- one plain and one
   // secret attach option whose effect a table reveals.
   createTicketProbeCatalog(registry),
+  // blob_test: the blob-vendor externalization fixture (vgi
+  // docs/testing/blob-test-catalog.md). With VGI_BLOB_VENDOR_URL set,
+  // serveVgiWorker externalizes results and vends upload URLs, and storage
+  // (with VGI_STORAGE_EXTERNALIZE=1) keeps large values in the vendor.
+  new ReadOnlyCatalogInterface(blobCatalog, registry),
 ]);
 
 // The `signingKey` this example used to pass to createHttpHandler was never read
