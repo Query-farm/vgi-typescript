@@ -41,10 +41,14 @@ permissions:
 
 env:
   # Test sources and statically linked binaries come from this exact native commit.
-  VGI_REF: 9dae8d55c9692cbd8b69d021c28b20a09aeee438
-  # The vendor lane needs the blob_test contract, test/sql/external_storage
-  # and test/start_fake_blob_vendor.sh, which arrived in vgi f9e5df3.
-  VGI_VENDOR_REF: f9e5df356dcc8fd18f545a3a348ca364ae58fe0e
+  # TODO(release-wave): both refs are vgi's protocol-3.4 branch (3.4.0, upload
+  # URLs v2, external_storage/upload_integrity); repoint at the merged commit.
+  VGI_REF: 865022e2557c6942187a659e2a9bd4fa68253d4e
+  VGI_VENDOR_REF: 865022e2557c6942187a659e2a9bd4fa68253d4e
+  # The fake vendor with sized-PUT verification and the upload fault route
+  # (vgi-rpc-python protocol-3.4); test/start_fake_blob_vendor.sh reads it.
+  # TODO(release-wave): drop once vgi's script pins a merged commit.
+  VGI_RPC_FAKE_VENDOR_REF: a07ccf2e1bf1c0832ae43757a55e8b4817674b2d
   VGI_NATIVE_RUNNER_BRANCH: v2.0
 
 jobs:
@@ -105,6 +109,8 @@ jobs:
         with:
           repository: Query-farm/vgi-rpc-python
           path: .vgi-rpc-python
+          # TODO(release-wave): back to main once protocol-3.4 is merged.
+          ref: a07ccf2e1bf1c0832ae43757a55e8b4817674b2d
 
       - uses: oven-sh/setup-bun@v2
         with:
