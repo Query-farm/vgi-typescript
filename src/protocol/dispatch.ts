@@ -89,9 +89,10 @@ export { VGI_PROTOCOL_NAME };
  * hash covers method names, types and the params/result/header schemas only
  * (WIRE_PROTOCOL.md §14).
  *
- * It changes only with vgi.v3's protocol version (currently 3.3.0: 3.3 removed
+ * It changes only with vgi.v3's method surface (3.3 removed
  * catalog_table_scan_function_get and gave catalog_table_create a `created`
- * result). Asserted
+ * result; 3.4.0 changed the transport's upload URLs, not the surface, so the
+ * hash is unchanged). Asserted
  * by src/protocol/__tests__/vgi-v3-hash.test.ts; if that test fails, the
  * surface drifted from the reference -- fix the schemas, do not bump this.
  */

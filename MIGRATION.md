@@ -1,5 +1,21 @@
 # Migration guide
 
+## Unreleased — vgi.v3 / 3.4.0 upload URLs v2
+
+Protocol 3.4.0 is a minor bump of `vgi.v3`; peers match exact major and minor,
+so a 3.4 worker needs the 3.4 extension (and the reverse). The `vgi.v3` method
+surface and hash are unchanged; what changed is vgi-rpc's client-upload path:
+
+- `__upload_url__/init` takes `uploads: list<struct<size, sha256>>` (one entry
+  per upload) instead of `count`, and returns `upload_headers` for each PUT.
+  Workers advertise `VGI-Upload-URL-Support: 2`; a v1 (`true`) peer is refused.
+- Request pointers must carry `vgi_rpc.location.sha256`; the worker verifies
+  the uploaded bytes against it before decoding.
+- A custom `UploadUrlProvider` passed to `serveVgiWorker` / `createVgiFetch`
+  implements `generateUploadUrl(size, sha256Hex)` and may return `headers`
+  (see vgi-rpc's large-payloads guide). The blob-vendor provider wired from
+  `VGI_BLOB_VENDOR_URL` already does, through the sized `/v1/blobs/put`.
+
 ## 0.51.0 — FunctionStorage sharding, sealing and aggregate state
 
 - **`FunctionStorage` gained `stateGetMany` / `statePutMany`** (required) and an

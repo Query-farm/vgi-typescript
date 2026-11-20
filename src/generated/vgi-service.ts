@@ -38,7 +38,7 @@ import {
 export const VGI_PROTOCOL_NAME = "vgi.v3";
 
 /** The protocol's semver, stamped on every request by a client of this protocol. */
-export const VGI_PROTOCOL_VERSION = "3.3.0";
+export const VGI_PROTOCOL_VERSION = "3.4.0";
 
 /** What a unary handler returns: the result row, now or later. */
 export type VgiReply<T> = T | ExternalRef | Promise<T | ExternalRef>;

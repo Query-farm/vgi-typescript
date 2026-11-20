@@ -60,8 +60,8 @@ describe("FunctionInfo.visibility wire field", () => {
     expect(String(f!.type.typeId ?? f!.type)).not.toContain("Dictionary");
   });
 
-  test("protocol is 3.3.0", () => {
-    expect(VGI_PROTOCOL_VERSION).toBe("3.3.0");
+  test("protocol is 3.4.0", () => {
+    expect(VGI_PROTOCOL_VERSION).toBe("3.4.0");
   });
 
   test("round-trips table_only, public and absent", () => {
