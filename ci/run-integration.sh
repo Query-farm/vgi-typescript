@@ -232,6 +232,12 @@ export VGI_SECRET_LOOKUP_FIXTURES=1
 export VGI_WRITABLE_TX_FIXTURES=1
 export VGI_TXFIX_STATE_DIR="${VGI_TXFIX_STATE_DIR:-$(mktemp -d)}"
 
+# The multi-branch and scan-planning fixtures (multi_branch_*, planned_days*,
+# planned_events) read files the tests write under VGI_TEST_BRANCH_DIR; unset,
+# those tests skip. Give each run its own directory (the worker reads the same
+# variable, examples/common.ts BRANCH_DIR), as vgi-java and vgi-rust do.
+export VGI_TEST_BRANCH_DIR="${VGI_TEST_BRANCH_DIR:-$(mktemp -d)}"
+
 # Function storage (src/functions/storage.ts) defaults to one SQLite file per
 # user (~/.local/state/vgi/vgi_storage.db). Give each run its own, so lanes
 # running at the same time on one host never share or contend on that file.
@@ -325,7 +331,7 @@ EXPECTED_SKIP_REASONS=(
   'require-env VGI_DOCKER_TX_IMAGE'          # containerised writable-tx worker (vgi >= f9e5df3)
   'require-env VGI_GITHUB_NETWORK_TESTS'     # hits github.com; opt-in only
   'require-env VGI_TEST_COMPANION_TARGET'    # companion-catalog fixture (Python-side)
-  'require-env VGI_TEST_BRANCH_DIR'          # multi-branch Iceberg fixture tree
+  'require-env VGI_TEST_ICEBERG'             # iceberg cold-tier branch: vgi's run_iceberg_integration.sh only
   'require-env VGI_TEST_BEARER_TOKEN'        # bearer-auth fixture server
   'require-env VGI_HTTP_DISABLE_ZSTD'        # gzip-fallback lane (separate run)
   # Added upstream in Query-farm/vgi@f8e11ce alongside the fix that made the

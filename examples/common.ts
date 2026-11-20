@@ -5,15 +5,15 @@ import { decodeCatalogCapabilities, encodeCatalogCapabilities } from "../src/gen
 // Shared function and catalog registration for example workers.
 // Used by both the IPC worker (worker.ts) and HTTP worker (http-worker.ts).
 
-import { Schema, Field, Int32, Int64, Float64, Float32, Bool, Utf8, Struct, DateDay, List } from "@query-farm/apache-arrow";
+import { Schema, Field, Int32, Int64, Float64, Float32, Bool, Utf8, Struct, DateDay, List, Timestamp, TimeUnit } from "@query-farm/apache-arrow";
 import {
   type CatalogDescriptor, type MacroDescriptor, Arguments,
   serializeBatch, batchFromColumns,
   ReadOnlyCatalogInterface, TableInfo,
   type AttachOpaqueData, type TransactionOpaqueData,
   buildScanBranchesResult, encodeFormatOptions, type ScanBranchInput,
-  type ColumnStatistics, type ScanPlanningFilters,
-  functionStorage,
+  type ColumnStatistics, type ScanPlanningFilters, type Filter,
+  functionStorage, isBool,
 } from "../src/index.js";
 import { serializeSchema } from "../src/util/arrow/index.js";
 import { argumentSpecsToSchema } from "../src/arguments/argument-spec.js";
@@ -113,6 +113,134 @@ async function plannedDaysBranches(name: string, filters: ScanPlanningFilters | 
 
 const isPlannedDays = (schemaPath: string[], name: string): boolean =>
   schemaPath.length === 1 && schemaPath[0]!.toLowerCase() === "data" && name.toLowerCase().startsWith("planned_days");
+
+// planned_events: one file per day (${BRANCH_DIR}/planned_events_<day>.parquet,
+// written by scan_planning_predicates*.test), 10 rows each. Statistics cover
+// event_date and ts (00:00-09:00 UTC), so predicates on either prune; every
+// other column only reaches DuckDB. Mirrors vgi-python's _PLANNED_EVENTS_SCHEMA.
+const plannedEventsColumns = () => new Schema([
+  new Field("event_date", new DateDay(), true),
+  new Field("ts", new Timestamp(TimeUnit.MICROSECOND, "UTC"), true),
+  new Field("series", new Utf8(), true),
+  new Field("ticker", new Utf8(), true),
+  new Field("n", new Int64(), true),
+  new Field("price", new Float64(), true),
+  new Field("flag", new Bool(), true),
+]);
+const plannedEventFile = (day: Date): string => branchPath(`planned_events_${isoDay(day)}.parquet`);
+const plannedEventStats = (day: Date): ColumnStatistics[] => {
+  const start = BigInt(day.getTime()) * 1000n; // microseconds since the epoch
+  return [
+    ...plannedDayStats(day),
+    {
+      columnName: "ts", arrowType: new Timestamp(TimeUnit.MICROSECOND, "UTC"),
+      min: start, max: start + 9n * 3_600_000_000n,
+      hasNull: false, hasNotNull: true, distinctCount: null, containsUnicode: null, maxStringLength: null,
+    },
+  ];
+};
+
+/** Column references in first-occurrence order (vgi-python's filter_v2.expression_columns). */
+function filterColumns(expr: Filter, out: string[] = []): string[] {
+  switch (expr.node) {
+    case "column_ref":
+      if (!out.includes(expr.columnName)) out.push(expr.columnName);
+      break;
+    case "comparison": case "arithmetic":
+      filterColumns(expr.left, out); filterColumns(expr.right, out);
+      break;
+    case "and": case "or":
+      for (const child of expr.children) filterColumns(child, out);
+      break;
+    case "field_ref": case "not": case "is_null": case "cast": case "negate": case "in":
+      filterColumns(expr.expression, out);
+      break;
+    case "call":
+      for (const argument of expr.arguments) filterColumns(argument, out);
+      break;
+    case "runtime_filter":
+      filterColumns(expr.input, out);
+      break;
+  }
+  return out;
+}
+
+const DESCRIBED_OPS: readonly string[] = ["eq", "ne", "lt", "le", "gt", "ge"];
+
+/**
+ * A stable one-line description of a pushed predicate, for test assertions:
+ * the same text vgi-python's fixture (_describe_filter over its compatibility
+ * filter views) writes. "col OP" for column-vs-literal comparisons and boolean
+ * columns, "col IsNull" / "col IsNotNull" / "col In", "And(...)" / "Or(...)"
+ * when every child has such a form, else "<first column> V2Expression";
+ * null for a predicate that references no column (Python drops it).
+ */
+function describeFilter(expr: Filter): string | null {
+  const isBoolColumn = (e: Filter): e is Extract<Filter, { node: "column_ref" }> =>
+    e.node === "column_ref" && e.dataType != null && isBool(e.dataType);
+  if (expr.node === "comparison" && expr.left.node === "column_ref" && expr.right.node === "literal" &&
+      DESCRIBED_OPS.includes(expr.op)) {
+    return `${expr.left.columnName} ${expr.op.toUpperCase()}`;
+  }
+  if (isBoolColumn(expr)) return `${expr.columnName} EQ`;
+  if (expr.node === "not" && isBoolColumn(expr.expression)) return `${expr.expression.columnName} EQ`;
+  if (expr.node === "is_null" && expr.expression.node === "column_ref") {
+    return `${expr.expression.columnName} ${expr.negated ? "IsNotNull" : "IsNull"}`;
+  }
+  if (expr.node === "in" && expr.expression.node === "column_ref" && !expr.negated) {
+    return `${expr.expression.columnName} In`;
+  }
+  if (expr.node === "and" || expr.node === "or") {
+    const children = expr.children.map(describeFilter);
+    if (children.length > 0 && children.every((c) => c != null)) {
+      return `${expr.node === "and" ? "And" : "Or"}(${children.join(", ")})`;
+    }
+  }
+  const columns = filterColumns(expr);
+  return columns.length === 0 ? null : `${columns[0]} V2Expression`;
+}
+
+/**
+ * Branches for data.planned_events: the day files the predicates may match.
+ *
+ * Every planning call (`record`) writes planned_events_last_plan.json with the
+ * planned days and the described filters (null when the client sent none), so
+ * a test can assert what reached the worker, including that a predicate it
+ * cannot use (LIKE, most functions) stayed with the client. Only
+ * scan_planning_predicates*.test query this table, in one serial group, so the
+ * record is never overwritten concurrently. Same bytes as Python's json.dump.
+ */
+async function plannedEventsBranches(filters: ScanPlanningFilters | null, record: boolean) {
+  const days: Date[] = [];
+  for (const day of PLANNED_DAYS) if (filters == null || await filters.mayMatch(plannedEventStats(day))) days.push(day);
+  if (record) {
+    let described: string[] | null = null;
+    if (filters != null) {
+      const decoded = await filters.decode();
+      described = decoded.predicates
+        // Python's compatibility views skip runtime filters the decoder does not support.
+        .filter((p) => !(p.expression.node === "runtime_filter" && !p.expression.supported))
+        .map((p) => describeFilter(p.expression))
+        .filter((d): d is string => d != null)
+        .sort();
+    }
+    const list = (values: string[]) => `[${values.map((v) => JSON.stringify(v)).join(", ")}]`;
+    fs.writeFileSync(branchPath("planned_events_last_plan.json"),
+      `{"days": ${list(days.map(isoDay))}, "filters": ${described == null ? "null" : list(described)}}`);
+  }
+  if (days.length === 0) return buildScanBranchesResult([], ["parquet"]);
+  return buildScanBranchesResult(
+    [{
+      functionName: "read_parquet",
+      positionalArguments: [{ value: days.map(plannedEventFile), type: new List(new Field("item", new Utf8(), true)) }],
+      rowCount: 10 * days.length,
+    }],
+    ["parquet"],
+  );
+}
+
+const isPlannedEvents = (schemaPath: string[], name: string): boolean =>
+  schemaPath.length === 1 && schemaPath[0]!.toLowerCase() === "data" && name.toLowerCase() === "planned_events";
 
 import {
   tableFunctions, resolveVersion, getVersionedSchema,
@@ -692,6 +820,15 @@ export const catalog: CatalogDescriptor = {
           name: "planned_days_bf",
           columns: plannedDaysColumns(),
           comment: "Protocol 3.2: pruning by branch_filter contradiction — scan_planning_branch_filter.test",
+        },
+        // Protocol 3.2 filtered planning over a mixed-type table: the predicates a
+        // real catalog sees (string LIKE / functions / NULLs / timestamps / bools),
+        // most of which the worker cannot use and DuckDB must still apply.
+        {
+          name: "planned_events",
+          columns: plannedEventsColumns(),
+          scanPlanning: "filtered",
+          comment: "Protocol 3.2: filtered planning, non-prunable predicates — scan_planning_predicates.test",
         },
         // Protocol 3.2: branch_filter must be ONE expression. "n < 5, n > 2"
         // parses as two; 3.1 clients silently kept the first.
@@ -1334,6 +1471,10 @@ export function createExampleCatalog(base: ReadOnlyCatalogInterface): ReadOnlyCa
       validateAtParams(atUnit, atValue);
       return plannedDaysBranches(name.toLowerCase(), pushdownFilters);
     }
+    if (isPlannedEvents(schemaPath, name)) {
+      validateAtParams(atUnit, atValue);
+      return plannedEventsBranches(pushdownFilters, true);
+    }
     return origTableScanBranchesPlan(attachOpaqueData, schemaPath, name, atUnit, atValue, transactionOpaqueData, pushdownFilters);
   };
 
@@ -1347,6 +1488,7 @@ export function createExampleCatalog(base: ReadOnlyCatalogInterface): ReadOnlyCa
   ): any => {
     validateAtParams(atUnit, atValue);
     if (isPlannedDays(schemaPath, name)) return plannedDaysBranches(name.toLowerCase(), null);
+    if (isPlannedEvents(schemaPath, name)) return plannedEventsBranches(null, false);
 
     const i64 = (value: number | bigint) => ({ value: BigInt(value), type: new Int64() });
     const str = (value: string) => ({ value, type: new Utf8() });

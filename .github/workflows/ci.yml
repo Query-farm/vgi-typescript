@@ -41,10 +41,14 @@ permissions:
 
 env:
   # Test sources and statically linked binaries come from this exact native commit.
-  VGI_REF: 9dae8d55c9692cbd8b69d021c28b20a09aeee438
+  # 91f8d63 brings scan_planning_predicates*.test and the comments.test row
+  # for the planned_events fixture table.
+  VGI_REF: 91f8d6355e1d86d2c6168e4c3a93396108a209c0
   # The vendor lane needs the blob_test contract, test/sql/external_storage
-  # and test/start_fake_blob_vendor.sh, which arrived in vgi f9e5df3.
-  VGI_VENDOR_REF: f9e5df356dcc8fd18f545a3a348ca364ae58fe0e
+  # and test/start_fake_blob_vendor.sh, which arrived in vgi f9e5df3. Kept at
+  # VGI_REF: comments.test lists every fixture table, so an older suite fails
+  # against a worker that serves a newer table.
+  VGI_VENDOR_REF: 91f8d6355e1d86d2c6168e4c3a93396108a209c0
   VGI_NATIVE_RUNNER_BRANCH: v2.0
 
 jobs:
