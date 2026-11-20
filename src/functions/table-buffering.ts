@@ -17,6 +17,7 @@
 // did NOT run the corresponding process() calls.
 
 import { normalizeRequiredSecrets, type RequiredSecret } from "../secrets/requirements.js";
+import { secretLookupWire } from "../secrets/lookups.js";
 import {
   type VgiSchema,
   schema,
@@ -309,9 +310,7 @@ export function defineTableBufferingFunction<
         return {
           output_schema: result.outputSchema,
           opaque_data: result.opaqueData ?? null,
-          lookup_secret_types: result.lookupSecretTypes,
-          lookup_scopes: result.lookupScopes,
-          lookup_names: result.lookupNames,
+          ...secretLookupWire(config.name, result),
         };
       }
       return {

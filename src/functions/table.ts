@@ -3,6 +3,7 @@
 // Table functions produce output batches from arguments (no streaming input).
 
 import { normalizeRequiredSecrets, type RequiredSecret } from "../secrets/requirements.js";
+import { secretLookupWire } from "../secrets/lookups.js";
 import {
   type VgiSchema,
   type VgiBatch,
@@ -214,7 +215,12 @@ export interface TableFunctionConfig<
   argConstraints?: Record<string, ArgumentConstraints>;
   /** Names of args that accept variable number of arguments */
   varargs?: string[];
-  /** Bind: return output schema. May be async — handlers `await` the result. */
+  /**
+   * Bind: return output schema. May be async — handlers `await` the result.
+   * To ask DuckDB for secrets, return `lookupSecretTypes` with optional
+   * `lookupScopes` / `lookupNames` at the same indexes (see `SecretLookupFields`);
+   * a scope or name with no type at its index is a bind error.
+   */
   onBind: (params: TableBindParams<TArgs>) =>
     | {
         outputSchema: VgiSchema;
@@ -472,9 +478,7 @@ export function defineTableFunction<
         opaque_data: result.opaqueData ?? null,
         projection_expression_profiles: result.projectionExpressionProfiles ?? [],
         repeatability: result.repeatability === undefined ? "UNKNOWN" : result.repeatability,
-        lookup_secret_types: result.lookupSecretTypes,
-        lookup_scopes: result.lookupScopes,
-        lookup_names: result.lookupNames,
+        ...secretLookupWire(config.name, result),
       };
     },
 

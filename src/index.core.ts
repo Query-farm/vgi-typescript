@@ -321,6 +321,8 @@ export {
   normalizeRequiredSecrets,
 } from "./secrets/requirements.js";
 
+export type { SecretLookupFields } from "./secrets/lookups.js";
+
 export {
   serializeSchema,
   deserializeSchema,
