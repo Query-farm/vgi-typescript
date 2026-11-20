@@ -11,7 +11,7 @@
       "devDependencies": {
         "@duckdb/node-api": "^1.5.5-r.4",
         "@query-farm/apache-arrow": "^21.1.1",
-        "@query-farm/vgi-rpc": "github:Query-farm/vgi-rpc-typescript#f7a141f6cf9c1ab014d17070505c82286b79307c",
+        "@query-farm/vgi-rpc": "github:Query-farm/vgi-rpc-typescript#164a1a7c1bb87fd97cdd5babff61ad991c3615fc",
         "@types/bun": "latest",
         "typescript": "^7.0.2",
       },
@@ -48,7 +48,7 @@
 
     "@query-farm/flechette": ["@query-farm/flechette@2.7.1", "", { "dependencies": { "@uwdata/wk-geojson": "^0.0.1" } }, "sha512-TL+u+0598AnFGlFteLCqaGsMpmymyMzgwGAgAsr9ZuTx/3lmG8I8M9gZfrnULGXXNWKPQ/u9MQTgISC2dJW0SA=="],
 
-    "@query-farm/vgi-rpc": ["@query-farm/vgi-rpc@github:Query-farm/vgi-rpc-typescript#f7a141f", { "dependencies": { "@noble/ciphers": "^2.2.0", "@query-farm/apache-arrow": "^21.1.1", "@query-farm/flechette": "^2.7.1", "fzstd": "^0.1.1", "oauth4webapi": "^3.8.6" }, "peerDependencies": { "@aws-sdk/client-s3": ">=3.0.0", "@aws-sdk/s3-request-presigner": ">=3.0.0", "@google-cloud/storage": ">=7.0.0", "@momics/iroh-http-node": ">=0.6.2 <1", "@number0/iroh": ">=1.1.0 <2", "@opentelemetry/api": ">=1.4.0" }, "optionalPeers": ["@aws-sdk/client-s3", "@aws-sdk/s3-request-presigner", "@google-cloud/storage", "@momics/iroh-http-node", "@number0/iroh", "@opentelemetry/api"] }, "Query-farm-vgi-rpc-typescript-f7a141f", "sha512-RkCKp1qMbNxPVDy5jqwBd/uPjog+cntOavmNVxu5/gclO6KkYZgn76lRwazWVzn3YWJlQqKjGslY8+k+VFpuEQ=="],
+    "@query-farm/vgi-rpc": ["@query-farm/vgi-rpc@github:Query-farm/vgi-rpc-typescript#164a1a7", { "dependencies": { "@noble/ciphers": "^2.2.0", "@query-farm/apache-arrow": "^21.1.1", "@query-farm/flechette": "^2.7.1", "fzstd": "^0.1.1", "oauth4webapi": "^3.8.6" }, "peerDependencies": { "@aws-sdk/client-s3": ">=3.0.0", "@aws-sdk/s3-request-presigner": ">=3.0.0", "@google-cloud/storage": ">=7.0.0", "@momics/iroh-http-node": ">=0.6.2 <1", "@number0/iroh": ">=1.1.0 <2", "@opentelemetry/api": ">=1.4.0" }, "optionalPeers": ["@aws-sdk/client-s3", "@aws-sdk/s3-request-presigner", "@google-cloud/storage", "@momics/iroh-http-node", "@number0/iroh", "@opentelemetry/api"] }, "Query-farm-vgi-rpc-typescript-164a1a7", "sha512-Ng92uRAm1y1Z544KaOMj3nec53oA4FT2kFDf2QY/2A5lB1Fz9U9TqNNvgh2i9Rrfy3Wk/QyfbTU6xNjJUlL4cQ=="],
 
     "@swc/helpers": ["@swc/helpers@0.5.21", "", { "dependencies": { "tslib": "^2.8.0" } }, "sha512-jI/VAmtdjB/RnI8GTnokyX7Ug8c+g+ffD6QRLa6XQewtnGyukKkKSk3wLTM3b5cjt1jNh9x0jfVlagdN2gDKQg=="],
 

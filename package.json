@@ -99,7 +99,7 @@
   "devDependencies": {
     "@duckdb/node-api": "^1.5.5-r.4",
     "@query-farm/apache-arrow": "^21.1.1",
-    "@query-farm/vgi-rpc": "github:Query-farm/vgi-rpc-typescript#f7a141f6cf9c1ab014d17070505c82286b79307c",
+    "@query-farm/vgi-rpc": "github:Query-farm/vgi-rpc-typescript#164a1a7c1bb87fd97cdd5babff61ad991c3615fc",
     "@types/bun": "latest",
     "typescript": "^7.0.2"
   },
