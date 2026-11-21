@@ -19,6 +19,7 @@ import { schemaDescriptorPath, type CatalogDescriptor } from "./catalog/descript
 import type { CatalogInterface } from "./catalog/interface.js";
 import { ReadOnlyCatalogInterface } from "./catalog/read-only.js";
 import { checkReservedAttachOptions } from "./catalog/attach-option.js";
+import { hostedModeEnabled, OrchardHostedConfigError, refuseNonHttpTransportInHostedMode } from "./hosted.js";
 
 /**
  * Startup/lifecycle tracing, off unless `VGI_DEBUG` is set to something other
@@ -69,6 +70,20 @@ function parseTcpSpec(spec: string, out: LauncherArgs): void {
     out.tcpHost = "127.0.0.1";
     out.tcpPort = Number(spec);
   }
+}
+
+/** The transport `run()` would serve for `argv`, as named in a refusal. */
+function transportName(argv: readonly string[]): string {
+  let launcher: LauncherArgs;
+  try {
+    launcher = parseLauncherArgs(argv);
+  } catch {
+    return "requested";
+  }
+  if (launcher.irohRawUpstream) return "--iroh-raw-upstream";
+  if (launcher.unixPath !== undefined) return "--unix";
+  if (launcher.tcpPort !== undefined) return "--tcp";
+  return "stdio";
 }
 
 function parseLauncherArgs(argv: readonly string[]): LauncherArgs {
@@ -193,6 +208,15 @@ export class Worker {
 
   run(argv: readonly string[] = process.argv.slice(2)): void {
     debug(() => `[worker] starting, pid=${process.pid}`);
+    // Orchard hosted mode serves HTTP only (serveVgiWorker); every transport
+    // run() offers -- stdio, --unix, --tcp, --iroh-raw-upstream -- carries no Pass.
+    try {
+      if (hostedModeEnabled()) refuseNonHttpTransportInHostedMode(transportName(argv));
+    } catch (err) {
+      if (!(err instanceof OrchardHostedConfigError)) throw err;
+      process.stderr.write(`Error: ${err.message}\n`);
+      process.exit(1);
+    }
     // Refuse to serve a catalog that declares the reserved `vgi_attach_ticket`
     // attach option, before anything is read off the transport.
     checkReservedAttachOptions(this._catalogInterface).then(
@@ -330,6 +354,7 @@ export class Worker {
     readable: ReadableStream<Uint8Array> | NodeJS.ReadableStream,
     writable?: number | import("node:net").Socket | import("@query-farm/vgi-rpc").ByteSink,
   ): Promise<void> {
+    refuseNonHttpTransportInHostedMode("byte-stream");
     await serveStreamRpc(this.buildServer(this.buildProtocol(), "stream"), omitUndefined({ readable, writable }));
   }
 }

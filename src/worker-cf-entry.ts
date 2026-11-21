@@ -33,6 +33,22 @@ export {
   StorageValueTooLargeError,
 } from "./index.core.js";
 export type { HostingOptions } from "./rpc-server.js";
+// Orchard hosted mode (VGI_ORCHARD_HOSTED=1): Pass-only HTTP serving. See
+// docs/orchard-hosted.md.
+export {
+  HOSTED_ENV,
+  HOSTED_CHALLENGE,
+  HOSTED_AUTH_DOMAIN,
+  OrchardHostedConfigError,
+  hostedModeEnabled,
+  resolveHostedConfig,
+  orchardHostedFromEnv,
+  checkHostedEnvironment,
+  checkHostedSigningKey,
+  type HostedConfig,
+  type HostedEnv,
+} from "./hosted.js";
+export { hostedAuthenticate, isHostedAuthenticate, type HostedVerifierDeps } from "./http/hosted-auth.js";
 export {
   AuthUnavailableError,
   GrantKeys,

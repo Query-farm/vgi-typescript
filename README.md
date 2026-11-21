@@ -605,6 +605,21 @@ its own required `name`/`doc`/`version`, so only the Cloudflare entry passes it
 explicitly. Without it there is no landing page and no `/vgi-client.js`; see
 [MIGRATION.md](MIGRATION.md).
 
+### Orchard hosted mode (`VGI_ORCHARD_HOSTED=1`)
+
+Set `VGI_ORCHARD_HOSTED=1` with `VGI_JWT_ISSUER`, `VGI_JWT_AUDIENCE`,
+`VGI_JWT_JWKS_URI` and a stable `VGI_SIGNING_KEY`, and `serveVgiWorker` serves only
+callers holding an Orchard *Pass* (an ES256 RFC 9068 JWT access token, verified
+locally against the Front Desk's JWKS). Every request except `HEAD /health` and CORS
+preflights needs one; anything else gets a 401 with
+`WWW-Authenticate: Bearer error="invalid_token"`. Startup fails closed on a missing or
+multi-valued setting and on any other way in (bearer tokens, grant keys,
+`resolveToken`/`mintGrant`, a custom `authenticate`, peer identity, a non-HTTP
+transport). Function code reads the Pass's claims from `info.auth` (domain
+`"orchard"`, principal `sub`). Works on Bun, Node and Cloudflare Workers
+(`createVgiFetch({ ..., orchardHosted: orchardHostedFromEnv(env) })`). See
+[docs/orchard-hosted.md](docs/orchard-hosted.md).
+
 ### Hosting additional protocols
 
 A worker can serve other [vgi-rpc](https://www.npmjs.com/package/@query-farm/vgi-rpc)

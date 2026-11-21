@@ -488,6 +488,22 @@ export {
   StatusError,
 } from "@query-farm/vgi-rpc";
 export type { GrantMinter, IssuedGrant, TokenIdentity, TokenResolver } from "@query-farm/vgi-rpc";
+// Orchard hosted mode (VGI_ORCHARD_HOSTED=1): Pass-only HTTP serving. See
+// docs/orchard-hosted.md.
+export {
+  HOSTED_ENV,
+  HOSTED_CHALLENGE,
+  HOSTED_AUTH_DOMAIN,
+  OrchardHostedConfigError,
+  hostedModeEnabled,
+  resolveHostedConfig,
+  orchardHostedFromEnv,
+  checkHostedEnvironment,
+  checkHostedSigningKey,
+  type HostedConfig,
+  type HostedEnv,
+} from "./hosted.js";
+export { hostedAuthenticate, isHostedAuthenticate, type HostedVerifierDeps } from "./http/hosted-auth.js";
 export { normalizeSchemaPath, schemaPathDisplay, schemaPathKey, schemaPathsEqual, type SchemaPath } from "./schema-path.js";
 
 // Optional scalar projection negotiation and its explicit offer.

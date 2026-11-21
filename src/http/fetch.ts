@@ -30,6 +30,8 @@ import { buildRpcServer, type HostingOptions } from "../rpc-server.js";
 import { setRequestAuthScope, type RequestAuthHolder } from "../request-auth.js";
 import { checkReservedAttachOptions } from "../catalog/attach-option.js";
 import type { BlobVendorHttpConfig } from "./blob-vendor.js";
+import { OrchardHostedConfigError, MIN_SIGNING_KEY_BYTES, type HostedConfig } from "../hosted.js";
+import { createHostedGate, isHostedAuthenticate, type HostedGate, type HostedVerifierDeps } from "./hosted-auth.js";
 
 /**
  * The external-location fields ({@link BlobVendorHttpConfig}) are forwarded to
@@ -107,6 +109,64 @@ export interface VgiFetchOptions extends HostingOptions, BlobVendorHttpConfig {
   peerAuthenticationPolicy?: PeerAuthenticationPolicy | undefined;
   /** Host adapter supplying the physical peer and multiplicity-preserving headers. */
   peerResolutionContext?: ((request: Request) => PeerResolutionOptions | Promise<PeerResolutionOptions>) | undefined;
+  /**
+   * Orchard hosted mode: accept only Orchard Passes (RFC 9068 JWT access
+   * tokens) on every request except `HEAD /health` and CORS preflights. Pass
+   * `orchardHostedFromEnv(env)`, which is `undefined` unless
+   * `VGI_ORCHARD_HOSTED` is on. `serveVgiWorker` / `createVgiWorkerFetch` set
+   * it from `process.env` themselves.
+   *
+   * Construction throws `OrchardHostedConfigError` when any other way in is
+   * configured (`authenticate`, `grantKeys`, `resolveToken`, `mintGrant`, peer
+   * identity) or the signing key is not a configured one. CORS is forced open
+   * (`*`): the only credential is the bearer Pass.
+   */
+  orchardHosted?: HostedConfig | undefined;
+  /** Test seam for hosted mode's JWKS fetch and clock. */
+  orchardHostedDeps?: HostedVerifierDeps | undefined;
+}
+
+/**
+ * Refuse a `createVgiFetch` configuration that admits a caller without a Pass.
+ * Called by `createVgiFetch` whenever `orchardHosted` is set; throws
+ * {@link OrchardHostedConfigError}.
+ */
+export function checkHostedFetchOptions(opts: VgiFetchOptions): void {
+  if (opts.authenticate !== undefined && !isHostedAuthenticate(opts.authenticate)) {
+    throw new OrchardHostedConfigError(
+      "a custom authenticate callback is configured; hosted workers verify Passes only.",
+    );
+  }
+  if (opts.grantKeys !== undefined && opts.grantKeys !== null) {
+    throw new OrchardHostedConfigError("sealed-grant keys (--grant-key / VGI_RPC_GRANT_KEYS / grantKeys) are configured.");
+  }
+  if (opts.resolveToken !== undefined) {
+    throw new OrchardHostedConfigError("the worker supplies a resolveToken hook (resolve_token); hosted workers accept Passes only.");
+  }
+  if (opts.mintGrant !== undefined) {
+    throw new OrchardHostedConfigError("the worker supplies a mintGrant hook (mint_grant / issue_grant); hosted workers accept Passes only.");
+  }
+  if (
+    (opts.peerIdentityProviders?.length ?? 0) > 0 ||
+    opts.peerAuthenticationPolicy !== undefined ||
+    opts.peerResolutionContext !== undefined
+  ) {
+    throw new OrchardHostedConfigError("peer identity (Iroh, Tailscale, ...) is configured; hosted workers accept Passes only.");
+  }
+  if (opts.signingKeyConfigured === false) {
+    throw new OrchardHostedConfigError(
+      "VGI_SIGNING_KEY is not set; hosted workers need a stable key shared by every machine of the " +
+        "deployment, or every restart breaks attached sessions.",
+    );
+  }
+  if (opts.signingKey.byteLength < MIN_SIGNING_KEY_BYTES) {
+    throw new OrchardHostedConfigError(`VGI_SIGNING_KEY must be at least ${MIN_SIGNING_KEY_BYTES} bytes.`);
+  }
+}
+
+function hostedDebugEnabled(): boolean {
+  const flag = (globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env?.VGI_DEBUG;
+  return flag !== undefined && flag !== "" && flag !== "0";
 }
 
 // ---------------------------------------------------------------------------
@@ -210,6 +270,16 @@ export function createVgiFetch(opts: VgiFetchOptions): (req: Request) => Promise
         "and GET /vgi-client.js 404s.",
     );
   }
+  // Orchard hosted mode: refuse every other way in, then put the Pass gate in
+  // front of the handler and hand the handler an authenticate that returns the
+  // identity the gate verified.
+  let gate: HostedGate | undefined;
+  if (opts.orchardHosted) {
+    checkHostedFetchOptions(opts);
+    const debug = hostedDebugEnabled() ? (m: string) => console.error(m) : undefined;
+    gate = createHostedGate(opts.orchardHosted, { debug, ...opts.orchardHostedDeps });
+  }
+  const authenticate = gate ? gate.authenticate : opts.authenticate;
   const tokenTtl = opts.tokenTtl ?? 3600;
   // `?? "/vgi"` and not `|| "/vgi"`: an explicit "" means "mount at root".
   const prefix = opts.prefix ?? "/vgi";
@@ -227,7 +297,9 @@ export function createVgiFetch(opts: VgiFetchOptions): (req: Request) => Promise
   // authenticates callers -- vgi_rpc.Identity.v2 when the worker opts in.
   // Built at construction, so a worker that opts into introspection without an
   // allowlist fails here rather than serving traffic.
-  const server = buildRpcServer(protocol, opts, {
+  // Hosted mode never reads sealed-grant keys from the environment (the
+  // hosted checks refused them; this keeps a Worker-less process.env out too).
+  const server = buildRpcServer(protocol, gate ? { ...opts, grantKeys: null } : opts, {
     transport: "http",
     serverId,
     attachTickets: {
@@ -247,7 +319,7 @@ export function createVgiFetch(opts: VgiFetchOptions): (req: Request) => Promise
   // `VgiRpcServer.identity` is `IdentityImpl | undefined` while `ProtocolHost`
   // declares `identity?: {...}` without `| undefined`. Both mean "may be
   // absent"; the cast only bridges the declarations.
-  const handler = createHttpHandler(server as Parameters<typeof createHttpHandler>[0], omitUndefined({
+  const rpcHandler = createHttpHandler(server as Parameters<typeof createHttpHandler>[0], omitUndefined({
     prefix,
     serverId,
     tokenKey: opts.signingKey,
@@ -257,12 +329,15 @@ export function createVgiFetch(opts: VgiFetchOptions): (req: Request) => Promise
     // stream `init` — the one handler the framework passes no CallContext to —
     // can still open the identity-bound attach and split envelopes.
     dispatchHook: REQUEST_AUTH_DISPATCH_HOOK,
-    authenticate: opts.authenticate,
+    authenticate,
+    // Hosted mode: a Pass is the only bearer; nothing is composed beside it.
+    identityBearer: gate ? false : undefined,
     peerIdentityProviders: opts.peerIdentityProviders,
     peerAuthenticationPolicy: opts.peerAuthenticationPolicy,
     peerResolutionContext: opts.peerResolutionContext,
-    // `null` is the explicit opt-out; `undefined` (omitted) means "*".
-    corsOrigins: opts.corsOrigins === null ? undefined : (opts.corsOrigins ?? "*"),
+    // `null` is the explicit opt-out; `undefined` (omitted) means "*". Hosted
+    // mode is always open: the only credential is the bearer Pass.
+    corsOrigins: gate ? "*" : opts.corsOrigins === null ? undefined : (opts.corsOrigins ?? "*"),
     repositoryUrl: opts.repositoryUrl,
     externalLocation: opts.externalLocation,
     uploadUrlProvider: opts.uploadUrlProvider,
@@ -275,6 +350,9 @@ export function createVgiFetch(opts: VgiFetchOptions): (req: Request) => Promise
     extraRoutes: createLandingRoutes(opts.landingInfo),
     enableLandingPage: false,
   }));
+  // Hosted mode authenticates before vgi-rpc routes anything, so no page,
+  // probe or body handling is reachable without a Pass.
+  const handler = gate ? gate.wrap(rpcHandler, prefix) : rpcHandler;
   return async (req: Request) => {
     await reservedCheck;
     const storage = await ensureRequestAuthStorage();

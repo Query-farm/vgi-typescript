@@ -35,6 +35,31 @@ import {
 import { createVgiFetch } from "./http/fetch.js";
 import { blobVendorHttpConfigFromEnv, type BlobVendorEnv, type BlobVendorHttpConfig } from "./http/blob-vendor.js";
 import { grantKeysFromArgv, type HostingOptions } from "./rpc-server.js";
+import {
+  checkHostedEnvironment,
+  checkHostedSigningKey,
+  hostedModeEnabled,
+  OrchardHostedConfigError,
+  resolveHostedConfig,
+  type HostedConfig,
+} from "./hosted.js";
+
+// Orchard hosted mode (VGI_ORCHARD_HOSTED=1): Pass-only HTTP serving. See
+// docs/orchard-hosted.md.
+export {
+  HOSTED_ENV,
+  HOSTED_CHALLENGE,
+  HOSTED_AUTH_DOMAIN,
+  OrchardHostedConfigError,
+  hostedModeEnabled,
+  resolveHostedConfig,
+  orchardHostedFromEnv,
+  checkHostedEnvironment,
+  checkHostedSigningKey,
+  type HostedConfig,
+  type HostedEnv,
+} from "./hosted.js";
+export { hostedAuthenticate, isHostedAuthenticate, type HostedVerifierDeps } from "./http/hosted-auth.js";
 
 /** Environment variables `serveVgiWorker` reads. Injectable for testing. */
 export interface ServeEnv extends BlobVendorEnv {
@@ -50,6 +75,16 @@ export interface ServeEnv extends BlobVendorEnv {
   VGI_RPC_GRANT_MAX_TTL_SECONDS?: string;
   /** Principals allowed to call `introspect_token`, comma-separated. */
   VGI_INTROSPECT_PRINCIPALS?: string;
+  /** `1` turns on Orchard hosted mode (see `docs/orchard-hosted.md`). */
+  VGI_ORCHARD_HOSTED?: string;
+  /** Hosted mode: the Front Desk issuer, exactly one value. */
+  VGI_JWT_ISSUER?: string;
+  /** Hosted mode: the canonical Desk Address, exactly one value. */
+  VGI_JWT_AUDIENCE?: string;
+  /** Hosted mode: the Front Desk's JWKS URL, exactly one value. */
+  VGI_JWT_JWKS_URI?: string;
+  /** Hosted mode: accepted Pass algorithms (default ES256; never none/HS*). */
+  VGI_JWT_ALGORITHMS?: string;
 }
 
 export const DEFAULT_PORT = 8787;
@@ -261,6 +296,11 @@ export function createVgiWorkerFetch(
   opts: ServeVgiWorkerOptions,
 ): (req: Request) => Promise<Response> {
   const env = opts.env ?? (process.env as ServeEnv);
+  const argv = opts.argv ?? process.argv.slice(2);
+  // Orchard hosted mode is checked first, before the signing key is parsed or
+  // grant keys are read, so every misconfiguration surfaces as a hosted-mode
+  // refusal rather than whatever error the generic path would raise.
+  const orchardHosted = resolveServeHostedMode(opts, env, argv);
   const signingKey = resolveSigningKey(
     typeof opts.signingKey === "string" ? parseSigningKeyHex(opts.signingKey) : opts.signingKey,
     env,
@@ -312,12 +352,42 @@ export function createVgiWorkerFetch(
     mintGrant: opts.mintGrant,
     introspectPrincipals: opts.introspectPrincipals,
     maxAuthAge: opts.maxAuthAge,
-    grantKeys:
-      opts.grantKeys !== undefined
+    grantKeys: orchardHosted
+      ? undefined
+      : opts.grantKeys !== undefined
         ? opts.grantKeys
-        : (grantKeysFromArgv(opts.argv ?? process.argv.slice(2), env as Record<string, string | undefined>) ??
+        : (grantKeysFromArgv(argv, env as Record<string, string | undefined>) ??
           GrantKeys.fromEnv(env as Record<string, string | undefined>)),
+    orchardHosted,
   });
+}
+
+/**
+ * Orchard hosted mode for {@link createVgiWorkerFetch}: `undefined` when
+ * `VGI_ORCHARD_HOSTED` is off, else the validated configuration once every
+ * check has passed. Throws {@link OrchardHostedConfigError}.
+ */
+function resolveServeHostedMode(
+  opts: ServeVgiWorkerOptions,
+  env: ServeEnv,
+  argv: readonly string[],
+): HostedConfig | undefined {
+  const hostedEnv = env as Record<string, string | undefined>;
+  if (!hostedModeEnabled(hostedEnv)) return undefined;
+  checkHostedSigningKey(hostedEnv, opts.signingKey);
+  checkHostedEnvironment(hostedEnv);
+  if (opts.grantKeys !== undefined && opts.grantKeys !== null) {
+    throw new OrchardHostedConfigError("sealed-grant keys (grantKeys) are configured.");
+  }
+  if (argv.some((a) => a === "--grant-key" || a.startsWith("--grant-key="))) {
+    throw new OrchardHostedConfigError("sealed-grant keys (--grant-key) are configured.");
+  }
+  if (opts.irohBridge) {
+    throw new OrchardHostedConfigError("an Iroh HTTP bridge (peer identity) is configured; hosted workers accept Passes only.");
+  }
+  // authenticate / resolveToken / mintGrant / peer identity are refused by
+  // createVgiFetch, which sees the same options.
+  return resolveHostedConfig(hostedEnv);
 }
 
 /**
@@ -358,7 +428,18 @@ export function serveVgiWorker(opts: ServeVgiWorkerOptions): VgiHttpServer {
         },
       }
     : opts.irohBridge;
-  const fetch = createVgiWorkerFetch({ ...opts, irohBridge: bridge });
+  let fetch: (req: Request) => Promise<Response>;
+  try {
+    fetch = createVgiWorkerFetch({ ...opts, irohBridge: bridge });
+  } catch (error) {
+    // A hosted-mode refusal is an operator error with one fix, not a crash:
+    // say what is wrong and exit non-zero, without a stack trace.
+    if (error instanceof OrchardHostedConfigError) {
+      process.stderr.write(`Error: ${error.message}\n`);
+      process.exit(1);
+    }
+    throw error;
+  }
   server = runtime.serve({ port, hostname, fetch });
 
   if (!opts.quiet) {

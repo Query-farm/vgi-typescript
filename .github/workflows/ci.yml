@@ -90,6 +90,20 @@ jobs:
       - name: Consumer type-check (packed tarball, strict flags)
         run: scripts/check-consumer-types.sh
 
+      # Orchard hosted mode must not depend on Bun: run the built worker-cf
+      # bundle's Pass gate under plain Node (the unit suite covers the contract
+      # on Bun, both backends). The pinned vgi-rpc ships no JS until it is a
+      # published release, so build its Node bundle first.
+      # TODO(release-wave): drop the vgi-rpc build with the switch to a published vgi-rpc.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Orchard hosted mode on Node
+        run: |
+          (cd node_modules/@query-farm/vgi-rpc && bun run build:js:node)
+          node scripts/hosted-node-smoke.mjs
+
   hosted-protocols:
     # vgi-rpc's hosted-protocols group (MULTI_PROTOCOL_HOSTING.md §7) against
     # the example fixture worker: the worker lists vgi.v3 then

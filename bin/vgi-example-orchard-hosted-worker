@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# Orchard hosted-mode fixture worker. VGI_BUN_CONDITIONS (e.g. "flechette")
+# selects the Arrow backend.
+exec bun ${VGI_BUN_CONDITIONS:+--conditions="$VGI_BUN_CONDITIONS"} run "$(dirname "$0")/../examples/orchard-hosted-worker.ts" "$@"
