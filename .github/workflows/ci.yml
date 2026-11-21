@@ -143,6 +143,54 @@ jobs:
       - name: Hosted-protocols group
         run: ci/run-hosted-protocols.sh
 
+  orchard-hosted:
+    # vgi's SDK-neutral Orchard hosted-mode harness (test/hosted, the definition
+    # of done for VGI_ORCHARD_HOSTED=1) against examples/orchard-hosted-worker.ts,
+    # on both Arrow backends.
+    name: "Orchard hosted mode (${{ matrix.backend }})"
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - backend: arrowjs
+            conditions: ""
+          - backend: flechette
+            conditions: flechette
+    steps:
+      - name: Checkout vgi-typescript
+        uses: actions/checkout@v4
+
+      - name: Checkout Query-farm/vgi (supplies test/hosted)
+        uses: actions/checkout@v4
+        with:
+          repository: Query-farm/vgi
+          path: .vgi
+          # TODO(release-wave): back to main once protocol-3.4 is merged.
+          ref: 2957674e1167abf884fbd0d7e159472afa31291c
+          sparse-checkout: test/hosted
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v10.3.3
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      # TODO(release-wave): drop with the switch to a published vgi-rpc.
+      - name: Build the pinned vgi-rpc's declarations
+        run: scripts/prepare-pinned-vgi-rpc.sh
+
+      - name: Hosted-mode conformance
+        env:
+          VGI_SRC: ${{ github.workspace }}/.vgi
+          VGI_BUN_CONDITIONS: ${{ matrix.conditions }}
+        run: ci/run-orchard-hosted-conformance.sh
+
   integration:
     # Lanes run independently (fail-fast: false) so a regression in one is never
     # masked by another. The plain subprocess transport is deliberately absent:

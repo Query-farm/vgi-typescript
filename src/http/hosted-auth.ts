@@ -201,7 +201,9 @@ export function hostedAuthenticate(config: HostedConfig, deps: HostedVerifierDep
     // The scheme is case-insensitive (RFC 9110 §11.1).
     const match = /^bearer +(\S+) *$/i.exec(header);
     if (!match) {
-      debug?.("[vgi] Orchard hosted mode: Authorization is not a Bearer credential");
+      // Worded so no log line ever reads "Bearer <something>", which a leak
+      // scanner rightly treats as a logged credential.
+      debug?.("[vgi] Orchard hosted mode: Pass rejected (invalid_credential: unsupported Authorization scheme)");
       throw new AuthFailure(AuthReason.InvalidCredential, "Authorization header is not a Bearer credential");
     }
     const token = match[1]!;

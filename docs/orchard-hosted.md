@@ -159,3 +159,16 @@ catalog `orchard` with `pass_claims(x)`, which returns
 sorted). It prints `PORT:<n>` once listening (`PORT` and `HOST` choose the
 bind; default `127.0.0.1:0`). `src/__tests__/orchard-hosted.test.ts` drives it,
 and `scripts/hosted-node-smoke.mjs` runs the gate under plain Node.
+
+`ci/run-orchard-hosted-conformance.sh` runs vgi's SDK-neutral harness
+(`test/hosted/run_hosted_conformance.py`, vgi >= `2957674`) against it, with
+every non-HTTP transport as a `--refuse-cmd`:
+
+```sh
+VGI_SRC=../vgi ci/run-orchard-hosted-conformance.sh
+```
+
+All required rules pass. Of the opt-in `--streaming-body` rules, the two that
+declare a 64 GiB body get 413 from `Bun.serve` itself (its
+`maxRequestBodySize`), before any application code runs; the 16 MiB and
+unfinished-chunked ones pass.
