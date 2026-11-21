@@ -161,14 +161,14 @@ bind; default `127.0.0.1:0`). `src/__tests__/orchard-hosted.test.ts` drives it,
 and `scripts/hosted-node-smoke.mjs` runs the gate under plain Node.
 
 `ci/run-orchard-hosted-conformance.sh` runs vgi's SDK-neutral harness
-(`test/hosted/run_hosted_conformance.py`, vgi >= `2957674`) against it, with
+(`test/hosted/run_hosted_conformance.py`, vgi >= `fce5798`) against it, with
 every non-HTTP transport as a `--refuse-cmd`:
 
 ```sh
 VGI_SRC=../vgi ci/run-orchard-hosted-conformance.sh
 ```
 
-All required rules pass. Of the opt-in `--streaming-body` rules, the two that
-declare a 64 GiB body get 413 from `Bun.serve` itself (its
-`maxRequestBodySize`), before any application code runs; the 16 MiB and
-unfinished-chunked ones pass.
+All rules pass, including the opt-in `--streaming-body` ones. A request
+declaring a body over the cap gets its answer before any of the body is sent:
+401 from the gate, or, for a declared length above `Bun.serve`'s
+`maxRequestBodySize` (the 64 GiB rule), an immediate 413 from Bun itself.

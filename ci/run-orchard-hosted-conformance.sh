@@ -16,9 +16,9 @@
 # No rule is skipped.
 set -euo pipefail
 
-: "${VGI_SRC:?path to a Query-farm/vgi checkout (needs test/hosted, vgi >= 2957674)}"
+: "${VGI_SRC:?path to a Query-farm/vgi checkout (needs test/hosted, vgi >= fce5798)}"
 HARNESS="$VGI_SRC/test/hosted/run_hosted_conformance.py"
-[ -f "$HARNESS" ] || { echo "::error::no $HARNESS (needs vgi >= 2957674)"; exit 1; }
+[ -f "$HARNESS" ] || { echo "::error::no $HARNESS (needs vgi >= fce5798)"; exit 1; }
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 
 W="bun ${VGI_BUN_CONDITIONS:+--conditions=$VGI_BUN_CONDITIONS} run examples/orchard-hosted-worker.ts"
