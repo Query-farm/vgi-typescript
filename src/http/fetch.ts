@@ -31,7 +31,12 @@ import { buildRpcServer, type HostingOptions } from "../rpc-server.js";
 import { setRequestAuthScope, type RequestAuthHolder } from "../request-auth.js";
 import { checkReservedAttachOptions } from "../catalog/attach-option.js";
 import type { BlobVendorHttpConfig } from "./blob-vendor.js";
-import { OrchardHostedConfigError, MIN_SIGNING_KEY_BYTES, type HostedConfig } from "../hosted.js";
+import {
+  HOSTED_DEFAULT_MAX_REQUEST_BYTES,
+  OrchardHostedConfigError,
+  MIN_SIGNING_KEY_BYTES,
+  type HostedConfig,
+} from "../hosted.js";
 import { createHostedGate, isHostedAuthenticate, type HostedGate, type HostedVerifierDeps } from "./hosted-auth.js";
 
 /**
@@ -335,6 +340,9 @@ export function createVgiFetch(opts: VgiFetchOptions): (req: Request) => Promise
     gate = createHostedGate(opts.orchardHosted, { debug, ...opts.orchardHostedDeps });
   }
   const authenticate = gate ? gate.authenticate : opts.authenticate;
+  // A hosted worker always has a request cap (VGI_RPC_MAX_REQUEST_BYTES, else
+  // 32 MiB), advertised, as in vgi-python's hosted mode.
+  const maxRequestBytes = opts.maxRequestBytes ?? (gate ? HOSTED_DEFAULT_MAX_REQUEST_BYTES : undefined);
   const tokenTtl = opts.tokenTtl ?? DEFAULT_TOKEN_TTL;
   // Protocol 3.4: argument references are on whenever the server can mint and
   // resolve them, and the header is the mandatory signal that they are.
@@ -405,7 +413,7 @@ export function createVgiFetch(opts: VgiFetchOptions): (req: Request) => Promise
     repositoryUrl: opts.repositoryUrl,
     externalLocation: opts.externalLocation,
     uploadUrlProvider: opts.uploadUrlProvider,
-    maxRequestBytes: opts.maxRequestBytes,
+    maxRequestBytes,
     maxUploadBytes: opts.maxUploadBytes,
     // The landing surface is ours, contributed into vgi-rpc's routing rather
     // than built there. `enableLandingPage: false` drops vgi-rpc's generic

@@ -49,6 +49,14 @@ export const JWKS_REFRESH_MIN_INTERVAL_SECONDS = 60;
 export const JWKS_FETCH_TIMEOUT_SECONDS = 10;
 /** The shortest signing key a hosted worker accepts, bytes. */
 export const MIN_SIGNING_KEY_BYTES = 32;
+/**
+ * The request cap a hosted worker serves with when neither
+ * `VGI_RPC_MAX_REQUEST_BYTES` nor `maxRequestBytes` sets one: 32 MiB
+ * (vgi-python `HOSTED_DEFAULT_MAX_REQUEST_BYTES`). Advertised as
+ * `VGI-Max-Request-Bytes`, so with the blob vendor a larger request goes up
+ * through an upload URL instead.
+ */
+export const HOSTED_DEFAULT_MAX_REQUEST_BYTES = 32 * 1024 * 1024;
 
 const TRUE_VALUES: ReadonlySet<string> = new Set(["1", "true", "yes", "on"]);
 const FALSE_VALUES: ReadonlySet<string> = new Set(["", "0", "false", "no", "off"]);

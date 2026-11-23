@@ -115,6 +115,21 @@ open (`Access-Control-Allow-Origin: *`, whatever `corsOrigins` says), because
 the only credential is the bearer Pass. The `Authorization` header is never
 logged; with `VGI_DEBUG=1` a rejection logs only its reason code.
 
+## The blob vendor and the request cap
+
+A hosted worker reads the blob-vendor environment like any HTTP worker
+(`VGI_BLOB_VENDOR_URL`, `VGI_BLOB_VENDOR_TOKEN`,
+`VGI_RPC_EXTERNALIZE_THRESHOLD_BYTES`, ...): results over the threshold become
+vendor pointers, `__upload_url__` grants come from the vendor, and
+`VGI-Arguments-Ref-Bytes` is advertised. Every request has passed the Pass
+gate, so a grant's `ref` is sealed for the Pass principal (domain `orchard`,
+principal `sub`) and opens for no one else.
+
+A hosted worker always has a request cap: `VGI_RPC_MAX_REQUEST_BYTES` (or
+`maxRequestBytes`), else 32 MiB (vgi-python's
+`HOSTED_DEFAULT_MAX_REQUEST_BYTES`), advertised as `VGI-Max-Request-Bytes`.
+With the vendor, a larger request goes up through an upload URL.
+
 ## Claims in function code
 
 Function code sees the Pass through the usual `info.auth` (`AuthContext`), with
