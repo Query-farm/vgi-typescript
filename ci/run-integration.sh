@@ -184,10 +184,15 @@ fi
 if [ "$TRANSPORT" = "vendor" ]; then
   EXTERNAL_STORAGE="$VGI_SRC/test/sql/external_storage"
   [ -d "$EXTERNAL_STORAGE" ] || { echo "::error::no test/sql/external_storage under VGI_SRC=$VGI_SRC (needs vgi >= f9e5df3)"; exit 1; }
-  mkdir -p "$STAGE/test/sql/external_storage"
+  mkdir -p "$STAGE/test/sql/external_storage" "$STAGE/test/sql/external_storage_server_env"
   for f in "$EXTERNAL_STORAGE"/*.test; do
+    # A file declaring `# server-env: NAME=VALUE` needs its own worker started
+    # with that environment (vgi scripts/run_tests.py applies it per file), so
+    # it is staged apart and run against a dedicated server below.
+    dest="$STAGE/test/sql/external_storage"
+    grep -q '^#[[:space:]]*server-env:' "$f" && dest="$STAGE/test/sql/external_storage_server_env"
     awk -v http=1 -v install="$PREPROCESS" -f "$HERE/preprocess-require.awk" "$f" \
-      > "$STAGE/test/sql/external_storage/$(basename "$f")"
+      > "$dest/$(basename "$f")"
   done
 fi
 STAGED=$(find "$STAGE/test/sql" -name '*.test' | wc -l | tr -d ' ')
@@ -288,9 +293,11 @@ trap cleanup EXIT
 BOOTED_PORT=""
 boot_http_worker() {
   local exe="$1" log pid port=""
+  shift
   BOOTED_PORT=""
   log="$(mktemp)"
-  ( cd "$RUN_CWD" && exec "$exe" ) >"$log" 2>&1 &
+  # Any further arguments are NAME=VALUE environment for this worker only.
+  ( cd "$RUN_CWD" && exec env "$@" "$exe" ) >"$log" 2>&1 &
   pid=$!
   echo "$pid" >> "$BG_PIDS_FILE"
   for _ in $(seq 1 120); do
@@ -462,6 +469,12 @@ case "$TRANSPORT" in
       command -v uvx >/dev/null 2>&1 || { echo "::error::the vendor lane needs uvx (astral-sh/setup-uv)"; exit 1; }
       # shellcheck source=/dev/null
       source "$VGI_SRC/test/start_fake_blob_vendor.sh" || { echo "::error::fake blob vendor did not start"; exit 1; }
+      # Protocol 3.4 large values (vgi docs/testing/blob-test-catalog.md): the
+      # worker implements argument references and serves the four blob_param_*
+      # fixtures, carries its init request as an `init` StateRef, and the
+      # pinned fake vendor has the delete-object route, so every
+      # external_storage/arguments_ref*.test runs instead of skipping.
+      export VGI_WORKER_ARGUMENTS_REF=1 VGI_WORKER_INIT_STATE_REF=1 VGI_FAKE_VENDOR_DELETE_ROUTE=1
       # The SDK's own ExternalizingStorage tests against this lane's vendor
       # (fault routes included); required here, so a broken vendor is a failure.
       ( cd "$REPO" && VGI_VENDOR_TESTS_REQUIRED=1 bun ${VGI_BUN_CONDITIONS:+--conditions="$VGI_BUN_CONDITIONS"} \
@@ -631,11 +644,28 @@ echo "Suite wall clock: ${SECONDS}s for $TOTAL_EXECUTED executed test cases."
 
 if [ "$TRANSPORT" = "vendor" ]; then
   # The externalization suite, one file at a time in this one process (the
-  # files compare the vendor's lane-wide counters and arm faults). 7 of its 10
-  # files are worker tests; the 3 fetch_* files skip (see the skip list).
+  # files compare the vendor's lane-wide counters and arm faults). Of the 17
+  # files staged here, the 3 fetch_* files skip (see the skip list); the 3
+  # server-env files run after, each against its own worker.
   echo "Running test/sql/external_storage/* against the fake blob vendor ..."
-  MIN_EXECUTED="${MIN_EXECUTED_EXTERNAL_STORAGE:-7}"
+  MIN_EXECUTED="${MIN_EXECUTED_EXTERNAL_STORAGE:-14}"
   run_unittest "test/sql/external_storage/*" || suite_rc=1
+  # The files that declare `# server-env:` (staged apart above), each against
+  # its own worker started with that environment -- e.g.
+  # VGI_TEST_DISABLE_ARGUMENTS_REF=1, VGI_RPC_STATE_REF_INLINE_BYTES=2048,
+  # VGI_RPC_OBJECT_CACHE_BYTES=1 -- the way vgi's own runner applies them.
+  MAIN_TEST_WORKER="$VGI_TEST_WORKER"
+  for f in "$STAGE"/test/sql/external_storage_server_env/*.test; do
+    [ -e "$f" ] || continue
+    mapfile -t SERVER_ENV < <(sed -n 's/^#[[:space:]]*server-env:[[:space:]]*\([A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*\)[[:space:]]*$/\1/p' "$f")
+    echo "Running $(basename "$f") against its own worker (${SERVER_ENV[*]}) ..."
+    boot_http_worker "$HTTP_WORKER" "${SERVER_ENV[@]}" || { suite_rc=1; continue; }
+    export VGI_TEST_WORKER="http://localhost:${BOOTED_PORT}"
+    MIN_EXECUTED=1
+    run_unittest "test/sql/external_storage_server_env/$(basename "$f")" || suite_rc=1
+    kill "$(tail -1 "$BG_PIDS_FILE")" 2>/dev/null || true
+  done
+  export VGI_TEST_WORKER="$MAIN_TEST_WORKER"
   # Evidence the lane externalized at all: the vendor's lifetime counters.
   echo "fake blob vendor counters: $(curl -fsS "$VGI_BLOB_VENDOR_URL/__stats__" 2>&1 | tr -s ' ')"
 fi

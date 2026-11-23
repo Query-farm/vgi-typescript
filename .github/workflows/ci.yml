@@ -34,6 +34,9 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  # TODO(release-wave): lets the protocol-3.4 branch be run on demand until it
+  # merges.
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -43,12 +46,12 @@ env:
   # Test sources and statically linked binaries come from this exact native commit.
   # TODO(release-wave): both refs are vgi's protocol-3.4 branch (3.4.0, upload
   # URLs v2, external_storage/upload_integrity); repoint at the merged commit.
-  VGI_REF: 5b8b7a2a7e4e587e15573ddd62cf1dbcdf6b357e
-  VGI_VENDOR_REF: 5b8b7a2a7e4e587e15573ddd62cf1dbcdf6b357e
+  VGI_REF: e99683f2af215c5a166697945e796c91d0cc66fe
+  VGI_VENDOR_REF: e99683f2af215c5a166697945e796c91d0cc66fe
   # The fake vendor with sized-PUT verification and the upload fault route
   # (vgi-rpc-python protocol-3.4); test/start_fake_blob_vendor.sh reads it.
   # TODO(release-wave): drop once vgi's script pins a merged commit.
-  VGI_RPC_FAKE_VENDOR_REF: f0fb6754ae5b70900ba21629a1e2d48eb2182774
+  VGI_RPC_FAKE_VENDOR_REF: 6a21ee3b2fb21d9c348c9b615fd97dce8e0bb852
   VGI_NATIVE_RUNNER_BRANCH: protocol-3.4
 
 jobs:
