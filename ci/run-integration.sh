@@ -479,6 +479,10 @@ case "$TRANSPORT" in
       # (fault routes included); required here, so a broken vendor is a failure.
       ( cd "$REPO" && VGI_VENDOR_TESTS_REQUIRED=1 bun ${VGI_BUN_CONDITIONS:+--conditions="$VGI_BUN_CONDITIONS"} \
           test src/functions/__tests__/storage-blobs.test.ts ) || { echo "::error::storage-blobs unit tests failed against the lane vendor"; exit 1; }
+      # Orchard hosted mode with this lane's vendor (grants bound to the Pass
+      # principal, results externalized, the hosted request cap advertised).
+      ( cd "$REPO" && VGI_VENDOR_TESTS_REQUIRED=1 bun ${VGI_BUN_CONDITIONS:+--conditions="$VGI_BUN_CONDITIONS"} \
+          test src/__tests__/orchard-hosted-vendor.test.ts ) || { echo "::error::Orchard hosted-mode vendor tests failed against the lane vendor"; exit 1; }
     fi
     # Whole-suite-over-HTTP (mirrors make test-http): every ATTACH goes over
     # http://, so staging injected `LOAD httpfs` and dropped the pool-semantics
