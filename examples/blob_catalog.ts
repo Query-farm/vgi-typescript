@@ -19,6 +19,15 @@
 //   blob_buffer_echo(t)     table-buffering  stores each input batch, replays it
 //   blob_tio(t)             table-in-out     stores each batch in state, reads back
 //   blob_store_values(t)    table-in-out     stores each value of column 0 exactly
+//   blob_param_batches(p,n) table            large bind parameter over n stream turns
+//   blob_param_streams(p,n) table (splits)   large bind parameter, n parallel streams
+//   blob_param_scalar(i,p)  scalar (const p) large constant parameter of a scalar
+//   blob_param_table        catalog table    a scan binding repeat('t', 65536)
+//
+// The four blob_param_* fixtures back the extension's protocol 3.4
+// argument-reference tests (test/sql/external_storage/arguments_ref*.test,
+// "Protocol 3.4 large values" in the contract); vgi-python 779dc67 is the
+// reference.
 //
 // The storage functions compute their outputs from what storage returns, not
 // from their input, so the round trip is what the tests check. A separate
@@ -26,6 +35,7 @@
 
 import { createHash } from "node:crypto";
 import { Int64, Utf8 } from "@query-farm/apache-arrow";
+import { Arguments } from "../src/arguments/arguments.js";
 import type { OutputCollector } from "@query-farm/vgi-rpc";
 import {
   batchFromColumns,
@@ -41,6 +51,8 @@ import {
   serializeBatch,
   utf8,
   type CatalogDescriptor,
+  type PlanResult,
+  type TableProcessParams,
   type TableBufferingParams,
   type VgiBatch,
   type VgiFunction,
@@ -201,6 +213,159 @@ const blob_param_echo = defineTableFunction<{ payload: string }, { emitted: bool
   examples: [{ sql: "SELECT * FROM blob_param_echo('abc')", description: "3, sha256('abc')" }],
 });
 
+// ----------------------------------------------------------------------------
+// Protocol 3.4 argument-reference fixtures
+// ----------------------------------------------------------------------------
+
+function digest(payload: string): { len: bigint; sha: string } {
+  const raw = TE.encode(payload);
+  return { len: BigInt(raw.byteLength), sha: createHash("sha256").update(raw).digest("hex") };
+}
+
+const PARAM_BATCHES_SCHEMA = schema([
+  field("i", int64()),
+  field("payload_len", int64()),
+  field("payload_sha256", utf8()),
+]);
+
+/** `blob_param_batches(payload, batches)`: `batches` one-row batches, one per
+ *  stream turn, row i = (i, strlen(payload), sha256(payload)). A 60-batch call
+ *  is at least 60 continuations, each carrying the stream's `init` state. */
+const blob_param_batches = defineTableFunction<{ payload: string; batches: bigint }, { next: number }>({
+  name: "blob_param_batches",
+  description: "Length and SHA-256 of a parameter, once per batch (argument references over many turns)",
+  args: { payload: new Utf8(), batches: new Int64() },
+  argDocs: { payload: "Parameter to measure", batches: "Number of one-row batches" },
+  argConstraints: { batches: { ge: 0 } },
+  onBind: () => ({ outputSchema: PARAM_BATCHES_SCHEMA }),
+  cardinality: (params) => ({ estimate: Number(params.args.batches), max: Number(params.args.batches) }),
+  initialState: () => ({ next: 0 }),
+  process: (params, state, out) => {
+    if (state.next >= Number(params.args.batches)) {
+      out.finish();
+      return;
+    }
+    const { len, sha } = digest(params.args.payload);
+    out.emit(
+      batchFromColumns(
+        { i: [BigInt(state.next)], payload_len: [len], payload_sha256: [sha] },
+        params.outputSchema,
+      ),
+    );
+    state.next += 1;
+  },
+  examples: [{ sql: "SELECT * FROM blob_param_batches('abc', 3)", description: "3 rows, i = 0..2" }],
+});
+
+const PARAM_STREAMS_SCHEMA = schema([
+  field("stream", int64()),
+  field("payload_len", int64()),
+  field("payload_sha256", utf8()),
+]);
+
+function streamIndex(payload: Uint8Array): number {
+  return Number(new DataView(payload.buffer, payload.byteOffset, payload.byteLength).getBigInt64(0, true));
+}
+
+/** `blob_param_streams(payload, streams)`: one bind planned as `streams`
+ *  splits, each emitting (stream index, strlen(payload), sha256(payload)).
+ *  Every split's init embeds the same bind call, so with an argument reference
+ *  the worker process fetches the argument once (vgi-rpc's object cache). */
+const blob_param_streams = defineTableFunction<
+  { payload: string; streams: bigint },
+  { streamsJson: string; next: number }
+>({
+  name: "blob_param_streams",
+  description: "Length and SHA-256 of a parameter from parallel streams (argument references)",
+  args: { payload: new Utf8(), streams: new Int64() },
+  argDocs: { payload: "Parameter to measure", streams: "Number of parallel streams (one split each)" },
+  argConstraints: { streams: { ge: 1 } },
+  supportsSplits: true,
+  onBind: () => ({ outputSchema: PARAM_STREAMS_SCHEMA }),
+  cardinality: (params) => ({ estimate: Number(params.args.streams), max: Number(params.args.streams) }),
+  plan: (params): PlanResult => {
+    const count = Number(params.args.streams);
+    const splits = Array.from({ length: count }, (_, i) => {
+      const payload = new Uint8Array(8);
+      new DataView(payload.buffer).setBigInt64(0, BigInt(i), true);
+      return { payload, estimatedRows: 1, rowsExact: true };
+    });
+    return { splits, estimatedTotalSplits: count, estimatedTotalRows: count };
+  },
+  // Splits are redeemed from `splitPayloads` in initialState.
+  onSplit: () => undefined,
+  initialState: (params: TableProcessParams<{ payload: string; streams: bigint }>) => {
+    if (params.splitPayloads === undefined) {
+      throw new Error("blob_param_streams is split-only; vgi_split_scans is probably off");
+    }
+    return { streamsJson: JSON.stringify(params.splitPayloads.map(streamIndex)), next: 0 };
+  },
+  process: (params, state, out) => {
+    const streams = JSON.parse(state.streamsJson) as number[];
+    if (state.next >= streams.length) {
+      out.finish();
+      return;
+    }
+    const { len, sha } = digest(params.args.payload);
+    out.emit(
+      batchFromColumns(
+        { stream: [BigInt(streams[state.next]!)], payload_len: [len], payload_sha256: [sha] },
+        params.outputSchema,
+      ),
+    );
+    state.next += 1;
+  },
+  examples: [{ sql: "SELECT * FROM blob_param_streams('abc', 4)", description: "4 rows, stream = 0..3" }],
+});
+
+/** `blob_param_scalar(i, payload)`: sha256(payload) per non-NULL i. `payload`
+ *  is a constant parameter, so it rides the scalar's bind (and with it an
+ *  argument reference), not its input batches. */
+const blob_param_scalar = defineScalarFunction({
+  name: "blob_param_scalar",
+  description: "SHA-256 of a constant parameter for every row (argument references for scalars)",
+  params: { i: new Int64() },
+  constParams: { payload: new Utf8() },
+  argDocs: { i: "Row value; NULL gives NULL", payload: "Constant parameter to hash" },
+  returns: new Utf8(),
+  compute: (batch: VgiBatch, consts: Record<string, any>) => {
+    const payload = consts.payload as string | null | undefined;
+    const sha = payload == null ? null : digest(payload).sha;
+    const col = batch.getChildAt(0)!;
+    const out: Array<string | null> = [];
+    for (let r = 0; r < batch.numRows; r++) out.push(col.get(r) == null ? null : sha);
+    return out;
+  },
+  examples: [{ sql: "SELECT blob_param_scalar(1, 'abc')", description: "sha256('abc')" }],
+});
+
+/** The fixed argument `blob_param_table` binds: repeat('t', 65536). */
+export const BLOB_PARAM_TABLE_ARGUMENT = "t".repeat(65536);
+
+/** The scan behind the `blob_param_table` catalog table: blob_param_echo with a
+ *  fixed argument. It reports STABLE_WITHIN_QUERY and its bind result is never
+ *  inlined in the catalog (this SDK inlines only the scan-function discovery),
+ *  so every scan binds over RPC and a serialized-plan rebind must reproduce
+ *  the same bind bytes (the extension's per-query argument-reference memo). */
+const blob_param_table_scan = defineTableFunction<{ payload: string }, { emitted: boolean }>({
+  name: "blob_param_table_scan",
+  description: "Length and SHA-256 of blob_param_table's fixed parameter (STABLE_WITHIN_QUERY)",
+  args: { payload: new Utf8() },
+  argDocs: { payload: "Parameter to measure" },
+  onBind: () => ({ outputSchema: PARAM_ECHO_SCHEMA, repeatability: "STABLE_WITHIN_QUERY" }),
+  cardinality: () => ({ estimate: 1, max: 1 }),
+  initialState: () => ({ emitted: false }),
+  process: (params, state, out) => {
+    if (state.emitted) {
+      out.finish();
+      return;
+    }
+    const { len, sha } = digest(params.args.payload);
+    out.emit(batchFromColumns({ payload_len: [len], payload_sha256: [sha] }, params.outputSchema));
+    state.emitted = true;
+  },
+});
+
 // ============================================================================
 // Table-buffering and table-in-out
 // ============================================================================
@@ -325,6 +490,9 @@ export const blobCatalogFunctions: VgiFunction[] = [
   blob_buffer_echo,
   blob_tio,
   blob_store_values,
+  blob_param_batches,
+  blob_param_streams,
+  blob_param_scalar,
 ];
 
 export const blobCatalog: CatalogDescriptor = {
@@ -336,6 +504,14 @@ export const blobCatalog: CatalogDescriptor = {
       name: "main",
       comment: "Externalization test functions",
       functions: blobCatalogFunctions,
+      tables: [
+        {
+          name: "blob_param_table",
+          function: blob_param_table_scan,
+          arguments: new Arguments([BLOB_PARAM_TABLE_ARGUMENT]),
+          comment: "blob_param_echo(repeat('t', 65536)), STABLE_WITHIN_QUERY, bound over RPC on every scan",
+        },
+      ],
     },
   ],
 };
