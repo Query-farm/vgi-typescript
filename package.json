@@ -96,11 +96,11 @@
     "@query-farm/apache-arrow": "^21.1.1",
     "@query-farm/vgi-rpc": "^0.29.7"
   },
-  "//devDependencies": "TODO(release-wave): switch @query-farm/vgi-rpc back to the first published release containing the commit below (and raise the peer range to it), then delete scripts/prepare-pinned-vgi-rpc.sh. Until then the dev dependency is pinned to the exact vgi-rpc-typescript commit on its protocol-3.4 branch carrying the blob-vendor client (VendorStorage, VendorBlobClient, externalConfigFromEnv) and upload URLs v2 (VGI-Upload-URL-Support: 2, sized (size, sha256) uploads); CI runs the prepare script after bun install so tsc finds its declarations.",
+  "//devDependencies": "TODO(release-wave): switch @query-farm/vgi-rpc back to the first published release containing the commit below (and raise the peer range to it), then delete scripts/prepare-pinned-vgi-rpc.sh. Until then the dev dependency is pinned to the exact vgi-rpc-typescript commit on its protocol-3.4 branch carrying the blob-vendor client (VendorStorage, VendorBlobClient, externalConfigFromEnv), upload URLs v2 and protocol 3.4 StateRef / argument references (StateRef, resolveArgumentRef, the object cache, cursorRule) (VGI-Upload-URL-Support: 2, sized (size, sha256) uploads); CI runs the prepare script after bun install so tsc finds its declarations.",
   "devDependencies": {
     "@duckdb/node-api": "^1.5.5-r.4",
     "@query-farm/apache-arrow": "^21.1.1",
-    "@query-farm/vgi-rpc": "github:Query-farm/vgi-rpc-typescript#164a1a7c1bb87fd97cdd5babff61ad991c3615fc",
+    "@query-farm/vgi-rpc": "github:Query-farm/vgi-rpc-typescript#fed3a646fd668a9317da2da53ffcba78b1248d37",
     "@types/bun": "latest",
     "typescript": "^7.0.2"
   },

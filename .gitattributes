@@ -1,0 +1,2 @@
+# The nested-binary conformance corpus is byte-exact Arrow IPC (vgi docs/large-values-3.4.md §3.4).
+conformance/nested-binary/** -text
