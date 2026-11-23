@@ -9,6 +9,7 @@
 // execution_id), then rebuilds the user-facing TableBufferingParams. Mirrors
 // vgi-python's worker._load_table_buffering_params.
 
+import { resolveBindCall } from "../arguments-ref.js";
 import { deserializeBatch } from "../../arrow/index.js";
 import type { VgiService } from "../../generated/vgi-service.js";
 import type { FunctionRegistry } from "../../functions/registry.js";
@@ -99,6 +100,10 @@ export function tableBufferingHandlers(
         storage_shard_key: shardKey,
       },
     };
+    // The stored init holds an argument reference as the reference: resolve
+    // it for this request (vgi-rpc's object cache, one storage GET per object
+    // per process) before anything reads the arguments.
+    await resolveBindCall(request.bind_call, ctx);
     const args = func.bufferingExtractArgs(request.bind_call);
     const settings = batchToScalarDict(request.bind_call.settings);
     const secrets = batchToSecretDict(request.bind_call.secrets);

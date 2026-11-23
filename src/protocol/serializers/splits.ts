@@ -13,7 +13,8 @@ import type { BindRequest } from "../types.js";
 import { OrderByDirection, OrderByNullOrder } from "../types.js";
 import { deserializeBatch, batchToScalarDict } from "../../util/arrow/index.js";
 import { toUint8Array } from "./shared.js";
-import { deserializeBindRequest } from "./bind.js";
+import { toUint8Array as bytesOf } from "../../util/bytes.js";
+import { decodeBindCall } from "./bind.js";
 
 /**
  * One named, independently redeemable unit of scan work.
@@ -164,8 +165,7 @@ export const PLAN_RESPONSE_SCHEMA: VgiSchema = TableFunctionPlanResultSchema as 
  * not set — so every field but `bind_call` is read defensively.
  */
 export function deserializePlanRequest(params: Record<string, any>): TableFunctionPlanRequest {
-  const bindCallBytes = toUint8Array(params.bind_call);
-  const bindCall = deserializeBindRequest(batchToScalarDict(deserializeBatch(bindCallBytes)));
+  const bindCall = decodeBindCall(toUint8Array(params.bind_call), "TableFunctionPlanRequest.bind_call");
 
   let projectionIds: number[] | null = null;
   if (params.projection_ids != null) {
@@ -224,6 +224,13 @@ export function deserializePlanRequest(params: Record<string, any>): TableFuncti
  * that minted a token and the init that redeems it. A decoded-then-re-encoded
  * argument list is not guaranteed to round-trip to identical bytes; the wire
  * bytes are.
+ *
+ * `args` is tagged (large-values spec §5a, "Split-token fingerprints"):
+ * inline arguments contribute `0x00 || u64le(len) || IPC bytes`; an argument
+ * reference contributes `0x01 || u64le(size) || sha256[32]`, never the sealed
+ * `ref` (it holds a random nonce). Without the location branch every bind of
+ * externalized arguments would fingerprint the same empty bytes, and a split
+ * token would redeem across different large arguments.
  */
 export function fingerprintInputs(bindCallBytes: Uint8Array): {
   schemaPath: string[];
@@ -237,9 +244,29 @@ export function fingerprintInputs(bindCallBytes: Uint8Array): {
       ? []
       : (Array.isArray(dict.schema_path) ? dict.schema_path : [...dict.schema_path]).map(String),
     functionName: String(dict.function_name ?? ""),
-    args: dict.arguments ? toUint8Array(dict.arguments) : new Uint8Array(0),
+    args: argumentsFingerprintInput(dict.arguments, dict.arguments_location),
     settings: dict.settings ? toUint8Array(dict.settings) : new Uint8Array(0),
   };
+}
+
+const ARGS_INLINE = 0x00;
+const ARGS_LOCATION = 0x01;
+
+function argumentsFingerprintInput(argumentsValue: unknown, location: any): Uint8Array {
+  if (location != null) {
+    const sha = String(location.sha256 ?? "");
+    const out = new Uint8Array(1 + 8 + 32);
+    out[0] = ARGS_LOCATION;
+    new DataView(out.buffer).setBigUint64(1, BigInt(location.size ?? 0), true);
+    for (let i = 0; i < 32; i++) out[9 + i] = parseInt(sha.slice(i * 2, i * 2 + 2), 16) || 0;
+    return out;
+  }
+  const raw = argumentsValue != null ? bytesOf(argumentsValue) : new Uint8Array(0);
+  const out = new Uint8Array(1 + 8 + raw.byteLength);
+  out[0] = ARGS_INLINE;
+  new DataView(out.buffer).setBigUint64(1, BigInt(raw.byteLength), true);
+  out.set(raw, 9);
+  return out;
 }
 
 /** Build the row dict for one `ScanSplit`. */

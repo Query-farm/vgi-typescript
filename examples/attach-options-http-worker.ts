@@ -214,7 +214,7 @@ const descriptor: CatalogDescriptor = {
 const registry = new FunctionRegistry();
 registry.register(echo_attach_options);
 const signingKey = crypto.getRandomValues(new Uint8Array(32));
-const tokenTtl = 3600;
+const tokenTtl = 21600;
 
 const protocol = buildVgiProtocol({
   registry,

@@ -2,6 +2,11 @@
 import { describe, test, expect } from "bun:test";
 import { inferFieldType, arrowStateSerializer } from "../state-serializer.js";
 import { type VgiDataType } from "../../arrow/index.js";
+import { StateRef } from "@query-farm/vgi-rpc";
+
+// An `init` StateRef as a continuation reads it back: encoded bytes only (the
+// serializer copies them; it never decodes or resolves them).
+const initRef = (): StateRef => StateRef.fromBytes(new Uint8Array([0x01, 0xde, 0xad]));
 // ============================================================================
 // inferFieldType
 // ============================================================================
@@ -90,10 +95,7 @@ describe("inferFieldType", () => {
 describe("arrowStateSerializer", () => {
   const baseState = {
     functionName: "test_func",
-    initRequestIpc: new Uint8Array([0xde, 0xad]),
-    executionId: new Uint8Array([0xbe, 0xef]),
-    maxWorkers: 4,
-    opaqueData: null,
+    init: initRef(),
     isProducer: false,
   };
 
@@ -241,7 +243,6 @@ describe("arrowStateSerializer", () => {
     const state = {
       ...baseState,
       isProducer: true,
-      maxWorkers: 8,
       userState: null,
     };
     const bytes = arrowStateSerializer.serialize(state);
@@ -249,8 +250,8 @@ describe("arrowStateSerializer", () => {
     expect(result.functionName).toBe("test_func");
     expect(result.isProducer).toBe(true);
     expect(result.__isProducer).toBe(true);
-    expect(result.maxWorkers).toBe(8);
-    expect(new Uint8Array(result.executionId)).toEqual(new Uint8Array([0xbe, 0xef]));
+    expect(StateRef.isStateRef(result.init)).toBe(true);
+    expect(result.init.encoded).toEqual(new Uint8Array([0x01, 0xde, 0xad]));
   });
 });
 
@@ -266,30 +267,30 @@ describe("arrowStateSerializer", () => {
 describe("the exchange state frame", () => {
   const state = {
     functionName: "test_func",
-    initRequestIpc: new Uint8Array([0xde, 0xad]),
-    executionId: new Uint8Array([0xbe, 0xef]),
-    maxWorkers: 4,
-    opaqueData: new Uint8Array([7]),
+    init: initRef(),
     isProducer: true,
     userState: null,
   };
 
   test("is a few bytes of framing around its fields, not an Arrow batch", () => {
     const bytes = arrowStateSerializer.serialize(state);
-    // 10-byte header, a 4-byte length per field, then the fields themselves.
-    expect(bytes.byteLength).toBeLessThan(64);
+    // 2-byte header, a 4-byte length per field, then the fields themselves.
+    expect(bytes.byteLength).toBeLessThan(32);
     const result = arrowStateSerializer.deserialize(bytes);
     expect(result.functionName).toBe("test_func");
-    expect(result.maxWorkers).toBe(4);
     expect(result.isProducer).toBe(true);
-    expect(new Uint8Array(result.opaqueData)).toEqual(new Uint8Array([7]));
     expect(result.userState).toBeNull();
   });
 
-  test("the init request travels packed and comes back packed", () => {
+  test("the init StateRef travels as its encoded bytes, unchanged turn after turn", () => {
     const once = arrowStateSerializer.deserialize(arrowStateSerializer.serialize(state));
     const twice = arrowStateSerializer.deserialize(arrowStateSerializer.serialize(once));
-    expect(twice.initRequestPacked).toEqual(once.initRequestPacked);
+    expect(twice.init.encoded).toEqual(once.init.encoded);
+    expect(once.init.encoded).toEqual(new Uint8Array([0x01, 0xde, 0xad]));
+  });
+
+  test("a state without its init StateRef is refused, not serialized without it", () => {
+    expect(() => arrowStateSerializer.serialize({ ...state, init: null })).toThrow(/no init StateRef/);
   });
 
   test("refuses bytes it did not write", () => {

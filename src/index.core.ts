@@ -130,6 +130,7 @@ export {
 
 // Protocol types
 export type {
+  ArgumentsLocation,
   BindRequest,
   BindResponse,
   BindRepeatability,
@@ -139,6 +140,24 @@ export type {
   GlobalInitResponse,
   TableCardinality,
 } from "./protocol/types.js";
+// Protocol 3.4 argument references: the bind call's raw-preserving decode and
+// the resolution every request entry runs (vgi docs/large-values-3.4.md §5a).
+export { decodeBindCall, bindCallBytes, receivedBindCall } from "./protocol/serializers/bind.js";
+export {
+  resolveBindCall,
+  argumentsResolved,
+  argumentsRefBytesFromEnv,
+  argumentsRefHeaderValue,
+  ARGUMENTS_REF_BYTES_HEADER,
+  ARGUMENTS_REF_BYTES_ENV,
+  DEFAULT_ARGUMENTS_REF_BYTES,
+  DISABLE_ARGUMENTS_REF_ENV,
+  ARGUMENTS_REF_MISSING_KIND,
+  ARGUMENTS_REF_MISSING_MESSAGE,
+  INVALID_BIND_REQUEST_KIND,
+  INVALID_BIND_REQUEST_MESSAGE,
+  INVALID_ARGUMENTS_REF_KIND,
+} from "./protocol/arguments-ref.js";
 export type {
   ScanSplit,
   PlanResult,

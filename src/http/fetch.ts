@@ -10,6 +10,7 @@
 // `buildVgiProtocol` as `signingKey`, from one source. Passing different keys to
 // those two seams produces a worker that mints tokens it cannot recover.
 
+import { ARGUMENTS_REF_BYTES_HEADER, argumentsRefHeaderValue } from "../protocol/arguments-ref.js";
 import { omitUndefined } from "../util/defined.js";
 import {
   AuthContext,
@@ -59,8 +60,27 @@ export interface VgiFetchOptions extends HostingOptions, BlobVendorHttpConfig {
    * bytes to use unchanged. Defaults to {@link signingKey}'s bytes.
    */
   storageSealKey?: Uint8Array | string | undefined;
-  /** State-token TTL in seconds (default 3600). */
+  /** State-token TTL in seconds (default 21600, 6 h: vgi-rpc STATE_REF_V1.md). */
   tokenTtl?: number | undefined;
+  /**
+   * vgi-rpc's cursor rule for a stream state token over its turn budget
+   * (STATE_REF_V1.md §9). Defaults to `"error"` (`cursor_too_large`): this SDK
+   * carries its init request as an `init` StateRef, so a cursor over budget
+   * is a bug to surface, not a size to tolerate.
+   */
+  cursorRule?: "warn" | "error" | undefined;
+  /**
+   * The `VGI-Arguments-Ref-Bytes` value advertised when the server vends
+   * upload URLs and its storage is a vgi-rpc ObjectStore (protocol 3.4
+   * argument references). Defaults to `$VGI_ARGUMENTS_REF_BYTES`, else 4 MiB.
+   */
+  argumentsRefBytes?: number | undefined;
+  /**
+   * Environment read for `VGI_ARGUMENTS_REF_BYTES` and the test switch
+   * `VGI_TEST_DISABLE_ARGUMENTS_REF` (a Cloudflare Worker passes its `env`).
+   * Defaults to `process.env` where there is one.
+   */
+  env?: Readonly<Record<string, string | undefined>> | undefined;
   /** URL path prefix for VGI requests (default "/vgi"). Pass "" to mount at
    *  the root, which is what a dedicated single-worker HTTP server wants. */
   prefix?: string | undefined;
@@ -252,6 +272,41 @@ const REQUEST_AUTH_DISPATCH_HOOK: DispatchHook = {
   },
 };
 
+/** Default state-token TTL: 6 h (vgi-rpc STATE_REF_V1.md, protocol 3.4). */
+export const DEFAULT_TOKEN_TTL = 21600;
+
+/**
+ * Add `VGI-Arguments-Ref-Bytes` to every response, next to vgi-rpc's own
+ * capability headers (which it sets on every response, capability discovery
+ * included), and expose it to browsers alongside them.
+ */
+function withArgumentsRefHeader(
+  handler: (req: Request) => Promise<Response> | Response,
+  value: number,
+): (req: Request) => Promise<Response> {
+  const text = String(value);
+  return async (req: Request) => {
+    const response = await handler(req);
+    try {
+      response.headers.set(ARGUMENTS_REF_BYTES_HEADER, text);
+      return addExposed(response);
+    } catch {
+      // Immutable headers (a fetched Response): rebuild around the same body.
+      const copy = new Response(response.body, response);
+      copy.headers.set(ARGUMENTS_REF_BYTES_HEADER, text);
+      return addExposed(copy);
+    }
+  };
+}
+
+function addExposed(response: Response): Response {
+  const exposed = response.headers.get("Access-Control-Expose-Headers");
+  if (exposed && exposed !== "*" && !exposed.toLowerCase().includes(ARGUMENTS_REF_BYTES_HEADER.toLowerCase())) {
+    response.headers.set("Access-Control-Expose-Headers", `${exposed}, ${ARGUMENTS_REF_BYTES_HEADER}`);
+  }
+  return response;
+}
+
 /**
  * Build a fetch handler suitable for `export default { fetch }` in a CF
  * Worker module, or for `Bun.serve({ fetch })`. The returned handler is
@@ -280,7 +335,15 @@ export function createVgiFetch(opts: VgiFetchOptions): (req: Request) => Promise
     gate = createHostedGate(opts.orchardHosted, { debug, ...opts.orchardHostedDeps });
   }
   const authenticate = gate ? gate.authenticate : opts.authenticate;
-  const tokenTtl = opts.tokenTtl ?? 3600;
+  const tokenTtl = opts.tokenTtl ?? DEFAULT_TOKEN_TTL;
+  // Protocol 3.4: argument references are on whenever the server can mint and
+  // resolve them, and the header is the mandatory signal that they are.
+  const argumentsRefBytes = argumentsRefHeaderValue({
+    uploadUrlProvider: opts.uploadUrlProvider,
+    externalLocation: opts.externalLocation,
+    explicit: opts.argumentsRefBytes,
+    ...(opts.env ? { env: opts.env } : {}),
+  });
   // `?? "/vgi"` and not `|| "/vgi"`: an explicit "" means "mount at root".
   const prefix = opts.prefix ?? "/vgi";
   const serverId = opts.serverId ?? "vgi-cf";
@@ -324,6 +387,7 @@ export function createVgiFetch(opts: VgiFetchOptions): (req: Request) => Promise
     serverId,
     tokenKey: opts.signingKey,
     tokenTtl,
+    cursorRule: opts.cursorRule ?? "error",
     stateSerializer: arrowStateSerializer,
     // Records the dispatching principal on the request scope opened below, so
     // stream `init` — the one handler the framework passes no CallContext to —
@@ -352,7 +416,8 @@ export function createVgiFetch(opts: VgiFetchOptions): (req: Request) => Promise
   }));
   // Hosted mode authenticates before vgi-rpc routes anything, so no page,
   // probe or body handling is reachable without a Pass.
-  const handler = gate ? gate.wrap(rpcHandler, prefix) : rpcHandler;
+  const gated = gate ? gate.wrap(rpcHandler, prefix) : rpcHandler;
+  const handler = argumentsRefBytes === null ? gated : withArgumentsRefHeader(gated, argumentsRefBytes);
   return async (req: Request) => {
     await reservedCheck;
     const storage = await ensureRequestAuthStorage();

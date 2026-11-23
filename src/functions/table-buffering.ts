@@ -16,6 +16,7 @@
 // The Source phase may route a finalize_state_id to a worker process that
 // did NOT run the corresponding process() calls.
 
+import { unresolvedArguments } from "../protocol/arguments-ref.js";
 import { normalizeRequiredSecrets, type RequiredSecret } from "../secrets/requirements.js";
 import { secretLookupWire } from "../secrets/lookups.js";
 import {
@@ -558,9 +559,19 @@ export async function persistBufferingInit(
   signingKey: Uint8Array | undefined,
 ): Promise<void> {
   const shardKey = shardKeyOf(request.bind_call);
+  // A bind call that arrived by reference is stored -- and cached -- as that
+  // reference, never the resolved value (vgi docs/large-values-3.4.md §6):
+  // serializeBindRequest emits `arguments_location`, and the cached copy holds
+  // the unresolved placeholder, so neither storage nor this process's cache
+  // pins a large argument. The loader resolves it per request.
   const stored: InitRequest = {
     ...request,
-    bind_call: { ...request.bind_call, attach_opaque_data: null, transaction_opaque_data: null },
+    bind_call: {
+      ...request.bind_call,
+      arguments: request.bind_call.arguments_location ? unresolvedArguments() : request.bind_call.arguments,
+      attach_opaque_data: null,
+      transaction_opaque_data: null,
+    },
   };
   const bound = new BoundStorage(defaultStorage, response.execution_id, null, shardKey);
   await bound.sealedPut(FrameworkNS.BUFFERING_INIT, BUFFERING_INIT_KEY, encodeBufferingInit(stored, response), signingKey);

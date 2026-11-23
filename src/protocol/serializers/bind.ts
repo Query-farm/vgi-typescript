@@ -3,10 +3,13 @@
 // ArrowSerializableDataclass field declaration order so the format is
 // positional-compatible with the Python reader.
 
-import { type VgiSchema, schema, field, type VgiBatch, type VgiDataType, utf8, binary, bool, struct, dictionary, int16, list } from "../../arrow/index.js";
-import { Arguments } from "../../arguments/arguments.js";
+import type { VgiSchema, VgiBatch } from "../../arrow/index.js";
 import { FunctionType } from "../../types.js";
-import type { BindRequest, BindResponse, BindRepeatability, CopyFromContext, CopyToContext } from "../types.js";
+import type { ArgumentsLocation, BindRequest, BindResponse, BindRepeatability, CopyFromContext, CopyToContext } from "../types.js";
+import { BindRequestSchema } from "../../generated/vgi-protocol-schemas.js";
+import { nestedBindRequest, type BindRequest as WireBindRequest, type Nested } from "../../generated/vgi-protocol-types.js";
+import { toUint8Array as toUint8ArrayBase } from "../../util/bytes.js";
+import { invalidArgumentsRef, invalidBindRequest, unresolvedArguments } from "../arguments-ref.js";
 import {
   serializeSchema,
   deserializeSchema,
@@ -16,62 +19,44 @@ import {
 import { toUint8Array, buildSingleRowBatch } from "./shared.js";
 import { serializeArguments, deserializeArguments } from "./arguments.js";
 
-// The BindRequest wire record. This must equal `BindRequestSchema` in
-// src/generated/vgi-protocol-schemas.ts EXACTLY — same columns, same order,
-// same types, same nullability — and src/__tests__/wire-schema-completeness.ts
-// asserts that it does.
-//
-// Exactly, not approximately. It is tempting to reason that every peer reads
-// these columns by name, so a nullable column with nothing to say can be left
-// out and a bind that opens no COPY scan can keep a shorter "legacy" shape.
-// That is what this file used to do, and it is wrong: vgi-rpc-go validates a
-// request against its declared parameter contract with `arrow.Schema.Equal`,
-// which is order-, name-, type- AND nullability-sensitive. A record short one
-// nullable column fails EVERY call of that shape, with a message that prints
-// two schemas in full and leaves the reader to diff them by eye.
-//
-// So `copy_from` and `copy_to` are always present and null on a non-COPY bind,
-// `schema_path` and `argument_names` are last, and `function_type` is a dictionary
-// rather than plain utf8.
-const COPY_FROM_STRUCT_TYPE = struct([
-  field("format", utf8(), false),
-  field("file_path", utf8(), false),
-  field("expected_schema", binary(), false),
-]);
+// The BindRequest wire record is the GENERATED `BindRequestSchema`
+// (src/generated/vgi-protocol-schemas.ts), not a hand-written copy. A copy
+// has to equal it exactly -- vgi-rpc-go validates a request against its
+// declared parameter contract with `arrow.Schema.Equal`, which is order-,
+// name-, type- AND nullability-sensitive -- and the hand-written one this file
+// used to carry went stale the moment protocol 3.4 made `arguments` nullable
+// and appended `arguments_location`.
+const BIND_REQUEST_SCHEMA = BindRequestSchema as unknown as VgiSchema;
 
-const COPY_TO_STRUCT_TYPE = struct([
-  field("format", utf8(), false),
-  field("file_path", utf8(), false),
-]);
+/**
+ * The bytes each decoded bind call was received as, held in the generated
+ * raw-preserving wrapper (vgi docs/large-values-3.4.md §3.3). Keyed by the
+ * domain object, so a copy (`{ ...bindCall, x }`) has none and serializes from
+ * its fields, while the decoded object itself -- even after the framework
+ * opened its sealed attach / transaction in place -- re-encodes as exactly the
+ * bytes the client sent (§3.3 rule 11: opened values live beside the wrapper,
+ * never in it).
+ */
+const receivedBindCalls = new WeakMap<object, Nested<WireBindRequest>>();
 
-const BIND_REQUEST_SCHEMA = schema([
-  field("function_name", utf8(), false),
-  field("arguments", binary(), false),
-  field("function_type", dictionary(utf8(), int16()), false),
-  field("input_schema", binary(), true),
-  field("settings", binary(), true),
-  field("secrets", binary(), true),
-  field("attach_opaque_data", binary(), true),
-  field("transaction_opaque_data", binary(), true),
-  field("resolved_secrets_provided", bool(), false),
-  // Time travel AT clause. Both null when the scan has no AT clause.
-  field("at_unit", utf8(), true),
-  field("at_value", utf8(), true),
-  // Null unless this bind opens a COPY scan / sink.
-  field("copy_from", COPY_FROM_STRUCT_TYPE, true),
-  field("copy_to", COPY_TO_STRUCT_TYPE, true),
-  // Catalog schema owning the function. A worker may register one name in
-  // several schemas, so the bare name is not a unique key — resolution is by
-  // (schema_path, function_name). Null for callers with no catalog context.
-  field("schema_path", list(field("item", utf8(), true)), true),
-  // Complete resolved logical signature, including const args and varargs.
-  field("argument_names", list(field("item", utf8(), true)), true),
-]);
+/** The wrapper holding the bytes `bindCall` was decoded from, or `undefined` for one built from fields. */
+export function receivedBindCall(bindCall: BindRequest): Nested<WireBindRequest> | undefined {
+  return receivedBindCalls.get(bindCall);
+}
+
+/** The bind call's wire bytes: the bytes it was received as, else a fresh serialization of its fields. */
+export function bindCallBytes(bindCall: BindRequest): Uint8Array {
+  return receivedBindCalls.get(bindCall)?.bytes ?? serializeBatch(serializeBindRequest(bindCall));
+}
 
 export function serializeBindRequest(req: BindRequest): VgiBatch {
+  // A bind call that arrived by reference re-serializes as that reference,
+  // never as the resolved value (large-values spec §6: anything that
+  // re-serializes an init request emits `arguments_location`).
+  const location = req.arguments_location ?? null;
   return buildSingleRowBatch(BIND_REQUEST_SCHEMA, {
     function_name: req.function_name,
-    arguments: serializeArguments(req.arguments),
+    arguments: location ? null : serializeArguments(req.arguments),
     // The wire carries the Python enum member NAME ("TABLE"), not the TS
     // enum's value ("table"); each FunctionType value upper-cases to its name.
     function_type: req.function_type == null ? req.function_type : String(req.function_type).toUpperCase(),
@@ -95,6 +80,9 @@ export function serializeBindRequest(req: BindRequest): VgiBatch {
       : null,
     schema_path: req.schema_path ?? null,
     argument_names: req.argument_names ?? null,
+    arguments_location: location
+      ? { ref: location.ref, size: BigInt(location.size), sha256: location.sha256 }
+      : null,
   });
 }
 
@@ -123,14 +111,41 @@ function parseCopyToContext(raw: any): CopyToContext | null {
   return { format: String(format), file_path: String(filePath) };
 }
 
+const SHA256_HEX = /^[0-9a-f]{64}$/;
+
+/** Validate and normalise a received `arguments_location` (large-values spec §2). */
+function parseArgumentsLocation(raw: any): ArgumentsLocation {
+  const size = typeof raw.size === "bigint" ? Number(raw.size) : Number(raw.size);
+  if (!Number.isSafeInteger(size) || size < 1) {
+    throw invalidArgumentsRef("arguments_location.size must be a positive byte count");
+  }
+  const sha256 = raw.sha256 == null ? "" : String(raw.sha256);
+  if (!SHA256_HEX.test(sha256)) {
+    throw invalidArgumentsRef("arguments_location.sha256 must be 64 lowercase hex digits");
+  }
+  if (raw.ref == null) throw invalidArgumentsRef("arguments_location.ref is missing");
+  return { ref: toUint8ArrayBase(raw.ref), size, sha256 };
+}
+
+/**
+ * Decode a bind request from a dict of its wire columns (the generated
+ * decoder's record, or `batchToScalarDict` of the one-row batch).
+ *
+ * Exactly one of `arguments` and `arguments_location` must be set (protocol
+ * 3.4); anything else is refused with `invalid_bind_request`. When the
+ * arguments came by reference the returned bind call's `arguments` is a
+ * placeholder that throws until the framework resolves it at the turn's entry
+ * (`resolveBindCall`, protocol/arguments-ref.ts); `arguments_location` keeps
+ * the location it arrived with.
+ */
 export function deserializeBindRequest(
   params: Record<string, any>
 ): BindRequest {
-  // params come from the RPC layer - already extracted from a single-row batch
-  // arguments may be null/undefined when DuckDB sends empty args
-  const args = params.arguments
-    ? deserializeArguments(toUint8Array(params.arguments))
-    : new Arguments();
+  const hasArguments = params.arguments != null;
+  const hasLocation = params.arguments_location != null;
+  if (hasArguments === hasLocation) throw invalidBindRequest();
+  const location = hasLocation ? parseArgumentsLocation(params.arguments_location) : null;
+  const args = location ? unresolvedArguments() : deserializeArguments(toUint8ArrayBase(params.arguments));
 
   // function_type might be a string directly or enum name
   let functionType: FunctionType;
@@ -181,7 +196,24 @@ export function deserializeBindRequest(
     copy_from: parseCopyFromContext(params.copy_from),
     // COPY ... TO context — absent for ordinary scans / COPY FROM.
     copy_to: parseCopyToContext(params.copy_to),
+    arguments_location: location,
   };
+}
+
+/**
+ * Decode a received bind call from its bytes through the generated
+ * raw-preserving wrapper: the domain object re-encodes as exactly these bytes
+ * ({@link bindCallBytes}) for as long as it lives, whatever the framework opens
+ * on it in place.
+ *
+ * @param source The bind call's bytes, or a wrapper already holding them.
+ * @param path The field path decode errors name (`InitRequest.bind_call`).
+ */
+export function decodeBindCall(source: Uint8Array | Nested<WireBindRequest>, path = "BindRequest"): BindRequest {
+  const nested = source instanceof Uint8Array ? nestedBindRequest(source, path) : source;
+  const bindCall = deserializeBindRequest(nested.get() as Record<string, any>);
+  receivedBindCalls.set(bindCall, nested);
+  return bindCall;
 }
 
 /** Validate required wire enum values, including rejecting NULL and absent values. */
@@ -229,13 +261,8 @@ export function deserializeBindResponse(
   };
 }
 
-// BIND_REQUEST_SCHEMA has no codegen counterpart — the generated
-// BindParamsSchema is only the `{request: binary}` envelope, so the inner
-// record is spelled out above. The BindResponse copy that used to sit beside
-// it did have one, and the two had already drifted: this file called
-// `opaque_data` nullable where the generated BindResultSchema calls it
-// non-null. Nobody read the copy (handlers/function.ts wraps with the
-// generated schema), which is exactly how a duplicate goes stale unnoticed —
-// and a stale copy is how a *correct* client ends up rejected at its first
-// call. Use BindResultSchema from src/generated/vgi-protocol-schemas.ts.
+// The BindResponse copy that used to sit beside the request schema had
+// already drifted from the generated BindResultSchema (it called
+// `opaque_data` nullable where the protocol says non-null). Use
+// BindResultSchema from src/generated/vgi-protocol-schemas.ts.
 export { BIND_REQUEST_SCHEMA };

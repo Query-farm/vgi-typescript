@@ -25,9 +25,8 @@ import {
 } from "../arrow/index.js";
 import { codecFor } from "../arrow/codec/registry.js";
 import type { StateSerializer } from "@query-farm/vgi-rpc";
-import { toUint8Array } from "../util/bytes.js";
 import { decodeFilterHistory, encodeFilterHistory } from "../filter-pushdown/history.js";
-import { packInitRequest } from "./carried-init-request.js";
+import { StateRef } from "@query-farm/vgi-rpc";
 
 /**
  * The fields of the exchange state an HTTP cursor carries, by name and type.
@@ -38,12 +37,11 @@ import { packInitRequest } from "./carried-init-request.js";
  */
 export const EXCHANGE_STATE_SCHEMA = makeSchema([
   field("function_name", binary(), false),
-  // The init request, packed by carried-init-request.ts (a codec byte, then
-  // the IPC bytes, zstd-compressed where the runtime can).
-  field("init_request", binary(), false),
-  field("execution_id", binary(), false),
-  field("max_workers", int64(), false),
-  field("opaque_data", binary(), true),
+  // The stream's `init`: a vgi-rpc StateRef (its encoded bytes) to the init
+  // request as received plus the worker's init response (stream-init.ts).
+  // Inline and compressed in the common case, a sealed stored tag for a large
+  // init. Created on the init turn only; every continuation copies it.
+  field("init", binary(), false),
   field("is_producer", bool(), false),
   field("user_state", binary(), true),
   // The stream's compacted dynamic-filter history (filter-pushdown/history.ts),
@@ -59,9 +57,8 @@ const TEXT_ENCODER = new TextEncoder();
 const TEXT_DECODER = new TextDecoder();
 
 /** Version byte of the exchange state frame (never 0xFF, the first byte of an Arrow IPC stream). */
-const STATE_FORMAT_VERSION = 1;
+const STATE_FORMAT_VERSION = 2;
 const FLAG_PRODUCER = 1;
-const FLAG_OPAQUE_DATA = 2;
 const FLAG_USER_STATE = 4;
 const FLAG_FILTER_HISTORY = 8;
 const FLAG_MORE_PENDING = 16;
@@ -223,44 +220,41 @@ export function deserializeUserState(bytes: Uint8Array | null): any {
  * {@link EXCHANGE_STATE_SCHEMA} names; `user_state` stays Arrow IPC inside the
  * frame, because it carries typed user values.
  *
- * Layout (little-endian): `u8 version | u8 flags | f64 max_workers |
- * bytes function_name | bytes init_request | bytes execution_id |
- * [bytes opaque_data] [bytes user_state] [bytes filter_history]`, where
- * `bytes` is `u32 length, payload` and a bracketed field is present only when
- * its flag bit is set. The frame never leaves this worker unsealed, so the
- * version byte exists to turn a token minted by another build into a clean
- * refusal rather than a misread.
+ * Layout (little-endian): `u8 version | u8 flags | bytes function_name |
+ * bytes init | [bytes user_state] [bytes filter_history]`, where `bytes` is
+ * `u32 length, payload` and a bracketed field is present only when its flag
+ * bit is set. `init` is the encoded vgi-rpc StateRef the init handler created
+ * (`StateRef.toBytes()`; vgi-rpc decides its form while minting the token and
+ * caches the encoding, so continuations re-emit the same bytes). The frame
+ * never leaves this worker unsealed, so the version byte exists to turn a
+ * token minted by another build into a clean refusal rather than a misread.
  *
  * The name is kept for API stability; the Arrow in it is the user state.
  */
 export const arrowStateSerializer: StateSerializer = {
   serialize(state: any): Uint8Array {
     const functionName = TEXT_ENCODER.encode(state.functionName ?? "");
-    // Packed on the init turn (the only one holding the raw bytes); every
-    // continuation carries the packed bytes through unchanged.
-    const initRequest: Uint8Array = state.initRequestPacked ?? packInitRequest(state.initRequestIpc);
-    const executionId = toUint8Array(state.executionId);
-    const opaqueData = state.opaqueData != null ? toUint8Array(state.opaqueData) : null;
+    if (!StateRef.isStateRef(state.init)) {
+      throw new Error("exchange state carries no init StateRef (the stream's init handler creates it)");
+    }
+    const init = (state.init as StateRef).toBytes();
     const userState = serializeUserState(state.userState);
     const filterHistory = encodeFilterHistory(state.filterHistory);
     const flags =
       (state.isProducer ? FLAG_PRODUCER : 0) |
-      (opaqueData ? FLAG_OPAQUE_DATA : 0) |
       (userState ? FLAG_USER_STATE : 0) |
       (filterHistory ? FLAG_FILTER_HISTORY : 0) |
       (state.morePending ? FLAG_MORE_PENDING : 0);
-    const chunks = [functionName, initRequest, executionId];
-    if (opaqueData) chunks.push(opaqueData);
+    const chunks = [functionName, init];
     if (userState) chunks.push(userState);
     if (filterHistory) chunks.push(filterHistory);
-    let size = 2 + 8;
+    let size = 2;
     for (const chunk of chunks) size += 4 + chunk.byteLength;
     const out = new Uint8Array(size);
     const view = new DataView(out.buffer);
     out[0] = STATE_FORMAT_VERSION;
     out[1] = flags;
-    view.setFloat64(2, Number(state.maxWorkers ?? 1), true);
-    let offset = 10;
+    let offset = 2;
     for (const chunk of chunks) {
       view.setUint32(offset, chunk.byteLength, true);
       out.set(chunk, offset + 4);
@@ -271,12 +265,11 @@ export const arrowStateSerializer: StateSerializer = {
 
   deserialize(bytes: Uint8Array): any {
     const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-    if (bytes.byteLength < 10 || bytes[0] !== STATE_FORMAT_VERSION) {
+    if (bytes.byteLength < 2 || bytes[0] !== STATE_FORMAT_VERSION) {
       throw new Error("exchange state has an unknown format (minted by another build of this worker?)");
     }
-    const flags = bytes[1]!; // in range: byteLength >= 10 was checked above
-    const maxWorkers = view.getFloat64(2, true);
-    let offset = 10;
+    const flags = bytes[1]!; // in range: byteLength >= 2 was checked above
+    let offset = 2;
     // Each field is copied out, not viewed: Arrow readers want a buffer of
     // their own (byteOffset 0), and nothing should pin the whole frame.
     const take = (): Uint8Array => {
@@ -289,19 +282,14 @@ export const arrowStateSerializer: StateSerializer = {
       return chunk;
     };
     const functionName = TEXT_DECODER.decode(take());
-    const initRequestPacked = take();
-    const executionId = take();
-    const opaqueData = flags & FLAG_OPAQUE_DATA ? take() : null;
+    const init = StateRef.fromBytes(take());
     const userStateBytes = flags & FLAG_USER_STATE ? take() : null;
     const filterHistoryBytes = flags & FLAG_FILTER_HISTORY ? take() : null;
     if (offset !== bytes.byteLength) throw new Error("exchange state has trailing bytes");
     const isProducer = (flags & FLAG_PRODUCER) !== 0;
     return {
       functionName,
-      initRequestPacked,
-      executionId,
-      maxWorkers,
-      opaqueData,
+      init,
       isProducer,
       // vgi-rpc dispatch reads __isProducer to choose producer vs exchange mode
       __isProducer: isProducer,

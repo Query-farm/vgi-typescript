@@ -80,7 +80,7 @@ class VersionedCatalog extends CatalogInterface {
 
 const registry = new FunctionRegistry();
 const signingKey = crypto.getRandomValues(new Uint8Array(32));
-const tokenTtl = 3600;
+const tokenTtl = 21600;
 
 const protocol = buildVgiProtocol({
   registry,

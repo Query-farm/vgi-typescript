@@ -56,8 +56,26 @@ export interface CopyToContext {
   file_path: string;
 }
 
+/**
+ * Where a bind's externalized arguments live (protocol 3.4 argument
+ * references, vgi docs/large-values-3.4.md §2). The client uploaded the
+ * arguments IPC stream once through this worker's `__upload_url__` grant;
+ * `ref` is the grant's sealed reference, `size` / `sha256` describe exactly
+ * the uploaded bytes. Mirrors vgi-python's `protocol.ArgumentsLocation`.
+ */
+export interface ArgumentsLocation {
+  ref: Uint8Array;
+  size: number;
+  sha256: string;
+}
+
 export interface BindRequest {
   function_name: string;
+  /**
+   * The bound arguments. When the bind arrived by reference
+   * (`arguments_location`), the framework resolves them at the entry of every
+   * request before any function code runs, so this always holds the value.
+   */
   arguments: Arguments;
   function_type: FunctionType;
   input_schema: VgiSchema | null;
@@ -110,6 +128,13 @@ export interface BindRequest {
    * named varargs retain the caller-provided name. `null` means unavailable.
    */
   argument_names?: (string | null)[] | null;
+  /**
+   * Protocol 3.4: the location the arguments arrived by, when the client sent
+   * them as an argument reference instead of inline; `null`/absent for inline
+   * arguments. `arguments` still holds the resolved value; this is what the
+   * bind call re-serializes as (never the value).
+   */
+  arguments_location?: ArgumentsLocation | null;
 }
 
 /** Equivalent scans of one bound state within a query; independent binds may differ. */

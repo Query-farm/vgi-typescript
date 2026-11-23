@@ -15,7 +15,6 @@ import { refuseMoreOutput } from "../../functions/continuation.js";
 import { persistBufferingInit } from "../../functions/table-buffering.js";
 import { TableInOutPhase } from "../../types.js";
 import {
-  deserializeBindRequest,
   serializeBindResponse,
   deserializeInitRequest,
   serializeGlobalInitResponse,
@@ -23,7 +22,7 @@ import {
   serializeTableCardinality,
 } from "../serialize.js";
 import type { GlobalInitResponse } from "../types.js";
-import { batchToScalarDict, deserializeBatch, adoptArrowJsShape } from "../../util/arrow/index.js";
+import { adoptArrowJsShape } from "../../util/arrow/index.js";
 import { toUint8Array } from "../../util/bytes.js";
 import { serializeColumnStatistics } from "../../util/statistics.js";
 import {
@@ -35,7 +34,9 @@ import {
   TableFunctionDynamicToStringResultSchema,
 } from "../../generated/vgi-protocol-schemas.js";
 import { unwrapRequest, wrapResult, overloadContext } from "./shared.js";
-import { parseCarriedInitRequest } from "../carried-init-request.js";
+import { bindCallBytes, decodeBindCall } from "../serializers/bind.js";
+import { resolveBindCall } from "../arguments-ref.js";
+import { decodeStreamInit, encodeStreamInit } from "../stream-init.js";
 import { openAttach, openAttachWithShard, openTransaction, shardKeyForAttach } from "./catalog/shared.js";
 import { currentRequestAuth } from "../../request-auth.js";
 import { batchFromColumns, serializeBatch } from "../../util/arrow/index.js";
@@ -208,6 +209,46 @@ async function resolveSplitPayloads(
   }
 }
 
+/**
+ * Unseal a decoded bind call's opaque values in place, as the catalog handlers
+ * do: the transaction first (its envelope binds the *sealed* attach), then the
+ * attach, and stamp the storage shard of the attach's framework UUID (in
+ * memory only, never serialized) so every BoundStorage the function builds
+ * routes to this attach's shard. Every function-side request goes through
+ * this, so function bodies see the same transaction plaintext that
+ * transactionCommit/Rollback get.
+ *
+ * Rule 11 of the raw-preserving wrapper (vgi docs/large-values-3.4.md §3.3):
+ * the opened plaintext lives on the domain object, BESIDE the received bytes,
+ * never in them. A decoded bind call re-encodes as exactly what the client
+ * sent (`bindCallBytes`), sealed envelopes included, so nothing opened here
+ * can reach the wire, a state token or storage.
+ */
+export async function openBindCallOpaque(
+  bindCall: { attach_opaque_data?: Uint8Array | null; transaction_opaque_data?: Uint8Array | null; storage_shard_key?: string | null },
+  auth: AuthContext | undefined,
+  signingKey: Uint8Array | undefined,
+  attachSecretKey?: Uint8Array,
+): Promise<void> {
+  const sealedAttach = bindCall.attach_opaque_data != null ? toUint8Array(bindCall.attach_opaque_data) : new Uint8Array(0);
+  if (bindCall.transaction_opaque_data != null) {
+    bindCall.transaction_opaque_data = await openTransaction(
+      toUint8Array(bindCall.transaction_opaque_data),
+      sealedAttach,
+      auth,
+      signingKey,
+    );
+  }
+  const opened = await openAttachWithShard(
+    bindCall.attach_opaque_data != null ? toUint8Array(bindCall.attach_opaque_data) : null,
+    auth,
+    signingKey,
+    attachSecretKey,
+  );
+  bindCall.attach_opaque_data = opened.attach;
+  (bindCall as { storage_shard_key?: string }).storage_shard_key = opened.shardKey;
+}
+
 /** The per-function lifecycle's `vgi.v3` handlers. */
 export function functionHandlers(config: FunctionHandlerConfig): Partial<VgiService> {
   const { registry, signingKey, catalogInterface, attachSecretKey } = config;
@@ -231,27 +272,7 @@ export function functionHandlers(config: FunctionHandlerConfig): Partial<VgiServ
     bindCall: { attach_opaque_data?: Uint8Array | null; transaction_opaque_data?: Uint8Array | null; storage_shard_key?: string | null },
     ctx: any,
   ): Promise<void> {
-    const sealedAttach = bindCall.attach_opaque_data != null ? toUint8Array(bindCall.attach_opaque_data) : new Uint8Array(0);
-    if (bindCall.transaction_opaque_data != null) {
-      bindCall.transaction_opaque_data = await openTransaction(
-        toUint8Array(bindCall.transaction_opaque_data),
-        sealedAttach,
-        ctx?.auth ?? currentRequestAuth(),
-        signingKey,
-      );
-    }
-    // One open yields both what the body sees and the storage shard of the
-    // attach's framework UUID, which the strip removes. Stamped on the bind
-    // call (in memory only, never serialized) so every BoundStorage the
-    // function builds routes to this attach's shard.
-    const opened = await openAttachWithShard(
-      bindCall.attach_opaque_data != null ? toUint8Array(bindCall.attach_opaque_data) : null,
-      ctx?.auth ?? currentRequestAuth(),
-      signingKey,
-      attachSecretKey,
-    );
-    bindCall.attach_opaque_data = opened.attach;
-    (bindCall as { storage_shard_key?: string }).storage_shard_key = opened.shardKey;
+    await openBindCallOpaque(bindCall, ctx?.auth ?? currentRequestAuth(), signingKey, attachSecretKey);
   }
 
   // Build an overload context whose attach has been unsealed, so catalog
@@ -285,8 +306,10 @@ export function functionHandlers(config: FunctionHandlerConfig): Partial<VgiServ
   // bind (unary)
   // --------------------------------------------------------------------------
   const bind: VgiService["bind"] = async (params, ctx) => {
-    const innerParams = unwrapRequest(params.request);
-    const request = deserializeBindRequest(innerParams);
+    // The generated raw-preserving decode; arguments sent by reference are
+    // resolved before anything (overload resolution included) reads them.
+    const request = decodeBindCall(toUint8Array(params.request), "BindRequest");
+    await resolveBindCall(request, ctx);
     await openOpaque(request, ctx);
     const func = registry.get(request.function_name, overloadContext(request, catalogInterface));
     const response = await func.bind(request);
@@ -324,6 +347,9 @@ export function functionHandlers(config: FunctionHandlerConfig): Partial<VgiServ
       // attach_opaque_data not recognized` on its first scan, i.e. this worker
       // could not serve authenticated traffic at all.
       const auth = ctx?.auth ?? currentRequestAuth();
+      // Argument references resolve first (through vgi-rpc's object cache):
+      // overload resolution and every function hook read the arguments.
+      await resolveBindCall(request.bind_call, ctx);
       await openOpaque(request.bind_call, ctx);
 
       // Verify and strip the split envelopes BEFORE any user code runs, so an
@@ -374,9 +400,22 @@ export function functionHandlers(config: FunctionHandlerConfig): Partial<VgiServ
       // Build state object with raw binary data (no base64/hex encoding).
       // The Arrow state serializer picks fields by name; live objects
       // (_handlers, _handlerState, _initResponse, __outputSchema) are ignored.
+      // The stream's `init` StateRef (stream-init.ts): the init request exactly
+      // as received -- its bind call still the reference, never a resolved
+      // argument, and its attach still sealed -- plus the init response. Built
+      // here, in the init handler, the one place vgi-rpc allows
+      // `stateRef()`; every continuation copies it unchanged.
+      const initValue = encodeStreamInit({
+        initRequestIpc: requestIpcBytes,
+        executionId: initResponse.execution_id,
+        maxWorkers: Number(initResponse.max_workers),
+        opaqueData: initResponse.opaque_data ?? null,
+      });
       const state: any = {
         functionName: request.bind_call.function_name,
-        initRequestIpc: requestIpcBytes,
+        init: typeof ctx?.stateRef === "function" ? ctx.stateRef(initValue) : null,
+        // The init response, in memory for this turn only (the cursor carries
+        // it inside `init`).
         executionId: initResponse.execution_id,
         maxWorkers: Number(initResponse.max_workers),
         opaqueData: initResponse.opaque_data ?? null,
@@ -420,17 +459,21 @@ export function functionHandlers(config: FunctionHandlerConfig): Partial<VgiServ
         // Deserialized from token — reconstruct from serializable refs.
         // Infrastructure (processParams, BoundStorage) is recreated fresh.
         // Mutable user state is merged from state.userState.
-        // Parsed once per process per stream (carried-init-request.ts): the
-        // cursor carries the packed request unchanged on every turn.
-        const carried = parseCarriedInitRequest(state.initRequestPacked);
-        const request = carried.request;
+        // The cursor's `init` StateRef, resolved through this turn's context
+        // (inline: decompressed here; stored: the object cache, then storage)
+        // and parsed afresh: there is no per-process parse memo (vgi
+        // docs/large-values-3.4.md §6, decision 3).
+        const carried = decodeStreamInit(await out.resolve(state.init));
+        const request = deserializeInitRequest(unwrapRequest(carried.initRequestIpc));
+        // The bind call holds the reference when the arguments came by one:
+        // resolve it (object cache, one storage GET per object per process)
+        // before overload resolution or any user code reads it.
+        await resolveBindCall(request.bind_call, out);
         // The cursor carries the wire request, whose attach is still the sealed
         // envelope. Strip it exactly as the init turn did, before any user code
         // or split resolution sees it: every turn of a stream must hand the
         // function the catalog's own bytes, not just the first. (Unopenable is
         // a hard error here, as on the init turn: the cursor is caller-bound.)
-        // `carried.request.bind_call` is a per-call copy, so this does not
-        // disturb the memoised parse other turns share.
         await openOpaque(request.bind_call, undefined);
         // Re-derive the split payloads. The cursor carries the wire request,
         // which has `split_tokens` but not the opened `split_payloads` — that
@@ -440,11 +483,12 @@ export function functionHandlers(config: FunctionHandlerConfig): Partial<VgiServ
         // splits at all". checkAnchor is false: redemption was already decided
         // on the init turn, and re-checking here would let a mid-scan catalog
         // bump fail a query that had already been admitted.
-        // fingerprintInputs hashes the RAW bind_call bytes, so pass the
-        // pre-deserialization blob from the cursor — handing it the decoded
-        // object hashes a different shape and every token fails as
-        // SPLIT_TOKEN_INVALID "minted for a different bind".
-        await resolveSplitPayloads(request, { bind_call: carried.bindCallIpc }, {
+        // fingerprintInputs hashes the RAW bind_call bytes, so pass the bytes
+        // the bind call was received as (held by its raw-preserving wrapper,
+        // untouched by the open above) — handing it a re-encoding hashes a
+        // different shape and every token fails as SPLIT_TOKEN_INVALID
+        // "minted for a different bind".
+        await resolveSplitPayloads(request, { bind_call: bindCallBytes(request.bind_call) }, {
           // Same principal the tokens were sealed under. The exchange dispatch
           // gets no ctx (see openOpaque above), so the request-scoped identity
           // is the only source — opening under the anonymous tail would fail
@@ -458,12 +502,10 @@ export function functionHandlers(config: FunctionHandlerConfig): Partial<VgiServ
         // Already stripped above, so resolve directly (strippedContext would try
         // to open the plaintext again and fall back to an unscoped lookup).
         const func = registry.get(state.functionName, overloadContext(request.bind_call, catalogInterface));
-        const executionId = state.executionId;
-        const opaqueData = state.opaqueData ?? null;
         const initResponse: GlobalInitResponse = {
-          execution_id: executionId,
-          max_workers: Number(state.maxWorkers ?? 1),
-          opaque_data: opaqueData,
+          execution_id: carried.executionId,
+          max_workers: Number(carried.maxWorkers ?? 1),
+          opaque_data: carried.opaqueData,
         };
 
         // The cursor's compacted dynamic-filter history: without it every turn
@@ -532,10 +574,11 @@ export function functionHandlers(config: FunctionHandlerConfig): Partial<VgiServ
   // --------------------------------------------------------------------------
   // table_function_cardinality (unary)
   // --------------------------------------------------------------------------
-  const tableFunctionCardinality: VgiService["tableFunctionCardinality"] = async (params) => {
+  const tableFunctionCardinality: VgiService["tableFunctionCardinality"] = async (params, ctx?: any) => {
     const innerParams = unwrapRequest(params.request);
     const request = deserializeCardinalityRequest(innerParams);
-    const func = registry.get(request.bind_call.function_name, await strippedContext(request.bind_call));
+    await resolveBindCall(request.bind_call, ctx);
+    const func = registry.get(request.bind_call.function_name, await strippedContext(request.bind_call, ctx));
     let cardResult: Record<string, any>;
     if (func.cardinality) {
       cardResult = serializeTableCardinality(await func.cardinality(request));
@@ -559,9 +602,10 @@ export function functionHandlers(config: FunctionHandlerConfig): Partial<VgiServ
   const tableFunctionPlan: VgiService["tableFunctionPlan"] = async (params, ctx?: any) => {
     const innerParams = unwrapRequest(params.request);
     const request = deserializePlanRequest(innerParams);
+    await resolveBindCall(request.bind_call, ctx);
     const func = registry.get(
       request.bind_call.function_name,
-      await strippedContext(request.bind_call),
+      await strippedContext(request.bind_call, ctx),
     );
 
     const plan: PlanResult = func.plan
@@ -631,10 +675,11 @@ export function functionHandlers(config: FunctionHandlerConfig): Partial<VgiServ
   // the function declared a statistics() hook and it produced a non-empty
   // list, else null. DuckDB uses the bounds for plan-time filter elimination
   // (folds impossible filters to EMPTY_RESULT).
-  const tableFunctionStatistics: VgiService["tableFunctionStatistics"] = async (params) => {
+  const tableFunctionStatistics: VgiService["tableFunctionStatistics"] = async (params, ctx?: any) => {
     const innerParams = unwrapRequest(params.request);
-    const request = deserializeCardinalityRequest(innerParams);
-    const func = registry.get(request.bind_call.function_name, await strippedContext(request.bind_call));
+    const request = deserializeCardinalityRequest(innerParams, "TableFunctionStatisticsRequest");
+    await resolveBindCall(request.bind_call, ctx);
+    const func = registry.get(request.bind_call.function_name, await strippedContext(request.bind_call, ctx));
     if (!func.statistics) return { result: null };
     const stats = func.statistics(request);
     if (!stats || stats.length === 0) return { result: null };
@@ -650,18 +695,18 @@ export function functionHandlers(config: FunctionHandlerConfig): Partial<VgiServ
   // intrinsics (Function, Rows Read, Threads). When the function doesn't
   // declare dynamicToString, return empty maps so the C++ side falls back
   // to intrinsics only.
-  const tableFunctionDynamicToString: VgiService["tableFunctionDynamicToString"] = async (params) => {
+  const tableFunctionDynamicToString: VgiService["tableFunctionDynamicToString"] = async (params, ctx?: any) => {
     const innerParams = unwrapRequest(params.request);
-    const bindCallBytes = toUint8Array(innerParams.bind_call);
-    const bindCallBatch = deserializeBatch(bindCallBytes);
-    // Single-row bind_call batch -> dict via the codec/canonical path.
-    const bindParams = batchToScalarDict(bindCallBatch);
-    const bindCall = deserializeBindRequest(bindParams);
+    const bindCall = decodeBindCall(
+      toUint8Array(innerParams.bind_call),
+      "TableFunctionDynamicToStringRequest.bind_call",
+    );
+    await resolveBindCall(bindCall, ctx);
     const globalExecutionId = toUint8Array(innerParams.global_execution_id);
     const bindOpaqueData = innerParams.bind_opaque_data
       ? toUint8Array(innerParams.bind_opaque_data)
       : null;
-    const func = registry.get(bindCall.function_name, await strippedContext(bindCall));
+    const func = registry.get(bindCall.function_name, await strippedContext(bindCall, ctx));
     // Its BoundStorage must reach the same attach shard as the scan's.
     try {
       bindCall.storage_shard_key = await shardKeyForAttach(
@@ -682,6 +727,7 @@ export function functionHandlers(config: FunctionHandlerConfig): Partial<VgiServ
 
   const tableFunctionProjection: VgiService["tableFunctionProjection"] = async (
     params,
+    ctx?: any,
   ) => {
     if (toUint8Array(params.request).length > 8 * 1024 * 1024)
       throw new Error("projection exceeds 8MiB");
@@ -695,10 +741,13 @@ export function functionHandlers(config: FunctionHandlerConfig): Partial<VgiServ
         (v) => toUint8Array(v).length,
       ).reduce((a, b) => a + b, 0);
     if (size > 8 * 1024 * 1024) throw new Error("projection exceeds 8MiB");
+    // The strict record check first (exact generated schema), then the
+    // raw-preserving decode.
+    projectionRecord(toUint8Array(inner.bind_call), BindRequestSchema);
+    const bindCall = decodeBindCall(toUint8Array(inner.bind_call), "TableFunctionProjectionRequest.bind_call");
+    await resolveBindCall(bindCall, ctx);
     const proposal: ProjectionProposal = {
-      bindCall: deserializeBindRequest(
-        projectionRecord(toUint8Array(inner.bind_call), BindRequestSchema),
-      ),
+      bindCall,
       bindResult: deserializeBindResponse(
         projectionRecord(toUint8Array(inner.bind_result), BindResultSchema),
       ),
@@ -708,7 +757,7 @@ export function functionHandlers(config: FunctionHandlerConfig): Partial<VgiServ
     validateProjectionProposal(proposal);
     const func = registry.get(
       proposal.bindCall.function_name,
-      await strippedContext(proposal.bindCall),
+      await strippedContext(proposal.bindCall, ctx),
     );
     if (func.kind !== "table")
       throw new Error("projection requires an ordinary table");

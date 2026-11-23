@@ -585,7 +585,8 @@ It also serves `GET /` (landing page), `GET /describe.json` (catalog contract), 
 | ----------------- | ------- | ----------------------------------------------------------- |
 | `PORT`            | `8787`  | Listen port. `0` binds an ephemeral port.                    |
 | `VGI_SIGNING_KEY` | random  | State-token HMAC key, **64 hex chars** (`openssl rand -hex 32`). |
-| `VGI_TOKEN_TTL`   | `3600`  | State-token lifetime in seconds.                             |
+| `VGI_TOKEN_TTL`   | `21600` | State-token lifetime in seconds (6 h).                       |
+| `VGI_ARGUMENTS_REF_BYTES` | `4194304` | Argument size above which clients send an argument reference (see *Large values*). |
 | `CORS_ORIGINS`    | `*`     | Allowed origins. Pass `corsOrigins: null` to disable CORS.   |
 
 Every variable has an explicit option that takes precedence over it.
@@ -604,6 +605,32 @@ landing page and its JSON status document display. `serveVgiWorker` builds it fr
 its own required `name`/`doc`/`version`, so only the Cloudflare entry passes it
 explicitly. Without it there is no landing page and no `/vgi-client.js`; see
 [MIGRATION.md](MIGRATION.md).
+
+### Large values (protocol 3.4)
+
+Over HTTP a stream has no memory between turns, so everything it needs rides in
+its sealed state token. Two things keep that token small however large the
+query's values get (vgi `docs/large-values-3.4.md`):
+
+- **Argument references.** A worker that vends upload URLs over an object store
+  (`VGI_BLOB_VENDOR_URL`, or any vgi-rpc `ObjectStore`) advertises
+  `VGI-Arguments-Ref-Bytes` (default 4 MiB, `VGI_ARGUMENTS_REF_BYTES` or the
+  `argumentsRefBytes` option). Arguments above that size are uploaded once by
+  the client and every request carries a small `arguments_location` instead of
+  the value. The framework resolves it at the entry of each request (through
+  vgi-rpc's object cache, one storage read per object per process), so
+  `bindCall.arguments` always holds the value in function code. A bind call
+  re-encodes as the bytes it was received as, so the reference, never the
+  value, goes back on the wire, into a state token or into storage.
+- **`init: StateRef`.** A stream carries its init request (bind call, filters,
+  join keys, split tokens) and init response as one vgi-rpc `StateRef`: inline
+  and compressed when small, stored once and named by a ~130-byte tag when
+  large. Its state tokens live 6 hours, and a cursor over the request budget is
+  a hard `cursor_too_large` error (`cursorRule: "error"`).
+
+A prepared statement whose large argument has expired (objects live about a
+day) fails with `this prepared statement's large argument has expired; prepare
+it again`.
 
 ### Orchard hosted mode (`VGI_ORCHARD_HOSTED=1`)
 

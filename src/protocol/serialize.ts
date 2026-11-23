@@ -8,6 +8,9 @@ export { serializeArguments, deserializeArguments } from "./serializers/argument
 export {
   serializeBindRequest,
   deserializeBindRequest,
+  decodeBindCall,
+  bindCallBytes,
+  receivedBindCall,
   serializeBindResponse,
   deserializeBindResponse,
 } from "./serializers/bind.js";

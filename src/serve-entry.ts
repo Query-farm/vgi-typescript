@@ -88,7 +88,8 @@ export interface ServeEnv extends BlobVendorEnv {
 }
 
 export const DEFAULT_PORT = 8787;
-export const DEFAULT_TOKEN_TTL = 3600;
+/** Default state-token TTL: 6 h (vgi-rpc STATE_REF_V1.md, protocol 3.4). */
+export const DEFAULT_TOKEN_TTL = 21600;
 /** Bytes of HMAC key `createHttpHandler` expects; 64 hex characters. */
 export const SIGNING_KEY_BYTES = 32;
 
@@ -143,7 +144,7 @@ export interface ServeVgiWorkerOptions extends HostingOptions, BlobVendorHttpCon
    * `attach_opaque_data` for `attachOptions()`). Defaults to the signing key.
    */
   attachSecretKey?: Uint8Array | undefined;
-  /** Overrides `$VGI_TOKEN_TTL` (default 3600 seconds). */
+  /** Overrides `$VGI_TOKEN_TTL` (default 21600 seconds, 6 h). */
   tokenTtl?: number | undefined;
   /** Overrides `$CORS_ORIGINS` (default "*"). Pass `null` to disable CORS. */
   corsOrigins?: string | null | undefined;
@@ -334,6 +335,8 @@ export function createVgiWorkerFetch(
     signingKeyConfigured,
     storageSealKey,
     tokenTtl,
+    cursorRule: "error",
+    env: env as Readonly<Record<string, string | undefined>>,
     prefix: opts.prefix ?? "",
     serverId: opts.serverId ?? opts.name,
     corsOrigins,

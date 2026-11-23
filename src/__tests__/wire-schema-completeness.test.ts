@@ -424,9 +424,29 @@ const CASES: WireRecordCase[] = [
     build: () => serializeBatch(serializeBindRequest(sampleBindRequest())),
     // No COPY context on an ordinary bind, and no AT clause. They must still be
     // PRESENT as null columns — that is the whole point of the fix.
+    // Inline arguments, so `arguments_location` is present and null (the
+    // `arguments_location` variant below covers the other half of the
+    // exactly-one rule).
     allowNull: ["input_schema", "settings", "secrets", "attach_opaque_data",
                 "transaction_opaque_data", "at_unit", "at_value",
-                "copy_from", "copy_to"],
+                "copy_from", "copy_to", "arguments_location"],
+  },
+  {
+    // Protocol 3.4: a bind whose arguments went up by reference re-serializes
+    // as that reference -- `arguments` null, `arguments_location` set -- never
+    // as the resolved value.
+    origin: "BindRequest",
+    variant: "arguments_location",
+    schema: generated.BindRequestSchema,
+    build: () =>
+      serializeBatch(
+        serializeBindRequest({
+          ...sampleBindRequest(),
+          arguments_location: { ref: new Uint8Array([1, 2, 3]), size: 4096, sha256: "ab".repeat(32) },
+        }),
+      ),
+    allowNull: ["arguments", "input_schema", "settings", "secrets", "attach_opaque_data",
+                "transaction_opaque_data", "at_unit", "at_value", "copy_from", "copy_to"],
   },
   {
     origin: "BindRequest",
@@ -444,7 +464,7 @@ const CASES: WireRecordCase[] = [
         }),
       ),
     allowNull: ["input_schema", "settings", "secrets", "attach_opaque_data",
-                "transaction_opaque_data", "at_unit", "at_value", "copy_to"],
+                "transaction_opaque_data", "at_unit", "at_value", "copy_to", "arguments_location"],
   },
   {
     origin: "BindRequest",
@@ -458,7 +478,7 @@ const CASES: WireRecordCase[] = [
         }),
       ),
     allowNull: ["input_schema", "settings", "secrets", "attach_opaque_data",
-                "transaction_opaque_data", "at_unit", "at_value", "copy_from"],
+                "transaction_opaque_data", "at_unit", "at_value", "copy_from", "arguments_location"],
   },
   {
     origin: "InitRequest",
@@ -585,6 +605,7 @@ const NOT_BUILT_BY_TYPESCRIPT: Record<string, string> = {
   // below checks them where they actually live.
   CopyFromContext: "only ever a nested struct column of BindRequest.copy_from",
   CopyToContext: "only ever a nested struct column of BindRequest.copy_to",
+  ArgumentsLocation: "only ever a nested struct column of BindRequest.arguments_location",
 };
 
 // --------------------------------------------------------------------------- //
@@ -695,6 +716,7 @@ describe("nested copy contexts match their own schemas", () => {
   const cases = [
     { column: "copy_from", schema: generated.CopyFromContextSchema },
     { column: "copy_to", schema: generated.CopyToContextSchema },
+    { column: "arguments_location", schema: generated.ArgumentsLocationSchema },
   ];
 
   for (const c of cases) {

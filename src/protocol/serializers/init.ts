@@ -43,7 +43,7 @@ import {
   batchToScalarDict,
 } from "../../util/arrow/index.js";
 import { toUint8Array, buildSingleRowBatch } from "./shared.js";
-import { serializeBindRequest, deserializeBindRequest } from "./bind.js";
+import { bindCallBytes, decodeBindCall } from "./bind.js";
 import { decodeDictValue } from "../../util/arrow/index.js";
 
 // The InitRequest wire record. This must equal `InitRequestSchema` in
@@ -100,11 +100,10 @@ const GLOBAL_INIT_RESPONSE_SCHEMA = makeSchema([
 ]);
 
 export function serializeInitRequest(req: InitRequest): VgiBatch {
-  const bindCallBatch = serializeBindRequest(req.bind_call);
-  const bindCallBytes = serializeBatch(bindCallBatch);
-
   const row: Record<string, any> = {
-    bind_call: bindCallBytes,
+    // The bytes the bind call was received as when it was received (the
+    // raw-preserving wrapper, §3.3 rules 4 and 11), else its fields.
+    bind_call: bindCallBytes(req.bind_call),
     output_schema: serializeSchema(req.output_schema),
     bind_opaque_data: req.bind_opaque_data ?? null,
     projection_ids: req.projection_ids?.map((n) => BigInt(n)) ?? null,
@@ -132,12 +131,7 @@ export function serializeInitRequest(req: InitRequest): VgiBatch {
 export function deserializeInitRequest(
   params: Record<string, any>
 ): InitRequest {
-  const bindCallBytes = toUint8Array(params.bind_call);
-  const bindCallBatch = deserializeBatch(bindCallBytes);
-  // Extract the single row as params via the codec/canonical path.
-  const bindParams = batchToScalarDict(bindCallBatch);
-
-  const bindCall = deserializeBindRequest(bindParams);
+  const bindCall = decodeBindCall(toUint8Array(params.bind_call), "InitRequest.bind_call");
 
   // Parse projection_ids - may be a list/array of Int32
   let projectionIds: number[] | null = null;
