@@ -34,6 +34,9 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  # TODO(release-wave): lets the protocol-3.4 branch be run on demand while it
+  # pins an unreleased vgi-rpc (the storage stall-timeout fix).
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -61,6 +64,10 @@ jobs:
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
+
+      # TODO(release-wave): drop with the switch to a published vgi-rpc.
+      - name: Build the pinned vgi-rpc's declarations
+        run: scripts/prepare-pinned-vgi-rpc.sh
 
       - name: Build (types + bundles)
         run: bun run build
@@ -91,7 +98,10 @@ jobs:
           node-version: "22"
 
       - name: Orchard hosted mode on Node
-        run: node scripts/hosted-node-smoke.mjs
+        # TODO(release-wave): drop the vgi-rpc build with the switch to a published vgi-rpc.
+        run: |
+          (cd node_modules/@query-farm/vgi-rpc && bun run build:js:node)
+          node scripts/hosted-node-smoke.mjs
 
   hosted-protocols:
     # vgi-rpc's hosted-protocols group (MULTI_PROTOCOL_HOSTING.md §7) against
@@ -123,6 +133,10 @@ jobs:
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
+
+      # TODO(release-wave): drop with the switch to a published vgi-rpc.
+      - name: Build the pinned vgi-rpc's declarations
+        run: scripts/prepare-pinned-vgi-rpc.sh
 
       - name: Install the reference
         run: pip install "./.vgi-rpc-python[http,conformance]" pytest pytest-timeout
@@ -167,6 +181,10 @@ jobs:
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
+
+      # TODO(release-wave): drop with the switch to a published vgi-rpc.
+      - name: Build the pinned vgi-rpc's declarations
+        run: scripts/prepare-pinned-vgi-rpc.sh
 
       - name: Hosted-mode conformance
         env:
@@ -223,6 +241,10 @@ jobs:
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
+
+      # TODO(release-wave): drop with the switch to a published vgi-rpc.
+      - name: Build the pinned vgi-rpc's declarations
+        run: scripts/prepare-pinned-vgi-rpc.sh
 
       # The vendor lane's fake blob vendor runs with uvx from a pinned
       # vgi-rpc-python commit (vgi test/start_fake_blob_vendor.sh).

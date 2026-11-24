@@ -1,5 +1,5 @@
 // Copyright 2025, 2026 Query Farm LLC - https://query.farm
-import type { ExternalStorage, ExternalLocationConfig } from "@query-farm/vgi-rpc";
+import { discardStorageBody, storageFetch, storageStallTimeoutMsFromEnv, type ExternalStorage, type ExternalLocationConfig } from "@query-farm/vgi-rpc";
 import { S3CatalogPublicationRepository, type CatalogManifestObjectStore, type CatalogPublicationManifest } from "./publication.js";
 
 /** Sign an S3/R2 request using the application's existing credentials/SDK.
@@ -19,8 +19,14 @@ export class S3CatalogObjectStorage implements ExternalStorage, CatalogManifestO
     const headers: Record<string, string> = { "Content-Type": "application/vnd.apache.arrow.stream", "If-None-Match": "*" };
     if (contentEncoding) headers["Content-Encoding"] = contentEncoding;
     const put = await this.sign({ key, method: "PUT", headers });
-    const response = await this.request(put.url, { method: "PUT", headers, body: data as BodyInit, redirect: "error", signal: AbortSignal.timeout(30_000) });
-    if (!response.ok) throw new Error(`catalog object upload failed (${response.status})`);
+    // A catalog result can be large: a stall (idle) timeout, never a whole-PUT
+    // deadline (VGI_RPC_STORAGE_STALL_TIMEOUT_SECONDS, default 30 s).
+    const upload = await storageFetch(put.url, {
+      method: "PUT", headers, body: data, redirect: "error", fetch: this.request,
+      stallTimeoutMs: storageStallTimeoutMsFromEnv(),
+    });
+    await discardStorageBody(upload);
+    if (!upload.response.ok) throw new Error(`catalog object upload failed (${upload.response.status})`);
     const get = await this.sign({ key, method: "GET", headers: {} });
     if (!get.stable && get.expiresAt == null) throw new Error("S3 catalog signer must declare GET URL expiration or stability");
     this.locations.set(get.url, { objectId: key, expiresAt: get.expiresAt, stable: get.stable ?? false,

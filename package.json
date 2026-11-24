@@ -96,10 +96,11 @@
     "@query-farm/apache-arrow": "^21.1.1",
     "@query-farm/vgi-rpc": "^0.30.0"
   },
+  "//devDependencies": "TODO(release-wave): switch @query-farm/vgi-rpc back to the first published release containing the commit below (and raise the peer range to it: storageFetch / storageStallTimeoutMsFromEnv are new exports), then delete scripts/prepare-pinned-vgi-rpc.sh. Until then the dev dependency is pinned to the vgi-rpc-typescript protocol-3.4 commit carrying the storage stall timeouts (VGI_RPC_STORAGE_STALL_TIMEOUT_SECONDS, no whole-transfer deadline); CI runs the prepare script after bun install so tsc finds its declarations.",
   "devDependencies": {
     "@duckdb/node-api": "^1.5.5-r.4",
     "@query-farm/apache-arrow": "^21.1.1",
-    "@query-farm/vgi-rpc": "^0.30.0",
+    "@query-farm/vgi-rpc": "github:Query-farm/vgi-rpc-typescript#992dd0925f365730330d9bab58717ea7024d3669",
     "@types/bun": "latest",
     "typescript": "^7.0.2"
   },

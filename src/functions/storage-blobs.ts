@@ -47,7 +47,7 @@
 // it wraps the Durable Object client on Cloudflare Workers as well as SQLite on
 // Bun/Node.
 
-import { VendorBlobClient, VendorError, type BlobRef, type BlobScope } from "@query-farm/vgi-rpc";
+import { VendorBlobClient, VendorError, storageStallTimeoutMsFromEnv, type BlobRef, type BlobScope } from "@query-farm/vgi-rpc";
 import type { FunctionStorage, WorkerStateKey } from "./storage.js";
 
 /** Values of at least this many bytes go to the blob vendor (default). */
@@ -289,14 +289,20 @@ export function externalizeBytesFromEnv(env: Env = processEnv()): number {
 }
 
 /** The vendor client from `VGI_BLOB_VENDOR_URL` and its token (falling back to
- *  `VGI_CF_DO_TOKEN`), or `null` when the URL is unset.
- *  @throws Error if the URL is set but no token is. */
+ *  `VGI_CF_DO_TOKEN`), or `null` when the URL is unset. Storage transfers use
+ *  a stall timeout (`VGI_RPC_STORAGE_STALL_TIMEOUT_SECONDS`, default 30 s) read
+ *  from the same `env`, never a whole-transfer deadline.
+ *  @throws Error if the URL is set but no token is, or the stall timeout will not parse. */
 export function blobClientFromEnv(env: Env = processEnv()): VendorBlobClient | null {
   const url = (env[ENV_VENDOR_URL] ?? "").trim();
   if (!url) return null;
   const token = (env[ENV_VENDOR_TOKEN] ?? "").trim() || (env.VGI_CF_DO_TOKEN ?? "").trim();
   if (!token) throw new Error(`${ENV_VENDOR_URL} is set but neither ${ENV_VENDOR_TOKEN} nor VGI_CF_DO_TOKEN is`);
-  return new VendorBlobClient(url, token, { purpose: "fs", maxFetchBytes: MAX_BLOB_BYTES });
+  return new VendorBlobClient(url, token, {
+    purpose: "fs",
+    maxFetchBytes: MAX_BLOB_BYTES,
+    stallTimeoutMs: storageStallTimeoutMsFromEnv(env),
+  });
 }
 
 /** Options for {@link wrapStorageFromEnv}. */
