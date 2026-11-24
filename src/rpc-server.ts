@@ -28,8 +28,10 @@ import {
   GrantKeys,
   type GrantMinter,
   IdentityImpl,
+  parseVersions,
   type Protocol,
   type TokenResolver,
+  VersionRange,
   VgiRpcServer,
 } from "@query-farm/vgi-rpc";
 import { buildAttachTicketsProtocol, resolveTicketMaxTtl } from "./attach-ticket.js";
@@ -195,10 +197,12 @@ export function buildRpcServer(
     const tickets = buildAttachTickets(hosting, grantKeys, options.attachTickets, env);
     if (tickets) protocols.push(tickets);
   }
+  const versionRanges = testProtocolRanges(primary, options.env ?? processEnv());
   return new VgiRpcServer(primary, omitUndefined({
     serverId: options.serverId,
     protocols,
     identity,
+    protocolVersionRanges: versionRanges,
     // Resolved here, per transport, rather than by vgi-rpc's own environment
     // default: identity (and so grants) is hosted on HTTP only.
     grantKeys: null,
@@ -370,4 +374,41 @@ export function grantKeysFromArgv(
   if (keys.length === 0) return undefined;
   const fromEnv = GrantKeys.fromEnv({ ...(env ?? {}), VGI_RPC_GRANT_KEYS: keys.join(",") });
   return fromEnv ?? undefined;
+}
+
+/** Fixture switch (PROTOCOL_VERSIONS_V1 §9): make a worker advertise and
+ *  accept a different version window, so the extension's tests can stand up a
+ *  "fake older worker" from any fixture. A bare range (`3.3-3.3`) applies to the
+ *  worker's own protocol (`vgi.v3`); `name=MIN-MAX[, ...]` names protocols. */
+export const TEST_PROTOCOL_RANGE_ENV = "VGI_TEST_PROTOCOL_RANGE";
+
+/** Read {@link TEST_PROTOCOL_RANGE_ENV}; `undefined` when unset.
+ *  @throws Error when it is set but malformed: a test switch silently ignored
+ *  would make the test it serves pass for the wrong reason. */
+export function testProtocolRanges(
+  primary: Protocol,
+  env: Record<string, string | undefined> | undefined,
+): Record<string, string> | undefined {
+  const raw = (env?.[TEST_PROTOCOL_RANGE_ENV] ?? "").trim();
+  if (!raw) return undefined;
+  let ranges: Record<string, string>;
+  if (raw.includes("=")) {
+    const parsed = parseVersions(raw);
+    const entries = raw.split(",").filter((e) => e.trim());
+    if (parsed.size !== entries.length) {
+      throw new Error(`${TEST_PROTOCOL_RANGE_ENV}=${JSON.stringify(raw)}: expected name=MAJ.MIN-MAJ.MIN[, ...]`);
+    }
+    ranges = Object.fromEntries([...parsed].map(([name, rng]) => [name, String(rng)]));
+  } else {
+    try {
+      ranges = { [primary.name]: String(VersionRange.parse(raw)) };
+    } catch (e) {
+      throw new Error(`${TEST_PROTOCOL_RANGE_ENV}=${JSON.stringify(raw)}: expected MAJ.MIN-MAJ.MIN (${(e as Error).message})`);
+    }
+  }
+  console.warn(
+    `${TEST_PROTOCOL_RANGE_ENV} is set: advertising and accepting ${JSON.stringify(ranges)} instead of the ` +
+      "declared protocol versions (test fixture switch)",
+  );
+  return ranges;
 }

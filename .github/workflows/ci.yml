@@ -122,6 +122,9 @@ jobs:
         with:
           repository: Query-farm/vgi-rpc-python
           path: .vgi-rpc-python
+          # TODO(release-wave): back to main once vgi-rpc-python protocol-3.4
+          # (PROTOCOL_VERSIONS_V1: protocol_version_unsupported) is merged.
+          ref: protocol-3.4
 
       - uses: oven-sh/setup-bun@v2
         with:

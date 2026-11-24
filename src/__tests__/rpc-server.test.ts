@@ -118,3 +118,31 @@ describe("sealed grants", () => {
     expect(() => grantKeysFromArgv(["--grant-key", "short"], {})).toThrow();
   });
 });
+
+describe("protocol version negotiation (PROTOCOL_VERSIONS_V1)", () => {
+  test("every gated protocol is advertised, vgi.v3 first, on every transport", () => {
+    for (const transport of ALL) {
+      expect(buildRpcServer(primary(), {}, { transport, env: {} }).protocolVersions).toBe("vgi.v3=3.4-3.4");
+    }
+    // An unversioned hosted protocol is not advertised.
+    const extra = new Protocol("acme.Extra.v1");
+    expect(buildRpcServer(primary(), { hostedProtocols: () => [extra] }, { transport: "pipe", env: {} }).protocolVersions).toBe(
+      "vgi.v3=3.4-3.4",
+    );
+  });
+
+  test("VGI_TEST_PROTOCOL_RANGE makes any fixture impersonate another window", () => {
+    const bare = buildRpcServer(primary(), {}, { transport: "http", env: { VGI_TEST_PROTOCOL_RANGE: "3.3-3.3" } });
+    expect(bare.protocolVersions).toBe("vgi.v3=3.3-3.3");
+    const named = buildRpcServer(primary(), {}, { transport: "pipe", env: { VGI_TEST_PROTOCOL_RANGE: "vgi.v3=3.3-3.4" } });
+    expect(named.protocolVersions).toBe("vgi.v3=3.3-3.4");
+    expect(() => buildRpcServer(primary(), {}, { transport: "pipe", env: { VGI_TEST_PROTOCOL_RANGE: "3.x" } })).toThrow(
+      "VGI_TEST_PROTOCOL_RANGE",
+    );
+    expect(() =>
+      buildRpcServer(primary(), {}, { transport: "pipe", env: { VGI_TEST_PROTOCOL_RANGE: "vgi.v3=3.3, junk" } }),
+    ).toThrow("VGI_TEST_PROTOCOL_RANGE");
+    const unhosted = buildRpcServer(primary(), {}, { transport: "pipe", env: { VGI_TEST_PROTOCOL_RANGE: "acme.v9=1.0-1.0" } });
+    expect(() => unhosted.seal()).toThrow("not a hosted protocol");
+  });
+});

@@ -191,6 +191,8 @@ function expect401(res: Response, reason?: string): void {
   expect(res.headers.get("www-authenticate")).toBe('Bearer error="invalid_token"');
   expect(res.headers.get("www-authenticate") ?? "").not.toContain("resource_metadata");
   expect(res.headers.has("vgi-supported-encodings")).toBe(true);
+  // Hosted 401s carry the version advertisement (PROTOCOL_VERSIONS_V1 §4.1).
+  expect(res.headers.get("vgi-protocol-versions") ?? "").toStartWith("vgi.v3=3.4-3.4");
   expect(
     res.headers.has("vgi-accept-max-response-bytes-support") || res.headers.has("vgi-externalization-enabled"),
   ).toBe(true);
