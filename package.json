@@ -94,13 +94,19 @@
   },
   "peerDependencies": {
     "@query-farm/apache-arrow": "^21.1.1",
-    "@query-farm/vgi-rpc": "^0.30.0"
+    "@query-farm/vgi-rpc": "^0.30.0",
+    "@aws-sdk/client-s3": ">=3.0.0",
+    "@aws-sdk/s3-request-presigner": ">=3.0.0",
+    "@google-cloud/storage": ">=7.0.0"
   },
   "//devDependencies": "TODO(release-wave): switch @query-farm/vgi-rpc back to the first published release containing the commit below (and raise the peer range to it: storageFetch / storageStallTimeoutMsFromEnv are new exports), then delete scripts/prepare-pinned-vgi-rpc.sh. Until then the dev dependency is pinned to the vgi-rpc-typescript protocol-3.4 commit carrying the storage stall timeouts (VGI_RPC_STORAGE_STALL_TIMEOUT_SECONDS, no whole-transfer deadline); CI runs the prepare script after bun install so tsc finds its declarations.",
   "devDependencies": {
+    "@aws-sdk/client-s3": "^3.1059.0",
+    "@aws-sdk/s3-request-presigner": "^3.1059.0",
     "@duckdb/node-api": "^1.5.5-r.4",
+    "@google-cloud/storage": "^8.1.0",
     "@query-farm/apache-arrow": "^21.1.1",
-    "@query-farm/vgi-rpc": "github:Query-farm/vgi-rpc-typescript#992dd0925f365730330d9bab58717ea7024d3669",
+    "@query-farm/vgi-rpc": "github:Query-farm/vgi-rpc-typescript#f2dc70903df41ad7b80d9fef9207a0aa3b2a5acd",
     "@types/bun": "latest",
     "typescript": "^7.0.2"
   },
@@ -114,5 +120,16 @@
     "build:browser-test": "bun build examples/browser/main.ts --outdir examples/browser/dist --target browser --format esm --sourcemap=external",
     "test": "bun test",
     "build:landing-client": "bun build ./scripts/landing-client-entry.ts --outfile dist/vgi-client.js --target browser --format esm --minify"
+  },
+  "peerDependenciesMeta": {
+    "@aws-sdk/client-s3": {
+      "optional": true
+    },
+    "@aws-sdk/s3-request-presigner": {
+      "optional": true
+    },
+    "@google-cloud/storage": {
+      "optional": true
+    }
   }
 }
