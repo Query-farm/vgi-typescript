@@ -650,14 +650,18 @@ more than one of those without `VGI_STORAGE_BACKEND` refuses to start.
   `_SDK_CHECKSUM` (`when_supported` / `when_required`), explicit credentials
   `_ACCESS_KEY_ID` / `_SECRET_ACCESS_KEY` / `_SESSION_TOKEN` (else the AWS
   default chain), `VGI_STORAGE_URL_TTL_SECONDS`, and `VGI_STORAGE_S3_VERIFY=1`
-  to HEAD the bucket at startup (it is checked on first use anyway).
+  to HEAD the bucket at startup (it is checked on first use anyway);
+  `VGI_STORAGE_S3_SESSION_EXPIRES` (RFC 3339 or epoch seconds) for an explicit
+  session token, so URL lifetimes are capped at its expiry;
+  `VGI_STORAGE_ALLOW_PLAIN_HTTP=1` to allow an `http://` endpoint. The worker must
+  also reach `_PUBLIC_ENDPOINT` (request-upload pointers are fetched by URL).
 - **GCS:** `VGI_STORAGE_GCS_BUCKET`, `_PREFIX`, `_ENDPOINT`, `_CREDENTIALS_FILE`
-  (else Application Default Credentials).
+  (else Application Default Credentials), `VGI_STORAGE_GCS_VERIFY=1`.
 
 Install the optional peers for the backend you use: `@aws-sdk/client-s3` and
-`@aws-sdk/s3-request-presigner`, or `@google-cloud/storage`. The worker never
-deletes objects: give the prefix a lifecycle rule expiring it after one to two
-days.
+`@aws-sdk/s3-request-presigner`, or `@google-cloud/storage`. Keys go under
+`<prefix>rpc/` and `<prefix>fs/` (function storage): add lifecycle rules
+expiring `rpc/` after one day and `fs/` after two. Deletes are best effort.
 
 ### Orchard hosted mode (`VGI_ORCHARD_HOSTED=1`)
 
