@@ -1,6 +1,8 @@
 # Migration guide
 
-## Unreleased — vgi.v3 / 3.4.0 upload URLs v2
+## 0.52.0 — vgi.v3 / 3.4.0 upload URLs v2
+
+Requires the `@query-farm/vgi-rpc` ^0.30.0 peer.
 
 Protocol 3.4.0 is a minor bump of `vgi.v3`; peers match exact major and minor,
 so a 3.4 worker needs the 3.4 extension (and the reverse). The `vgi.v3` method
