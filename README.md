@@ -67,7 +67,7 @@ DuckDB 2.0; it does not require upgrading DuckDB itself. See
 [the migration notes](MIGRATION.md#0470--vgiv3).
 
 > **Peer dependencies (since 0.3.0).** `@query-farm/apache-arrow` (`^21.1.1`) and
-> `@query-farm/vgi-rpc` (`^0.29.2`) are **peerDependencies** — install them directly
+> `@query-farm/vgi-rpc` (`^0.30.0`) are **peerDependencies** — install them directly
 > alongside `@query-farm/vgi`:
 >
 > ```bash
