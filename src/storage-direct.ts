@@ -7,6 +7,8 @@ import { createGCSStorage, gcsStorageConfigFromEnv } from "@query-farm/vgi-rpc/g
 import { createS3Storage, s3StorageConfigFromEnv } from "@query-farm/vgi-rpc/s3";
 import { registerDirectObjectStoreFactory } from "./storage-select.js";
 
-registerDirectObjectStoreFactory((backend, env) =>
-  backend === "s3" ? createS3Storage(s3StorageConfigFromEnv(env)) : createGCSStorage(gcsStorageConfigFromEnv(env)),
+registerDirectObjectStoreFactory((backend, env, role) =>
+  backend === "s3"
+    ? createS3Storage(s3StorageConfigFromEnv(env, { role }))
+    : createGCSStorage(gcsStorageConfigFromEnv(env, { role })),
 );

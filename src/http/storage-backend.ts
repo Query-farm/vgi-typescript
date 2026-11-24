@@ -37,6 +37,8 @@ type Env = Readonly<Record<string, string | undefined>>;
 
 /** `1` HEADs the S3 bucket at startup instead of on first use. */
 export const ENV_STORAGE_S3_VERIFY = "VGI_STORAGE_S3_VERIFY";
+/** `1` checks the GCS bucket at startup. */
+export const ENV_STORAGE_GCS_VERIFY = "VGI_STORAGE_GCS_VERIFY";
 
 
 /** {@link BlobVendorHttpConfig} for any backend, plus what it was built from. */
@@ -82,7 +84,8 @@ function compressionFromEnv(env: Env): ExternalLocationConfig["compression"] | u
 export function storageHttpConfigFromEnv(env: Env, log: (message: string) => void = console.warn): StorageHttpConfig {
   const backend = selectStorageBackend(env);
   const hosted = ["1", "true", "yes", "on"].includes((env.VGI_ORCHARD_HOSTED ?? "").trim().toLowerCase());
-  const verifyAtStartup = ["1", "true", "yes", "on"].includes((env[ENV_STORAGE_S3_VERIFY] ?? "").trim().toLowerCase());
+  const verifyName = backend === "gcs" ? ENV_STORAGE_GCS_VERIFY : ENV_STORAGE_S3_VERIFY;
+  const verifyAtStartup = ["1", "true", "yes", "on"].includes((env[verifyName] ?? "").trim().toLowerCase());
   if (backend === "vendor" || backend === "none") {
     const base = blobVendorHttpConfigFromEnv(backend === "vendor" ? env : { ...env, VGI_BLOB_VENDOR_URL: "" });
     return { ...base, backend, verify: async () => {}, verifyAtStartup: false };

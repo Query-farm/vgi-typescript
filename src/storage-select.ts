@@ -16,7 +16,14 @@ export type StorageBackend = "vendor" | "s3" | "gcs" | "none";
 
 /** An S3/GCS object store as built from the environment. */
 export type DirectObjectStore = ObjectStore &
-  Partial<UploadUrlProvider> & { verify?: () => Promise<void>; urlValidator: (url: string) => Promise<void> };
+  Partial<UploadUrlProvider> & {
+    verify?: () => Promise<void>;
+    urlValidator: (url: string) => Promise<void>;
+    deleteObject?: (objectId: string) => Promise<void>;
+  };
+
+/** The half of the bucket a store writes: `rpc/` or `fs/` (function storage). */
+export type StorageRole = "rpc" | "fs";
 
 function isSet(env: Env, name: string): boolean {
   return (env[name] ?? "").trim() !== "";
@@ -52,9 +59,9 @@ export function selectStorageBackend(env: Env): StorageBackend {
   return configured[0]?.[1] ?? "none";
 }
 
-type Factory = (backend: "s3" | "gcs", env: Env) => DirectObjectStore;
+type Factory = (backend: "s3" | "gcs", env: Env, role: StorageRole) => DirectObjectStore;
 let factory: Factory | null = null;
-const memo = new WeakMap<object, DirectObjectStore>();
+const memo = new WeakMap<object, Map<StorageRole, DirectObjectStore>>();
 
 /** @internal Called by http/storage-backend.ts on import. */
 export function registerDirectObjectStoreFactory(f: Factory): void {
@@ -62,19 +69,24 @@ export function registerDirectObjectStoreFactory(f: Factory): void {
 }
 
 /**
- * The S3/GCS object store for `env` (one per `env` object).
+ * The S3/GCS object store for `env` and `role` (one per `env` object and role).
  *
  * @throws Error when this runtime has no S3/GCS support loaded.
  */
-export function directObjectStore(backend: "s3" | "gcs", env: Env): DirectObjectStore {
-  const cached = memo.get(env);
+export function directObjectStore(backend: "s3" | "gcs", env: Env, role: StorageRole = "rpc"): DirectObjectStore {
+  let byRole = memo.get(env);
+  if (!byRole) {
+    byRole = new Map();
+    memo.set(env, byRole);
+  }
+  const cached = byRole.get(role);
   if (cached) return cached;
   if (!factory) {
     throw new Error(
       `${ENV_STORAGE_BACKEND}=${backend} is not available here: import "@query-farm/vgi/serve" (Bun/Node) to load the S3/GCS backends`,
     );
   }
-  const store = factory(backend, env);
-  memo.set(env, store);
+  const store = factory(backend, env, role);
+  byRole.set(role, store);
   return store;
 }

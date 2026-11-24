@@ -314,9 +314,9 @@ async function sha256HexOf(data: Uint8Array): Promise<string> {
  * (the object key with `/` written as `:`, since the stored envelope allows
  * only `[A-Za-z0-9._:-]{1,128}`);
  * reads are checked against the ref's size and sha256 (the same
- * `size_mismatch` / `sha256_mismatch` / 404 errors as the vendor client). The
- * worker never deletes objects: {@link delete} and {@link deleteScope} are
- * no-ops and the bucket lifecycle rule removes them.
+ * `size_mismatch` / `sha256_mismatch` / 404 errors as the vendor client).
+ * {@link delete} is best effort; {@link deleteScope} is a no-op (no scope
+ * index on a bucket); the `fs/` lifecycle rule removes the rest.
  */
 export class ObjectStoreBlobClient implements FunctionBlobClient {
   constructor(
@@ -360,8 +360,18 @@ export class ObjectStoreBlobClient implements FunctionBlobClient {
     return data;
   }
 
-  async delete(_refs: Iterable<BlobRef | string>): Promise<number> {
-    return 0;
+  /** Delete the blobs, best effort (failures ignored; the bucket's `fs/`
+   *  lifecycle rule is the real clean-up). @returns How many were attempted. */
+  async delete(refs: Iterable<BlobRef | string>): Promise<number> {
+    const del = (this.store as { deleteObject?: (id: string) => Promise<void> }).deleteObject;
+    if (!del) return 0;
+    let n = 0;
+    for (const r of refs) {
+      const id = typeof r === "string" ? r : r.objectId;
+      await del.call(this.store, id.replaceAll(":", "/")).catch(() => {});
+      n++;
+    }
+    return n;
   }
 
   async deleteScope(_shard: string, _executionId: string): Promise<number> {
@@ -376,7 +386,7 @@ export function functionBlobClientFromEnv(env: Env = processEnv()): FunctionBlob
   const backend = selectStorageBackend(env);
   if (backend === "none") return null;
   if (backend === "vendor") return blobClientFromEnv(env);
-  return new ObjectStoreBlobClient(directObjectStore(backend, env));
+  return new ObjectStoreBlobClient(directObjectStore(backend, env, "fs"));
 }
 
 /** The vendor client from `VGI_BLOB_VENDOR_URL` and its token (falling back to

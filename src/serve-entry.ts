@@ -63,6 +63,7 @@ export {
 export { hostedAuthenticate, isHostedAuthenticate, type HostedVerifierDeps } from "./http/hosted-auth.js";
 export {
   ENV_STORAGE_BACKEND,
+  ENV_STORAGE_GCS_VERIFY,
   ENV_STORAGE_S3_VERIFY,
   selectStorageBackend,
   storageHttpConfigFromEnv,

@@ -5,7 +5,7 @@ import { describe, expect, test } from "bun:test";
 import { functionBlobClientFromEnv, ObjectStoreBlobClient } from "../../functions/storage-blobs.js";
 import { selectStorageBackend, storageHttpConfigFromEnv } from "../storage-backend.js";
 
-const S3 = { VGI_STORAGE_S3_BUCKET: "b", VGI_STORAGE_S3_ENDPOINT: "http://127.0.0.1:9", VGI_STORAGE_S3_ACCESS_KEY_ID: "a", VGI_STORAGE_S3_SECRET_ACCESS_KEY: "s" };
+const S3 = { VGI_STORAGE_S3_BUCKET: "b", VGI_STORAGE_S3_ENDPOINT: "http://127.0.0.1:9", VGI_STORAGE_S3_ACCESS_KEY_ID: "a", VGI_STORAGE_S3_SECRET_ACCESS_KEY: "s", VGI_STORAGE_ALLOW_PLAIN_HTTP: "1" };
 
 describe("selectStorageBackend", () => {
   test("explicit, inferred, none", () => {
