@@ -194,7 +194,15 @@ export function deserializeBatches(bytes: Uint8Array): VgiBatch[] {
   return [deserializeBatch(bytes)];
 }
 
-/** The input batches must share dictionaries; collection encoding builds them together. */
+/**
+ * One multi-batch IPC stream. Each batch may carry its own dictionary values
+ * (batches built independently, e.g. an HTTP reply's metadata-only batch and
+ * its result batch): the flechette fork's `tablesToIPC` assigns dictionary ids
+ * by field position and writes a replacement dictionary before any batch whose
+ * dictionary differs. Needs @query-farm/flechette with that fix; earlier
+ * releases crashed on a leading zero-row batch and decoded later batches
+ * against the first batch's dictionary (see multi-batch-dictionaries.test.ts).
+ */
 export function serializeBatches(batches: VgiBatch[], schema: VgiSchema): Uint8Array {
   if (batches.length === 0) return serializeSchema(schema);
   return tablesToIPC(batches as any[], { format: "stream" }) as Uint8Array;
