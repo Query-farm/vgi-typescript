@@ -1,5 +1,23 @@
 # Migration guide
 
+## 0.52.2 — storage timeouts, direct S3/GCS storage, protocol negotiation
+
+Requires the `@query-farm/vgi-rpc` ^0.30.2 peer (`storageFetch` and
+`storageStallTimeoutMsFromEnv` are new exports). The wire protocol stays 3.4.
+
+- Storage HTTP uses a 30 s connect timeout and a 30 s stall timeout, never a
+  whole-transfer deadline, with 3 attempts
+  (`VGI_RPC_STORAGE_STALL_TIMEOUT_SECONDS`).
+- Self-hosted workers can store directly in object storage:
+  `VGI_STORAGE_BACKEND` = `vendor` | `s3` | `gcs` | `none`, with
+  `VGI_STORAGE_S3_*` / `VGI_STORAGE_GCS_*` (see the README). The optional
+  `@aws-sdk/client-s3`, `@aws-sdk/s3-request-presigner` and
+  `@google-cloud/storage` peers are needed only for those backends.
+- Protocol version negotiation (PROTOCOL_VERSIONS_V1): workers advertise
+  `VGI-Protocol-Versions` and refuse an unsupported version with
+  `protocol_version_unsupported`.
+- Haybarn 2.0.1rc3 is required for the 3.4 extension.
+
 ## 0.52.0 — vgi.v3 / 3.4.0 upload URLs v2
 
 Requires the `@query-farm/vgi-rpc` ^0.30.0 peer.
