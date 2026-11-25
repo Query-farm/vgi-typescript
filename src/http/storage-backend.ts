@@ -22,7 +22,7 @@ import {
   type ObjectStore,
   type UploadUrlProvider,
 } from "@query-farm/vgi-rpc";
-import "../storage-direct.js";
+import { registerDirectStorage } from "../storage-direct.js";
 import {
   directObjectStore,
   ENV_STORAGE_BACKEND,
@@ -30,6 +30,9 @@ import {
   type StorageBackend,
 } from "../storage-select.js";
 import { blobVendorHttpConfigFromEnv, type BlobVendorHttpConfig } from "./blob-vendor.js";
+
+// A call, not a bare import: see storage-direct.ts.
+registerDirectStorage();
 
 export { ENV_STORAGE_BACKEND, selectStorageBackend, type StorageBackend } from "../storage-select.js";
 

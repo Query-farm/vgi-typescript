@@ -1,8 +1,8 @@
 // Copyright 2025, 2026 Query Farm LLC - https://query.farm
 // Storage backend selection (direct storage contract v1), runtime-agnostic:
 // no S3/GCS code here, so the Cloudflare entry does not bundle it. The
-// S3/GCS object stores are built by http/storage-backend.ts, which registers
-// itself as the factory when imported (serveVgiWorker does).
+// S3/GCS object stores come from storage-direct.ts, whose
+// registerDirectStorage() the package entry and http/storage-backend.ts call.
 
 import type { ObjectStore, UploadUrlProvider } from "@query-farm/vgi-rpc";
 
@@ -63,7 +63,7 @@ type Factory = (backend: "s3" | "gcs", env: Env, role: StorageRole) => DirectObj
 let factory: Factory | null = null;
 const memo = new WeakMap<object, Map<StorageRole, DirectObjectStore>>();
 
-/** @internal Called by http/storage-backend.ts on import. */
+/** @internal Called by storage-direct.ts registerDirectStorage(). */
 export function registerDirectObjectStoreFactory(f: Factory): void {
   factory = f;
 }

@@ -94,6 +94,13 @@ jobs:
       - name: Orchard hosted mode on Node
         run: node scripts/hosted-node-smoke.mjs
 
+      # Workers ship as `bun build --compile` binaries without the optional
+      # storage peers (@aws-sdk/*, @google-cloud/storage). Compile a worker
+      # from the packed tarball without them and with them, and check the
+      # S3/GCS factory survives bundling (compiled and on Node).
+      - name: bun build --compile worker, with and without optional peers
+        run: scripts/check-compile-worker.sh
+
   hosted-protocols:
     # vgi-rpc's hosted-protocols group (MULTI_PROTOCOL_HOSTING.md §7) against
     # the example fixture worker: the worker lists vgi.v3 then
