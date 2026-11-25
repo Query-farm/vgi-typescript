@@ -36,10 +36,16 @@
 #   HAYBARN_UNITTEST  path to the haybarn-unittest binary
 # Optional:
 #   BIN_DIR           dir holding the worker wrappers (default: $REPO/bin)
-#   TRANSPORT         http | stdio | launch | vendor (default: http)
+#   TRANSPORT         http | stdio | launch | vendor | s3 (default: http)
 #                     vendor = the http lane with everything externalized
 #                     through a fake blob vendor, plus test/sql/external_storage
 #                     (see "The vendor lane" below)
+#                     s3 = the same lane and test files, unchanged, with the
+#                     worker on direct S3 storage (VGI_STORAGE_BACKEND=s3)
+#                     against an S3-compatible endpoint the caller runs:
+#                     VGI_S3_LANE_ENDPOINT, VGI_S3_LANE_BUCKET,
+#                     VGI_S3_LANE_ACCESS_KEY_ID, VGI_S3_LANE_SECRET_ACCESS_KEY
+#                     (optional VGI_S3_LANE_SESSION_TOKEN, VGI_S3_LANE_CHECKSUM)
 #   VGI_BUN_CONDITIONS  Arrow backend for the bun workers (unset | flechette)
 #   EXTRA_EXCLUDES    extra integration-relative paths to drop from staging
 #                     (space-separated; used for tests that are version-skewed
@@ -137,7 +143,7 @@ EXCLUDED=(
   'table_in_out/echo/nested_type_combinations.test'
 )
 AWK_HTTP=0
-if [ "$TRANSPORT" = "http" ] || [ "$TRANSPORT" = "vendor" ]; then
+if [ "$TRANSPORT" = "http" ] || [ "$TRANSPORT" = "vendor" ] || [ "$TRANSPORT" = "s3" ]; then
   AWK_HTTP=1
   # No http-lane exclusions. This block used to drop five tests, each with a
   # plausible reason, and all five reasons were wrong:
@@ -180,7 +186,10 @@ mkdir -p "$STAGE/test/sql/integration"
 if [ -d "$VGI_SRC/test/support" ]; then
   cp -R "$VGI_SRC/test/support" "$STAGE/test/support"
 fi
-# The vendor lane also runs the blob-vendor externalization suite.
+# The vendor lane also runs the externalization suite. The s3 lane does not:
+# every test/sql/external_storage file asserts on the fake vendor's counters
+# (read_json_auto('${VGI_BLOB_VENDOR_URL}/__stats__')) and is gated on
+# VGI_BLOB_VENDOR_URL, so against S3 all of them would skip.
 if [ "$TRANSPORT" = "vendor" ]; then
   EXTERNAL_STORAGE="$VGI_SRC/test/sql/external_storage"
   [ -d "$EXTERNAL_STORAGE" ] || { echo "::error::no test/sql/external_storage under VGI_SRC=$VGI_SRC (needs vgi >= f9e5df3)"; exit 1; }
@@ -368,7 +377,7 @@ case "$TRANSPORT" in
     ;;
 esac
 case "$TRANSPORT" in
-  http|vendor)
+  http|vendor|s3)
     # The writable-table fixture (examples/simple-writable-worker.ts) has no
     # HTTP serve mode yet; it runs on the stdio and launch lanes.
     EXPECTED_SKIP_REASONS+=('require-env VGI_SIMPLE_WRITABLE_WORKER')
@@ -403,7 +412,7 @@ fi
 # far above the 25 that executed before this harness landed. stdio dropped by 2
 # when the two crash-recovery files moved to vgi test_deferred/crash_recovery/.
 case "$TRANSPORT" in
-  http|vendor) MIN_EXECUTED="${MIN_EXECUTED:-245}" ;;
+  http|vendor|s3) MIN_EXECUTED="${MIN_EXECUTED:-245}" ;;
   stdio)  MIN_EXECUTED="${MIN_EXECUTED:-243}" ;;
   launch) MIN_EXECUTED="${MIN_EXECUTED:-240}" ;;
 esac
@@ -453,7 +462,39 @@ case "$TRANSPORT" in
     boot_http_worker "$VERSIONED_HTTP" || exit 1
     export VGI_VERSIONED_HTTP_WORKER="http://localhost:${BOOTED_PORT}"
     ;;
-  http|vendor)
+  http|vendor|s3)
+    if [ "$TRANSPORT" = "s3" ]; then
+      # ── The s3 lane ──────────────────────────────────────────────────────
+      # The vendor lane's environment with the worker on direct S3 storage
+      # (direct storage contract v1) instead of the vendor: same thresholds
+      # and request cap, ExternalizingStorage on the bucket, argument refs and
+      # init StateRefs. Faults and counters that only the fake vendor has stay
+      # off (their files skip; see EXPECTED_SKIP_REASONS).
+      : "${VGI_S3_LANE_ENDPOINT:?the s3 lane needs VGI_S3_LANE_ENDPOINT}"
+      : "${VGI_S3_LANE_BUCKET:?the s3 lane needs VGI_S3_LANE_BUCKET}"
+      : "${VGI_S3_LANE_ACCESS_KEY_ID:?the s3 lane needs VGI_S3_LANE_ACCESS_KEY_ID}"
+      : "${VGI_S3_LANE_SECRET_ACCESS_KEY:?the s3 lane needs VGI_S3_LANE_SECRET_ACCESS_KEY}"
+      export VGI_STORAGE_BACKEND=s3
+      export VGI_STORAGE_S3_ENDPOINT="$VGI_S3_LANE_ENDPOINT" VGI_STORAGE_S3_BUCKET="$VGI_S3_LANE_BUCKET"
+      export VGI_STORAGE_S3_PREFIX="${VGI_S3_LANE_PREFIX:-lane/}" VGI_STORAGE_S3_REGION="${VGI_S3_LANE_REGION:-us-east-1}"
+      export VGI_STORAGE_S3_ACCESS_KEY_ID="$VGI_S3_LANE_ACCESS_KEY_ID"
+      export VGI_STORAGE_S3_SECRET_ACCESS_KEY="$VGI_S3_LANE_SECRET_ACCESS_KEY"
+      [ -n "${VGI_S3_LANE_SESSION_TOKEN:-}" ] && export VGI_STORAGE_S3_SESSION_TOKEN="$VGI_S3_LANE_SESSION_TOKEN"
+      [ -n "${VGI_S3_LANE_CHECKSUM:-}" ] && export VGI_STORAGE_S3_CHECKSUM="$VGI_S3_LANE_CHECKSUM"
+      export VGI_STORAGE_S3_VERIFY=1 VGI_STORAGE_ALLOW_PLAIN_HTTP=1
+      unset VGI_BLOB_VENDOR_URL VGI_BLOB_VENDOR_TOKEN
+      export VGI_RPC_EXTERNALIZE_THRESHOLD_BYTES="${VGI_RPC_EXTERNALIZE_THRESHOLD_BYTES:-4096}"
+      if [ "${VGI_S3_LANE_CHECKSUM:-}" = "none" ]; then
+        # No upload grants: large requests stay inline, so no request cap.
+        unset VGI_RPC_MAX_REQUEST_BYTES VGI_RPC_MAX_UPLOAD_BYTES
+      else
+        export VGI_RPC_MAX_REQUEST_BYTES="${VGI_RPC_MAX_REQUEST_BYTES:-32768}"
+        export VGI_RPC_MAX_UPLOAD_BYTES="${VGI_RPC_MAX_UPLOAD_BYTES:-268435456}"
+      fi
+      export VGI_STORAGE_EXTERNALIZE=1 VGI_STORAGE_EXTERNALIZE_BYTES="${VGI_STORAGE_EXTERNALIZE_BYTES:-4096}"
+      export VGI_TEST_ALLOW_LOOPBACK_EXTERNAL_LOCATIONS=1
+      export VGI_WORKER_ARGUMENTS_REF=1 VGI_WORKER_INIT_STATE_REF=1
+    fi
     if [ "$TRANSPORT" = "vendor" ]; then
       # ── The vendor lane ──────────────────────────────────────────────────
       # vgi's test/start_fake_blob_vendor.sh starts vgi-rpc-python's
@@ -513,7 +554,7 @@ case "$TRANSPORT" in
     export VGI_HTTP_TRANSPORT=1
     ;;
   *)
-    echo "::error::unknown TRANSPORT=$TRANSPORT (expected http|stdio|launch|vendor)"; exit 1 ;;
+    echo "::error::unknown TRANSPORT=$TRANSPORT (expected http|stdio|launch|vendor|s3)"; exit 1 ;;
 esac
 
 SUITE_GLOB="test/sql/integration/*"

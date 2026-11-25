@@ -33,7 +33,8 @@ import {
   type PeerResolutionOptions,
 } from "@query-farm/vgi-rpc";
 import { createVgiFetch } from "./http/fetch.js";
-import { blobVendorHttpConfigFromEnv, type BlobVendorEnv, type BlobVendorHttpConfig } from "./http/blob-vendor.js";
+import { type BlobVendorEnv, type BlobVendorHttpConfig } from "./http/blob-vendor.js";
+import { storageHttpConfigFromEnv } from "./http/storage-backend.js";
 import { grantKeysFromArgv, type HostingOptions } from "./rpc-server.js";
 import {
   checkHostedEnvironment,
@@ -60,6 +61,15 @@ export {
   type HostedEnv,
 } from "./hosted.js";
 export { hostedAuthenticate, isHostedAuthenticate, type HostedVerifierDeps } from "./http/hosted-auth.js";
+export {
+  ENV_STORAGE_BACKEND,
+  ENV_STORAGE_GCS_VERIFY,
+  ENV_STORAGE_S3_VERIFY,
+  selectStorageBackend,
+  storageHttpConfigFromEnv,
+  type StorageBackend,
+  type StorageHttpConfig,
+} from "./http/storage-backend.js";
 
 /** Environment variables `serveVgiWorker` reads. Injectable for testing. */
 export interface ServeEnv extends BlobVendorEnv {
@@ -323,7 +333,15 @@ export function createVgiWorkerFetch(
     );
   }
   const trustedProxyAddresses = bridge?.trustedProxyAddresses ?? ["127.0.0.1"];
-  const blobVendor = blobVendorHttpConfigFromEnv(env);
+  // VGI_STORAGE_BACKEND: the blob vendor, the operator's own S3/GCS bucket,
+  // or none (see http/storage-backend.ts).
+  const blobVendor = storageHttpConfigFromEnv(env as Readonly<Record<string, string | undefined>>);
+  if (blobVendor.verifyAtStartup) {
+    blobVendor.verify().catch((error: unknown) => {
+      process.stderr.write(`Error: storage check failed: ${(error as Error)?.message ?? String(error)}\n`);
+      process.exit(1);
+    });
+  }
 
   return createVgiFetch({
     externalLocation: opts.externalLocation ?? blobVendor.externalLocation,

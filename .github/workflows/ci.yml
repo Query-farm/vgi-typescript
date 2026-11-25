@@ -34,6 +34,9 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  # TODO(release-wave): lets the protocol-3.4 branch be run on demand while it
+  # pins an unreleased vgi-rpc (the storage stall-timeout fix).
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -61,6 +64,10 @@ jobs:
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
+
+      # TODO(release-wave): drop with the switch to a published vgi-rpc.
+      - name: Build the pinned vgi-rpc's declarations
+        run: scripts/prepare-pinned-vgi-rpc.sh
 
       - name: Build (types + bundles)
         run: bun run build
@@ -91,7 +98,10 @@ jobs:
           node-version: "22"
 
       - name: Orchard hosted mode on Node
-        run: node scripts/hosted-node-smoke.mjs
+        # TODO(release-wave): drop the vgi-rpc build with the switch to a published vgi-rpc.
+        run: |
+          (cd node_modules/@query-farm/vgi-rpc && bun run build:js:node)
+          node scripts/hosted-node-smoke.mjs
 
   hosted-protocols:
     # vgi-rpc's hosted-protocols group (MULTI_PROTOCOL_HOSTING.md §7) against
@@ -112,6 +122,9 @@ jobs:
         with:
           repository: Query-farm/vgi-rpc-python
           path: .vgi-rpc-python
+          # TODO(release-wave): back to main once vgi-rpc-python protocol-3.4
+          # (PROTOCOL_VERSIONS_V1: protocol_version_unsupported) is merged.
+          ref: protocol-3.4
 
       - uses: oven-sh/setup-bun@v2
         with:
@@ -123,6 +136,10 @@ jobs:
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
+
+      # TODO(release-wave): drop with the switch to a published vgi-rpc.
+      - name: Build the pinned vgi-rpc's declarations
+        run: scripts/prepare-pinned-vgi-rpc.sh
 
       - name: Install the reference
         run: pip install "./.vgi-rpc-python[http,conformance]" pytest pytest-timeout
@@ -168,6 +185,10 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
+      # TODO(release-wave): drop with the switch to a published vgi-rpc.
+      - name: Build the pinned vgi-rpc's declarations
+        run: scripts/prepare-pinned-vgi-rpc.sh
+
       - name: Hosted-mode conformance
         env:
           VGI_SRC: ${{ github.workspace }}/.vgi
@@ -178,7 +199,7 @@ jobs:
     # Lanes run independently (fail-fast: false) so a regression in one is never
     # masked by another. The plain subprocess transport is deliberately absent:
     # it pays a bun cold start per test and thrashes CI's 2-core runners.
-    name: "Integration (${{ matrix.lane }} — ${{ matrix.backend }})"
+    name: "Integration (${{ matrix.lane }} — ${{ matrix.backend }}${{ matrix.checksum && format(' — checksum {0}', matrix.checksum) || '' }})"
     runs-on: ubuntu-latest
     timeout-minutes: 45
     strategy:
@@ -206,6 +227,12 @@ jobs:
           # commit that defines that contract (VGI_VENDOR_REF).
           - { lane: vendor, backend: arrow-js, conditions: '' }
           - { lane: vendor, backend: flechette, conditions: flechette }
+          # The same lane and test files, unchanged, with the worker on direct
+          # S3 storage (VGI_STORAGE_BACKEND=s3) against RustFS (the pinned
+          # image vgi-rpc-java's storage-integration job uses), and once with
+          # VGI_STORAGE_S3_CHECKSUM=none (no upload grants).
+          - { lane: s3, backend: arrow-js, conditions: '', checksum: '' }
+          - { lane: s3, backend: arrow-js, conditions: '', checksum: none }
     steps:
       - name: Checkout vgi-typescript
         uses: actions/checkout@v4
@@ -215,7 +242,7 @@ jobs:
         with:
           repository: Query-farm/vgi
           path: vgi-upstream
-          ref: ${{ matrix.lane == 'vendor' && env.VGI_VENDOR_REF || env.VGI_REF }}
+          ref: ${{ (matrix.lane == 'vendor' || matrix.lane == 's3') && env.VGI_VENDOR_REF || env.VGI_REF }}
 
       - uses: oven-sh/setup-bun@v2
         with:
@@ -224,11 +251,29 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
+      # TODO(release-wave): drop with the switch to a published vgi-rpc.
+      - name: Build the pinned vgi-rpc's declarations
+        run: scripts/prepare-pinned-vgi-rpc.sh
+
       # The vendor lane's fake blob vendor runs with uvx from a pinned
       # vgi-rpc-python commit (vgi test/start_fake_blob_vendor.sh).
       - name: Set up uv (vendor lane)
         if: matrix.lane == 'vendor'
         uses: astral-sh/setup-uv@v10.3.3
+
+      - name: Start RustFS (s3 lane)
+        if: matrix.lane == 's3'
+        env:
+          AWS_ACCESS_KEY_ID: vgi-lane-access
+          AWS_SECRET_ACCESS_KEY: vgi-lane-secret-key
+          AWS_DEFAULT_REGION: us-east-1
+        run: |
+          docker run -d --name rustfs -p 9000:9000 \
+            -e RUSTFS_ACCESS_KEY=vgi-lane-access -e RUSTFS_SECRET_KEY=vgi-lane-secret-key \
+            -e RUSTFS_CONSOLE_ENABLE=false -e RUSTFS_OBS_LOGGER_LEVEL=error \
+            ghcr.io/rustfs/rustfs@sha256:29c02251c085cb04edce556304a9ec0f8fba0c40300266cf4f3d953783fe2450
+          for _ in $(seq 1 60); do curl -fsS http://127.0.0.1:9000/health >/dev/null 2>&1 && break; sleep 1; done
+          aws --endpoint-url http://127.0.0.1:9000 s3api create-bucket --bucket vgi-lane
 
       - name: Download native runner matching the test suite
         run: |
@@ -244,3 +289,8 @@ jobs:
           VGI_SRC: ${{ github.workspace }}/vgi-upstream
           TRANSPORT: ${{ matrix.lane }}
           VGI_BUN_CONDITIONS: ${{ matrix.conditions }}
+          VGI_S3_LANE_ENDPOINT: http://127.0.0.1:9000
+          VGI_S3_LANE_BUCKET: vgi-lane
+          VGI_S3_LANE_ACCESS_KEY_ID: vgi-lane-access
+          VGI_S3_LANE_SECRET_ACCESS_KEY: vgi-lane-secret-key
+          VGI_S3_LANE_CHECKSUM: ${{ matrix.checksum }}

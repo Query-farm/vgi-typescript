@@ -47,7 +47,16 @@
 // it wraps the Durable Object client on Cloudflare Workers as well as SQLite on
 // Bun/Node.
 
-import { VendorBlobClient, VendorError, type BlobRef, type BlobScope } from "@query-farm/vgi-rpc";
+import {
+  ObjectMissingError,
+  VendorBlobClient,
+  VendorError,
+  storageStallTimeoutMsFromEnv,
+  type BlobRef,
+  type BlobScope,
+  type ObjectStore,
+} from "@query-farm/vgi-rpc";
+import { directObjectStore, selectStorageBackend } from "../storage-select.js";
 import type { FunctionStorage, WorkerStateKey } from "./storage.js";
 
 /** Values of at least this many bytes go to the blob vendor (default). */
@@ -288,15 +297,113 @@ export function externalizeBytesFromEnv(env: Env = processEnv()): number {
   return DEFAULT_EXTERNALIZE_BYTES;
 }
 
+/** What {@link ExternalizingStorage} needs from a blob store: the vendor's
+ *  {@link VendorBlobClient}, or {@link ObjectStoreBlobClient} on an S3/GCS bucket. */
+export type FunctionBlobClient = Pick<VendorBlobClient, "putBytes" | "getBytes" | "delete" | "deleteScope">;
+
+async function sha256HexOf(data: Uint8Array): Promise<string> {
+  const buf = new ArrayBuffer(data.byteLength);
+  new Uint8Array(buf).set(data);
+  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", buf));
+  return Array.from(digest, (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+/**
+ * Function-storage blobs on an S3/GCS {@link ObjectStore} (direct storage
+ * contract v1). Each blob is one stored object addressed by its object id
+ * (the object key with `/` written as `:`, since the stored envelope allows
+ * only `[A-Za-z0-9._:-]{1,128}`);
+ * reads are checked against the ref's size and sha256 (the same
+ * `size_mismatch` / `sha256_mismatch` / 404 errors as the vendor client).
+ * {@link delete} is best effort; {@link deleteScope} is a no-op (no scope
+ * index on a bucket); the `fs/` lifecycle rule removes the rest.
+ */
+export class ObjectStoreBlobClient implements FunctionBlobClient {
+  constructor(
+    private readonly store: ObjectStore,
+    /** Largest blob {@link getBytes} will fetch. */
+    readonly maxFetchBytes: number = MAX_BLOB_BYTES,
+  ) {}
+
+  async putBytes(data: Uint8Array, _options: { scope?: BlobScope | null; idempotencyKey?: string | null } = {}): Promise<BlobRef> {
+    const key = await this.store.putObject(data);
+    const objectId = key.replaceAll("/", ":");
+    if (key.includes(":") || !OBJECT_ID_RE.test(objectId)) {
+      throw new Error(
+        `storage key ${JSON.stringify(key)} cannot be a function-storage blob id: keep the prefix to ` +
+          "[A-Za-z0-9._-/] and the key under 128 characters",
+      );
+    }
+    return { objectId, size: data.byteLength, sha256: await sha256HexOf(data) };
+  }
+
+  async getBytes(ref: BlobRef): Promise<Uint8Array> {
+    if (ref.size > this.maxFetchBytes) {
+      throw new VendorError(`Blob ${ref.objectId} is ${ref.size} bytes, over maxFetchBytes (${this.maxFetchBytes})`);
+    }
+    let data: Uint8Array;
+    try {
+      data = await this.store.get(ref.objectId.replaceAll(":", "/"), { maxBytes: ref.size + 1 });
+    } catch (error) {
+      if (error instanceof ObjectMissingError) throw new VendorError(`Blob ${ref.objectId} is gone`, 404, "not_found");
+      if (/max_fetch_bytes/.test((error as Error)?.message ?? "")) {
+        throw new VendorError(`Blob ${ref.objectId} size mismatch: expected ${ref.size}, got more`, null, "size_mismatch");
+      }
+      throw error;
+    }
+    if (data.byteLength !== ref.size) {
+      throw new VendorError(`Blob ${ref.objectId} size mismatch: expected ${ref.size}, got ${data.byteLength}`, null, "size_mismatch");
+    }
+    if ((await sha256HexOf(data)) !== ref.sha256.toLowerCase()) {
+      throw new VendorError(`Blob ${ref.objectId} SHA-256 mismatch`, null, "sha256_mismatch");
+    }
+    return data;
+  }
+
+  /** Delete the blobs, best effort (failures ignored; the bucket's `fs/`
+   *  lifecycle rule is the real clean-up). @returns How many were attempted. */
+  async delete(refs: Iterable<BlobRef | string>): Promise<number> {
+    const del = (this.store as { deleteObject?: (id: string) => Promise<void> }).deleteObject;
+    if (!del) return 0;
+    let n = 0;
+    for (const r of refs) {
+      const id = typeof r === "string" ? r : r.objectId;
+      await del.call(this.store, id.replaceAll(":", "/")).catch(() => {});
+      n++;
+    }
+    return n;
+  }
+
+  async deleteScope(_shard: string, _executionId: string): Promise<number> {
+    return 0;
+  }
+}
+
+/** The blob store the environment selects (`VGI_STORAGE_BACKEND`): the
+ *  vendor client, an {@link ObjectStoreBlobClient} on the S3/GCS bucket, or
+ *  `null` for `none`. */
+export function functionBlobClientFromEnv(env: Env = processEnv()): FunctionBlobClient | null {
+  const backend = selectStorageBackend(env);
+  if (backend === "none") return null;
+  if (backend === "vendor") return blobClientFromEnv(env);
+  return new ObjectStoreBlobClient(directObjectStore(backend, env, "fs"));
+}
+
 /** The vendor client from `VGI_BLOB_VENDOR_URL` and its token (falling back to
- *  `VGI_CF_DO_TOKEN`), or `null` when the URL is unset.
- *  @throws Error if the URL is set but no token is. */
+ *  `VGI_CF_DO_TOKEN`), or `null` when the URL is unset. Storage transfers use
+ *  a stall timeout (`VGI_RPC_STORAGE_STALL_TIMEOUT_SECONDS`, default 30 s) read
+ *  from the same `env`, never a whole-transfer deadline.
+ *  @throws Error if the URL is set but no token is, or the stall timeout will not parse. */
 export function blobClientFromEnv(env: Env = processEnv()): VendorBlobClient | null {
   const url = (env[ENV_VENDOR_URL] ?? "").trim();
   if (!url) return null;
   const token = (env[ENV_VENDOR_TOKEN] ?? "").trim() || (env.VGI_CF_DO_TOKEN ?? "").trim();
   if (!token) throw new Error(`${ENV_VENDOR_URL} is set but neither ${ENV_VENDOR_TOKEN} nor VGI_CF_DO_TOKEN is`);
-  return new VendorBlobClient(url, token, { purpose: "fs", maxFetchBytes: MAX_BLOB_BYTES });
+  return new VendorBlobClient(url, token, {
+    purpose: "fs",
+    maxFetchBytes: MAX_BLOB_BYTES,
+    stallTimeoutMs: storageStallTimeoutMsFromEnv(env),
+  });
 }
 
 /** Options for {@link wrapStorageFromEnv}. */
@@ -326,9 +433,9 @@ export function wrapStorageFromEnv(base: FunctionStorage, options: WrapStorageOp
   const enabled = TRUE_VALUES.has((env[ENV_EXTERNALIZE] ?? "").trim().toLowerCase());
   const maxValueBytes = options.maxValueBytes;
   if (maxValueBytes === undefined && !enabled) return base;
-  const blobs = blobClientFromEnv(env);
+  const blobs = functionBlobClientFromEnv(env);
   if (enabled && blobs === null) {
-    throw new Error(`${ENV_EXTERNALIZE}=1 needs the blob vendor: set ${ENV_VENDOR_URL}`);
+    throw new Error(`${ENV_EXTERNALIZE}=1 needs the blob vendor or a storage bucket: set ${ENV_VENDOR_URL}, VGI_STORAGE_S3_BUCKET or VGI_STORAGE_GCS_BUCKET`);
   }
   let threshold = externalizeBytesFromEnv(env);
   if (maxValueBytes !== undefined) threshold = Math.min(threshold, maxValueBytes);
@@ -342,7 +449,7 @@ export function wrapStorageFromEnv(base: FunctionStorage, options: WrapStorageOp
 /** Options for {@link ExternalizingStorage}. */
 export interface ExternalizingStorageOptions {
   /** The vendor client, or null to keep every value inline. */
-  blobClient: VendorBlobClient | null;
+  blobClient: FunctionBlobClient | null;
   /** With a vendor, values of at least this many bytes are stored as blobs
    *  (default {@link DEFAULT_EXTERNALIZE_BYTES}). */
   threshold?: number | undefined;
@@ -354,7 +461,7 @@ export interface ExternalizingStorageOptions {
 
 /** State one wrapper shares with its per-shard views. */
 interface SharedState {
-  readonly blobs: VendorBlobClient | null;
+  readonly blobs: FunctionBlobClient | null;
   readonly threshold: number;
   readonly maxValueBytes: number | undefined;
   readonly pending: Set<Promise<void>>;
@@ -398,7 +505,7 @@ export class ExternalizingStorage implements FunctionStorage {
   }
 
   /** The vendor client, if any. */
-  get blobClient(): VendorBlobClient | null {
+  get blobClient(): FunctionBlobClient | null {
     return this._shared.blobs;
   }
 

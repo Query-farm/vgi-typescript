@@ -632,6 +632,37 @@ A prepared statement whose large argument has expired (objects live about a
 day) fails with `this prepared statement's large argument has expired; prepare
 it again`.
 
+### Storage backend (`VGI_STORAGE_BACKEND`)
+
+Large values (externalized results, argument references, `StateRef` objects,
+function-storage blobs) go to the blob vendor or to the operator's own bucket,
+chosen by `VGI_STORAGE_BACKEND` = `vendor` | `s3` | `gcs` | `none`. Unset, it is
+`vendor` when `VGI_BLOB_VENDOR_URL` is set, `s3` when `VGI_STORAGE_S3_BUCKET`
+is, `gcs` when `VGI_STORAGE_GCS_BUCKET` is, else `none` (everything inline);
+more than one of those without `VGI_STORAGE_BACKEND` refuses to start.
+
+- **S3** (any S3-compatible service): `VGI_STORAGE_S3_BUCKET`, `_PREFIX`,
+  `_ENDPOINT`, `_PUBLIC_ENDPOINT` (host for the URLs handed to clients),
+  `_REGION`, `_FORCE_PATH_STYLE`, `_CHECKSUM` (`sha256`, or `none` for services
+  that do not enforce `x-amz-checksum-sha256`: no upload grants, so
+  `VGI-Upload-URL-Support` and `VGI-Arguments-Ref-Bytes` are not advertised and
+  large requests stay inline; results and objects are still externalized),
+  `_SDK_CHECKSUM` (`when_supported` / `when_required`), explicit credentials
+  `_ACCESS_KEY_ID` / `_SECRET_ACCESS_KEY` / `_SESSION_TOKEN` (else the AWS
+  default chain), `VGI_STORAGE_URL_TTL_SECONDS`, and `VGI_STORAGE_S3_VERIFY=1`
+  to HEAD the bucket at startup (it is checked on first use anyway);
+  `VGI_STORAGE_S3_SESSION_EXPIRES` (RFC 3339 or epoch seconds) for an explicit
+  session token, so URL lifetimes are capped at its expiry;
+  `VGI_STORAGE_ALLOW_PLAIN_HTTP=1` to allow an `http://` endpoint. The worker must
+  also reach `_PUBLIC_ENDPOINT` (request-upload pointers are fetched by URL).
+- **GCS:** `VGI_STORAGE_GCS_BUCKET`, `_PREFIX`, `_ENDPOINT`, `_CREDENTIALS_FILE`
+  (else Application Default Credentials), `VGI_STORAGE_GCS_VERIFY=1`.
+
+Install the optional peers for the backend you use: `@aws-sdk/client-s3` and
+`@aws-sdk/s3-request-presigner`, or `@google-cloud/storage`. Keys go under
+`<prefix>rpc/` and `<prefix>fs/` (function storage): add lifecycle rules
+expiring `rpc/` after one day and `fs/` after two. Deletes are best effort.
+
 ### Orchard hosted mode (`VGI_ORCHARD_HOSTED=1`)
 
 Set `VGI_ORCHARD_HOSTED=1` with `VGI_JWT_ISSUER`, `VGI_JWT_AUDIENCE`,

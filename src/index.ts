@@ -6,6 +6,8 @@
 // `./index.core.js` (via worker-cf-entry.ts) instead, which omits `Worker` so
 // the launcher's `serveUnix` (node:net) never enters the bundle.
 export * from "./index.core.js";
+// VGI_STORAGE_BACKEND=s3|gcs in any worker process (not the Cloudflare entry).
+import "./storage-direct.js";
 
 // Worker (node/bun only — stdio + AF_UNIX launcher transport)
 export { Worker, type WorkerConfig } from "./worker.js";

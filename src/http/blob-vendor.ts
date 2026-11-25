@@ -32,6 +32,8 @@ export interface BlobVendorEnv {
   VGI_RPC_EXTERNAL_COMPRESSION?: string | undefined;
   VGI_RPC_MAX_REQUEST_BYTES?: string | undefined;
   VGI_RPC_MAX_UPLOAD_BYTES?: string | undefined;
+  /** Seconds a storage transfer may move no bytes (default 30). */
+  VGI_RPC_STORAGE_STALL_TIMEOUT_SECONDS?: string | undefined;
 }
 
 /** HTTP handler options from the blob-vendor environment. Every field is
