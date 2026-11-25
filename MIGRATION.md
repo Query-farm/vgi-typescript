@@ -1,5 +1,24 @@
 # Migration guide
 
+## 0.52.3 — compiled workers, direct S3/GCS storage, secret scopes
+
+Requires the `@query-farm/vgi-rpc` ^0.30.3 peer. The wire protocol stays 3.4.
+
+- Compiled workers (`bun build --compile`) build without the optional
+  `@aws-sdk/client-s3`, `@aws-sdk/s3-request-presigner` and
+  `@google-cloud/storage` packages; with them installed, the binary bundles
+  them. 0.52.2 with vgi-rpc 0.30.2 failed with
+  `Could not resolve: "@aws-sdk/client-s3"`.
+- Direct S3/GCS storage (`VGI_STORAGE_BACKEND=s3|gcs`) works. In 0.52.2 the
+  factory was tree-shaken out of the published dist, so those backends
+  reported "is not available here"; it is now registered explicitly.
+- Secret scopes follow DuckDB 2.0.1's authority boundary
+  ([duckdb#28684](https://github.com/duckdb/duckdb/pull/28684)): an
+  authority-only scope like `snmp://host` no longer covers
+  `snmp://host:161` or `snmp://host2`, and `s3://bucket` no longer covers
+  `s3://bucket-evil/`. Matching is tested against 3,025 vectors generated
+  from DuckDB's C++.
+
 ## 0.52.2 — storage timeouts, direct S3/GCS storage, protocol negotiation
 
 Requires the `@query-farm/vgi-rpc` ^0.30.2 peer (`storageFetch` and
