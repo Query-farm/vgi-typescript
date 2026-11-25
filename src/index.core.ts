@@ -331,6 +331,7 @@ export {
   secretByName,
   secretForScope,
   secretForScopeOfType,
+  scopeMatches,
 } from "./secrets/helpers.js";
 
 export {

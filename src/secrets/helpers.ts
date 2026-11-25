@@ -113,6 +113,9 @@ export function secretByName(
  * serializes each secret's scope as a newline-joined list of prefixes; a secret
  * with no (or empty) scope matches as a last-resort fallback. Returns undefined
  * when no scope is a prefix of `path` and no unscoped secret was delivered.
+ * Matching follows DuckDB exactly (see {@link scopeMatches}): an
+ * authority-only scope such as `snmp://10.0.0.1` covers only that host and
+ * paths under it, never `snmp://10.0.0.15` or `snmp://10.0.0.1:161`.
  */
 export function secretForScope(secrets: SecretsDict, path: string): SecretFields | undefined {
   return selectForScope(secrets, path, undefined);
@@ -147,11 +150,51 @@ function selectForScope(
       continue;
     }
     for (const prefix of scope.split("\n")) {
-      if (prefix && path.startsWith(prefix) && prefix.length > bestLen) {
+      if (prefix && scopeMatches(prefix, path) && prefix.length > bestLen) {
         bestLen = prefix.length;
         best = fields;
       }
     }
   }
   return best ?? fallback;
+}
+
+/**
+ * The URI authority of `text`, or `""`; mirrors DuckDB's
+ * `StringUtil::GetURIAuthority`. `text` is a URI only if it contains `://`
+ * after a non-empty scheme and its first `/` or `\\` is the one that starts
+ * that `://`. The authority runs from after `://` to the first `/`, `\\`, `?`
+ * or `#` (or the end).
+ */
+function uriAuthority(text: string): string {
+  const schemeEnd = text.indexOf("://");
+  if (schemeEnd <= 0) return "";
+  const slashes = [text.indexOf("/"), text.indexOf("\\")].filter((i) => i !== -1);
+  const firstSlash = slashes.length ? Math.min(...slashes) : -1;
+  if (firstSlash !== schemeEnd + 1) return "";
+  const start = schemeEnd + 3;
+  const ends = ["/", "\\", "?", "#"].map((c) => text.indexOf(c, start)).filter((i) => i !== -1);
+  return ends.length ? text.slice(start, Math.min(...ends)) : text.slice(start);
+}
+
+/**
+ * Whether a secret scope `prefix` covers `path`, exactly as DuckDB decides.
+ *
+ * A scope matches when it is a string prefix of `path`, except that an
+ * authority-only URI scope (`scheme://authority` with nothing after the
+ * authority) has an implicit trailing `/`: `snmp://10.0.0.1` covers
+ * `snmp://10.0.0.1` and `snmp://10.0.0.1/x` but not `snmp://10.0.0.15` or
+ * `snmp://10.0.0.1:161`, and `s3://bucket` does not cover `s3://bucket-evil/`.
+ * This is DuckDB's `BaseSecret::MatchScore` as of the Haybarn 2.0.1 engine
+ * (duckdb#28684). Indexing is by UTF-16 unit rather than DuckDB's byte, which
+ * agrees here: every delimiter is ASCII, `startsWith` aligns the prefix, and
+ * the unit after it is `/` exactly when the next UTF-8 byte is `/`.
+ */
+export function scopeMatches(prefix: string, path: string): boolean {
+  if (!prefix || !path.startsWith(prefix)) return false;
+  const authority = uriAuthority(prefix);
+  const authorityOnly =
+    authority.length > 0 && prefix.length === prefix.indexOf("://") + 3 + authority.length;
+  if (!authorityOnly) return true;
+  return path.length === prefix.length || path[prefix.length] === "/";
 }

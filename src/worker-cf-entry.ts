@@ -112,6 +112,7 @@ export {
   secretByName,
   secretForScope,
   secretForScopeOfType,
+  scopeMatches,
   normalizeRequiredSecrets,
 } from "./index.core.js";
 // vgi.v3 records: constraints, capabilities, column expressions, indexes, macro overloads.
